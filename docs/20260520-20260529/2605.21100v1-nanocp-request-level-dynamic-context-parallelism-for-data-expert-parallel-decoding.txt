@@ -1,0 +1,1222 @@
+Title: NanoCP: Request-Level Dynamic Context Parallelism for Data-Expert Parallel Decoding
+
+URL Source: https://arxiv.org/pdf/2605.21100v1
+
+Published Time: Thu, 21 May 2026 01:17:02 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# NanoCP : Request-Level Dynamic Context Parallelism for Data-Expert Parallel Decoding 
+
+## Jiefei Chen ∗
+
+Fudan University Shanghai, China Shanghai Artificial Intelligence Laboratory Shanghai, China 
+
+## Binbin Lin ∗
+
+Huazhong University of Science and Technology Wuhan, China Shanghai Artificial Intelligence Laboratory Shanghai, China 
+
+## Jinming Ma ∗† 
+
+Shanghai Artificial Intelligence Laboratory Shanghai, China 
+
+majinming@pjlab.org.cn 
+
+## Jiangfei Duan †
+
+The Chinese University of Hong Kong Hong Kong, China 
+
+imjfduan@gmail.com 
+
+## Haojie Duanmu 
+
+Shanghai Jiao Tong University Shanghai, China Shanghai Artificial Intelligence Laboratory Shanghai, China 
+
+## Hao Liu 
+
+Shanghai Artificial Intelligence Laboratory Shanghai, China Harbin Institute of Technology Harbin, China 
+
+## Qinxiu Cheng 
+
+Shanghai Artificial Intelligence Laboratory Shanghai, China 
+
+## Xiuhong Li 
+
+Peking University Beijing, China 
+
+## Zhilin Pei 
+
+Shanghai Artificial Intelligence Laboratory Shanghai, China 
+
+## Hui Wang †
+
+Shanghai Artificial Intelligence Laboratory Shanghai, China 
+
+wanghui@pjlab.org.cn 
+
+## Xingcheng Zhang 
+
+Shanghai Artificial Intelligence Laboratory Shanghai, China SenseTime Shanghai, China 
+
+## Dahua Lin 
+
+Shanghai Artificial Intelligence Laboratory Shanghai, China The Chinese University of Hong Kong Hong Kong, China 
+
+## Abstract 
+
+Modern serving systems for Mixture-of-Experts (MoE) mod-els adopt hybrid data-expert parallelism: expert parallelism (EP) shards experts across GPUs to scale capacity, while data parallelism (DP) replicates attention layers across instances to process independent requests. Existing systems bind each request’s attention, MoE communication, and KV cache to 
+
+> ∗
+
+Equal contribution. 
+
+> †
+
+Corresponding authors: Jinming Ma (majinming@pjlab.org.cn), Jiangfei Duan (imjfduan@gmail.com), and Hui Wang (wanghui@pjlab.org.cn). Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org. 
+
+Conference’17, Washington, DC, USA 
+
+© 2026 Copyright held by the owner/author(s). Publication rights licensed to ACM. ACM ISBN 978-x-xxxx-xxxx-x/YYYY/MM 
+
+https://doi.org/10.1145/nnnnnnn.nnnnnnn 
+
+a single instance. Because attention latency scales with KV cache size while MoE communication latency scales with batch size, this binding cannot balance both simultaneously, producing EP stragglers; it also fragments KV memory across instances, inflating tail latency under long contexts. While existing context parallelism (CP) mitigates these constraints, its uniform parallelism degree incurs prohibitive communi-cation and attention-side overheads. We present NanoCP , which decouples MoE communica-tion from KV cache placement and achieves dual balance through dynamic context parallelism (DCP). DCP assigns each request a context-parallel degree sized to its KV foot-print: long requests distribute attention across multiple in-stances; short requests remain local. This dynamic parallelism effectively liquefies the KV cache across the cluster, balancing both the per-instance KV cache occupancy and batch sizes without unnecessary load-balancing costs. To bridge DCP with static execution, NanoCP intro-duces an ahead-of-time (AOT) graph engine paired with a custom routing-based communication backend. Experimen-tal results show that NanoCP maintains up to 1.88 ×–3.27 ×
+
+higher request rates under strict time-per-output-token (TPOT)  
+
+> arXiv:2605.21100v1 [cs.DC] 20 May 2026 Conference’17, July 2017, Washington, DC, USA Trovato et al.
+
+service level objectives (SLOs). Furthermore, NanoCP sig-nificantly mitigates stragglers, reducing P99 tail latency by up to 1.79 ×–2.12 ×.
+
+CCS Concepts: • Computing methodologies → Paral-lel algorithms ; • Computer systems organization →
+
+Distributed architectures .
+
+Keywords: mixture-of-experts, LLM serving, distributed in-ference, dynamic context parallelism     
+
+> ACM Reference Format:
+> Jiefei Chen, Binbin Lin, Jinming Ma, Jiangfei Duan, Haojie Du-anmu, Hao Liu, Qinxiu Cheng, Xiuhong Li, Zhilin Pei, Hui Wang, Xingcheng Zhang, and Dahua Lin. 2026. NanoCP : Request-Level Dynamic Context Parallelism for Data-Expert Parallel Decoding. In .ACM, New York, NY, USA, 16 pages. https://doi.org/10.1145/ nnnnnnn.nnnnnnn
+
+## 1 Introduction 
+
+Mixture-of-experts (MoE) architectures have become the dominant design for scaling large language models (LLMs) beyond the trillion-parameter regime without incurring pro-portional computation costs [ 12 , 26 , 54 , 65 ]. In production, these models serve requests of highly variable length, from short conversational turns to multi-million-token agentic and long-context workloads [ 15 , 29 , 53 ]. Meeting tight token-level latency targets on such workloads is now a central system challenge in LLM inference. Modern LLM serving systems typically adopt prefill-decode disaggregation [ 44 , 77 ] together with hybrid data-expert par-allelism (DP-EP) [ 12 , 30 , 70 , 75 ]. In this design, non-expert layers (e.g., attention) are replicated across data-parallel (DP) instances 1, while experts are sharded across those instances through expert parallelism (EP). Each MoE layer therefore incurs two all-to-all communication phases, dispatch and combine, whose latency is determined by the slowest partic-ipating rank under collective synchronization. To describe request placement in this architecture, we introduce two terms used throughout the paper. A request’s MoE binding 
+
+denotes the DP-instance set responsible for its MoE dispatch and combine operations. In this paper, this set is a singleton. A request’s KV binding is the set of one or more DP instances that store its KV cache and execute its attention computation. In current request-level serving systems [ 30 , 50 , 75 ], the MoE binding and KV binding are tied to the same DP instance. Under variable-length workloads, this design creates a fun-damental scheduling problem. The two dominant phases in decoding scale differently: attention latency on each instance scales with its resident KV cache size [ 77 ], while dispatch and combine latency scale with the per-rank token batch entering the all-to-all [ 71 ]. As shown in Figure 1(a), routing 
+
+> 1A DP instance is the set of GPUs that together hold one replica of the non-expert layers and one shard of the experts.
+
+for KV cache balance inevitably skews batch sizes, and rout-ing for batch size balance inevitably skews KV cache load. Under lock-step synchronization, both types of imbalance force faster ranks to wait for the slowest one, making end-to-end latency dominated by EP stragglers [ 6 , 22 , 41 , 59 , 60 ]. This problem is orthogonal to prior work on expert load imbalance, such as EPLB and redundant experts [13]. Tying the MoE binding and the KV binding to the same DP instance also creates a capacity-side problem. As MoE weights grow toward the trillion-parameter regime, model weights consume most of each instance’s HBM, leaving KV cache capacity on the same order as a single long-context request. In one representative deployment—a 1T-parameter MoE on 32 ×H200 with 32DP-32EP—the KV cache capacity of one instance is roughly 1M tokens, already comparable to the context windows of recent models [ 42 , 48 ]. A single long request can therefore approach the capacity of an entire instance. As a result, even modest fragmentation can prevent the request from being scheduled, although the cluster still has enough aggregate free memory. This creates head-of-line (HoL) blocking and inflates tail latency, as shown in Figure 1(a). A related line of work is context parallelism (CP) [ 2 , 4 , 5 ,18 , 25 , 27 , 31 , 34 , 35 , 61 – 63 , 66 ], which expands a request’s KV binding across multiple DP instances. However, existing CP systems are mainly designed for dense models or uniformly long-context serving, rather than variable-length MoE de-coding. Helix [ 4], for example, targets interactive decoding at multi-million-token contexts, where requests are uniformly long. It uses a fixed CP group for attention execution and ap-plies the same context-parallel degree to every request, as il-lustrated in Figure 1(b). It keeps one MoE binding per request, but uniformly expands the KV binding of every request to the same fixed-size group. This design introduces unnecessary overhead for short requests by forcing all requests to partic-ipate in cross-instance communication. Moreover, because Helix realizes CP within a tensor-parallel attention group, attention heads and the corresponding query activations are partitioned across the group, tying CP communication to the TP group and its collective execution. It also increases the effective attention batch size on each GPU, which can reduce attention kernel efficiency. Under variable-length workloads, these overheads can outweigh the benefit of better KV cache balance, making such systems ill-suited to variable-length MoE serving. To address this problem, we present NanoCP , which in-troduces dynamic context parallelism (DCP) to decouple a request’s MoE binding from its KV binding and schedule them independently. NanoCP chooses each request’s MoE binding to balance batch sizes across DP instances, while choosing each request’s KV binding by trading off better attention computation balance against additional commu-nication overhead. Under DCP, a request’s CP degree is the number of DP instances in its KV binding. NanoCP therefore NanoCP Conference’17, July 2017, Washington, DC, USA No CP overhead, but coupled binding causes imbalance /HoL 
+
+> S4
+> L2
+
+(a) Coupled single-instance binding (Pure DP) (b) Helix CP                
+
+> Incoming Requests S1 S4 L1 S2 L2 S3 SLLong Request Short Request
+> (a1) Least Cache Routing (a2) Least Batch Routing uniform CP for all requests
+> CP Communication
+> S1 S4 L1 S2 L2 S3
+> S1 S4 L1 S2 L2 S3
+
+(c) Ours NanoDeploy          
+
+> selective CP only when beneficial
+> S1 L1 S3 L2
+> S2 L1 S4 L2
+> L1
+> S1 S2 S3
+> L1
+> S1
+> S2
+> S3
+> Instance Number 12
+> 1
+> 2
+> 1
+> 2
+> 1
+> 2
+> 1
+> 2
+> Waiting
+> S4
+> L2
+> Waiting
+> An Batch: Large
+> CP Comm: High
+> An Batch: Small
+> CP Comm: Low
+> Batch Balance
+> KV Balance ~
+> Batch Balance
+> KV Balance
+> √Batch Balance KV Balance
+> √√
+> Batch Balance √
+> KV Balance √
+
+Figure 1. Existing load balancing strategies: (a1) least cache routes each incoming request to the instance with the most free KV blocks, (a2) least batch routes it to the instance with the smallest running batch size, and (b) Helix applies a uniform CP degree to all requests; (c) NanoCP .assigns larger CP degrees to long requests to better balance attention computation, while assigning smaller CP degrees to short requests to avoid unnecessary communication. As illustrated in Figure 1(c), this design achieves both batch size balance and KV cache balance without incurring the uniform overhead of fixed CP. In the control plane, NanoCP uses a centralized scheduler with a global view of load across instances, since local sched-ulers cannot jointly balance these dimensions or support token-level KV cache placement. Based on this global view, the scheduler determines, for each request, where MoE com-munication executes, what CP degree it uses, and how its KV cache is distributed across instances. However, executing this per-request flexibility creates highly asymmetric cross-instance traffic that conflicts with the static-shape assump-tions of CUDA Graph capture and DeepEP’s low-latency decode kernels [ 71 ]. To support this efficiently in the data plane, NanoCP pairs an ahead-of-time (AOT) graph man-ager, which pre-compiles a bounded family of static-shape execution graphs, with a routing-based communication back-end that issues asymmetric transfers outside the collective path. In summary, this paper makes the following contributions: 1. We identify rigid request-to-instance binding as a fun-damental source of both EP stragglers and memory fragmentation in hybrid DP-EP MoE serving, and show why uniform group-level CP is inefficient under variable-length workloads. 2. We propose NanoCP , a dynamic context parallelism 
+
+(DCP) system that decouples MoE communication from KV cache placement and supports per-request CP degrees under static-shape GPU runtimes. 3. We implement NanoCP and show that it improves the maximum sustainable request rate by up to 3.27 × over state-of-the-art baselines [ 4 , 30 ] under strict TPOT SLOs, while reducing P99 normalized latency by 1.79 ×–
+
+2.12 ×.Batch 1       
+
+> Batch 2
+> DP A nGate
+> Gate
+> Expert
+> Expert DP A n
+> Instance1 Instance2
+> Batch 3
+> Batch N
+> DP A nGate
+> Gate
+> Expert
+> Expert
+> Dispatch
+> DP A n
+> Instance3 InstanceN
+> Combine
+> ………………
+
+Figure 2. Data-expert parallel architecture. 
+
+## 2 Background and Motivation 
+
+2.1 Variable-Length Workloads 
+
+Modern LLM serving systems must handle requests with highly variable sequence lengths, ranging from short con-versational prompts [ 64 , 72 , 74 ] to much longer multi-modal and agentic workloads [ 15 , 29 , 45 ]. As shown by the Open-Router statistics in Table 1 [ 3, 43 ], production traffic is highly skewed: most requests are short, but a non-negligible fraction (1.67%) exceeds 100k tokens. Following Medha [ 2], we con-struct evaluation traces by mixing ShareGPT-4o [ 8 ] for short requests with long-context software-engineering traces de-rived from GitHub issues for long requests. We use long-request ratios of 1% and 5% to represent both typical produc-tion workloads and heavier long-context stress cases. 
+
+2.2 Data-expert Parallel MoE Serving 
+
+As shown in Figure 2, modern MoE serving systems during autoregressive decoding typically adopt data-expert paral-lelism (DP-EP) instead of tensor parallelism (TP) [ 49 , 69 , 78 ]. In attention layers, Multi-Head Latent Attention (MLA) [ 12 ]is poorly suited to head-wise TP partitioning, which can cause redundant KV cache replication and reduce its KV-cache efficiency advantage [ 12 , 52 ]. Meanwhile, sharding inherently small experts creates fragmented GEMMs that fail to saturate GPU compute units [ 78 ]. DP-EP instead replicates attention layers across GPUs so that different DP instances can process different requests in parallel, while using EP to distribute massive expert weights and leverage aggregate memory bandwidth to reduce execution latency [ 69 , 71 , 78 ]. In each MoE layer, the dispatch and combine stages together introduce two rounds of all-to-all communication. 
+
+Different scaling factors in data-expert parallelism. 
+
+A fundamental bottleneck in globally synchronized DP-EP Conference’17, July 2017, Washington, DC, USA Trovato et al. 256k 512k 768k 1M 
+
+> Total Total Sequence Length
+> 0
+> 150
+> 300
+> 450
+> 600
+> 750
+> Latency ( μs)
+
+(a) FlashMLA latency    
+
+> BS=1
+> BS=128
+> BS=1024
+> 64 128 192 256
+> Batch Size / GPU
+> 0
+> 200
+> 400
+> 600
+> 800
+
+(b) DeepEP on 32 GPUs 
+
+> Disp.+Comb.
+> Dispatch
+> Combine
+
+Figure 3. Microbenchmarks of attention and DeepEP com-munication latency. 
+
+Table 1. Dataset Distribution by Length Interval 
+
+Dataset < 1k 1k-10k 10k-100k 100k-500k 500k-1M Open Router 1 31.82 50.08 16.42 1.67 sharegpt-4o 85.7 10.7 3.5 - -Github Issue - - - 65.06 34.94  
+
+> 1
+
+Sourced from https://openrouter.ai/rankings , representing the call count records for Gemini 3 Flash Preview on Feb. 23. 
+
+execution is instance-level imbalance , because the two ma-jor phases in decode scale with different factors: attention computation latency scales with the total KV cache size (Fig-ure 3a), whereas MoE communication latency scales with the batch size (Figure 3b). Under variable-length workloads, these two dimensions do not necessarily grow proportionally, making them difficult to balance simultaneously. The result-ing imbalance creates stragglers, where slower instances delay the progress of the entire DP-EP group and increase decoding latency. Prior work primarily targets expert-level imbalance through expert placement optimization [ 12 , 20 ,32 , 69 ] or training-time load balancing [ 16 ]. However, even with perfectly balanced experts, this instance-level bottle-neck remains. 
+
+2.3 Existing Load Balancing Strategy 2.3.1 Request-level Load Balancing. A common base-line for hybrid DP-EP serving is request-level load balancing ,which assigns each request to a single DP instance. As il-lustrated by the DP case in Figure 7(a), this design ties the request’s MoE binding and KV binding to that same DP in-stance. This coupling is restrictive because attention scales with KV cache size, whereas MoE communication scales with batch size. As a result, this request-level scheduling can balance only one dimension. 
+
+LeastCache strategy and communication imbalance. 
+
+This policy routes each incoming request to the DP instance with the smallest total KV cache size to balance attention computation. We implement this policy in vLLM for compar-ison. However, by ignoring batch size, it can create severe batch size imbalance, leading to communication imbalance and stragglers. As illustrated in Figure 4(a), even when at-tention loads are balanced, DP instance 0 may handle only 2 IDLE 
+
+> Rank 1, 98 Short Rank 0, 1 Short, 1 Long
+
+(a) Least Cache → Communication Straggler (b) Least Batch → Aention Straggler 
+
+> Rank 0, 50 Short
+
+(c) Helix Parallelism                            
+
+> Rank 0, 50 Short Rank 1, 49 Short, 1 Long
+> timeline
+> Dependency
+> 25 25 25 25 25 25 25 25 25 300k 300k 300k 300k 100k 300k
+> 300k 300k 300K 100k 500k 125 25
+> 25 50 50 50 50 50
+> 50 1
+> IDLE IDLE IDLE 11125
+> 25
+> Total sequence length 300K
+> 11
+> 111
+> Transferred data volume
+> AnDS DR AnDS DR
+> 1
+> AnDS DR CS CR AnDS 25 25 25 DS DR CS CR DS DR 2525 25 DS DR CS CR DSDR 1DS DR CS CR DS DR A2A 1A2A A2A A2A DS DR CS CR DS DR A2A A2A A2A A2A
+> 1
+> Layer boundary
+
+(d) Dynamic Context Parallelism (DCP)             
+
+> Rank 0, 99 Short, 1 Long, Half Q head Rank 1, 99 Short, 1 Long, Half Q head
+> 300k 50 CS CR 25 25 25
+> 50 Batch size for expert
+> Expert Expert
+> 1
+> DR
+> Rank 1, 49 Short, 1 Long
+> 25 500k 49 49 49 49 49 25 25 25 25 100 25 DS DR CS CR 50 25 25 300k 50 50 DS DR 50 300k 50 25 25 25 100 25 DS DR CS CR 50 25 25 300k 50 50 DS DR 50
+> CP Comm
+> CP Comm
+> CP Comm
+> CP Comm
+
+Figure 4. Two types of imbalance in MoE decode (DS/DR: Dispatch Send/Receive; CS/CR: Combine Send/Receive). requests while DP instance 1 handles 98. DP instance 0 there-fore spends much longer in dispatch receive (DR), delaying its combine send (CS). As a result, DP instance 1, despite finishing its MLP and combine send quickly, is blocked be-fore combine receive (CR) and remains idle. This straggler arises from batch size imbalance together with the sequen-tial dependency between dispatch and combine. Using 32 DeepSeek-V3 instances driven by the Issue 1% trace in vLLM, with DP degree 32 and a constant arrival rate of 30 request-s/s, Figure 5a shows that MoE dispatch and combine latency varies significantly across instances: most instances fall be-tween 100 and 500 𝜇 s, while the straggler reaches 1020.6 𝜇 s. The mean is 354.7 𝜇 s, indicating that perfect load balance would reduce the maximum latency by 65.2%. 
+
+LeastBatch strategy and attention computation im-balance. This policy routes each incoming request to the DP instance with the smallest batch size to balance MoE com-munication. vLLM’s default scheduler follows this policy. However, because it ignores request-length heterogeneity, it can create severe KV cache imbalance and stragglers. As shown in Figure 4(b), even when batch sizes are balanced, attention loads can still differ substantially (e.g., 100K vs. 300K tokens). DP instance 0 finishes its lighter attention phase and dispatch send (DS) quickly, but cannot proceed because DP instance 1 is still executing a heavier attention computation. This delays DP instance 1’s dispatch send and leaves DP instance 0 idle. Thus, stragglers arise from KV cache imbalance together with the dependency between at-tention and dispatch. Figure 5b shows that attention latency NanoCP Conference’17, July 2017, Washington, DC, USA 0 8 16 24 31         
+
+> Rank
+> 0
+> 300
+> 600
+> 900
+> Latency (us)  Peak
+> Mean
+> (a) MoE Communication Imbalance
+> 65%
+> 0816 24 31
+> Rank
+> 0
+> 150
+> 300
+> 450
+> Latency (us)  Peak
+> Mean
+> (b) Attention Computation Imbalance
+> 66%
+> 0200 400 600
+> Time (s)
+> 0
+> 30k
+> 60k
+> 90k
+> Blocks
+> (c) Head of line queueing demand vs free blocks
+> HoL Demand Free Blocks
+
+Figure 5. Limitations of existing request-level load balancing strategies. 8K×128 16K×64 32K×32 64K×16 128K×8 256K×4 512K×2 1M×1 
+
+Sequence length × batch size per GPU 
+
+> 0
+> 600
+> 1,200
+> 1,800
+> 2,400
+> Latency (us)
+
+Attention Computation 
+
+CP Communication 
+
+DP CP2 CP4 CP8 DP CP2 CP4 CP8 
+
+Figure 6. Per-layer attention latency breakdown of Helix CP under varying sequence lengths and batch sizes (total 
+
+∼1M tokens per GPU). also varies significantly under this policy: most instances remain around 40–55 𝜇 s, while the straggler reaches 539.5 𝜇 s. The mean is 184.3 𝜇 s, indicating that balancing attention computation would reduce the maximum latency by 65.8%. 
+
+Head-of-line blocking. Request-level routing also leads to severe head-of-line (HoL) blocking. Since each request must be placed on a single DP instance, a long-context re-quest with a large KV cache cannot enter execution until one instance has enough local memory. Even when the cluster has sufficient aggregate free memory, the request can remain stuck at the head of the queue and block subsequent requests. Figure 5c shows this effect: there is a clear gap between the high total free memory and the blocked request at the front of the queue. Because the KV cache of a request cannot be distributed across instances, aggregate free memory cannot be effectively utilized, leading to higher tail latency. 
+
+2.3.2 Helix Parallelism. However, as shown in Figure 4(c), this uniform CP configuration forces even short requests to participate in cross-instance attention execution. This incurs higher communication overhead and lower attention kernel efficiency, because partitioning KV cache and query activa-tions across the group requires routing queries, exchanging partial attention results, and merging them into the final output. Helix [ 4 ] improves over request-level scheduling by allow-ing multiple GPUs to jointly serve each request’s attention, which helps distribute the KV cache of long requests and re-duce attention stragglers. As illustrated by the Helix CP case in Figure 7(b), Helix keeps each request’s MoE binding on (a) DP (b) Helix CP (c) Dynamic CP         
+
+> Long(300K)
+> Short(10K)
+> KV Binding
+> MoE Binding
+> Q
+> Q Partition By Batch dim Head dim Batch dim
+> Long(300K)
+> Short(10K)
+> CP=4
+> CP=4
+> Long(300K)
+> Short(10K) CP=1 CP=4 Requests
+> Coupled KV and MoE Decoupled bindings Coupled KV and MoE
+> Communication Communication
+> Group-wide! Group-wide!
+> Selective Selective
+> Uniform CP Per-request CP One instance per request
+
+Figure 7. KV and MoE binding comparison. one DP instance but uniformly expands its KV binding to the same fixed CP group. However, as illustrated in Figure 4(c), this uniform CP configuration forces even short requests to participate in cross-instance attention execution. This incurs higher communication overhead and lower attention kernel efficiency, because partitioning KV cache and query heads across the group requires routing queries, exchanging partial attention results, and merging them into the final output. Figure 6 shows the latency breakdown under different sequence-length and batch-size combinations. Compared with DP, all CP configurations (2CP, 4CP, and 8CP) incur substantially higher communication overhead. This over-head is especially pronounced for short sequences with large batches (e.g., 8K ×128), where CP communication accounts for a much larger fraction of total attention latency. Larger CP groups also reduce attention efficiency by in-creasing the attention batch size. In Helix, each DP instance performs attention over the full CP-group batch. As shown in Figure 3a, even under a fixed total token budget, attention latency increases with batch size because a larger batch am-plifies the fixed per-request overhead in the decode attention path (e.g., query loading and output write-back). 
+
+2.4 DCP with Dual-Balanced Scheduling 
+
+Figure 7 illustrates how the three designs differ in request binding. In DP, each request’s KV binding and MoE binding coincide on one instance. Helix-style CP expands the KV binding of every request to a fixed CP group, so short and long requests both pay group-wide attention communication. Conference’17, July 2017, Washington, DC, USA Trovato et al. Global State Manager §  
+
+> Control Plane §
+> Dual-Balanced Strategy §
+> Decode API
+> Requests
+
+…
+
+1 
+
+> Data Plane §
+
+4 
+
+> §Q-Routing Based Executor
+
+6  
+
+> §Comm Backend
+
+8
+
+> KV
+> LOAD /STORE LOOKUP DIRECT _PUT REPLAY DISPATCH ROUTE
+
+9
+
+7
+
+5
+
+> ENQUEUE
+
+2 MIGRATE 
+
+3 
+
+> TRANSFER
+> §AOT Graph Manager
+> Prefill Nodes
+
+Figure 8. NanoCP system overview. 
+
+NanoCP keeps one MoE binding per request but chooses the KV binding size dynamically, allowing long requests to use CP while keeping short requests local. To jointly balance attention computation and MoE com-munication with low overhead, we propose dual-balanced scheduling with dynamic context parallelism (DCP). The key idea is to decouple a request’s MoE binding from its KV bind-ing, so that MoE communication and KV cache placement can be scheduled independently within the same decoding step. As shown in Figure 7, NanoCP selects each request’s singleton MoE binding to balance per-instance batch sizes for dispatch and combine, and independently selects its KV bind-ing to balance KV cache and attention computation subject to cross-instance communication cost. DCP enables this design efficiently in two ways. First, 
+
+NanoCP distributes the KV cache and attention computa-tion of long requests across multiple instances only when doing so improves load balance, while keeping short requests local to avoid unnecessary communication. As illustrated in Figure 4(d), NanoCP makes Instance 0 and Instance 1 each hold 300K tokens of KV cache and process a batch size of 50, while incurring much lower communication overhead than Helix-style CP, leading to the shortest execution time in this example. Second, by partitioning a long request’s KV cache within its selected KV binding, NanoCP avoids requiring the request to fit into the free memory of a single instance, thereby utilizing fragmented free memory across instances and alleviating head-of-line blocking. 
+
+## 3 NanoCP Overview 
+
+Figure 8 illustrates the NanoCP architecture. The control plane (Section 4) maintains a global state manager (Sec-tion 4.1) that pools all requests and GPU resources into a unified view. Based on this view, the dual-balanced schedul-ing strategy (Section 4.2) generates per-iteration execution plans, determining for each request its MoE binding and 
+
+KV binding . At each iteration, the control plane dispatches per-instance metadata to the data plane (Section 5). In decoding phase, each iteration typically generates one token, so per-iteration latency is short, CPU launch and syn-chronization overheads can noticeably affect per-step latency. However, per-request DCP makes the routing pattern vary across iterations, which conflicts with the static-shape as-sumptions of CUDA Graph. NanoCP therefore combines an 
+
+AOT graph manager (Section 5.2) to select the matching pre-captured graph, with a routing-based communication backend 
+
+(Section 5.3) to support sparse cross-instance communication introduced by DCP efficiently. Specifically, a request’s decode lifecycle flows through this architecture: After completing external prefill, a request en-ters a global waiting queue( 1 ENQUEUE ). When it is admitted into decode, the scheduler determines its MoE binding, KV binding, and a KV-token split over the instances in its KV binding, where the per-request CP size equals the number of instances in its KV binding. Concretely, the scheduler first chooses the request’s MoE binding to balance MoE communication load, then selects one or more low-KV-load instances to form the request’s KV binding and decides the KV split across them. Each instance in the KV binding therefore stores and processes only its local KV shard. As a result, long requests (e.g., 512K) may use a KV binding spanning multiple instances to distribute attention load and reduce KV cache imbalance, whereas short requests (e.g., 4K) typically remain local with a KV binding containing only one instance to avoid unnecessary cross-instance communication. The control plane then allocates target KV space and triggers KV-cache migration from the prefill side to the se-lected instances in the KV binding( 2 MIGRATE ), while the data plane carries out the corresponding physical transfer ( 3 TRANSFER ). The control plane then lowers this decision into compact per-instance routing metadata ( 4 DISPATCH ). Each instance uses this metadata to look up the matching pre-built graph ( 5 LOOKUP ) and replay it( 6 REPLAY ), thereby bridging per-request dynamic routing with the largely static GPU runtime. During execution, the MoE binding computes the query tensor and sends it to the designated instances in the KV binding via the routing backend ( 8 ROUTE ); each instance in the KV binding performs attention over its local KV shard ( 7 LOAD/STORE ) and returns a partial result back ( 9 DIRECT_PUT ). The MoE binding merges these partial results before proceed-ing to MoE execution. 
+
+## 4 NanoCP Control Plane 
+
+4.1 Global State Management 
+
+Unlike mainstream LLM serving systems [ 30 , 34 , 37 , 50 ], which tightly couple the scheduler and executor within each data parallel (DP) instance, NanoCP maintains a single global scheduler to coordinate all DP instances. This design is driven by two requirements. First, hybrid DP-EP execution NanoCP Conference’17, July 2017, Washington, DC, USA 
+
+requires strict per-iteration load balancing, since the MoE dispatch and combine phases proceed in lock-step across DP instances and any imbalance immediately creates stragglers. Second, DCP requires fine-grained resource allocation across instances, including token-level partitioning of a request’s KV cache to reduce execution imbalance and memory frag-mentation, which is difficult under coupled architectures where each scheduler manages only local resources. 
+
+Centralized waiting queue. The scheduler manages a global waiting queue to buffer requests that have completed prefill and are ready for decode execution. During each sched-uling iteration, the scheduler selects ready requests from the waiting queue and allocates KV cache blocks on the target decode instances based on current memory availability. It then migrates the KV cache from the prefill instances to these allocated blocks before initiating the decode execution. 
+
+Global page table. Existing CP systems (e.g., vLLM’s CP mode) typically employ a shared page table within a CP group. However, assuming a fixed parallelism degree leads to addressing conflicts under DCP, where requests in the same batch have varying CP sizes. Requests with different CP de-grees compute incorrect page indices, causing mapping fail-ures or out-of-bounds memory access, as the fixed addressing logic cannot adapt to dynamic KV cache partitioning across the cluster. NanoCP addresses this limitation by introduc-ing a global page table that maintains a unified mapping from logical KV page IDs to physical tuples (Instance_ID, Frame_ID) . Each request manages its own logical page IDs, which are queried at runtime to locate its KV cache shards independently, effectively preventing errors while enabling flexible placement. 
+
+4.2 Dual-balanced Scheduling 
+
+NanoCP realizes dual-balanced scheduling as a request-centric, length-aware scheduling algorithm. For each request, it determines two decoupled bindings, with one placing its MoE communication on a single instance and the other as-signing its KV cache to a set of instances for attention compu-tation. These decisions jointly balance MoE communication load and attention computation load across instances. Let 
+
+N denote the set of nodes and S𝑛 the CP instances on node 
+
+𝑛 . For request 𝑟 , ℓ𝑟 is its sequence length, P𝑟 is the selected instance set for attention computation, 𝑚 𝑟 is the instance assigned to execute its MoE communication, and Split 𝑟 maps each instance in P𝑟 to its assigned tokens. For instance 𝑠 ,
+
+𝐾 𝑠 denotes its KV cache load, and 𝐵 𝑠 denotes the number of requests whose MoE communication is assigned to instance 
+
+𝑠 in the current decoding iteration; 𝐵 (𝑛 ) = Í𝑠 ∈ S 𝑛 𝐵 𝑠 , and 
+
+𝐾 max is the per-instance KV cache capacity. 
+
+4.2.1 Rebalancing MoE Communication Assignments for Active Requests. As requests complete, the number of requests whose MoE communication is assigned to each 
+
+Algorithm 1 Dual-balanced Scheduling Strategy                                                                                                 
+
+> Require: N,𝑄 𝑛𝑒𝑤 ,𝑄 𝑎𝑐𝑡 ,𝐾 max (Static memory pool capacity),
+> Bucket (·)
+> Ensure: T,mfor scheduled requests, updated m𝑎𝑐𝑡
+> Rebalance MoE Communication Assignments for Active Requests
+> 1: 𝐵 ←0
+> 2: for each 𝑟 ∈SortByParticipantCountAsc (𝑄 𝑎𝑐𝑡 )do
+> 3: 𝑚 𝑟 ←arg min 𝑠 ∈ P 𝑟 𝐵 𝑠
+> 4: 𝐵 𝑚 𝑟 ←𝐵 𝑚 𝑟 +1
+> 5: end for Node Selection and CP Degree
+> 6: for each 𝑟 ∈𝑄 𝑛𝑒𝑤 do
+> 7: 𝑛 ∗←arg min 𝑛 ∈ N 𝐵 (𝑛 )
+> 8: 𝑘 𝑟 ←min (Bucket (ℓ𝑟 ),|S 𝑛 ∗|)
+> Intra-Node Placement
+> 9: 𝑚 𝑟 ←arg min 𝑠 ∈ S 𝑛 ∗𝐵 𝑠
+> 10: C𝑟 ←SelectSmallestKV (S 𝑛 ∗\ { 𝑚 𝑟 }, 𝑘 𝑟 −1)
+> 11: P𝑟 ← { 𝑚 𝑟 } ∪ C 𝑟
+> 12: Split 𝑟 ←WaterFill (P 𝑟 , ℓ 𝑟 , 𝐾 )
+> 13: if CanAllocate (P𝑟 ,Split 𝑟 ,𝐾 ,𝐾 max )then
+> 14: Commit (𝑛 ∗,P𝑟 , 𝑚 𝑟 ,Split 𝑟 )for request 𝑟
+> 15: Update local KV loads 𝐾 𝑠 and MoE comm. load 𝐵 𝑚 𝑟
+> 16: else
+> 17: Keep 𝑟 in waiting queue for the next scheduling iteration
+> 18: end if
+> 19: end for
+
+instance can become imbalanced. Since the MoE communi-cation instance can be reassigned to any instance already holding part of the request’s KV cache without data migra-tion, the scheduler first processes active requests in ascend-ing order of |P 𝑟 | (line 2). Requests with fewer participating instances have fewer feasible reassignment choices, so they are handled first. For each active request, the scheduler reas-signs its MoE communication to the instance with the fewest currently assigned requests within its existing set P𝑟 (line 3). 
+
+4.2.2 Node Selection and CP Degree. For each new re-quest, the scheduler selects the node whose instances own the fewest total requests (line 7). It then determines the CP degree 𝑘 𝑟 using a length-bucket function Bucket (ℓ𝑟 ) (line 8). The key insight is that the optimal CP degree increases with request length: longer requests have larger KV cache foot-prints and thus lead to KV cache imbalance, so distributing them across more instances improves KV cache balance and reduces head-of-line blocking; shorter requests benefit less from CP and are more sensitive to its communication over-head. Based on this insight, Bucket (·) is derived from of-fline profiling. We sweep sequence lengths and candidate CP degrees, measure distributed attention latency under DCP, including both attention computation and communication, and select the CP degree that minimizes this latency for each length range. At runtime, the scheduler determines 𝑘 𝑟 by looking up Bucket (ℓ𝑟 ).Conference’17, July 2017, Washington, DC, USA Trovato et al. MoE Binding                                               
+
+> KV Binding
+> 0123
+> 0A
+> 1ABEB
+> 2AC,E
+> 3ABD
+> Request Seq Len
+> Req CP Group
+> C0010
+> E0110
+> (a) Request Partition (b) Binding configuration (c) Q-Route (Instance 2) (d) Res-Route (Instance 2)
+> Req CP Group
+> A1000
+> C0010
+> E0010
+> A13(0) 2B3(1) C(2) D(3) E(2) 1
+
+Figure 9. Routing table derivation. (a) Request partition with MoE binding assignment (parenthesized). (b) Binding configuration. (c)–(d) Per-instance Q-Route and Res-Route tables for Instance 2. 
+
+4.2.3 Intra-node Placement and KV Partitioning. Within the selected node, the scheduler first chooses the instance that will execute the request’s MoE communication (line 9). It then selects the remaining participating instances from those with the smallest KV cache load 𝐾 𝑠 (line 10), forming the final set P𝑟 for attention computation and KV placement (line 11). Given this participant set, the scheduler computes a token split Split 𝑟 using WaterFill (line 12), which distributes to-kens to lower-loaded instances first. Specifically, WaterFill 
+
+assigns tokens such that Í𝑠 ∈ P 𝑟 Split 𝑟 [𝑠 ] = ℓ𝑟 , while min-imizing the peak post-allocation KV load max 𝑠 ∈ P 𝑟 (𝐾 𝑠 +
+
+Split 𝑟 [𝑠 ]) . The scheduler commits the placement only if 
+
+CanAllocate confirms feasibility (line 13); otherwise, the request remains in the waiting queue for the next scheduling iteration (line 17). 
+
+4.2.4 Execution Configuration Injection. Once the sched-uler finalizes placement decisions and token splits, it lowers this global configuration into per-instance routing metadata— specifically, a 𝑄 -routing table and a Res/LSE routing table— and injects them into the pre-allocated context buffers of each instance. By materializing the dynamic scheduling deci-sions as compact routing tables, the control plane completely decouples scheduling complexity from data-plane execution. Section 5.1 details how the data plane consumes these tables to drive the 𝑄 -routing execution (Figure 9). 
+
+## 5 NanoCP Data Plane 
+
+The DCP execution engine orchestrates the dual-balanced execution plan generated by the control plane. 
+
+5.1 Decoupled Data-Path Design 
+
+Given the execution plan generated by the control plane, 
+
+NanoCP switches between the MoE binding and the in-stances in the KV binding through a 𝑄 -routing data path. For each request, the scheduler designates a singleton MoE binding —responsible for MoE dispatch and combine—while Paged A ention      
+
+> Q-routing Res-Routing
+> merge
+> Inst.0 Inst.1
+> 1
+> 2
+> 3
+> 4
+> 1
+> 1
+> 0
+> 11
+> 1
+> 1
+> 1
+> 0
+> 0
+> 1
+> 1
+> 11
+> 1
+> 0
+> 0
+> 0
+> 0
+> 0
+> Cache: Balanced! Batch: Balanced!
+
+Figure 10. Execution process of NanoCP DCP. a KV binding of one or more instances holds a shard of the request’s KV cache for distributed attention. The key idea is to route the lightweight query ( 𝑄 ) tensor from the MoE binding to the instances in the KV binding, compute partial attention on those instances, and merge the returned partial results at the MoE binding. This avoids KV cache migra-tion while preserving the flexible execution plan produced by dual-balanced scheduling. While similar 𝑄 -routing ideas have been explored in recent systems [ 34 , 62 , 66 ], NanoCP 
+
+makes this dynamic routing compatible with static GPU runtimes through an Ahead-of-Time (AOT) context-driven graph engine (Sec. 5.2) and a routing-based communication backend (Sec. 5.3). Before execution begins, the control plane derives per-instance routing tables from the KV cache distribution. Fig-ure 9 illustrates this with five requests (A–E) across four instances. (a) Each request’s KV cache blocks are distributed across instances, with the parenthesized number denoting the MoE binding. (b) The binding configuration groups re-quests by MoE binding and lists KV shard locations; e.g., In-stance 2 is the MoE binding for C and E ( 𝑀 =2) while holding KV shards for A, C, and E ( 𝑁 =3). (c)–(d) Two binary routing tables are derived per instance: a Q-Route table ( 𝑁 × 𝑊 𝑐𝑝 )marking from which MoE binding each query must be re-ceived, and a Res-Route table ( 𝑀 × 𝑊 𝑐𝑝 ) marking which in-stances in the KV binding will return partial results. The backend executes transfers only for entries marked 1.With the routing tables in place, Figure 10 illustrates the execution workflow. In Phase 1 (Projection & 𝑄 -Routing ), the MoE binding computes the query tensor 𝑄 and routes it to the instances in the KV binding via the Q-Route table ( 1 ). In 
+
+Phase 2 (Paged Attention ), each instance in the KV binding computes a partial attention output ( 𝑃 ) and its Log-Sum-Exp (𝐿𝑆𝐸 ) scaling factor using its local KV partition ( 2 ). In Phase 3 (Res-Routing ), the instances in the KV binding push partial results back to the MoE binding via the Res-Route table ( 3 ). In Phase 4 (LSE-based Merging ), the MoE binding merges incoming partial results into the final attention output using NanoCP Conference’17, July 2017, Washington, DC, USA 
+
+Algorithm 2 AOT Graph Capture & Replay  
+
+> 1:
+
+— Offline: Runner Setup — Config: 𝑊 𝑐𝑝 , 𝑀 max , 𝑁 max , 𝐻 𝑛 , 𝐻 𝑠  
+
+> 2:
+
+B𝑄 _𝑅𝑜𝑢𝑡𝑒 [𝑊 𝑐𝑝 , 𝑀 max ], B𝑅𝑒𝑠 _𝑅𝑜𝑢𝑡𝑒 [𝑊 𝑐𝑝 , 𝑁 max ] 
+
+> 3:
+
+B𝐴𝑡𝑡𝑛𝐿𝑒𝑛 [𝑀 max ], B𝐵𝑙𝑘𝑇 𝑎𝑏 [𝑀 max , MaxBlk ] 
+
+> 4:
+
+B𝐼𝑛𝑝𝑢𝑡 [𝑀 max , 𝐷 ] 
+
+> 5:
+
+B𝑄 [𝑊 𝑐𝑝 , 𝑀 max , 𝐻 𝑛 , 𝐻 𝑠 ] 
+
+> 6:
+
+B𝑅𝑒𝑠 [𝑊 𝑐𝑝 , 𝑁 max , 𝐻 𝑛 , 𝐻 𝑠 ], B𝐿𝑆𝐸 [𝑊 𝑐𝑝 , 𝑁 max , 1, 𝐻 𝑠 ] 
+
+> 7:
+
+for each bucket ( ˆ𝑀, ˆ𝑁 ) in predefined shape space do  
+
+> 8:
+
+C ← EmptyDictionary () // Current bucket context  
+
+> 9:
+
+C.𝑄 _𝑅𝑜𝑢𝑡𝑒 ← Slice (B 𝑄 _𝑅𝑜𝑢𝑡𝑒 , [𝑊 𝑐𝑝 , ˆ𝑀 ])  
+
+> 10:
+
+C.𝑅𝑒𝑠 _𝑅𝑜𝑢𝑡𝑒 ← Slice (B 𝑅𝑒𝑠 _𝑅𝑜𝑢𝑡𝑒 , [𝑊 𝑐𝑝 , ˆ𝑁 ])  
+
+> 11:
+
+C.𝐵𝑙𝑘𝑇 𝑎𝑏 ← Slice (B 𝐵𝑙𝑘𝑇 𝑎𝑏 , [ ˆ𝑀, MaxBlk ])  
+
+> 12:
+
+C.𝐴𝑡𝑡𝑛𝐿𝑒𝑛 ← Slice (B 𝐴𝑡𝑡𝑛𝐿𝑒𝑛 , [ ˆ𝑀 ])  
+
+> 13:
+
+C.𝑄 ← Slice (B 𝑄 , [𝑊 𝑐𝑝 , ˆ𝑀, 𝐻 𝑛 , 𝐻 𝑠 ])  
+
+> 14:
+
+C.𝑅𝑒𝑠 ← Slice (B 𝑅𝑒𝑠 , [𝑊 𝑐𝑝 , ˆ𝑁 , 𝐻 𝑛 , 𝐻 𝑠 ])  
+
+> 15:
+
+C.𝐿𝑆𝐸 ← Slice (B 𝐿𝑆𝐸 , [𝑊 𝑐𝑝 , ˆ𝑁 , 1, 𝐻 𝑠 ])  
+
+> 16:
+
+G [( ˆ𝑀, ˆ𝑁 )] ← CaptureGraph (C)  
+
+> 17:
+
+end for  
+
+> 18:
+
+— Online: In Runtime — Require: 𝑀, 𝑁 , 𝑐𝑝𝑢𝑄𝑅𝑜𝑢𝑡𝑒, 𝑐𝑝𝑢𝑅𝑒𝑠𝑅𝑜𝑢𝑡𝑒, 𝑐𝑝𝑢𝐵𝑙𝑘𝑇 𝑎𝑏 , etc.  
+
+> 19:
+
+( ˆ𝑀, ˆ𝑁 ) ← Bucket (𝑀, 𝑁 ) 
+
+> 20:
+
+C𝑎𝑐𝑡𝑖𝑣𝑒 ← GetContext ( ˆ𝑀, ˆ𝑁 ) 
+
+> 21:
+
+AsyncMemcpy (C 𝑎𝑐𝑡𝑖𝑣𝑒 .𝑄 _𝑅𝑜𝑢𝑡𝑒, 𝑐𝑝𝑢 _𝑄𝑅𝑜𝑢𝑡𝑒 ) 
+
+> 22:
+
+AsyncMemcpy (C 𝑎𝑐𝑡𝑖𝑣𝑒 .𝑅𝑒𝑠 _𝑅𝑜𝑢𝑡𝑒, 𝑐𝑝𝑢 _𝑅𝑒𝑠𝑅𝑜𝑢𝑡𝑒 ) 
+
+> 23:
+
+AsyncMemcpy (C 𝑎𝑐𝑡𝑖𝑣𝑒 .𝐴𝑡𝑡𝑛𝐿𝑒𝑛, 𝑐𝑝𝑢 _𝐴𝑡𝑡𝑛𝐿𝑒𝑛 ) 
+
+> 24:
+
+cudaGraphLaunch (G [( ˆ𝑀, ˆ𝑁 )]) // Launch with context 
+
+the LSE merging algorithm [ 11 ] ( 4 ), then passes the merged hidden states to MoE layer. 
+
+5.2 Bridging Dynamic Routing and Static Graphs 
+
+A fundamental challenge in implementing DCP is that its routing pattern changes across iterations, while high perfor-mance GPU runtimes require largely static execution shapes. CPU-side orchestration would introduce significant synchro-nization overhead on the critical path [ 7, 19 , 46 , 58 , 73 ], whereas capturing a static graph for the worst-case rout-ing pattern would inflate the attention batch size, degrading kernel efficiency. 
+
+NanoCP addresses this with an Ahead-of-Time (AOT) context-driven graph engine (Algorithm 2). Offline, the engine pre-allocates contiguous memory pools sized by upper bounds 
+
+𝑀 max and 𝑁 max , covering routing tables and payload buffers for 𝑄 , Res, and LSE tensors (lines 3–7). A single pool is reused across all captured graphs to avoid buffer duplication. The engine applies Bucketing to the execution shape (𝑀, 𝑁 ):for each bucket ( ˆ𝑀, ˆ𝑁 ), it slices the shared pool into a per-bucket context and captures the corresponding CUDA graph (lines 8–18). At runtime, the scheduler resolves the current 
+
+(𝑀, 𝑁 ) to the nearest bucket, asynchronously injects rout-ing metadata via AsyncMemcpy , and replays the pre-captured graph with zero CPU-side orchestration (lines 20–26). 0
+
+> Polling
+
+Rank 1   
+
+> F
+> Routing Mask SMs Global Memory Msk != 0?
+
+GPU Device (rank 0)       
+
+> Sig == T?TF
+> 0
+> 1
+> 1
+> 1
+> 0
+> 0
+> 0
+> 0
+> 1
+> 0
+> 0
+> 0
+> 1
+> 0
+> 0
+> 0
+> 1
+> 0
+> 146
+> 05
+> 02
+
+Rank 2 Rank 3             
+
+> 1460502
+> 03615Local Q/Res Remote Token Bu ff er Signal
+> T
+> T
+> T
+> TTT
+
+3 
+
+> TTT
+
+2   
+
+> 030201
+
+1
+
+> 1
+> 0
+> 0
+> 6543210
+> 51630
+> NVSwitch/IB
+
+... 
+
+Figure 11. The micro-architecture of the routing-based com-munication backend. 
+
+5.3 Routing-based Communication Backend 
+
+To efficiently execute the dynamic routing between decou-pled KV binding and MoE binding within CUDA graphs, existing communication libraries face a fundamental mis-match. Specifically, they suffer from two primary limitations. First, general collective libraries [ 10 , 24 , 40 , 47 ] are primarily optimized for static topologies and dense data exchanges with fixed memory layouts. Forcing them to accommodate the sparse, dynamic communication of DCP necessitates ex-cessive zero-padding, which wastes network bandwidth and inflates communication latency. Second, specialized MoE libraries [ 21 , 33 , 36 , 38 , 56 , 71 ] are coupled with control logic of MoE, including runtime token counting and metadata handshaking. These complex mechanisms are redundant for our dynamic routing scenario, which can introduce unneces-sary overhead. Therefore, we designed a novel, routing-based communication backend specifically tailored for the dynamic and sparse routing demands of DCP. Our backend design is driven by a key observation: un-like traditional MoE routing that relies on runtime gating outputs, the topological mapping between a request’s KV cache placement and its MoE execution assignment is de-terministically scheduled by the control plane prior to each iteration. Leveraging this a priori knowledge, we use the rout-ing table to directly steer the underlying data transfers. This mechanism eliminates the complex intermediate processing required by the existing libraries like DeepEP, allowing data to be transferred directly to the corresponding target rank. As illustrated in Figure 11, the runtime utilizes the routing table to coordinate sparse transfers. Specifically, the routing table serves as a 2D mask matrix; by reading this matrix from global memory ( 1 ), the sender identifies the exact target ranks for each data chunk. Guided by this matrix, the sender transfers the payload directly into the pre-allocated Conference’17, July 2017, Washington, DC, USA Trovato et al. 
+
+receive buffers of remote instances via NVLink for intra-node routing, or InfiniBand (IB) for inter-node routing ( 2 ). Concurrently, the receiver polls a local arrival flag ( 3 ). 
+
+## 6 Evaluation 
+
+6.1 Experimental Setup 
+
+We implement NanoCP in ∼10K lines of code atop FlashMLA [ 28 ], Triton-distributed [ 76 ], DeepEP [ 71 ], DeepGEMM [ 14 ], nano-vllm [ 68 ], and Ray [ 39 ]. The control plane is written in C++ and sends scheduling metadata to the data plane via RDMA to minimize overhead. NanoCP also supports multi-step ex-ecution [ 9 ], reusing one scheduling decision across multiple decoding iterations. We evaluate NanoCP on a cluster of NVIDIA H200 GPUs. Each node has eight GPUs connected by a fully-connected NVLink fabric (900 GBps bidirectional) and eight 50 GBps RDMA NICs for inter-node communication. We use DeepSeek-V3 [12] and Kimi-K2 [55] as model backbones. 
+
+Workloads. We use ShareGPT-4o [ 8 ] as the short-context dataset and GitHub Issue [ 2 ] as the long-context dataset. We synthesize mixed workloads by combining them at 1% and 5% long-context ratios, and also evaluate pure short- and long-context baselines. 
+
+Baselines. Both NanoCP and vLLM [30] use the same ker-nels (FlashMLA for attention, DeepEP [ 71 ] for MoE all-to-all). All configurations use wide EP for expert layers. For atten-tion, we compare: 
+
+• DP32: Standard data-parallel attention across 32 GPUs with vLLM’s default policy (LeastBatch) and an addi-tional LeastCache policy. 
+
+• DP-CP Hybrid: DP16-CP2, DP8-CP4, and DP4-CP8, using vLLM’s native uniform CP with head-dimension partitioning—the same core mechanism as Helix [4]. 
+
+Metrics. Our primary metric is time-per-output-token (TPOT) with a 50 ms SLO target [ 23 , 56 ]. We report the maximum request rate at which each system sustains ≥99% SLO attain-ment, i.e., at least 99% of requests meet this TPOT target. 
+
+6.2 Micro Benchmark 
+
+We compare NanoCP against four vLLM baselines (vLLM 32DP, vLLM 16DP2CP, vLLM 8DP4CP, vLLM 4DP8CP) on 4 nodes, placing 64 short requests (2048 tokens) per GPU and 1, 3, 5, or 7 long requests (512K tokens) per node. For each setting, we report the latency breakdown of the slowest instance, since EP makes per-layer latency nearly identical across instances. Per-layer latency is decomposed into atten-tion computation, MoE all-to-all, CP communication, and others. Figure 13 shows that NanoCP achieves the best over-all latency across all four settings. Its CP communication overhead is much smaller than vLLM4DP8CP’s, because it enables CP only for requests that would otherwise cre-ate significant attention imbalance. NanoCP also achieves the smallest maximum attention latency: compared with vLLM32DP, it distributes long-request KV cache across in-stances rather than confining each to a single DP instance; compared with vLLM4DP8CP, it avoids the inflated attention batch of uniform CP, where each CP instance executes atten-tion over the full CP-group batch, hurting kernel efficiency. vLLM16DP2CP and vLLM8DP4CP suffer from both attention stragglers and reduced kernel efficiency. The benefit of distributing long-request KV cache dimin-ishes as long requests increase per node: when they are few, this removes dominant attention stragglers; as their number grows, the room for further KV-cache balancing shrinks. 
+
+6.3 End-to-End Performance 
+
+As shown in Figure 12. Compared with the best-performing vLLM baseline, it increases the maximum request rate by 
+
+1.88 ×–3.27 × while maintaining 99% SLO attainment. Under mixed workloads, vLLM DP32 suffers from imbal-ance in both attention and MoE dispatch and combine, lead-ing to stragglers. Hybrid DP-CP baselines partially alleviate this problem, but still underperform NanoCP : larger CP groups better balance long requests but incur higher commu-nication and attention-side batch overhead, whereas smaller CP groups reduce communication but leave substantial at-tention imbalance. By assigning CP degrees dynamically per request, NanoCP mitigates these imbalances with minimal overhead, achieving a 1.87 ×–2.10 × speedup at the request rate where vLLM reaches a mean TPOT of 100 ms. Under the pure short-context workload (ShareGPT-4o), NanoCP 
+
+achieves slightly lower latency than vLLM DP32, mainly because its centralized scheduler provides a global view for better load balancing. Under the pure long-context work-load (Issue 100%), NanoCP performs similarly to 4DP8CP. At such low request rates, CP8 adds little overhead and already reduces stragglers effectively. 
+
+NanoCP also improves tail latency, achieving a 1.79 ×–
+
+2.12 × speedup in P99 TPOT over the baselines. By distribut-ing a request’s KV cache across multiple DP instances, it mitigates head-of-line blocking and prevents long-context requests from blocking subsequent ones. 
+
+6.4 Load Balance Analysis 
+
+NanoCP achieves better load balance and less HoL blocking than vLLM under both low and high load. 
+
+Low load. Figure 14(a)–(c) compares three configurations: (a) NanoCP , (b) vLLM 32DP with its default scheduling pol-icy, and (c) vLLM 32DP with LeastCache scheduling policy. The default vLLM policy roughly balances batch size, but leads to severe KV cache imbalance and hence attention com-putation imbalance. In contrast, NanoCP distributes the KV cache of long requests across multiple DP instances, reducing KV cache imbalance (74.13% vs. 186.75%). Compared with LeastCache, NanoCP further reduces MoE communication imbalance by choosing the DP instance with the smallest NanoCP Conference’17, July 2017, Washington, DC, USA 40 60 80                                                
+
+> 40
+> 60
+> 80
+> 100
+> SLO
+> Attainment (%)  DPSK-ShareGPT4o
+> 15 30 45
+> 40
+> 60
+> 80
+> 100
+> DPSK-Issue1%
+> 612 18 24
+> 40
+> 60
+> 80
+> 100
+> DPSK-Issue5%
+> 0.6 1.2 1.8 2.4
+> 40
+> 60
+> 80
+> 100
+> DPSK-Gemini Issues
+> 15 30 45
+> 40
+> 60
+> 80
+> 100
+> KIMI-Issue1%
+> 816 24
+> 40
+> 60
+> 80
+> 100
+> KIMI-Issue5%
+> 30 60 90 120
+> 40
+> 60
+> 80
+> 100
+> Mean
+> TPOT (ms)
+> 25 50 75
+> 40
+> 60
+> 80
+> 100
+> 10 20 30 40
+> 40
+> 60
+> 80
+> 100
+> 0.8 1.6 2.4
+> 40
+> 60
+> 80
+> 100
+> 25 50 75 100
+> 40
+> 60
+> 80
+> 100
+> 15 30 45
+> 40
+> 60
+> 80
+> 100
+> 30 60 90 120
+> Request Rate (req/s)
+> 40
+> 60
+> 80
+> 100
+> P99
+> TPOT (ms)
+> 25 50 75
+> Request Rate (req/s)
+> 40
+> 60
+> 80
+> 100
+> 10 20 30 40
+> Request Rate (req/s)
+> 40
+> 60
+> 80
+> 100
+> 0.8 1.6 2.4
+> Request Rate (req/s)
+> 40
+> 60
+> 80
+> 100
+> 25 50 75 100
+> Request Rate (req/s)
+> 40
+> 60
+> 80
+> 100
+> 15 30 45
+> Request Rate (req/s)
+> 40
+> 60
+> 80
+> 100
+> Ours (DCP) vLLM (DP-LeastBatch) vLLM (DP-LeastCache) vLLM (CP2) vLLM (CP4) vLLM (CP8)
+
+Figure 12. The end-to-end generation performance in H200 platform. DCP        
+
+> CP8
+> CP4
+> CP2
+> DP 0
+> 500
+> 1000
+> 1500
+> 2000
+> Latency ( μs)  2.2x
+> 1.8x
+> 1.6x 1.3x
+> Ours vLLM
+> Long=1
+> DCP
+> CP8
+> CP4
+> CP2
+> DP
+> 2x
+> 1.6x
+> 1.4x 1.2x
+> Ours vLLM
+> Long=3
+> DCP
+> CP8
+> CP4
+> CP2
+> DP
+> 1.9x
+> 1.6x 1.4x
+> 1.2x
+> Ours vLLM
+> Long=5
+> DCP
+> CP8
+> CP4
+> CP2
+> DP
+> 1.9x
+> 1.6x
+> 1.3x
+> 1.1x
+> Ours vLLM
+> Long=7
+> Attention Dispatch+Combine CP Cost Others
+
+Figure 13. Micro-benchmark batch size to execute dispatch and combine, achieving lower batch size imbalance (8.54% vs. 47.40%). 
+
+High load. Figure 14 compares NanoCP against vLLM 32DP with its default scheduling policy. Under high load, vLLM suffers from HoL blocking caused by memory frag-mentation. For each node (8 GPUs), we measure the amount of aggregate free memory blocks and the number of blocks required by the head-of-line request. In vLLM, substantial aggregate free memory often coexists with a non-empty head-of-line queue. Under NanoCP , queued requests appear mainly when aggregate free memory is nearly exhausted, indicating that NanoCP mitigates HoL blocking by placing a request’s KV cache across multiple instances and thereby utilizing fragmented memory. 
+
+6.5 Latency Breakdown 
+
+We decompose per-layer execution time into attention, MoE dispatch and combine, DCP communication overhead, and others. We compare four configurations: (1) NanoCP , (2) vLLM 4DP8CP, (3) vLLM 32DP with LeastBatch, and (4) vLLM 32DP with LeastCache. We evaluate them on three workloads: pure ShareGPT-4o, ShareGPT-4o mixed with 1% GitHub Issue, and ShareGPT-4o mixed with 5% GitHub Issue (Figure 15). We extract requests from serving logs and replay them to obtain per-layer timelines across 32 instances. Both vLLM 32DP baselines suffer from imbalanced atten-tion computation across instances. vLLM 32DP LeastBatch cannot balance KV cache, causing over 7.26 × max-to-median latency gap (811.3 𝜇 s vs.111.8 𝜇 s under ShareGPT-4o + 1% GitHub Issue). vLLM 32DP LeastCache alleviates this im-balance but still peaks at 986.065 𝜇 s. NanoCP uses DCP to distribute long-context KV cache across instances, limiting maximum attention latency to 267.744 𝜇 s and reducing the max-to-median gap by over 84.45% compared to vLLM 32DP. Both vLLM 32DP baselines also suffer from high MoE dis-patch and combine latency due to attention imbalance and batch size skew. Under ShareGPT-4o + 1% GitHub Issue, vLLM 32DP LeastBatch and LeastCache exhibit maximum dispatch+combine latencies of 1132 .9 𝜇 s and 1342 .7 𝜇 s , re-spectively. By jointly balancing attention and MoE phases, 
+
+NanoCP reduces the maximum dispatch+combine cost to 
+
+350 .9 𝜇 s. NanoCP incurs much lower CP communication over-head than vLLM 4DP8CP, because it enables DCP only for requests that need it. vLLM 4DP8CP incurs average CP over-head of 629.8 𝜇 s, whereas NanoCP incurs only 60.4 𝜇 s, a 90.41% reduction. 
+
+6.6 System Overhead Analysis Scheduler and AOT graph engine. We measure the central-ized control-plane overhead on 32 GPUs with per-instance batch sizes from 32 to 256 (Figure 16). Under DP32, schedul-ing plus RDMA metadata transfer accounts for only 1.17% –
+
+1.77% of iteration time. Enabling DCP raises this to 1.42% –
+
+2.61% , an increase of at most 0.84 percentage points. The AOT graph engine prebuilds 48 CUDA Graphs consuming 5.32 GiB per GPU (Table 2), an additional 4.30 GiB ( ∼3.0% of H200 HBM) over vLLM 32DP, comparable to vLLM 4DP+8CP (5.17 GiB, 68 graphs). 
+
+Communication backend. Using DeepSeek-V3’s Query tensor (hidden size 512, 128 heads, varying batch size), NanoCP ’s routing-based backend reduces latency by 8.56%–52.85% and improves effective bandwidth by 9.36%–111.97% over NCCL (Figure 17). 
+
+DCP cost at runtime. As shown in Figure 18, at peak only 25/2,279 requests (1.1%) use cross-instance CP, with DCP all-to-all latency peaking at just 35.5 𝜇 s. Conference’17, July 2017, Washington, DC, USA Trovato et al. 0
+
+> 20
+> 40
+> Batch Size
+
+Ours (DCP)   
+
+> 0150 300
+> 0
+> 8k
+> 16k
+> Used Blocks  0
+> 20
+> 40
+
+vLLM (DP-LeastBatch)   
+
+> 0150 300
+> 0
+> 8k
+> 16k
+> 0
+> 50
+> 100
+
+vLLM (DP-LeastCache)   
+
+> 0150 300
+> 0
+> 8k
+> 16k
+> 0%
+> 40%
+> 80%
+> 0%
+> 100%
+> 200%
+> 0
+> 40k
+> 80k
+> 120k
+> Blocks
+
+Ours (DCP)  
+
+> 200 400
+> 0
+> 40k
+> 80k
+> 120k
+> Blocks
+
+vLLM (DP-LeastBatch) 
+
+Step Step 
+
+(a) Load balance across all instances. (b) HoL demand vs free blocks.      
+
+> Min-Max IQR Median CV Free HoL Demand
+
+Figure 14. (a) Batch size and KV cache load balance across 32 instances under low load. (b) Head-of-line blocking under high load: free memory blocks vs. head-of-queue demand per node. 0                     
+
+> 1000
+> 2000
+> 3000 ShareGPT4o
+> Ours
+> (DCP)
+> vLLM
+> (CP8)
+> vLLM
+> (DP-LeastBatch)
+> vLLM
+> (DP-LeastCache)
+> 0
+> 1000
+> 2000 Issue1%
+> 0816 24 31
+> 0
+> 500
+> 1000
+> 1500 Issue5%
+> 0816 24 31 0816 24 31 0816 24 31
+> Instance ID
+> Latency ( μs)
+
+Attention Dispatch+Combine CP Cost Others 
+
+Figure 15. Latency breakdown of different routing and par-allel strategies across 32 GPUs 32 64 96 128 160 192 256 
+
+Batch Size 
+
+> 0
+> 50
+> Latency (ms)
+
+DP32 
+
+DP32DCP 
+
+DP32 
+
+DP32DCP 
+
+> 0
+> 2
+> 4
+> Overhead/ITL (%)
+
+Model Exec. Schedule Data Transfer 
+
+Figure 16. Schedule overhead comparison. 
+
+Table 2. CUDA Graph memory overhead comparison. 
+
+Method # Graphs Memory per GPU (GiB) vLLM (4DP+8CP) 68 5.17 vLLM (32DP) 12 1.02 Ours 48 5.32 
+
+## 7 Related Work 
+
+Context parallelism for LLM serving. Context paral-lelism (CP) was developed to scale sequence length in train-ing [ 5 , 35 , 49 ] and later adopted for serving. LoongServe [ 62 ], InfiniteLLM [ 34 ], Yang et al. [ 66 ], Medha [ 2], and Helix [ 4 ]use CP to pool distributed memory for long contexts or mitigate head-of-line blocking. These systems treat CP as a capacity extension mechanism with uniform parallelism degrees. NanoCP instead repurposes CP as a load-balancing 2 4 8 16 32 64 128        
+
+> Batch size
+> 0
+> 100
+> 200
+> 300
+> 400
+> Latency (us)
+> 24816 32 64 128
+> Batch size
+> 0
+> 100
+> 200
+> 300
+> Bandwidth (GB/s)
+> Ours NCCL
+
+Figure 17. Performance of NanoCP ’s routing-based back-end vs. NCCL for Query all-to-all transfer. 0       
+
+> 5
+> 10
+> CP>1 Cnt
+> CP=1
+> CP=4
+> CP=5
+> CP=6
+> CP=7
+> CP=8
+> 6000 7000 8000 9000 10000
+> Decode Iter
+> 20
+> 25
+> 30
+> 35
+> A2A Lat. (us)
+> DP0 DP1 DP2 DP3
+> 0
+> 1000
+> 2000 CP=1 Cnt
+
+Figure 18. CP Size breakdown. 
+
+primitive with per-request adaptive degrees, decoupling KV cache placement from MoE execution to jointly balance at-tention and MoE communication. 
+
+MoE serving systems. Prior work optimizes MoE infer-ence via efficient kernels and communication [ 17 , 21 , 33 , 38 ,71 ] or expert-level load balance [ 16 , 36 , 51 , 69 ]. MegaScale-Infer [ 78 ] disaggregates attention and FFN but assumes bal-anced execution times. These optimizations are orthogonal to NanoCP , which targets the DP-instance-level straggler effect under lock-step EP synchronization. 
+
+Request scheduling in LLM serving. Existing systems [ 1 ,9 , 30 , 37 , 67 , 75 ] bind each request’s attention, MoE execu-tion, and KV cache to a single DP instance. Llumnix [ 50 ] adds NanoCP Conference’17, July 2017, Washington, DC, USA 
+
+cross-instance migration; DistServe [ 77 ], SplitWise [ 44 ], and Mooncake [ 47 ] disaggregate prefill and decode; SBS [ 57 ] bal-ances DP-EP prefill at request level. None of these decouple KV cache placement from MoE execution, so they cannot simultaneously balance attention load and MoE communi-cation under variable-length decode workloads. NanoCP 
+
+addresses this through dual-balanced scheduling with per-request CP degrees. 
+
+## 8 Conclusion 
+
+NanoCP addresses MoE inference conflicts by decoupling scheduling via dynamic KV cache placement and dual-balanced scheduling. Under the TPOT SLO, it improves maximum re-quest rates by up to 3.27 × and significantly improves P99 TPOT over existing strategies. 
+
+## References 
+
+[1] Amey Agrawal, Nitin Kedia, Ashish Panwar, Jayashree Mohan, Nipun Kwatra, Bhargav Gulavani, Alexey Tumanov, and Ramachandran Ram-jee. 2024. Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . USENIX Association, Santa Clara, CA, 117–134. https://www.usenix.org/conference/osdi24/presentation/ agrawal 
+
+[2] Amey Agrawal, Haoran Qiu, Junda Chen, Íñigo Goiri, Chaojie Zhang, Rayyan Shahid, Ramachandran Ramjee, Alexey Tumanov, and Esha Choukse. 2025. No Request Left Behind: Tackling Heterogeneity in Long-Context LLM Inference with Medha . arXiv:2409.17264 [cs.LG] 
+
+https://arxiv.org/abs/2409.17264 
+
+[3] Malika Aubakirova, Alex Atallah, Chris Clark, Justin Summerville, and Anjney Midha. 2026. State of AI: An Empirical 100 Trillion Token Study with OpenRouter . arXiv:2601.10088 doi: 10.48550/arXiv.2601.10088 
+
+[4] Nidhi Bhatia, Ankit More, Ritika Borkar, Tiyasa Mitra, Ramon Matas, Ritchie Zhao, Maximilian Golub, Dheevatsa Mudigere, Brian Phar-ris, and Bita Darvish Rouhani. 2025. Helix Parallelism: Rethinking Sharding Strategies for Interactive Multi-Million-Token LLM Decoding .arXiv:2507.07120 doi: 10.48550/arXiv.2507.07120 
+
+[5] Chang Chen, Tiancheng Chen, Jiangfei Duan, Qianchao Zhu, Zerui Wang, Qinghao Hu, Peng Sun, Xiuhong Li, Chao Yang, and Torsten Hoefler. 2025. Zeppelin: Balancing Variable-length Workloads in Data Parallel Large Model Training. ArXiv preprint abs/2509.21841 (2025). [6] Chang Chen, Min Li, Zhihua Wu, Dianhai Yu, and Chao Yang. 2022. TA-MoE: Topology-Aware Large Scale Mixture-of-Expert Training. In 
+
+Advances in Neural Information Processing Systems 35: Annual Con-ference on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November 28 - December 9, 2022 , Sanmi Koyejo, S. Mohamed, A. Agarwal, Danielle Belgrave, K. Cho, and A. Oh (Eds.). [7] Hongtao Chen, Weiyu Xie, Boxin Zhang, Jingqi Tang, Jiahao Wang, Jianwei Dong, Shaoyuan Chen, Ziwei Yuan, Chen Lin, Chengyu Qiu, Yuening Zhu, Qingliang Ou, Jiaqi Liao, Xianglin Chen, Zhiyuan Ai, Yongwei Wu, and Mingxing Zhang. 2025. KTransformers: Unleashing the Full Potential of CPU/GPU Hybrid Inference for MoE Models. In 
+
+Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles (Lotte Hotel World, Seoul, Republic of Korea) (SOSP ’25) .Association for Computing Machinery, New York, NY, USA, 1014–1029. doi: 10.1145/3731569.3764843 
+
+[8] Junying Chen, Zhenyang Cai, Pengcheng Chen, Shunian Chen, Ke Ji, Xidong Wang, Yunjin Yang, and Benyou Wang. 2025. ShareGPT-4o-Image: Aligning Multimodal Models with GPT-4o-Level Image Generation. arXiv:2506.18095 [cs.CV] https://arxiv.org/abs/2506.18095 
+
+[9] LMDeploy Contributors. 2023. LMDeploy: A Toolkit for Compressing, Deploying, and Serving LLM. https://github.com/InternLM/lmdeploy .[10] Meghan Cowan, Saeed Maleki, Madanlal Musuvathi, Olli Saarikivi, and Yifan Xiong. 2023. MSCCLang: Microsoft Collective Communication Language. In Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 (Vancouver, BC, Canada) (ASPLOS 2023) . ACM, New York, NY, USA, 502–514. doi: 10.1145/3575693.3575724 
+
+[11] Tri Dao, Daniel Haziza, Francisco Massa, and Grigory Sizov. 2023. Flash-Decoding for long-context inference. PyTorch Blog. [12] DeepSeek-AI. 2024. DeepSeek-V3 Technical Report .arXiv:2412.19437 [cs.CL] https://arxiv.org/abs/2412.19437 
+
+[13] DeepSeek-AI. 2024. EPLB: Expert Parallelism Load Balancer. https: //github.com/deepseek-ai/EPLB .[14] DeepSeek-AI. 2025. DeepGEMM: Clean and Efficient FP8 GEMM Kernels with Fine-Grained Scaling. https://github.com/deepseek-ai/ DeepGEMM . GitHub repository. [15] Xiang Deng, Jeff Da, Edwin Pan, Yannis Yiming He, Charles Ide, Kanak Garg, Niklas Lauffer, Andrew Park, Nitin Pasari, Chetan Rane, Karmini Sampath, Maya Krishnan, Srivatsa Kundurthy, Sean Hendryx, Zi-fan Wang, Vijay Bharadwaj, Jeff Holm, Raja Aluri, Chen Bo Calvin Zhang, Noah Jacobson, Bing Liu, and Brad Kenstler. 2025. SWE-Bench Pro: Can AI Agents Solve Long-Horizon Software Engineering Tasks? 
+
+arXiv:2509.16941 [cs.SE] https://arxiv.org/abs/2509.16941 
+
+[16] William Fedus, Barret Zoph, and Noam Shazeer. 2022. Switch trans-formers: Scaling to trillion parameter models with simple and efficient sparsity. Journal of Machine Learning Research 23, 120 (2022), 1–39. [17] Trevor Gale, Deepak Narayanan, Cliff Young, and Matei Zaharia. 2023. Megablocks: Efficient sparse training with mixture-of-experts. Pro-ceedings of Machine Learning and Systems 5 (2023), 288–304. [18] Hao Ge, Fangcheng Fu, Haoyang Li, Xuanyu Wang, Sheng Lin, Yujie Wang, Xiaonan Nie, Hailin Zhang, Xupeng Miao, and Bin Cui. 2024. Enabling parallelism hot switching for efficient training of large lan-guage models. In Proceedings of the ACM SIGOPS 30th Symposium on Operating Systems Principles . 178–194. [19] Abhishek Ghosh, Ajay Nayak, Ashish Panwar, and Arkaprava Basu. 2025. PyGraph: Robust Compiler Support for CUDA Graphs in PyTorch. arXiv:2503.19779 [cs.LG] https://arxiv.org/abs/2503.19779 
+
+[20] Seokjin Go and Divya Mahajan. 2025. MoETuner: Optimized Mixture of Expert Serving with Balanced Expert Placement and Token Routing .arXiv:2502.06643 [cs.LG] https://arxiv.org/abs/2502.06643 
+
+[21] Amos Goldman, Nimrod Boker, Maayan Sheraizin, Nimrod Ad-moni, Artem Polyakov, Subhadeep Bhattacharya, Fan Yu, Kai Sun, Georgios Theodorakis, Hsin-Chun Yin, Peter-Jan Gootzen, Aamir Shafi, Assaf Ravid, Salvatore Di Girolamo, James Dinan, Xiaofan Li, Manjunath Gorentla Venkata, and Gil Bloch. 2026. NCCL EP: Towards a Unified Expert Parallel Communication API for NCCL. arXiv:2603.13606 [cs.DC] https://arxiv.org/abs/2603.13606 
+
+[22] Shwai He, Weilin Cai, Jiayi Huang, and Ang Li. 2026. Capacity-Aware Inference: Mitigating the Straggler Effect in Mixture of Experts. arXiv:2503.05066 [cs.LG] https://arxiv.org/abs/2503.05066 
+
+[23] Junhao Hu, Jiang Xu, Zhixia Liu, Yulong He, Yuetao Chen, Hao Xu, Jiang Liu, Jie Meng, Baoquan Zhang, Shining Wan, Gengyuan Dan, Zhiyu Dong, Zhihao Ren, Changhong Liu, Tao Xie, Dayun Lin, Qin Zhang, Yue Yu, Hao Feng, Xusheng Chen, and Yizhou Shan. 2025. DEEPSERVE: serverless large language model serving at scale. In 
+
+Proceedings of the 2025 USENIX Conference on Usenix Annual Technical Conference (Boston, MA, USA) (USENIX ATC ’25) . USENIX Association, USA, Article 4, 16 pages. [24] Changho Hwang, Peng Cheng, Roshan Dathathri, Abhinav Jangda, Saeed Maleki, Madan Musuvathi, Olli Saarikivi, Aashaka Shah, Ziyue Yang, Binyang Li, Caio Rocha, Qinghua Zhou, Mahdieh Ghazimir-saeed, Sreevatsa Anantharamu, and Jithin Jose. 2026. MSCCL++: Rethinking GPU Communication Abstractions for AI Inference. In Conference’17, July 2017, Washington, DC, USA Trovato et al. 
+
+Proceedings of the 31st ACM International Conference on Architec-tural Support for Programming Languages and Operating Systems, Vol-ume 2 (USA) (ASPLOS ’26) . ACM, New York, NY, USA, 1201–1215. doi: 10.1145/3779212.3790188 
+
+[25] Sam Ade Jacobs, Masahiro Tanaka, Chengming Zhang, Minjia Zhang, Reza Yazdani Aminadabi, Shuaiwen Leon Song, Samyam Rajbhandari, and Yuxiong He. 2024. System optimizations for enabling training of extreme long sequence transformer models. In Proceedings of the 43rd ACM Symposium on Principles of Distributed Computing . 121–130. [26] Albert Q Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Emma Bou Hanna, Florian Bressand, et al . 2024. Mixtral of experts. ArXiv preprint abs/2401.04088 (2024). [27] Chenyu Jiang, Zhenkun Cai, Ye Tian, Zhen Jia, Yida Wang, and Chuan Wu. 2025. DCP: Addressing Input Dynamism In Long-Context Training via Dynamic Context Parallelism. In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles . 221–236. [28] Shengyu Liu Jiashi Li. 2025. FlashMLA: Efficient Multi-head Latent Attention Kernels. https://github.com/deepseek-ai/FlashMLA .[29] Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik R. Narasimhan. 2024. SWE-bench: Can Language Models Resolve Real-world Github Issues?. In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net. [30] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serving with pagedattention. In Proceedings of the 29th symposium on operating systems principles . 611–626. [31] Cong Li, Yuzhe Yang, Xuegui Zheng, Qifan Yang, Yijin Guan, Size Zheng, Li-Wen Chang, Shufan Liu, Xin Liu, and Guangyu Sun. 2025. Optimizing Long-context LLM Serving via Fine-grained Sequence Parallelism. ArXiv preprint abs/2511.06247 (2025). [32] Yan Li, Zhenyu Zhang, Zhengang Wang, Pengfei Chen, and Pengfei Zheng. 2026. Semantic Parallelism: Redefining Efficient MoE Inference via Model-Data Co-Scheduling . arXiv:2503.04398 [cs.LG] https://arxiv. org/abs/2503.04398 
+
+[33] Nandor Licker, Kevin Hu, Vladimir Zaytsev, and Lequn Chen. 2025. RDMA Point-to-Point Communication for LLM Systems. arXiv:2510.27656 [cs.DC] https://arxiv.org/abs/2510.27656 
+
+[34] Bin Lin, Tao Peng, Chen Zhang, Minmin Sun, Lanbo Li, Hanyu Zhao, Wencong Xiao, Qi Xu, Xiafei Qiu, Shen Li, Zhigang Ji, Yong Li, and Wei Lin. 2024. Infinite-LLM: Efficient LLM Service for Long Context with DistAttention and Distributed KVCache. ArXiv preprint abs/2401.02669 (2024). [35] Hao Liu, Matei Zaharia, and Pieter Abbeel. 2024. RingAttention with Blockwise Transformers for Near-Infinite Context. In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net. [36] Ziming Liu, Boyu Tian, Guoteng Wang, Zhen Jiang, Peng Sun, Zhenhua Han, Tian Tang, Xiaohe Hu, Yanmin Jia, Yan Zhang, He Liu, Mingjun Zhang, Yiqi Zhang, Qiaoling Chen, Shenggan Cheng, Mingyu Gao, Yang You, and Siyuan Feng. 2025. Expert-as-a-Service: Towards Efficient, Scalable, and Robust Large-scale MoE Serving . arXiv:2509.17863 [cs.DC] 
+
+https://arxiv.org/abs/2509.17863 
+
+[37] Jinming Ma, Jiefei Chen, Xiuhong Li, Jiangfei Duan, Haojie Duanmu, Xingcheng Zhang, Chao Yang, and Dahua Lin. 2025. Tropical: Enhanc-ing SLO Attainment in Disaggregated LLM Serving via SLO-Aware Multiplexing. In 2025 62nd ACM/IEEE Design Automation Conference (DAC) . 1–7. doi: 10.1109/DAC63849.2025.11132617 
+
+[38] Ziming Mao, Yihan Zhang, Chihan Cui, Zhen Huang, Kaichao You, Zhongjie Chen, Zhiying Xu, Zhenyu Gu, Scott Shenker, Costin Raiciu, Yang Zhou, and Ion Stoica. 2026. UCCL-EP: Portable Expert-Parallel Communication. arXiv:2512.19849 [cs.DC] https://arxiv.org/abs/2512. 19849 
+
+[39] Philipp Moritz, Robert Nishihara, Stephanie Wang, Alexey Tumanov, Richard Liaw, Eric Liang, Melih Elibol, Zongheng Yang, William Paul, Michael I. Jordan, and Ion Stoica. 2018. Ray: A Distributed Framework for Emerging AI Applications. In 13th USENIX Symposium on Operating Systems Design and Implementation (OSDI 18) . USENIX Association, Carlsbad, CA, 561–577. https://www.usenix.org/conference/osdi18/ presentation/moritz 
+
+[40] NVIDIA Corporation. 2026. NVIDIA NCCL Source Code. https:// github.com/NVIDIA/nccl .[41] Gabriele Oliaro, Xupeng Miao, Xinhao Cheng, Vineeth Kada, Mengdi Wu, Ruohan Gao, Yingyi Huang, Remi Delacourt, April Yang, Yingcheng Wang, Colin Unger, and Zhihao Jia. 2025. FlexLLM: Token-Level Co-Serving of LLM Inference and Finetuning with SLO Guaran-tees. arXiv:2402.18789 [cs.DC] https://arxiv.org/abs/2402.18789 
+
+[42] OpenAI. 2026. GPT-5.4 Model. https://developers.openai.com/api/ docs/models/gpt-5.4 . Official model documentation for GPT-5.4, including snapshot gpt-5.4-2026-03-05 ; accessed 2026-04-16. [43] OpenRouter. 2026. OpenRouter Rankings: Model Usage Statistics. 
+
+https://openrouter.ai/rankings . Accessed: February 23, 2026. [44] Pratyush Patel, Esha Choukse, Chaojie Zhang, Aashaka Shah, Íñigo Goiri, Saeed Maleki, and Ricardo Bianchini. 2024. Splitwise: Efficient generative llm inference using phase splitting. In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA) . IEEE, 118–132. [45] Sundar Pichai, Demis Hassabis, and Koray Kavukcuoglu. 2025. ANew Era of Intelligence with Gemini 3. https://blog.google/products-and-platforms/products/gemini/gemini-3/ . Google Blog, accessed 2026-04-16. [46] PyTorch Foundation. 2023. Accelerating Generative AI with PyTorch II: GPT, Fast. https://pytorch.org/blog/accelerating-generative-ai-2/ .Accessed: 2026-04-16. [47] Ruoyu Qin, Zheming Li, Weiran He, Jialei Cui, Feng Ren, Mingxing Zhang, Yongwei Wu, Weimin Zheng, and Xinran Xu. 2025. Moon-cake: Trading More Storage for Less Computation — A KVCache-centric Architecture for Serving LLM Chatbot. In 23rd USENIX Confer-ence on File and Storage Technologies (FAST 25) . USENIX Association, Santa Clara, CA, 155–170. https://www.usenix.org/conference/fast25/ presentation/qin 
+
+[48] Qwen Team. 2026. Qwen3.5: Towards Native Multimodal Agents. 
+
+https://qwen.ai/blog?id=qwen3.5 
+
+[49] Samyam Rajbhandari, Conglong Li, Zhewei Yao, Minjia Zhang, Reza Yazdani Aminabadi, Ammar Ahmad Awan, Jeff Rasley, and Yux-iong He. 2022. DeepSpeed-MoE: Advancing Mixture-of-Experts Infer-ence and Training to Power Next-Generation AI Scale. In International Conference on Machine Learning, ICML 2022, 17-23 July 2022, Baltimore, Maryland, USA (Proceedings of Machine Learning Research, Vol. 162) .PMLR, 18332–18346. [50] Biao Sun, Ziming Huang, Hanyu Zhao, Wencong Xiao, Xinyi Zhang, Yong Li, and Wei Lin. 2024. Llumnix: Dynamic scheduling for large lan-guage model serving. In 18th USENIX symposium on operating systems design and implementation (OSDI 24) . 173–191. [51] Xinru Tang, Jingxiang Hou, Dingcheng Jiang, Taiquan Wei, Jiaxin Liu, Jinyi Deng, Huizheng Wang, Qize Yang, Haoran Shang, Chao Li, et al .2025. MoEntwine: Unleashing the Potential of Wafer-scale Chips for Large-scale Expert Parallel Inference. ArXiv preprint abs/2510.25258 (2025). [52] Xiaojuan Tang, Fanxu Meng, Pingzhi Tang, Yuxuan Wang, Di Yin, Xing Sun, and Muhan Zhang. 2026. TPLA: Tensor Parallel Latent Attention for Efficient Disaggregated Prefill & Decode Inference. In 
+
+Proceedings of the 31st ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 
+
+(USA) (ASPLOS ’26) . Association for Computing Machinery, New York, NY, USA, 2048–2062. doi: 10.1145/3779212.3790237 NanoCP Conference’17, July 2017, Washington, DC, USA 
+
+[53] Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell, Libin Bai, Anmol Gulati, Garrett Tanzer, Damien Vincent, Zhufeng Pan, Shibo Wang, et al . 2024. Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context. ArXiv preprint abs/2403.05530 (2024). [54] Kimi Team, Tongtong Bai, Yifan Bai, Yiping Bao, SH Cai, Yuan Cao, Y Charles, HS Che, Cheng Chen, Guanduo Chen, et al . 2026. Kimi K2. 5: Visual Agentic Intelligence. ArXiv preprint abs/2602.02276 (2026). [55] Kimi Team, Yifan Bai, Yiping Bao, Guanduo Chen, Jiahao Chen, Ningxin Chen, Ruijue Chen, Yanru Chen, Yuankun Chen, Yutian Chen, Zhuofu Chen, Jialei Cui, Hao Ding, Mengnan Dong, Angang Du, Chen-zhuang Du, Dikang Du, Yulun Du, Yu Fan, Yichen Feng, Kelin Fu, Bofei Gao, Hongcheng Gao, Peizhong Gao, Tong Gao, Xinran Gu, Longyu Guan, Haiqing Guo, Jianhang Guo, Hao Hu, Xiaoru Hao, Tianhong He, Weiran He, Wenyang He, Chao Hong, Yangyang Hu, Zhenxing Hu, Weixiao Huang, Zhiqi Huang, Zihao Huang, Tao Jiang, Zhejun Jiang, Xinyi Jin, Yongsheng Kang, Guokun Lai, Cheng Li, Fang Li, Haoyang Li, Ming Li, Wentao Li, Yanhao Li, Yiwei Li, Zhaowei Li, Zheming Li, Hongzhan Lin, Xiaohan Lin, Zongyu Lin, Chengyin Liu, Chenyu Liu, Hongzhang Liu, Jingyuan Liu, Junqi Liu, Liang Liu, Shaowei Liu, T. Y. Liu, Tianwei Liu, Weizhou Liu, Yangyang Liu, Yibo Liu, Yip-ing Liu, Yue Liu, Zhengying Liu, Enzhe Lu, Lijun Lu, Shengling Ma, Xinyu Ma, Yingwei Ma, Shaoguang Mao, Jie Mei, Xin Men, Yibo Miao, Siyuan Pan, Yebo Peng, Ruoyu Qin, Bowen Qu, Zeyu Shang, Lidong Shi, Shengyuan Shi, Feifan Song, Jianlin Su, Zhengyuan Su, Xinjie Sun, Flood Sung, Heyi Tang, Jiawen Tao, Qifeng Teng, Chensi Wang, Dinglu Wang, Feng Wang, Haiming Wang, Jianzhou Wang, Jiaxing Wang, Jinhong Wang, Shengjie Wang, Shuyi Wang, Yao Wang, Yejie Wang, Yiqin Wang, Yuxin Wang, Yuzhi Wang, Zhaoji Wang, Zhengtao Wang, Zhexu Wang, Chu Wei, Qianqian Wei, Wenhao Wu, Xingzhe Wu, Yuxin Wu, Chenjun Xiao, Xiaotong Xie, Weimin Xiong, Boyu Xu, Jing Xu, Jinjing Xu, L. H. Xu, Lin Xu, Suting Xu, Weixin Xu, Xinran Xu, Yangchuan Xu, Ziyao Xu, Junjie Yan, Yuzi Yan, Xiaofei Yang, Ying Yang, Zhen Yang, Zhilin Yang, Zonghan Yang, Haotian Yao, Xingcheng Yao, Wenjie Ye, Zhuorui Ye, Bohong Yin, Longhui Yu, Enming Yuan, Hong-bang Yuan, Mengjie Yuan, Haobing Zhan, Dehao Zhang, Hao Zhang, Wanlu Zhang, Xiaobin Zhang, Yangkun Zhang, Yizhi Zhang, Yongting Zhang, Yu Zhang, Yutao Zhang, Yutong Zhang, Zheng Zhang, Hao-tian Zhao, Yikai Zhao, Huabin Zheng, Shaojie Zheng, Jianren Zhou, Xinyu Zhou, Zaida Zhou, Zhen Zhu, Weiyu Zhuang, and Xinxing Zu. 2025. Kimi K2: Open Agentic Intelligence. arXiv:2507.20534 [cs.LG] 
+
+https://arxiv.org/abs/2507.20534 
+
+[56] StepFun Team. 2025. Step-3 is Large yet Affordable: Model-system Co-design for Cost-effective Decoding. arXiv:2507.19427 [cs.LG] https: //arxiv.org/abs/2507.19427 
+
+[57] Jian Tian, Shuailong Li, Yang Cao, Wenbo Cui, Minghan Zhu, Wenkang Wu, Jianming Zhang, Yanpeng Wang, Zhiwen Xiao, Zhenyu Hou, and Dou Shen. 2025. Staggered Batch Scheduling: Co-optimizing Time-to-First-Token and Throughput for High-Efficiency LLM Inference .arXiv:2512.16134 [cs.DC] https://arxiv.org/abs/2512.16134 
+
+[58] Ilyas Turimbetov, Mohamed Wahib, and Didem Unat. 2025. A Device-Side Execution Model for Multi-GPU Task Graphs. In Proceedings of the 39th ACM International Conference on Supercomputing (ICS ’25) .Association for Computing Machinery, New York, NY, USA, 384–396. doi: 10.1145/3721145.3730426 
+
+[59] Hulin Wang, Yaqi Xia, Donglin Yang, Xiaobo Zhou, and Dazhao Cheng. 2025. Harnessing inter-gpu shared memory for seamless moe communication-computation fusion. In Proceedings of the 30th ACM SIGPLAN Annual Symposium on Principles and Practice of Parallel Pro-gramming . 170–182. [60] Ne Wang, Wenxiang Lin, Lin Zhang, Shaohuai Shi, Ruiting Zhou, and Bo Li. 2025. SP-MoE: Expediting Mixture-of-Experts Training with Optimized Pipelining Planning. In IEEE INFOCOM 2025-IEEE Conference on Computer Communications . IEEE, 1–10. [61] Yujie Wang, Shiju Wang, Shenhan Zhu, Fangcheng Fu, Xinyi Liu, Xue-feng Xiao, Huixia Li, Jiashi Li, Faming Wu, and Bin Cui. 2025. Flexsp: Accelerating large language model training via flexible sequence par-allelism. In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Sys-tems, Volume 2 . 421–436. [62] Bingyang Wu, Shengyu Liu, Yinmin Zhong, Peng Sun, Xuanzhe Liu, and Xin Jin. 2024. Loongserve: Efficiently serving long-context large language models with elastic sequence parallelism. In Proceedings of the ACM SIGOPS 30th Symposium on Operating Systems Principles .640–654. [63] Bingyang Wu, Zili Zhang, Yinmin Zhong, Guanzhe Huang, Yibo Zhu, Xuanzhe Liu, and Xin Jin. 2025. TokenLake: A Unified Segment-level Prefix Cache Pool for Fine-grained Elastic Long-Context LLM Serving. 
+
+ArXiv preprint abs/2508.17219 (2025). [64] Yueru Yan, Tuc Nguyen, Bo Su, Melissa Lieffers, and Thai Le. 2025. ShareChat: A Dataset of Chatbot Conversations in the Wild. ArXiv preprint abs/2512.17843 (2025). [65] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al . 2025. Qwen3 technical report. ArXiv preprint abs/2505.09388 (2025). [66] Amy Yang, Jingyi Yang, Aya Ibrahim, Xinfeng Xie, Bangsheng Tang, Grigory Sizov, Jongsoo Park, and Jianyu Huang. 2025. Context par-allelism for scalable million-token inference. Proceedings of Machine Learning and Systems 7 (2025). [67] Gyeong-In Yu, Joo Seong Jeong, Geon-Woo Kim, Soojeong Kim, and Byung-Gon Chun. 2022. Orca: A Distributed Serving System for Transformer-Based Generative Models. In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22) . USENIX Asso-ciation, Carlsbad, CA, 521–538. https://www.usenix.org/conference/ osdi22/presentation/yu 
+
+[68] Xingkai Yu. [n. d.]. Nano-vLLM: A lightweight vLLM implementation built from scratch. https://github.com/GeeeekExplorer/nano-vllm .GitHub repository. [69] Zhexiang Zhang, Ye Wang, Xiangyu Wang, Yumiao Zhao, Jingzhe Jiang, Qizhen Weng, Shaohuai Shi, Yin Chen, and Minchen Yu. 2025. 
+
+Janus: Disaggregating Attention and Experts for Scalable MoE Inference .arXiv:2512.13525 [cs.DC] https://arxiv.org/abs/2512.13525 
+
+[70] Chenggang Zhao, Chengqi Deng, Chong Ruan, Damai Dai, Huazuo Gao, Jiashi Li, Liyue Zhang, Panpan Huang, Shangyan Zhou, Shirong Ma, et al . 2025. Insights into deepseek-v3: Scaling challenges and reflections on hardware for ai architectures. In Proceedings of the 52nd Annual International Symposium on Computer Architecture . 1731–1745. [71] Chenggang Zhao, Shangyan Zhou, Liyue Zhang, Chengqi Deng, Zhean Xu, Yuxuan Liu, Kuai Yu, Jiashi Li, and Liang Zhao. 2025. DeepEP: an efficient expert-parallel communication library. https://github.com/ deepseek-ai/DeepEP .[72] Wenting Zhao, Xiang Ren, Jack Hessel, Claire Cardie, Yejin Choi, and Yuntian Deng. 2024. WildChat: 1M ChatGPT Interaction Logs in the Wild. In The Twelfth International Conference on Learning Representa-tions, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net. [73] Bojian Zheng, Cody Hao Yu, Jie Wang, Yaoyao Ding, Yizhi Liu, Yida Wang, and Gennady Pekhimenko. 2023. Grape: Practical and Efficient Graphed Execution for Dynamic Deep Neural Networks on GPUs. In 
+
+Proceedings of the 56th Annual IEEE/ACM International Symposium on Microarchitecture (Toronto, ON, Canada) (MICRO ’23) . Association for Computing Machinery, New York, NY, USA, 1364–1380. doi: 10.1145/ 3613424.3614248 
+
+[74] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Tianle Li, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zhuohan Li, Zi Lin, Eric P. Xing, Joseph E. Gonzalez, Ion Stoica, and Hao Zhang. 2024. LMSYS-Chat-1M: A Large-Scale Real-World LLM Conversation Dataset. In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net. Conference’17, July 2017, Washington, DC, USA Trovato et al. 
+
+[75] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E. Gonzalez, Clark W. Barrett, and Ying Sheng. 2024. SGLang: Efficient Execution of Structured Language Model Programs. In Ad-vances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 , Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang (Eds.). [76] Size Zheng, Wenlei Bao, Qi Hou, Xuegui Zheng, Jin Fang, Chen-hui Huang, Tianqi Li, Haojie Duanmu, Renze Chen, Ruifan Xu, Yi-fan Guo, Ningxin Zheng, Ziheng Jiang, Xinyi Di, Dongyang Wang, Jianxi Ye, Haibin Lin, Li-Wen Chang, Liqiang Lu, Yun Liang, Jidong Zhai, and Xin Liu. 2025. Triton-distributed: Programming Overlap-ping Kernels on Distributed AI Systems with the Triton Compiler. arXiv:2504.19442 [cs.DC] https://arxiv.org/abs/2504.19442 
+
+[77] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xu-anzhe Liu, Xin Jin, and Hao Zhang. 2024. {DistServe }: Disaggregating prefill and decoding for goodput-optimized large language model serving. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . 193–210. [78] Ruidong Zhu, Ziheng Jiang, Chao Jin, Peng Wu, Cesar A Stuardo, Dongyang Wang, Xinlei Zhang, Huaping Zhou, Haoran Wei, Yang Cheng, et al . 2025. MegaScale-Infer: Efficient Mixture-of-Experts Model Serving with Disaggregated Expert Parallelism. In Proceedings of the ACM SIGCOMM 2025 Conference . 592–608.

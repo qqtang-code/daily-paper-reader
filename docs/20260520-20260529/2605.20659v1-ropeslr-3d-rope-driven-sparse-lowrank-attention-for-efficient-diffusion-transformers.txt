@@ -1,0 +1,2927 @@
+Title: RoPeSLR: 3D RoPE-driven Sparse-LowRank Attention for Efficient Diffusion Transformers
+
+URL Source: https://arxiv.org/pdf/2605.20659v1
+
+Published Time: Thu, 21 May 2026 00:35:55 GMT
+
+Number of Pages: 43
+
+Markdown Content:
+# RoPeSLR: 3D RoPE-driven Sparse-LowRank Attention for Efficient Diffusion Transformers 
+
+## Yuxi Liu ∗
+
+## Peking University 
+
+## yuxiliu666@stu.pku.edu.cn 
+
+## Zekun Zhang ∗
+
+## University of Electronic Science and Technology of China 
+
+## 2023090909020@std.uestc.edu.cn 
+
+## Yixiang Cai ∗
+
+## Beijing University of Posts and Telecommunications 
+
+## caiyixiang@bupt.edu.cn 
+
+## Renjia Deng Peking University 
+
+## 2501210078@stu.pku.edu.cn 
+
+## Yutong He Peking University 
+
+## yutonghe@pku.edu.cn 
+
+## Kun Yuan †
+
+## Peking University 
+
+## kunyuan@pku.edu.cn 
+
+## May 21, 2026 
+
+Figure 1: Video generation examples on Wan2.1-T2V-1.3B-480P. Each row shows the full attention baseline sequence followed by the corresponding RoPeSLR output generated at 90% sparsity. RoPeSLR maintains generation quality on par with full attention even at this high sparsity. 
+
+Abstract 
+
+Diffusion Transformers (DiTs) have revolutionized high-fidelity video generation, yet their O(L2)
+
+attention complexity poses a formidable bottleneck for long-sequence synthesis. While recent sparse-linear 
+
+> ∗
+> Equal contribution.
+> †
+> Corresponding author.
+
+1         
+
+> arXiv:2605.20659v1 [cs.CV] 20 May 2026 attention hybrids aim to mitigate this, their performance severely degrades at extreme sparsity due to the "RoPE Dilemma": standard linear attention fails to preserve the orthogonal relative-position structure of 3D Rotary Position Embeddings (RoPE), neutralizing vital distance awareness. To address this, we propose RoPeSLR , a 3D RoPE-guided Sparse-LowRank attention framework. We establish that under empirically validated assumptions, the DiT attention manifold admits a decoupling into a high-frequency semantic spike set (bounded by O(L3/2)sparsity) and an extreme low-rank ( O(dhlog L))background continuum. Guided by this structural prior, RoPeSLR eschews standard linear attention for a head-wise low-rank parameterization equipped with a learnable 3D Absolute Positional Embedding (PE) injection, seamlessly synthesizing long-range relative distance decay. By guaranteeing sub-quadratic sparsity and sub-linear rank growth, RoPeSLR is exceptionally suited for scaling to ultra-long video inference. Extensive evaluations validate this scalable superiority: at 90% sparsity, RoPeSLR achieves up to 10 ×fewer FLOPs on Wan2.1-1.3B and delivers a 2.26 ×end-to-end inference speedup on the ultra-long 100K+ token sequences of HunyuanVideo-13B, all while maintaining near-lossless generation fidelity (less than 1.3% average VBench degradation).
+
+# 1 Introduction 
+
+Diffusion Transformers (DiTs) [ 16 ] have revolutionized high-fidelity video generation, emerging as the dominant architecture for state-of-the-art models. However, processing the full spatiotemporal token sequence introduces a prohibitive computational bottleneck. The core of this inefficiency lies in the O(L2) complexity of the mechanism, which scales quadratically with the sequence length L.To mitigate this bottleneck, sparse attention mechanisms have been widely adopted to restrict queries to localized neighborhoods[ 27 , 1, 30 ]. While efficient, pushing sparsity to extreme levels rigidly masks out global receptive fields, fundamentally truncating long-range semantic dependencies. This aggressive pruning often leads to semantic misalignment and severe degradation of fine-grained details in generated videos, presenting a strict ceiling on the allowable sparsity. Recent advancements attempt to recover this lost global context by fusing sparse attention with a linear attention branch [ 32 , 33 , 6 ]. While empirically successful at moderate sparsity, these sparse-plus-linear hybrids suffer from two fundamental disadvantages that bottleneck their performance at extreme sparsity: (1) 
+
+The RoPE Dilemma: To maintain matrix associativity, these hybrid baselines rely on standard positive feature maps that fail to preserve the exact orthogonal relative-position structure of 3D RoPE. 
+
+Consequently, the global aggregation of context neutralizes the explicit relative spatiotemporal offsets, causing the model to lose vital distance awareness. (2) Lack of Guarantees: These architectures heavily rely on heuristic designs and lack a justification explaining why a linear combination can faithfully approximate the complex, non-linear softmax manifold without severe distribution shifts. This brings us to a pivotal question: 
+
+Question. Does there exist an efficient attention paradigm that can closely approximate full attention at extreme sparsity, guided by theoretical structural analysis, while delivering superior generation quality and computational efficiency in downstream tasks? 
+
+To answer this, we propose RoPeSLR , a 3D RoPE-guided Sparse-LowRank attention framework. Unlike prior heuristics, our design is grounded in an existence result ( Theorem 1 ), which suggests that under empirically supported assumptions, the post-softmax attention matrix in DiTs admits a sparse-low-rank decomposition. We show that under the exact Fourier series expansion provided by 3D RoPE, pre-trained DiTs empirically exhibit a spectral concentration that structurally decouples the attention manifold into an 
+
+O(L3/2) high-frequency semantic spike set and an extreme low-rank ( O(dh log L)) background continuum, where dh is the feature dimension per head. 
+
+Crucially, we establish why this sparse-low-rank paradigm is uniquely powerful for efficient long-sequence inference in DiTs. While sparse-low-rank designs exist in LLMs, their scaling efficiency is fundamentally amplified in DiTs: the 3D axis-splitting of RoPE accelerates spectral decay, while spa-tiotemporal locality yields a much tighter sparsity bound. This ensures that RoPeSLR remains exceptionally compact—maintaining extreme sparsity and a minimal rank requirement even as sequence length L
+
+scales —while providing a nearly lossless approximation of full attention. RoPeSLR systematically addresses the flaws of prior methods by eschewing standard linear attention in 2favor of a non-linear low-rank MLP compensator . This architectural shift is necessary to overcome the limitations of linear branches via three high-level advantages: (1) RoPE Compatibility : Combined with a novel learnable 3D Absolute Positional Embedding (PE) injection, our low-rank bottleneck synthesizes the relative distance decay that linear feature maps inherently destroy. (2) Non-linear Expressivity : It breaks free from the restrictive positive feature maps required by linear attention, unlocking robust non-linear representation capacity. (3) Theoretically-Inspired Amortization : While our existence theorem establishes the global low-rank manifold of the background continuum, executing explicit O(L) linear routing still compromises RoPE structures. Instead, we implement the low-rank compensator as an amortized token-wise MLP proxy . Conditioned on globally-modulated token features and explicit 3D absolute coordinates, this independent head-wise parameterization efficiently decodes the smooth, low-frequency background field. It translates our theoretical insights into a hardware-efficient framework that entirely circumvents sequence-level aggregation, harmonizing beautifully with the dynamically allocated sparsity budgets. Our main contributions are summarized as follows: 
+
+• Theoretical Foundation. We provide an analytical existence result demonstrating that the post-softmax attention matrix in DiTs exhibits a sparse-low-rank structure. We derive asymptotic bounds for both branches and prove that this decomposition is more pronounced in DiTs than in LLMs. 
+
+• Synergistic Architecture & Explicit Credit Assignment. We introduce RoPeSLR, a 3D RoPE-driven architecture that explicitly decouples computational responsibilities. We adopt block-sparse attention (e.g., VMoBA) as a hardware-efficient engine to deliver the primary inference speedup . In contrast, our 
+
+core novelties —the non-linear low-rank compensator, absolute 3D PE injection, and distribution-aware gated fusion—are specifically designed to synthesize global context and recover relative positional decay, delivering the critical quality restoration .
+
+• Excellent Performance on Ultra-Long Sequences. Extensive experiments across large-scale DiTs (e.g., Wan2.1-1.3B/14B, Hunyuan13B) demonstrate that RoPeSLR excels in the quality-efficiency trade-off, par-ticularly as sequence length scales. It retains the hardware efficiency of extreme sparse attention—achieving up to 10 × FLOPs reduction and a substantial 2.26 × end-to-end latency speedup on ultra-long videos exceeding 100K tokens—while accurately restoring the fine-grained details of full attention with less than 1.3% average VBench degradation. 
+
+# 2 Related work 
+
+Diffusion Transformers and Efficiency Challenges. Diffusion Transformers (DiTs) [ 16 ] have emerged as the dominant architecture for high-fidelity video generation. Earlier decoupled approaches [ 14 , 13 , 37 ] split video into separate spatial and temporal attention branches, trading joint spatio-temporal modeling capacity for efficiency. Recent unified 3D DiTs [ 37 , 31 , 10 , 23 ] process the full token sequence jointly, achieving superior quality but suffering from prohibitive O(N 2) self-attention complexity that scales poorly with increasing video resolution and length. 
+
+Sparse Attention for Video DiTs. Sparse attention is the most widely adopted approach to address the quadratic complexity, leveraging the sparsity of video attention patterns where each token only attends to a small subset of relevant tokens. Dynamic sparse attention methods adapt attention patterns to input content: Radial Attention [ 11 ] introduces global energy decay-based radial receptive fields, Vmoba [ 26 ]proposes mixture-of-block attention for video diffusion. Sampling-based dynamic sparse attention methods choose optimal attention patterns during inference: Sparse-vDiT [ 1], Sparse VideoGen [ 27 ] and its successor Sparse VideoGen2 [ 30 ] explore spatial-temporal sparsity and semantic-aware permutation, while VSA [ 36 ]introduces fully trainable sparse attention. Training-free sparse methods offer plug-and-play acceleration: SpargeAttention [ 35 ] and the training-free adaptive sparse attention approach [ 28 ] dynamically adjust sparsity without retraining. Mixture of Distributions Attention (MOD-DiT) [ 12 ] realizes sparse attention via online inference-time prediction of attention patterns. Re-ttention [ 2] achieves ultra-sparsity via attention statistical reshaping, LiteAttention [ 18 ] focuses on temporal sparsity, and DSV [ 21 ] exploits dynamic sparsity for training acceleration. 
+
+Sparse-Linear Attention Fusion. While sparse attention delivers significant speedups, it suffers from quality degradation at high sparsity levels. To overcome this, recent works combine sparse attention with 3linear attention, which has linear complexity but complementary approximation properties. SLA [ 32 ] first proposed sparse-linear attention fusion for diffusion transformers, followed by SLA2 [ 33 ] which adds learnable routing and quantization-aware training. SALAD [ 6] extends this paradigm to video DiTs, and Sana [ 29 ]explores pure linear diffusion transformers for efficient image synthesis. 
+
+Low-Rank and Hardware Optimizations. Low-rank approximation is a well-established efficiency technique in LLMs. SLTrain [ 7] and CR-Net [ 9] demonstrate the effectiveness of sparse-plus-low-rank approaches for LLM pre-training. However, these methods have not been widely adapted to diffusion transformers, and the "low-rank dilemma" of linear attention [ 5] remains a key challenge. In parallel, hardware-optimized attention implementations such as FlashAttention-2 [ 4] and SageAttention [ 34 ] provide speedups by optimizing memory access and numerical precision. 
+
+# 3 Preliminary 
+
+Notation and Attention Paradigms. Let X ∈ RL×dmodel denote a video sequence flattened from a spatiotemporal grid p = ( t, x, y ) ∈ [T ] × [H] × [W ]. For each attention head, the input is projected into 
+
+Q, K, V ∈ RL×dh . Token-specific representations at position p are denoted as qp, k p, v p ∈ Rdh .Standard attention computes O = softmax (QK ⊤/√dh)V , incurring an intractable O(L2) cost for video generation. Block-sparse attention circumvents this by restricting queries to a localized neighborhood N (p):
+
+Op = X 
+
+> q∈N (p)
+
+exp  q⊤ 
+
+> p
+
+kq /√dh
+
+P  
+
+> r∈N (p)
+
+exp  q⊤ 
+
+> p
+
+kr /√dh
+
+ vq
+
+3D RoPE and Shift-Invariance. 3D RoPE imparts geometric priors via orthogonal rotation. The head dimension is partitioned across axes ( dh = dt + dx + dy ), with rotational frequencies decaying exponentially: 
+
+θkm = 10000 −2( m−1) /d k , k ∈ { t, x, y }, m ∈ [1 , d k/2] 
+
+The composite rotation matrix R(p) ∈ Rdh×dh is block-diagonal. Crucially, the pre-softmax logit preserves shift-invariance, elegantly modeling distance decay: 
+
+sp,q = 1
+
+√dh
+
+⟨R(p)qp, R (q)kq ⟩ = 1
+
+√dh
+
+⟨qp, R (q − p)kq ⟩
+
+Linear Attention and The RoPE Dilemma. Linear attention achieves O(L) complexity by linearizing the exponential kernel with a feature map ϕ(·) : Rdh → Rr , exploiting matrix associativity: 
+
+Op = ϕ(qp)⊤
+
+> L
+
+X
+
+> q=1
+
+ϕ(kq )v⊤
+
+> q
+
+| {z } 
+
+> Global Context C
+
+The Dilemma. The global aggregation of context C neutralizes the explicit relative offset (p − q). Because the standard positive feature maps required for matrix associativity cannot preserve the exact orthogonal rotation (ϕ(R(p)qp)⊤ϕ(R(q)kq )̸ = ϕ(qp)⊤ϕ(kq ) · f (p − q)), the exact RoPE structure cannot be factored out of the summation. This incompatibility forces a severe trade-off between O(L) efficiency and critical relative positional cues, dictating our absolute-to-relative recovery mechanism in Section 4. 
+
+# 4 Method 
+
+Our proposed RoPeSLR is designed to exploit the sparse-low-rank nature of attention maps in Diffusion Transformers (DiT). 
+
+## 4.1 Theoretical Foundation: The Sparse-Low-Rank Theorem 
+
+Our architecture is motivated by a structural analysis demonstrating that the post-softmax attention map A
+
+in 3D RoPE-equipped DiTs intrinsically admits a sparse-low-rank decomposition. We formalize this in the following Theorem (Main Theorem in 3, with full proof in Appendix A). 4Theorem 1 (Informal) . Under Assumptions 1 and 2 (empirically validated bounded projection weights and the exponential spectral concentration of 3D RoPE, justified in Remark 1 ), for any sequence length 
+
+L, choosing the energy threshold τ and error tolerance E as: 
+
+τ = cL 12
+
+, E = τ
+
+2 = c
+
+2L 12
+
+where c > 0 is a constant independent of L, the post-softmax attention matrix A inherently decomposes into a high-energy sparse target ( Asparse ) and a smooth background target ( Abg ). Consequently, there exists a sparse-low-rank reconstructed matrix ˆAfinal = ˜Asparse + ˆAlowrank satisfying the following properties: 1. Sub-quadratic Sparsity: The residual sparse branch ˜Asparse , which acts as an exact error com-pensator on the spike set ( ˜Asparse (p, q ) = A(p, q ) − ˆAlowrank (p, q ) for (p, q ) ∈ Ωτ ), has total non-zero entries bounded by NNZ ( ˜Asparse ) = O(L 32 ).2. Sub-linear Rank: The globally unmasked low-rank branch ˆAlowrank , which acts as a dense approxi-mator for the background target Abg , requires a bottleneck rank of R = O (dh · log L).3. Asymptotic Error Bound: With high probability 1 − δfail , the global reconstruction error is uniformly bounded by max p,q | ˆAfinal (p, q ) − A(p, q )| = O
+
+
+
+L− 12
+
+
+
+.
+
+Mathematical Anatomy of 3D RoPE. By exploiting orthogonal shift-invariance ( R(p)⊤R(q) = R(q − p)), the pre-softmax logit admits an exact Fourier series expansion over the relative spatiotemporal offset ∆ = p−q.(See lemma 2) 
+
+sp,q = X 
+
+> k∈{ t,x,y }
+> dk/2
+
+X
+
+> m=1
+
+ akp,m cos  θkm∆k
+
+ + bkp,m sin  θkm∆k
+
+ 
+
+Under this explicit Fourier basis, the background interaction coefficients of pre-trained DiTs exhibit a rapid exponential energy decay. As formally justified in Remark 1 and validated in Appendix B.1, this spectral concentration serves as a structural prior that fundamentally decouples the attention manifold into high-frequency semantic spikes and an O(dh log L) low-frequency continuum. 
+
+Figure 2: Analysis of HunyuanVideo post-attention matrices across 960 diverse layer-head combinations, verifying their inherent sparse and low-rank structure under a 90% energy threshold. 
+
+Sparse-Low-Rank Structure of DiTs and LLMs. Our framework formally establishes why the sparse-low-rank structure is fundamentally more pronounced in DiTs than in LLMs. This superiority is rooted in two mathematical properties. First, the 3D axis-splitting of RoPE in DiTs induces a cubic acceleration in spectral decay compared to the 1D RoPE standard in LLMs, dictating a drastically lower rank requirement for the background continuum. Second, the inherent spatiotemporal locality of video heavily concentrates semantic spikes, yielding a significantly tighter sparsity bound by avoiding the dense, long-range token retrieval typical of LLMs’ causal attention. We defer the formal proofs, including the rank inequalities and sparsity bounds, to Appendix A, Remark 6. 5Empirical Validation. Analysis of pre-trained DiT attention maps confirms the widespread existence of the sparse-low-rank structure across various layers and denoising steps (Figure 2). As sequence length L
+
+scales, the stable rank of the background matrix maintains sublinear while its sparsity increases (Figure 3), directly corroborating the results in Theorem 1. Furthermore, the comparison between Figure 2 and Figure 11 validates that this structural decomposition is significantly more pronounced in DiTs than in LLMs (as theoretically justified in Remark 6). 
+
+Figure 3: HunyuanVideo post-softmax matrices are decomposed using a 90% per-row energy threshold. Across sequence lengths from 1.3K to 10.2K, the low-energy residual maintains bounded stable rank with sublinear growth, aligning with the theoretical bounds established in Theorem 3. 
+
+## 4.2 Positional Context Recovery via Absolute PE Injection 
+
+Standard linear attention neutralizes the relative positional offsets essential to 3D RoPE, fundamentally destroying distance awareness (Section 3). To recover this without reintroducing the O(L2) overhead, we leverage our theoretical findings in Lemma 2 .Because the 3D RoPE pre-softmax logit expands as a Fourier series over the relative offset ∆ = p − q,trigonometric identities allow us to decouple pairwise interactions into products of absolute spatial bases, which allows the global background context to be factorized into query-independent semantic descriptors and query-dependent positional frequencies. This transformation enables a transition from O(L2) cross-token routing to an efficient O(L) point-wise decoding paradigm. We provide the algebraic insight and the structural justification for this transition in Remark 5 .We instantiate this decoding via Implicit Neural Representations (INRs) [ 19 ]. While standard MLPs suffer from spectral bias [ 17 ] and struggle to capture high-frequency spatial variations, projecting coordinates into periodic bases empowers them to learn high-frequency, translation-invariant mappings [ 22 ]. Accordingly, we inject a learnable 3D Absolute Positional Embedding ( PE 3D )—constructed from the trigonometric frequencies ( θkm) of our RoPE expansion—into the input X ∈ RL×dmodel before routing: 
+
+ˆX = X + α ⊙ PE 3D 
+
+where α ∈ Rdmodel is a learnable gate. Furnished with these absolute geometric bases, our low-rank compensator is equipped to synthesize the long-range relative distance attenuation that linear baselines destroy ( Remark 5). 
+
+Empirical Validation. Macroscopically, RoPeSLR accurately reproduces the exact periodic distance-decay of full attention (Figure 4). Mechanistically, Gram spectral analysis ( Appendix B.8 )proves RoPeSLR successfully decodes absolute coordinates into pure geometric standing waves, which corroborates the insights in Remarks 4 and 5.
+
+## 4.3 Head-wise Sparse-LowRank Decomposition 
+
+To accommodate head heterogeneity —the phenomenon where distinct attention heads naturally specialize in varying semantic scales—we eschew monolithic context modeling. Instead, we propose a decoupled 6Figure 4: Statistical analysis of cosine similarity between outputs from three distinct attention variants revealing empirically observed periodic patterns across different token distances. architecture: the sparse branch dynamically allocates active token budgets via a continuous energy threshold, while the low-rank compensator employs independent head-wise parameterizations to learn head-specific semantic mappings under a fixed structural rank prior. 
+
+Energy-Driven Adaptive Sparse Branch. To explicitly capture the non-linear, high-energy “spikes” that resist low-rank compression (Theorem 1), we instantiate this branch using the VMoBA framework [ 26 ]governed by a fixed energy threshold τ . We must clarify that we adopt it as a practical, hardware-efficient proxy for our sparse branch. It complements our framework by: 
+
+• Empirical Alignment via Energy Thresholding. Rather than enforcing a rigid, predefined sparsity ratio, the fixed threshold τ dynamically determines the active block count. This threshold-driven routing inherently yields an adaptive sparsity pattern. 
+
+• Head-wise Adaptivity. It allocates sparsity budgets independently per head, aligning with the heteroge-neous spatiotemporal focus of our decoupled architecture. 
+
+• Hardware Synergy. It enables high-throughput parallel acceleration on GPUs, ensuring that our extremely high sparsity settings can be effectively exploited for computational efficiency. 
+
+Head-wise Low-Rank Context Compensator. Explicit cross-token aggregation poses a fundamental dilemma: computing exact relative distances incurs an intractable O(L2) pairwise routing cost, whereas O(L)
+
+linear approximations neutralize 3D RoPE priors. We resolve this by reframing global context computation as a conditioned implicit function approximation . Since Theorem 3 establishes that the background target Abg 
+
+is exceptionally low-rank, the exact context aggregation (Abg V ) intrinsically forms a smooth, low-frequency spatial manifold [25]. Rather than explicitly computing sequential aggregation, we introduce a token-wise learned non-linear compensator to act as an amortized proxy. This design exploits the fact that in deep DiT layers, each token 
+
+Xp has already integrated macroscopic semantic states from preceding layers and global modulations (e.g., AdaLN). Exploiting this dense state encapsulation, our compensator dynamically decodes the smooth global background directly from the modulated token Xp conditioned on its absolute spatial coordinates, bypassing the routing bottleneck entirely ( see Remark 5 for detailed insight). To accommodate head heterogeneity, we instantiate this compensator independently for each attention head h via a coordinate-guided MLP: 
+
+O(h) 
+
+> lowrank
+
+= σ
+
+
+
+σ( ˆXW (h) 
+
+> A
+
+)W (h)
+
+> B
+
+
+
+where σ(·) is the sigmoid activation, W (h) 
+
+> A
+
+∈ Rdh×r and W (h) 
+
+> B
+
+∈ Rr×dh are head-specific projection weights, and dh is the head dimension. Since adaptive sparsity yields greater benefits than adaptive rank, we employ a uniform rank r for implementation convenience, relying on the head-wise parameterization to capture diverse semantics. This decoupled design solves the RoPE dilemma by point-wise decoding the global context, preserving robust non-linear expressivity without the O(L2) routing overhead. As mechanistically proven via Gram spectral analysis in Appendix B.8 , this explicit PE injection prevents representational collapse, allowing the MLP to decode absolute coordinates into pure, low-frequency geometric standing waves without explicit pairwise computation. 74.4 Feature Alignment and Gated Fusion 
+
+Fusing highly localized sparse features with dense global contexts introduces severe numerical imbalances. We resolve this via a distribution-aware fusion protocol. 
+
+Distribution Alignment. We apply independent RMSNorm modules to stabilize the variance of both outputs. This projects the sparse spikes and the dense low-rank approximations onto a shared numerical manifold, guaranteeing balanced optimization: 
+
+˜O(h) 
+
+> sparse
+
+= RMSNorm 
+
+
+
+O(h)
+
+> sparse
+
+
+
+, ˜O(h) 
+
+> lowrank
+
+= RMSNorm 
+
+
+
+O(h)
+
+> lowrank
+
+
+
+Input-Dependent Routing. Since our low-rank compensator functions as a feature-conditioned decoder, the fusion mechanism must dynamically adapt to the input. We compute a token-wise scalar gate g ∈ (0 , 1) 
+
+via a lightweight projection: 
+
+g = σ( ˆXW g + bg )
+
+where Wg ∈ Rdmodel ×1, b g ∈ R. We deliberately bottleneck this gate to a single scalar per token. This ensures 
+
+g acts strictly as a magnitude regulator, preventing the directional distortion of the aligned semantic feature space that a high-dimensional vector gate would inevitably introduce. The final representation is synthesized via a gated residual combination: 
+
+O(h) = ˜O(h) 
+
+> sparse
+
++ g ⊙ ˜O(h)
+
+> lowrank
+
+## 4.5 Post-training Strategy 
+
+RoPeSLR is integrated into pre-trained DiTs via a lightweight two-stage post-training pipeline. 
+
+Stage I: Component Alignment. We freeze the pre-trained backbone and exclusively optimize the newly introduced parameters Θnew = {W (h) 
+
+> A
+
+, W (h) 
+
+> B
+
+, α, W g , b g }. To warm-start the structural decomposition without distorting the pre-trained latent manifold, we minimize the Mean Squared Error (MSE) between our sparse-low-rank output O and the exact full attention output Ofull .
+
+Lalign = 1
+
+L · dmodel 
+
+∥O − Ofull ∥2
+
+> F
+
+Stage II: Full Fine-tuning. After alignment, we unfreeze the full backbone and jointly optimize all parameters with the task-specific diffusion objective Ltask . This stage uses the full model’s representation power to recover end-to-end generation quality while preserving RoPeSLR’s efficiency. 
+
+Output Alignment Analysis. The Stage-I alignment training loss curves (Figure 5) demonstrate that RoPeSLR achieves faster convergence and a significantly lower loss floor compared to linear baselines. This validates the architectural advantage of our sparse-low-rank design in capturing precise relative interactions , ensuring a robust initialization. Additionally, comprehensive ablation studies on the training schedule (Appendix B.2.4) confirm that our two-stage pipeline is robust , seamlessly converging to full fine-tuning regardless of the specific Stage-I duration. 
+
+## 4.6 Engineering Approaches 
+
+We adopt the official implementation of VMoBA for the sparse attention module. It leverages the kernel to pack tokens into FlashAttention ’s varlen layout and merges chunk-wise outputs via log-sum-exp to avoid padding overhead. The low-rank compensator fuses computations with a customized Triton kernel 
+
+for inference, and uses torch.compile for operator fusion during training. Lazy parameter initialization ensures compatibility with gradient checkpointing .
+
+# 5 Experiments 
+
+## 5.1 Experimental Settings 
+
+Model and Datasets. We evaluate RoPeSLR on multiple video generation models (Wan2.1-1.3B, Wan2.1-14B [ 24 ], and Hunyuan13B[ 10 ]) to validate its cross-scale and cross-architecture generalizability. For fine-tuning, we construct model-specific curated video-text subsets from OpenSora[ 37 ] and OpenVid-1M[ 15 ]: 8Figure 5: Stage I training loss curves over 500 steps for three configurations: VMoBA with linear attention (no position embedding), VMoBA with linear attention (with 3D learnable position embedding), and our proposed VMoBA + low-rank compensator (with 3D learnable position embedding). Wan2.1-1.3B uses an OpenSora subset, while HunyuanVideo-13B and Wan2.1-14B use OpenVid-1M subsets. All subsets contain high-quality clips with diverse motions and scenes, preprocessed to match the corresponding base model’s resolution and frame configuration. 1
+
+Baselines. We further compare RoPeSLR with latest sparse and sparse-linear attention approaches,all evaluated using official implementations. For baselines incompatible with HunyuanVideo, we migrate them following their original design: 
+
+• SLA[ 32 ]: A fine-tunable sparse-linear attention framework that fuses sparse and linear attention to accelerate DiTs while preserving generation quality. 
+
+• VSA[ 36 ]: A trainable sparse attention paradigm designed to accelerate video diffusion Transformers by learning adaptive sparse patterns over spatio-temporal tokens. 
+
+• SVG2[ 30 ]: The improved version of Sparse VideoGen[ 27 ], which accelerates video generation with spatial-temporal sparse attention via semantic-aware permutation. 
+
+Metrics. For video quality, we evaluate on the full VBench[ 8] suite and report key evaluation dimensions: Subject Consistency (SC), Motion Smoothness (MS), Background Consistency (BC), Imaging Quality (IQ) and Aesthetic Quality (AQ). We adopt FLOPs to quantify the computational cost of the attention module. For fair comparison, we report only the FLOPs associated with attention computation per denoising step, excluding text tokens, QKV projections and MLP blocks. 
+
+## 5.2 Experimental Results Analysis 
+
+Table 1: Quantitative results on Wan2.1-1.3B and Hunyuan13B. We evaluate Wan2.1-1.3B on 81-frame 
+
+480 × 832 videos and Hunyuan13B on 129-frame 720 × 1280 videos, all with NVIDIA A100 80G GPUs.                                                                             
+
+> Model Method VBench Quality Efficiency SC ↑MS ↑BC ↑IQ ↑AQ ↑FLOPs ↓Sparsity ↑
+> Wan2.1-1.3B Full 0.9426 0.9553 0.9474 0.6506 0.6117 197.82 TFLOPs 0% SVG2 0.9133 0.9579 0.9287 0.6369 0.5625 54.38 TFLOPs 72% VSA 0.9042 0.9862 0.9425 0.6389 0.5542 19.98 TFLOPs 89% SLA 0.9377 0.9776 0.9485 0.6258 0.5975 20.94 TFLOPs 90%
+> RoPeSLR (Ours) 0.9510 0.9898 0.9487 0.6440 0.6071 20.17 TFLOPs 90%
+> HunyuanVideo-13B Full 0.9717 0.9957 0.9744 0.6771 0.6232 10.41 PFLOPs 0% SVG2 0.9411 0.9653 0.9537 0.6328 0.6032 2.66 PFLOPs 75% VSA 0.9442 0.9762 0.9625 0.6088 0.6142 1.04 PFLOPs 90% SLA 0.9592 0.9896 0.9665 0.6216 0.6043 1.06 PFLOPs 90%
+> RoPeSLR (Ours) 0.9697 0.9930 0.9706 0.6597 0.6179 1.05 PFLOPs 90%
+> 1The sparsity ratios of baseline methods follow the default settings of their official native implementations. Since some sparse methods cannot support precise sparsity control, all reported sparsity values in this work are within a deviation of 1%.
+
+9Quality Evaluation. As shown in Table 1, even at the extreme sparsity of 90%, RoPeSLR substantially reduces computational overhead compared with dense full attention. Averaged across all VBench dimensions, our method incurs a performance drop of less than 1.3% against full attention, with negligible degradation on individual metrics and well-preserved generation fidelity. This strongly validates its advantages in the 
+
+quality-efficiency trade-off . Quantitative results for Wan2.1-14B are presented in Table 6. 
+
+Latency Characteristics and Sparse Branch Flexibility. For compatibility, we adopt VMoBA as the default sparse branch, though its implementation is not fully optimized, leading to lower end-to-end latency reduction than the theoretical FLOPs reduction. Notably, RoPeSLR is sparse-backbone-agnostic and supports seamless substitution of VMoBA with other advanced sparse attention designs. Detailed latency and efficiency evaluations are provided in Figure 10, Table 7, and Section D.. 
+
+Sparsity-Aligned Comparison. Further sparsity-aligned evaluation on SVG2 (see Table 5) demonstrates that baseline perform significantly worse than RoPeSLR under identical sparsity constraints. 
+
+Supplementary Analyses. We provide comprehensive supplementary validations: (i) visualize the adaptive token-wise gate distributions in Appendix B.7; (ii) verify that diffusion Transformers (DiTs) exhibit a more prominent sparse-low-rank structural property than LLMs in Appendix B.6; (iii) list key training hyperparameters in Appendix C; (iv) validate compatibility with step-distilled models for compounded acceleration in Appendix B.9. 
+
+## 5.3 Ablation Study 
+
+Experimental Settings. All ablation experiments are conducted on the Wan2.1-1.3B model with identical settings to the main experiments. Core ablations are consolidated in Table 2. 
+
+Low-Rank Compensator Validation. Lines 1–4 compare different context modeling strategies, alongside an equal-parameter MLP baseline 2. This setup distinguishes performance gains brought by our structural design from simple parameter expansion or non-linear enhancement. Results demonstrate that our low-rank compensator outperforms linear attention and the equal-parameter MLP, verifying the advantages of our theoretically derived sparse low-rank design. 
+
+Positional Encoding Necessity and Design. Lines 5–7 evaluate the influence of positional priors on spatiotemporal context decoding. Incorporating 3D positional encoding steadily improves generation performance, confirming its indispensable role in global context aggregation. 
+
+Additional Ablation Studies. Supplementary analyses in the appendix include sparsity optimization (see Table 3), which identifies 90% sparsity as the optimal balance point, and activation function ablation (see Table 4), which validates Sigmoid as the most suitable choice for the low-rank compensator. Furthermore, we empirically ablate the low-rank dimension r (See Appendix B.2.2). Table 2: Component Ablation Studies on RoPeSLR.                                         
+
+> Method SC BC MS AQ IQ
+> Context Modeling and Structural Baselines
+> 1. VMoBA only 0.8496 0.8909 0.9580 0.4740 0.5294 2. VMoBA + LinearAttention (without PE) 0.9310 0.9267 0.9776 0.5621 0.6104 3. VMoBA + Equal-Param MLP (without PE) 0.9002 0.9149 0.9789 0.4835 0.5497 4. VMoBA + Low-Rank Compensator (without PE) 0.9452 0.9336 0.9882 0.5756 0.6332
+> Positional Encoding Design Comparison
+> 5. VMoBA + Low-Rank Compensator (with 1D PE) 0.9454 0.9342 0.9886 0.5865 0.6338 6. VMoBA + LinearAttention (with 3D PE) 0.9476 0.9421 0.9869 0.5808 0.6380 7. VMoBA + Low-Rank Compensator (with 3D PE) 0.9510 0.9487 0.9898 0.6071 0.6440
+> 2The equal-parameter MLP baseline is parameter-matched with our low-rank branch, trained with random initialization and without Stage I pre-alignment or positional encoding (PE). This controls confounding variables to isolate the performance gains from our theoretically derived structural design.
+
+10 6 Conclusion and Limitation 
+
+Conclusion. We introduce RoPeSLR, a theoretically grounded attention framework that resolves the O(L2)
+
+bottleneck in DiTs. We prove that 3D RoPE decouples the attention manifold into a sparse-low-rank structure. Extensive evaluations confirm that RoPeSLR accelerates inference at extreme sparsity while strictly preserving high-fidelity generation quality. 
+
+Future Work. While our default sparse branch (VMoBA) reduces theoretical FLOPs, its sub-optimal engineering limits end-to-end latency gains. Because RoPeSLR is backbone-agnostic, future work will integrate hardware-optimized sparse kernels to fully translate our theoretical efficiency into real-world speedups. 
+
+# References 
+
+[1] P. Chen, X. Zeng, M. Zhao, P. Ye, M. Shen, W. Cheng, G. Yu, and T. Chen. Sparse-vdit: Unleashing the power of sparse attention to accelerate video diffusion transformers, 2025. [2] R. Chen, K. G. Mills, L. Jiang, C. Gao, and D. Niu. Re-ttention: Ultra sparse visual generation via attention statistical reshape, 2025. [3] K. Choromanski, V. Likhosherstov, D. Dohan, X. Song, A. Gane, T. Sarlos, P. Hawkins, J. Davis, A. Mohiuddin, L. Kaiser, D. Belanger, L. Colwell, and A. Weller. Rethinking attention with performers. In ICLR 2021 , 2021. [4] T. Dao. Flashattention-2: Faster attention with better parallelism and work partitioning, 2023. [5] Q. Fan, H. Huang, and R. He. Breaking the low-rank dilemma of linear attention, 2024. [6] T. Fang, H. Zhang, R. Xie, Z. Han, X. Tao, T. Zhao, P. Wan, W. Ding, W. Ouyang, X. Ning, and Y. Wang. Salad: Achieve high-sparsity attention via efficient linear attention tuning for video diffusion transformer, 2026. [7] A. Han, J. Li, W. Huang, M. Hong, A. Takeda, P. Jawanpuria, and B. Mishra. Sltrain: a sparse plus low-rank approach for parameter and memory efficient pretraining, 2024. [8] Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit, Y. Wang, X. Chen, L. Wang, D. Lin, Y. Qiao, and Z. Liu. Vbench: Comprehensive benchmark suite for video generative models, 2023. [9] B. Kong, J. Liang, Y. Liu, R. Deng, and K. Yuan. Cr-net: Scaling parameter-efficient training with cross-layer low-rank structure, 2025. [10] W. Kong, Q. Tian, Z. Zhang, R. Min, Z. Dai, J. Zhou, J. Xiong, X. Li, B. Wu, J. Zhang, K. Wu, Q. Lin, J. Yuan, Y. Long, A. Wang, A. Wang, C. Li, D. Huang, F. Yang, H. Tan, H. Wang, J. Song, J. Bai, J. Wu, J. Xue, J. Wang, K. Wang, M. Liu, P. Li, S. Li, W. Wang, W. Yu, X. Deng, Y. Li, Y. Chen, Y. Cui, Y. Peng, Z. Yu, Z. He, Z. Xu, Z. Zhou, Z. Xu, Y. Tao, Q. Lu, S. Liu, D. Zhou, H. Wang, Y. Yang, D. Wang, Y. Liu, J. Jiang, and C. Zhong. Hunyuanvideo: A systematic framework for large video generative models, 2024. [11] X. Li, M. Li, T. Cai, H. Xi, S. Yang, Y. Lin, L. Zhang, S. Yang, J. Hu, K. Peng, M. Agrawala, I. Stoica, K. Keutzer, and S. Han. Radial attention: o(n log n) sparse attention with energy decay for long video generation, 2025. [12] Y. Liu, Y. Hu, Z. Zhang, K. Jiang, and K. Yuan. Mixture of distributions matters: Dynamic sparse attention for efficient video diffusion transformers, 2026. [13] H. Lu, G. Yang, N. Fei, Y. Huo, Z. Lu, P. Luo, and M. Ding. Vdt: General-purpose video diffusion transformers via mask modeling. arXiv preprint arXiv:2305.13311 , 2023. [14] X. Ma, Y. Wang, X. Chen, G. Jia, Z. Liu, Y.-F. Li, C. Chen, and Y. Qiao. Latte: Latent diffusion transformer for video generation, 2024. [15] K. Nan, R. Xie, P. Zhou, T. Fan, Z. Yang, Z. Chen, X. Li, J. Yang, and Y. Tai. Openvid-1m: A large-scale high-quality dataset for text-to-video generation. arXiv preprint arXiv:2407.02371 , 2024. [16] W. Peebles and S. Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , pages 4195–4205, 2023. 
+
+11 [17] N. Rahaman, A. Baratin, D. Arpit, F. Draxler, M. Lin, F. A. Hamprecht, Y. Bengio, and A. Courville. On the spectral bias of neural networks, 2019. [18] D. Shmilovich, T. Wu, A. Dahan, and Y. Domb. Liteattention: A temporal sparse attention for diffusion transformers, 2025. [19] V. Sitzmann, J. N. P. Martel, A. W. Bergman, D. B. Lindell, and G. Wetzstein. Implicit neural representations with periodic activation functions, 2020. [20] J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu. Roformer: Enhanced transformer with rotary position embedding. arXiv preprint arXiv:2104.09864 , 2021. [21] X. Tan, Y. Chen, Y. Jiang, X. Chen, K. Yan, N. Duan, Y. Zhu, D. Jiang, and H. Xu. Dsv: Exploiting dynamic sparsity to accelerate large-scale video dit training. In Proceedings of the 31st ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS) , volume 1, pages 101–116, 2026. [22] M. Tancik, P. P. Srinivasan, B. Mildenhall, S. Fridovich-Keil, N. Raghavan, U. Singhal, R. Ramamoorthi, J. T. Barron, and R. Ng. Fourier features let networks learn high frequency functions in low dimensional domains. 
+
+arXiv preprint arXiv:2006.10739 , June 2020. [23] K. Team. Kling-omni technical report, 2025. [24] T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C.-W. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, J. Zeng, J. Wang, J. Zhang, J. Zhou, J. Wang, J. Chen, K. Zhu, K. Zhao, K. Yan, L. Huang, M. Feng, N. Zhang, P. Li, P. Wu, R. Chu, R. Feng, S. Zhang, S. Sun, T. Fang, T. Wang, T. Gui, T. Weng, T. Shen, W. Lin, W. Wang, W. Wang, W. Zhou, W. Wang, W. Shen, W. Yu, X. Shi, X. Huang, X. Xu, Y. Kou, Y. Lv, Y. Li, Y. Liu, Y. Wang, Y. Zhang, Y. Huang, Y. Li, Y. Wu, Y. Liu, Y. Pan, Y. Zheng, Y. Hong, Y. Shi, Y. Feng, Z. Jiang, Z. Han, Z.-F. Wu, and Z. Liu. Wan: Open and advanced large-scale video generative models, 2025. [25] S. Wang, B. Z. Li, M. Khabsa, H. Fang, and H. Ma. Linformer: Self-attention with linear complexity. arXiv preprint arXiv:2006.04768 , 2020. [26] J. Wu, L. Hou, H. Yang, X. Tao, Y. Tian, P. Wan, D. Zhang, and Y. Tong. Vmoba: Mixture-of-block attention for video diffusion models, 2025. [27] H. Xi, S. Yang, Y. Zhao, C. Xu, M. Li, X. Li, Y. Lin, H. Cai, J. Zhang, D. Li, J. Chen, I. Stoica, K. Keutzer, and S. Han. Sparse video-gen: Accelerating video diffusion transformers with spatial-temporal sparsity. In 
+
+International Conference on Machine Learning (ICML) . PMLR, 2025. [28] Y. Xia, S. Ling, F. Fu, Y. Wang, H. Li, X. Xiao, and B. Cui. Training-free and adaptive sparse attention for efficient long video generation, 2025. [29] E. Xie, J. Chen, J. Chen, H. Cai, H. Tang, Y. Lin, Z. Zhang, M. Li, L. Zhu, Y. Lu, and S. Han. Sana: Efficient high-resolution image synthesis with linear diffusion transformers, 2024. [30] S. Yang, H. Xi, Y. Zhao, M. Li, J. Zhang, H. Cai, Y. Lin, X. Li, C. Xu, K. Peng, J. Chen, S. Han, K. Keutzer, and I. Stoica. Sparse videogen2: Accelerate video generation with sparse attention via semantic-aware permutation, 2025. [31] Z. Yang, J. Teng, W. Zheng, M. Ding, S. Huang, J. Xu, Y. Yang, W. Hong, X. Zhang, G. Feng, D. Yin, Y. Zhang, W. Wang, Y. Cheng, B. Xu, X. Gu, Y. Dong, and J. Tang. Cogvideox: Text-to-video diffusion models with an expert transformer. In International Conference on Learning Representations (ICLR) , 2025. [32] J. Zhang, H. Wang, K. Jiang, S. Yang, K. Zheng, H. Xi, Z. Wang, H. Zhu, M. Zhao, I. Stoica, J. E. Gonzalez, J. Zhu, and J. Chen. Sla: Beyond sparsity in diffusion transformers via fine-tunable sparse-linear attention, 2025. [33] J. Zhang, H. Wang, K. Jiang, K. Zheng, Y. Jiang, I. Stoica, J. Chen, J. Zhu, and J. E. Gonzalez. Sla2: Sparse-linear attention with learnable routing and qat, 2026. [34] J. Zhang, J. Wei, H. Huang, P. Zhang, J. Zhu, and J. Chen. Sageattention: Accurate 8-bit attention for plug-and-play inference acceleration. In International Conference on Learning Representations (ICLR) , 2025. [35] J. Zhang, C. Xiang, H. Huang, J. Wei, H. Xi, J. Zhu, and J. Chen. Spargeattention: Accurate and training-free sparse attention accelerating any model inference, 2025. 
+
+12 [36] P. Zhang, Y. Chen, H. Huang, W. Lin, Z. Liu, I. Stoica, E. Xing, and H. Zhang. Vsa: Faster video diffusion with trainable sparse attention. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. [37] Z. Zheng, X. Peng, T. Yang, C. Shen, S. Li, H. Liu, Y. Zhou, T. Li, and Y. You. Open-sora: Democratizing efficient video production for all, 2024. 
+
+13 Appendix 
+
+## Contents 
+
+1 Introduction 22 Related work 33 Preliminary 44 Method 4
+
+4.1 Theoretical Foundation: The Sparse-Low-Rank Theorem . . . . . . . . . . . . . . . . . . . . . 44.2 Positional Context Recovery via Absolute PE Injection . . . . . . . . . . . . . . . . . . . . . . 64.3 Head-wise Sparse-LowRank Decomposition . . . . . . . . . . . . . . . . . . . . . . . . . . . . 64.4 Feature Alignment and Gated Fusion . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 84.5 Post-training Strategy . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 84.6 Engineering Approaches . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+5 Experiments 8
+
+5.1 Experimental Settings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 85.2 Experimental Results Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 95.3 Ablation Study . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10 
+
+6 Conclusion and Limitation 11 A Theory 16 
+
+A.1 Proof Overview . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 A.2 Preliminaries and Notation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 A.3 Energy-Based Sparse-Low-Rank Decomposition . . . . . . . . . . . . . . . . . . . . . . . . . . 17 A.4 Core Assumptions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18 A.5 Core Lemmas . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 A.6 Main theorem and result analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29 
+
+B Additional Experiments 32 
+
+B.1 Empirical Validation of Spectral Concentration (Assumption 2) . . . . . . . . . . . . . . . . . 32 B.1.1 Spectral Evolution and Justification of Exponential Decay . . . . . . . . . . . . . . . . 32 B.2 Ablation Study . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 32 B.2.1 Ablation Study on Sparsity . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 32 B.2.2 Ablation Study on Low-Rank Dimension . . . . . . . . . . . . . . . . . . . . . . . . . . 32 B.2.3 Ablation Study on Activation Function . . . . . . . . . . . . . . . . . . . . . . . . . . 32 B.2.4 Ablation Study on Training Schedule Robustness . . . . . . . . . . . . . . . . . . . . . 34 B.3 Sparsity-Aligned Evaluation of SVG2 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 34 B.4 Quantitative results of Wan2.1-T2V-14B . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 35 B.5 Efficiency Analysis . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 35 B.5.1 Efficiency Analysis of the Low-Rank compensator . . . . . . . . . . . . . . . . . . . . . 35 B.5.2 Efficiency Analysis of Latency for Long-Sequence Video Tokens . . . . . . . . . . . . . 36 B.6 Sparse and Low-Rank Characteristics of LLM Attention . . . . . . . . . . . . . . . . . . . . . 36 B.7 Visualization of Learned Gate Distributions . . . . . . . . . . . . . . . . . . . . . . . . . . . . 37 B.8 Mechanistic Interpretability via Gram Spectral Analysis . . . . . . . . . . . . . . . . . . . . . 37 B.9 Compatibility with Step-Distilled Models . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 38 
+
+C Algorithm and Hyperparameters 40 
+
+14 D Computational Complexity Analysis 41 
+
+D.1 Notation and Basic Definitions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 41 D.2 Complexity Anatomy of RoPeSLR . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 41 D.3 Theoretical Superiority over Sparse-Linear Frameworks . . . . . . . . . . . . . . . . . . . . . . 42 D.4 Negligible Overhead Compared to Pure Sparse Attention . . . . . . . . . . . . . . . . . . . . . 42 
+
+E Broader Impacts 43 
+
+15 A Theory 
+
+## A.1 Proof Overview 
+
+We provide an analytical existence proof demonstrating that the ground-truth post-softmax attention matrix in 3D RoPE-equipped and pre-trained video diffusion transformers s(DiTs) intrinsically admits a clean decomposition into a highly sparse branch and a provably low-rank compensator. Crucially, our theoretical framework is designed to prove the structural existence of this mathematical decomposition, revealing the geometric properties of the attention matrix itself, independent of the forward-pass computational algorithms. 
+
+1. We first define an energy threshold τ to split the full attention matrix A into two disjoint components: a high-energy spike set Ωτ (captured by the sparse branch) and a low-energy smooth background set Ωcτ
+
+(approximated by the low-rank compensator). We prove the sparse branch has a deterministic sparsity guarantee: at most ⌊1/τ ⌋ non-zero entries per row. 2. Leveraging the mathematical structure of 3D RoPE, we prove the pre-softmax QK logit matrix can be exactly expanded as a Fourier series over spatiotemporal frequencies, where each frequency term corresponds to a matrix of rank at most 2. 3. Under a empirically validated spectral concentration assumption, high-frequency interaction coefficients in the background set decay exponentially, allowing us to truncate the Fourier series to get a low-rank approximation of the pre-softmax background matrix with controllable error. 4. We use positive random features (FAVOR+)[ 3] to linearize the softmax exponential kernel while preserving the low-rank structure, and perform error propagation to bound the final approximation error of the background branch. 5. Our final main theorem establishes the existence of this decomposition: the sparse branch has guaranteed high sparsity, and the low rank branch has a rank bound that is linear in head dimension dh and only logarithmic in sequence length L, confirming extreme low-rankness for long video sequences. 
+
+## A.2 Preliminaries and Notation 
+
+We first formalize all symbols and foundational definitions with zero ambiguity, consistent with standard video diffusion transformer literature. 
+
+Notation Conventions 
+
+• Video Tokenization : A video is tokenized into a sequence of spatiotemporal tokens indexed by p = ( t, x, y ),where t is the temporal index, x, y are spatial indices. The total sequence length is L = T · H · W , with T
+
+temporal frames, H × W spatial resolution per frame. 
+
+• Relative Position : For tokens p, q , the per-axis relative position is ∆k = pk − qk for k ∈ { t, x, y }, where 
+
+pk denotes the k-th coordinate of token p.
+
+• 3D Rotary Position Embedding (3D RoPE) : The head dimension is split as dh = dt + dx + dy , with 
+
+dk the dimension allocated to axis k. For axis k, the m-th frequency pair uses the standard exponential schedule: 
+
+θkm = 10000 −2( m−1) /d k , m = 1 , 2, . . . , d k/2
+
+The 2D rotation matrix for axis k, frequency m, and position pk is: 
+
+Rk(pk, m ) = Rot( θkmpk)
+
+The full RoPE rotation matrix R(p) ∈ Rdh×dh is block-diagonal, with each block corresponding to Rk(pk, m )
+
+for each axis and frequency. By construction, R(p) is orthogonal: R(p)⊤R(p) = I.16 • Frequency Subspace Projection : For token p, axis k, frequency m, we define the 2D projections of query/key vectors onto the corresponding frequency subspace: 
+
+Q(k,m ) 
+
+> p
+
+= q(k)
+
+> p, 2( m−1)+1
+
+q(k)
+
+> p, 2m
+
+!
+
+, K(k,m ) 
+
+> q
+
+= k(k)
+
+> q, 2( m−1)+1
+
+k(k)
+
+> q, 2m
+
+!
+
+where q(k) 
+
+> p
+
+∈ Rdk is the part of qp allocated to axis k.
+
+• Attention Matrices :
+
+Pre-softmax QK logit matrix : sp,q = ⟨R(p)qp, R (q)kq ⟩ (we omit the standard 1/√dh scaling for clarity; it can be reintroduced as a linear scaling factor without affecting any bounds). 
+
+Post-softmax attention matrix: Ap,q = exp( sp,q ) 
+
+> Zp
+
+, where Zp = PLr=1 exp( sp,r ) is the row partition function. 
+
+Spike/Background Sets : For a given energy threshold τ > 0, we define: High-energy spike set: 
+
+Ωτ = {(p, q ) | Ap,q > τ }; Low-energy background set: Ωcτ = {(p, q ) | Ap,q ≤ τ }.
+
+Global Error Tolerance : Fixed constant E > 0, the maximum allowable absolute error per element for the low-rank approximation on the background set. 
+
+Foundational Facts. We list standard mathematical facts used throughout the proofs, to eliminate any implicit assumptions: 
+
+• Cauchy-Schwarz Inequality. For any vectors u, v ∈ Rd, abs ⟨u, v ⟩ ≤ ∥ u∥2∥v∥2.
+
+• Sylvester’s Rank Inequality. For matrices A ∈ Rm×n, B ∈ Rn×p, rank (AB ) ≤ min ( rank (A), rank (B)) .
+
+• Union Bound (Boole’s Inequality). For events E1, E 2, . . . , E n, P (Sni=1 Ei) ≤ Pni=1 P(Ei).
+
+• Exponential Function Inequalities. For all x ∈ R, ex ≥ 1 + x. For 0 ≤ x ≤ 0.5, ex ≤ 1 + 2 x.
+
+• Invertible Matrix Preserves Rank. For any matrix A ∈ Rm×n and invertible matrix B ∈ Rn×n,
+
+rank( AB ) = rank( A).
+
+## A.3 Energy-Based Sparse-Low-Rank Decomposition 
+
+We first formalize the core decomposition of the attention matrix, which is the foundation of our framework. 
+
+Definition 1 (Energy-Threshold Sparse-Low-Rank Decomposition) . For a given energy threshold τ ∈ (0 , 1) ,we decompose the full post-softmax attention matrix A into two disjoint, complementary components: 
+
+A = Asparse + Abg 
+
+where the sparse branch isolates high-energy semantic spikes: 
+
+Asparse (p, q ) = A(p, q ), if (p, q ) ∈ Ωτ
+
+and the background branch (low-rank approximation target) contains only the low-energy smooth residual: 
+
+Abg (p, q ) = A(p, q ), if (p, q ) ∈ Ωcτ
+
+Definition 2 (Residual Sparse Branch for Reconstruction) . Because the background target Abg contains zeros at the high-energy spike locations Ωτ , directly fitting it with a low-rank matrix is highly inefficient. Instead, we introduce a globally dense, unmasked low-rank approximator ˆAlowrank (whose existence is proven in Corollary 1) to approximate Abg only on the background set Ωcτ .To correct the inaccurate outputs produced by ˆAlowrank on the spike set Ωτ , we define the residual sparse branch ˜Asparse as an exact error compensator: 
+
+˜Asparse (p, q ) = 
+
+(
+
+A(p, q ) − ˆAlowrank (p, q ) if (p, q ) ∈ Ωτ
+
+0 otherwise The final reconstructed attention matrix is then guaranteed as: 
+
+ˆAfinal = ˜Asparse + ˆAlowrank 
+
+17 A.4 Core Assumptions 
+
+We state all non-trivial assumptions used in this work, all of which are empirically validated in video diffusion transformers. 
+
+Assumption 1 (Bounded Query/Key Projection Weights) . The spectral norms of the trainable query and key projection matrices are uniformly bounded by a constant independent of sequence length L and head dimension dh:
+
+∥Wq ∥2 ≤ Wmax , ∥Wk∥2 ≤ Wmax 
+
+where Wmax > 0 is a fixed constant. 
+
+Assumption 2 (Spectral Concentration of Background Interaction Coefficients) . For the background set of a 
+
+pretrained DiT model Ωcτ = {(p, q ) | Ap,q ≤ τ }, the maximum high-frequency interaction coefficients decay exponentially with frequency index for all three axes:  
+
+> dk/2
+
+X
+
+> m=m0
+
+max 
+
+> (p,q )∈Ωcτ
+
+ |akp,m | + |bkp,m | ≤ Cω · ρm0 
+
+> k
+
+, ∀m0 ≥ 1
+
+where ρk = 10000 −α/d k < 1, Cω > 0, α > 0 are constants independent of sequence length L and head dimension dh. Here, akp,m and bkp,m are the Fourier coefficients from the 3D RoPE expansion (Lemma 2). 
+
+Remark 1 (Theoretical Grounding and Empirical Validity of Assumption 2) . We note that Assumption 2 functions as a grounded structural prior characterizing the macroscopic background continuum, rather than a rigid universal law. Its formulation is motivated by two established theoretical properties: (1) The RoPE Long-Term Decay Prior : The exponential schedule of RoPE’s base frequencies ( θkm = 10000 −2( m−1) /d k )intrinsically penalizes high-frequency interactions over extended distances [ 20 ]. (2) The Low-Rank Spectrum of Softmax Attention : The singular value spectrum of the residual background attention naturally exhibits exponential decay [25]. Crucially, the practical validity of this prior is structurally enforced by our decoupled architecture and extensively corroborated by our empirical analyses. Because well-optimized DiTs naturally decouple sharp semantic spikes from the smooth background, explicitly isolating these high-energy interactions into the sparse branch guarantees that the remaining background set Ωcτ strictly conforms to this low-frequency profile. We validate this phenomenon in Appendix B.1 (Figure 6) , which clearly demonstrates the consistent exponential spectral decay of QK interactions across multiple foundational DiTs. Furthermore, our stability analysis ( Figure 3 ) confirms that the background continuum maintains bounded, sub-linear rank growth even as the sequence length scales significantly. Together, these structural and empirical insights perfectly justify the efficient O(dh log L) bottleneck rank bound established in Theorem 1. 
+
+Theorem 2 (Sparsity Bound and Background Energy Suppression) . Given the decomposition in Definition 1, the following two results hold deterministically for any τ ∈ (0 , 1) :
+
+• Sparsity Bound : The sparse branch Asparse contains at most ⌊1/τ ⌋ non-zero entries per row. The total number of non-zero entries is bounded above by L · ⌊ 1/τ ⌋.
+
+Asymptotic Sparsity Analysis : For any sequence length L, the total number of non-zero entries in the sparse branch is bounded by: NNZ (Asparse ) = O(L ·
+
+ 1
+
+τ
+
+
+
+)
+
+.
+
+• Background Element-wise Bound : The background branch Abg is bounded element-wise: ∥Abg ∥∞ ≤
+
+τ .Proof. We prove each statement sequentially, with explicit justification for every step. 
+
+Proof of Statement 1 (Sparsity Bound). Fix an arbitrary row p of the attention matrix. Let Np denote the number of entries in row p with Ap,q > τ . By definition of row-stochasticity, we have: 
+
+> L
+
+X
+
+> q=1
+
+Ap,q = 1 , and Ap,q ≥ 0 for all q
+
+18 We split the sum into entries in the spike set and background set: 
+
+> L
+
+X
+
+> q=1
+
+Ap,q = X 
+
+> q:Ap,q >τ
+
+Ap,q + X 
+
+> q:Ap,q ≤τ
+
+Ap,q = 1 
+
+Since all terms are non-negative, we can drop the background sum to get a lower bound: 
+
+X 
+
+> q:Ap,q >τ
+
+Ap,q ≤ 1
+
+For every entry in the spike set, Ap,q > τ by definition. There are Np such entries, so: 
+
+X 
+
+> q:Ap,q >τ
+
+Ap,q > X 
+
+> q:Ap,q >τ
+
+τ = Np · τ
+
+Combining the two inequalities: 
+
+Np · τ < 1 = ⇒ Np < 1
+
+τ
+
+Since Np is a non-negative integer, the maximum possible value of Np is the largest integer less than 1/τ ,which is ⌊1/τ ⌋. Thus: 
+
+Np ≤
+
+ 1
+
+τ
+
+
+
+for all rows p
+
+Summing over all L rows, the total number of non-zero entries in Asparse is bounded above by: 
+
+> L
+
+X
+
+> p=1
+
+Np ≤ L ·
+
+ 1
+
+τ
+
+
+
+This completes the proof of Statement 1. 
+
+Proof of Statement 2 (Background Element-wise Bound). By definition of Abg (Definition 1), for any 
+
+(p, q ) ∈ Ωcτ , we have Abg (p, q ) = Ap,q ≤ τ . For (p, q ) ∈ Ωτ , Abg (p, q ) = 0 ≤ τ . Thus, for all p, q , Abg (p, q ) ≤ τ .The infinity norm of a matrix is the maximum absolute value of its entries, so: 
+
+∥Abg ∥∞ = max  
+
+> p,q
+
+|Abg (p, q )| ≤ τ
+
+This completes the proof of Statement 2. 
+
+## A.5 Core Lemmas 
+
+Lemma 1 (Deterministic Q/K Boundedness) . By Assumption 1, for any diffusion time step s, the query and key vectors are deterministically bounded across all tokens: 
+
+max  
+
+> p
+
+(∥qp∥2, ∥kp∥2) ≤ Qmax = Wmax 
+
+pdh
+
+where Qmax is a constant independent of sequence length L.Proof. Step 1: Deterministic Norm Bound for LayerNorm Output. By definition of LayerNorm, for any token feature vector xs,p , we have: LN (xs,p ) = xs,p − μσ , σ2 = 1
+
+dhdhX
+
+> i=1
+
+(xs,p,i − μ)2
+
+19 The squared ℓ2 norm of the LayerNorm output is: 
+
+∥LN (xs,p )∥22 =
+
+> dh
+
+X
+
+> i=1
+
+ xs,p,i − μσ
+
+2
+
+= 1
+
+σ2
+
+> dh
+
+X
+
+> i=1
+
+(xs,p,i − μ)2
+
+By definition of σ2, Pdh
+
+> i=1
+
+(xs,p,i − μ)2 = dhσ2. Substituting this in, we have 
+
+∥LN (xs,p )∥22 = 1
+
+σ2 · dhσ2 = dh
+
+Taking the square root of both sides gives the deterministic norm bound: 
+
+∥LN (xs,p )∥2 = pdh
+
+Step 2: Norm Bound for Query/Key Vectors. By definition, the query vector is qp = Wq · LN (xs,p ). We use the submultiplicativity property of the spectral norm: for any matrix W and vector x, ∥W x ∥2 ≤ ∥ W ∥2∥x∥2.Applying this property: 
+
+∥qp∥2 = ∥Wq · LN (xs,p )∥2 ≤ ∥ Wq ∥2 · ∥ LN (xs,p )∥2
+
+Substituting the bounds ∥Wq ∥2 ≤ Wmax and ∥LN (xs,p )∥2 = √dh:
+
+∥qp∥2 ≤ Wmax 
+
+pdh
+
+The identical derivation applies to the key vector kp, since ∥Wk∥2 ≤ Wmax . Since this bound holds for all tokens p, we have: 
+
+max  
+
+> p
+
+(∥qp∥2, ∥kp∥2) ≤ Wmax 
+
+pdh
+
+This completes the proof. 3
+
+Lemma 2 (3D RoPE Induces Exact Fourier Series) . With standard 3D RoPE, the QK inner product can be written exactly as: 
+
+sp,q = X 
+
+> k∈{ t,x,y }
+> dk/2
+
+X
+
+> m=1
+
+ akp,m cos  θkm∆k
+
+ + bkp,m sin  θkm∆k
+
+ 
+
+where ∆k = pk − qk, and the coefficients are defined as: 
+
+akp,m = Q(k,m ),1 
+
+> p
+
+K(k,m ),1 
+
+> q
+
++ Q(k,m ),2 
+
+> p
+
+K(k,m ),2 
+
+> q
+
+, bkp,m = Q(k,m ),1 
+
+> p
+
+K(k,m ),2 
+
+> q
+
+− Q(k,m ),2 
+
+> p
+
+K(k,m ),1
+
+> q
+
+and satisfy the bounds: 
+
+|akp,m | ≤ ∥ Q(k,m ) 
+
+> p
+
+∥2∥K(k,m ) 
+
+> q
+
+∥2, |bkp,m | ≤ ∥ Q(k,m ) 
+
+> p
+
+∥2∥K(k,m ) 
+
+> q
+
+∥2
+
+Proof. Step 1: Simplify the RoPE QK Inner Product. By definition, the pre-softmax logit is: 
+
+sp,q = ⟨R(p)qp, R (q)kq ⟩
+
+Since R(p) is orthogonal, R(p)⊤R(p) = I. We use the standard RoPE identity for relative position encoding: 
+
+⟨R(p)qp, R (q)kq ⟩ = ⟨qp, R (p)⊤R(q)kq ⟩ = ⟨qp, R (q − p)kq ⟩
+
+This follows directly from the orthogonality of RoPE rotation matrices.          
+
+> 3In practice, LayerNorm applies a learned affine transformation γ⊙ˆx+β. We assume these learned scaling and shifting parameters are absorbed into the bounded query/key projection matrices Wqand Wkwithout loss of generality, maintaining the rigor of the deterministic norm bound.
+
+20 Step 2: Block-Diagonal Expansion of the Rotation Matrix. The RoPE rotation matrix R(∆) (where 
+
+∆ = p − q) is block-diagonal, with each block corresponding to a 2D rotation matrix for a specific axis and frequency. Thus, the inner product decomposes into a sum over axes and frequencies: 
+
+⟨qp, R (∆) kq ⟩ = X 
+
+> k∈{ t,x,y }
+> dk/2
+
+X
+
+> m=1
+
+⟨Q(k,m ) 
+
+> p
+
+, R k(∆ k, m )K(k,m ) 
+
+> q
+
+⟩
+
+where Q(k,m ) 
+
+> p
+
+, K (k,m ) 
+
+> q
+
+are the 2D frequency subspace projections defined in Section 2.1, and Rk(∆ k, m ) = Rot( θkm)∆ k is the 2D rotation matrix for axis k, frequency m, relative position ∆k.
+
+Step 3: Explicit 2D Rotation and Fourier Series Form. We expand the 2D inner product explicitly. Let Q(k,m ) 
+
+> p
+
+= ( u1, u 2)⊤ and K(k,m ) 
+
+> q
+
+= ( v1, v 2)⊤. The 2D rotation matrix is: 
+
+Rk(∆ k, m ) = 
+
+cos  θkm∆k
+
+ − sin  θkm∆k
+
+
+
+sin  θkm∆k
+
+ cos  θkm∆k
+
+
+
+Multiplying the rotation matrix by K(k,m ) 
+
+> q
+
+:
+
+Rk(∆ k, m )K(k,m ) 
+
+> q
+
+=
+
+v1 cos  θkm∆k
+
+ − v2 sin  θkm∆k
+
+
+
+v1 sin  θkm∆k
+
+ + v2 cos  θkm∆k
+
+
+
+Taking the inner product with Q(k,m ) 
+
+> p
+
+:
+
+⟨Q(k,m ) 
+
+> p
+
+, R k(∆ k, m )K(k,m ) 
+
+> q
+
+⟩ = u1
+
+ v1 cos  θkm∆k
+
+ − v2 sin  θkm∆k
+
+ 
+
++ u2
+
+ v1 sin  θkm∆k
+
+ + v2 cos  θkm∆k
+
+ 
+
+Grouping terms by cos  θkm∆k
+
+ and sin  θkm∆k
+
+:
+
+= ( u1v1 + u2v2)
+
+| {z }
+
+> akp,m
+
+cos  θkm∆k
+
+ + ( u1v2 − u2v1)
+
+| {z }
+
+> bkp,m
+
+sin  θkm∆k
+
+
+
+This gives the exact Fourier series form. 
+
+Step 4: Coefficient Bounds. We prove the bounds for akp,m and bkp,m using the Cauchy-Schwarz inequality. For akp,m :
+
+|akp,m | = |u1v1 + u2v2| = |⟨ Q(k,m ) 
+
+> p
+
+, K (k,m ) 
+
+> q
+
+⟩| ≤ ∥ Q(k,m ) 
+
+> p
+
+∥2∥K(k,m ) 
+
+> q
+
+∥2
+
+For bkp,m , using the same method, we can obtain: 
+
+|bkp,m | ≤ ∥ Q(k,m ) 
+
+> p
+
+∥2∥K(k,m ) 
+
+> q
+
+∥2
+
+This completes the proof. 
+
+Lemma 3 (Each Frequency Term Corresponds to a ≤ 2 Matrix) . For any fixed axis k ∈ { t, x, y } and frequency m, the matrix Tk,m ∈ RL×L representing the m-th frequency interaction is defined by: 
+
+Tk,m (p, q ) = ⟨Rk(pk, m )Q(k,m ) 
+
+> p
+
+, R k(qk, m )K(k,m ) 
+
+> q
+
+⟩
+
+This matrix has rank at most 2. Proof. Step 1: Define Rotated Query/Key Vectors. For each token p, define the rotated 2D query vector: 
+
+ˆqp,k,m = Rk(pk, m )Q(k,m ) 
+
+> p
+
+∈ R2
+
+For each token q, define the rotated 2D key vector: 
+
+ˆkq,k,m = Rk(qk, m )K(k,m ) 
+
+> q
+
+∈ R2
+
+21 By definition, the (p, q )-th entry of Tk,m is exactly the Euclidean inner product of these two vectors: 
+
+Tk,m (p, q ) = ⟨ˆqp,k,m , ˆkq,k,m ⟩ = ˆ q⊤ 
+
+> p,k,m
+
+ˆkq,k,m 
+
+Step 2: Construct Matrix Factorization. We construct two matrices from the rotated vectors: Uk,m ∈
+
+RL×2: the p-th row of Uk,m is ˆq⊤ 
+
+> p,k,m
+
+(the transpose of the rotated query vector for token p). Vk,m ∈ RL×2:the q-th row of Vk,m is ˆk⊤ 
+
+> q,k,m
+
+(the transpose of the rotated key vector for token q). By construction, the transpose of Vk,m is a 2 × L matrix, where the q-th column is ˆkq,k,m .
+
+Step 3: Verify Matrix Product and Rank Bound. We now compute the product Uk,m V ⊤
+
+> k,m
+
+. The 
+
+(p, q )-th entry of this product is the dot product of the p-th row of Uk,m and the q-th column of V ⊤
+
+> k,m
+
+, which is exactly:  Uk,m V ⊤
+
+> k,m
+
+ 
+
+> p,q
+
+= ˆ q⊤ 
+
+> p,k,m
+
+ˆkq,k,m = Tk,m (p, q )
+
+Thus, we have the exact matrix factorization: 
+
+Tk,m = Uk,m V ⊤
+
+> k,m
+
+We now apply Sylvester’s Rank Inequality : for matrices A ∈ Rm×n and B ∈ Rn×p, rank (AB ) ≤
+
+min(rank( A), rank( B)) . Here, Uk,m ∈ RL×2 and V ⊤ 
+
+> k,m
+
+∈ R2×L, so: 
+
+rank( Tk,m ) = rank( Uk,m V ⊤
+
+> k,m
+
+) ≤ min(rank( Uk,m ), rank( V ⊤
+
+> k,m
+
+)) ≤ 2
+
+This completes the proof. 
+
+Lemma 4 (Low-Rank Approximation of Background Pre-Softmax Matrix) . Under Assumption 1 and 2, for any error tolerance δ > 0, there exists a truncated matrix ˜S ∈ RL×L of rank at most: 
+
+r = O
+
+
+
+dh log 
+
+ 1
+
+δ
+
+ 
+
+such that the approximation error is bounded uniformly over the background set: 
+
+max 
+
+> (p,q )∈Ωcτ
+
+|sp,q − ˜sp,q | ≤ δ
+
+Proof. Step 1: Decompose the Full Pre-Softmax Matrix. From Lemma 2, the full pre-softmax matrix 
+
+S (with entries sp,q ) can be written as a sum over axes and frequency terms: 
+
+S = X 
+
+> k∈{ t,x,y }
+> dk/2
+
+X
+
+> m=1
+
+Tk,m 
+
+where each Tk,m is the rank-≤ 2 matrix from Lemma 3. 
+
+Step 2: Choose Truncation Threshold for Each Axis. We aim to truncate the high-frequency terms such that the total tail error is bounded by δ. We split the error equally across the three axes: we require the tail error for each axis to be at most δ/ 3, so the total error is at most δ.Fix an axis k. From Assumption 1, the tail sum of coefficients decays exponentially:  
+
+> dk/2
+
+X
+
+> m=m0
+
+max 
+
+> (p,q )∈Ωcτ
+
+ |akp,m | + |bkp,m | ≤ Cω · ρm0
+
+> k
+
+From Lemma 3, each frequency term’s entry is bounded by: 
+
+|Tk,m (p, q )| = |akp,m cos  θkm∆k
+
+ + bkp,m sin  θkm∆k
+
+| ≤ | akp,m | + |bkp,m |
+
+22 since | cos( ·)| ≤ 1 and | sin( ·)| ≤ 1. Thus, the maximum entry of the tail sum for axis k is bounded by: 
+
+max  
+
+> (p,q )∈Ωcτ
+> dk/2
+
+X
+
+> m=m0
+
+Tk,m (p, q ) ≤ 
+
+> dk/2
+
+X
+
+> m=m0
+
+max 
+
+> (p,q )∈Ωcτ
+
+|Tk,m (p, q )| ≤ Cω · ρm0
+
+> k
+
+We require this tail error to be at most δ/ 3:
+
+Cω · ρm0 
+
+> k
+
+≤ δ
+
+3
+
+We solve for m0. Since ρk < 1, log( ρk) < 0. Rearranging the inequality: 
+
+ρm0 
+
+> k
+
+≤ δ
+
+3Cω
+
+=⇒ m0 log( ρk) ≤ log 
+
+ δ
+
+3Cω
+
+
+
+=⇒ m0 ≥ log   3Cω
+
+> δ
+
+
+
+− log( ρk)
+
+Recall that ρk = 10000 −α/d k , so − log( ρk) = αdk log(10000) . Substituting this in: 
+
+m0 ≥ dk log   3Cω
+
+> δ
+
+
+
+α log(10000) = O
+
+
+
+dk log 
+
+ 1
+
+δ
+
+ 
+
+We choose Mk = min ( m0, d k/2) , which is the truncation index for axis k.
+
+Step 3: Construct the Truncated Matrix. We define the truncated pre-softmax matrix ˜S as the sum of the low-frequency terms: 
+
+˜S = X
+
+> k∈{ t,x,y }
+> Mk
+
+X
+
+> m=1
+
+Tk,m 
+
+By construction, the approximation error is bounded by: 
+
+max 
+
+> (p,q )∈Ωcτ
+
+|sp,q − ˜sp,q | = max 
+
+> (p,q )∈Ωcτ
+
+X 
+
+> k∈{ t,x,y }
+> dk/2
+
+X 
+
+> m=Mk+1
+
+Tk,m (p, q ) ≤ X
+
+> k∈{ t,x,y }
+
+δ
+
+3 = δ
+
+This satisfies the error bound requirement. 
+
+Step 4: Bound the Rank of the Truncated Matrix. From Lemma 3, each Tk,m has rank at most 2. Using the rank of sum property, the rank of the truncated matrix is bounded by: 
+
+rank( ˜S) ≤ X
+
+> k∈{ t,x,y }
+> Mk
+
+X
+
+> m=1
+
+rank( Tk,m ) ≤ X
+
+> k∈{ t,x,y }
+
+2Mk
+
+Substituting Mk = O  dk log   1
+
+> δ
+
+ and dt + dx + dy = dh:
+
+rank( ˜S) ≤ 2 log 
+
+ 1
+
+δ
+
+ X
+
+> k∈{ t,x,y }
+
+O(dk) = O
+
+
+
+dh log 
+
+ 1
+
+δ
+
+ 
+
+This completes the proof. 
+
+Lemma 5 (Positive Random Features for Exponential Kernel (FAVOR+)[ 3], High-Probability Bound) . Let 
+
+˜qi, ˜kj ∈ Rr be vectors uniformly bounded by ∥˜qi∥2, ∥˜kj ∥2 ≤ B for some constant B > 0 independent of L. The exponential kernel exp 
+
+
+
+˜qTi ˜kj
+
+
+
+can be approximated using a positive random feature map Φ : Rr → RR
+
+> +
+
+. For any relative error tolerance δrel > 0 and failure probability δfail > 0, the required feature dimension is: 
+
+R = O
+
+ rδ2
+
+> rel
+
+log 
+
+ L2
+
+δfail 
+
+ 
+
+23 With probability at least 1 − δfail , provided exp 
+
+
+
+˜qTi ˜kj
+
+
+
+≥ c > 0 for all i, j (this holds across the entire attention matrix, as the original query/key vectors are deterministically bounded by Lemma 1 and the low-rank truncation error is bounded by Lemma 4, ensuring all approximated pre-softmax logits ˜si,j have a finite global minimum), the approximation satisfies the uniform relative error bound over all L2 pairs: 
+
+|Φ(˜ qi)T Φ( ˜kj ) − exp 
+
+
+
+˜qTi ˜kj
+
+
+
+| ≤ δrel exp 
+
+
+
+˜qTi ˜kj
+
+
+
+Proof. Step 1: Per-Pair FAVOR+ Guarantee via Hoeffding’s Bound. Based on the foundational properties of positive random features (FAVOR+) established in [ 3] (specifically Lemma 1 and Eq. 4), the random feature map Φ : Rr → RR 
+
+> +
+
+provides an unbiased Monte Carlo estimator of the exponential kernel. For any fixed pair (˜ qi, ˜kj ), let the estimator be ˆEi,j = Φ(˜ qi)T Φ( ˜kj ). We have: 
+
+E
+
+h ˆEi,j 
+
+i
+
+= exp 
+
+
+
+˜qTi ˜kj
+
+
+
+Since the inputs are uniformly bounded ( ∥˜qi∥2, ∥˜kj ∥2 ≤ B), the positive random features drawn from the FAVOR+ distribution are bounded by a constant M = O(√r). Therefore, ˆEi,j is an average of R independent, bounded random variables. We apply Hoeffding’s inequality to bound the absolute error . For any ϵ > 0:
+
+P
+
+
+
+| ˆEi,j − exp 
+
+
+
+˜qTi ˜kj
+
+
+
+| > ϵ 
+
+
+
+≤ 2 exp 
+
+
+
+− 2Rϵ 2
+
+M 2
+
+
+
+To obtain a relative error bound, we set the absolute error tolerance to ϵ = δrel exp 
+
+
+
+˜qTi ˜kj
+
+
+
+. Substituting this into the bound yields: 
+
+P
+
+
+
+| ˆEi,j − exp 
+
+
+
+˜qTi ˜kj
+
+
+
+| > δ rel exp 
+
+
+
+˜qTi ˜kj
+
+ 
+
+≤ 2 exp 
+
+−
+
+2Rδ 2 
+
+> rel
+
+exp 
+
+
+
+˜qTi ˜kj
+
+2
+
+M 2
+
+
+
+Crucially, we must establish a positive lower bound for the squared exponential kernel exp 
+
+
+
+˜qTi ˜kj
+
+2
+
+= exp(2˜ si,j )
+
+to bound the failure probability. By Lemma 1, the original pre-softmax logits are lower-bounded: si,j ≥ − Q2
+
+> max
+
+.By Lemma 4, the truncation error is bounded by δ, giving a global minimum for the approximated logits: 
+
+˜si,j ≥ − Q2 
+
+> max
+
+− δ.Because the exponential function is positive and monotonically increasing, the true exponential kernel is lower-bounded by a global positive constant c:
+
+exp(˜ si,j ) ≥ exp  −Q2 
+
+> max
+
+− δ ≡ c > 0
+
+Consequently, its square is also lower-bounded by a positive constant: 
+
+exp(˜ si,j )2 ≥ c2 > 0
+
+We can therefore upper-bound the failure probability by replacing the squared exponential term with its minimal value c2:
+
+P (Relative Error > δ rel ) ≤ 2 exp 
+
+
+
+− 2Rδ 2
+
+> rel
+
+c2
+
+M 2
+
+
+
+To ensure this per-pair failure probability is at most δfail  
+
+> L2
+
+(which is required for the subsequent union bound), we enforce: 
+
+2 exp 
+
+
+
+− 2Rδ 2
+
+> rel
+
+c2
+
+M 2
+
+
+
+≤ δfail 
+
+L2
+
+Solving for the required feature dimension R:
+
+R ≥ M 2
+
+2c2δ2
+
+> rel
+
+log 
+
+ 2L2
+
+δfail 
+
+
+
+24 Since M 2 = O(r) and c is a positive constant independent of L, the required dimension to guarantee the relative error bound for a single pair with probability 1 − δfail  
+
+> L2
+
+is: 
+
+R = O
+
+ rδ2
+
+> rel
+
+log 
+
+ L2
+
+δfail 
+
+ 
+
+Step 2: Uniform Guarantee via Union Bound. We now extend the per-pair bound to a uniform bound over all L2 query-key pairs. Let Ei,j denote the event that the relative error for pair (i, j ) exceeds δrel . From Step 1, P(Ei,j ) ≤ δfail  
+
+> L2
+
+for all i, j .We apply the Union Bound to the union of all L2 events: 
+
+P
+
+
+
+> L
+
+[
+
+> i,j =1
+
+Ei,j 
+
+ ≤
+
+> L
+
+X
+
+> i,j =1
+
+P(Ei,j ) ≤ L2 · δfail 
+
+L2 = δfail 
+
+Taking the complement of this event, we get: 
+
+P
+
+
+
+> L
+
+\
+
+> i,j =1
+
+Eci,j 
+
+ ≥ 1 − δfail 
+
+In other words, with probability at least 1 − δfail , the relative error is bounded by δrel for all L2 pairs: 
+
+|Φ(˜ qi)T Φ( ˜kj ) − exp 
+
+
+
+˜qTi ˜kj
+
+
+
+| ≤ δrel exp 
+
+
+
+˜qTi ˜kj
+
+
+
+∀i, j 
+
+The total required feature dimension to satisfy this uniform bound across all pairs is R = R0 ·O
+
+
+
+log 
+
+ L2
+
+> δfail
+
+ 
+
+=
+
+O
+
+ rδ2
+
+> rel
+
+log 
+
+ L2
+
+> δfail
+
+ 
+
+. This completes the proof. 
+
+Lemma 6 (Exact Diagonal Normalization and Rank Preservation) . Let Zp = PLr=1 exp( sp,r ) be the true row partition function, and define D = diag (1 /Z 1, . . . , 1/Z L). For any approximated exponentiated kernel matrix 
+
+ˆE ∈ RL×L, the normalized matrix ˆA = D ˆE satisfies: 
+
+rank( ˆA) = rank( ˆE)
+
+Proof. Step 1: Prove D is Invertible. By definition, the partition function Zp = PLr=1 exp( sp,r ). Since the exponential function is positive ( exp( x) > 0 for all x ∈ R), every term in the sum is positive, so Zp > 0
+
+for all rows p.The diagonal matrix D has entries 1/Z p on its diagonal, all of which are positive. A diagonal matrix is invertible if and only if all its diagonal entries are non-zero. Thus, D is full-rank and invertible, with inverse 
+
+D−1 = diag (Z1, Z 2, . . . , Z L).
+
+Step 2: Prove Rank Preservation. For any matrix ˆE ∈ RL×L and invertible matrix D ∈ RL×L,left-multiplying by D preserves the rank: 
+
+rank( D ˆE) = rank( ˆE)
+
+Since ˆA = D ˆE, we have: 
+
+rank( ˆA) = rank( ˆE)
+
+This completes the proof. 
+
+Corollary 1 (Constructive Sparse-Low-Rank Reconstruction of Attention Matrix) . Let E > 0 be a fixed global absolute error tolerance, and let δfail = O(L−c) for some constant c > 0. For any energy threshold τ ∈ [2 E, 1) ,we can construct an approximate reconstructed attention matrix ˆAfinal = ˜Asparse + ˆAlowrank , where: 
+
+25 1. The residual sparse branch ˜Asparse is sparse, with exactly the same support as the original spike set 
+
+Ωτ , and thus has at most ⌊1/τ ⌋ non-zero entries per row; 2. The low-rank branch ˆAlowrank is a globally defined, unmasked matrix that acts as a low-rank approxi-mator for the background target Abg . It operates with a provable bottleneck rank bound: 
+
+R = O
+
+
+
+dh ·
+
+ τ
+
+E
+
+2
+
+· log 
+
+ τ
+
+E
+
+
+
+· log L
+
+
+
+With probability at least 1 − δfail , the low-rank approximator tightly bounds the background target on Ωcτ :
+
+max 
+
+> (p,q )∈Ωcτ
+
+| ˆAlowrank (p, q ) − Abg (p, q )| ≤ E 
+
+Consequently, the final reconstructed matrix ˆAfinal satisfies the global uniform error guarantee across all L2
+
+pairs: 
+
+max  
+
+> p,q
+
+| ˆAfinal (p, q ) − A(p, q )| ≤ E 
+
+Proof. Step 1: Pre-Softmax Low-Rank Approximation. We first choose the pre-softmax absolute error tolerance and FAVOR+ relative error tolerance to be equal: δ = δrel = E 
+
+> 4τ
+
+. This choice is derived from detailed error propagation analysis, ensuring that the compounded error after exponential kernel linearization and normalization results in the desired absolute error bound E on the background set. Since τ ∈ [2 E, 1) , we have E 
+
+> τ
+
+≤ 0.5, so δ ≤ 1/8, which satisfies the validity condition for the exponential inequalities used in error propagation. Since τ ∈ [2 E, 1) , we have E 
+
+> τ
+
+≤ 0.5, so δ ≤ 1/8, which is a valid small error tolerance. By Lemma 4, there exists a truncated pre-softmax matrix ˜S of rank: 
+
+r = O
+
+
+
+dh log 
+
+ 1
+
+δ
+
+ 
+
+= O
+
+
+
+dh log 
+
+ 4τ
+
+E
+
+ 
+
+= O
+
+
+
+dh log 
+
+ τ
+
+E
+
+ 
+
+such that the approximation error is bounded uniformly over the background set: 
+
+max 
+
+> (p,q )∈Ωcτ
+
+|sp,q − ˜sp,q | ≤ δ = E
+
+4τ
+
+Since ˜S has rank r, by the definition of matrix rank, we can factor it as: 
+
+˜S = ˜Q ˜K⊤, where ˜Q, ˜K ∈ RL×r
+
+Step 2: Set FAVOR+ Relative Error Tolerance. We choose the FAVOR+ relative error tolerance to match the pre-softmax error: 
+
+δrel = E
+
+4τ
+
+and set the failure probability to δfail = O(L−c), as specified in the following theorem statement. 
+
+Step 3: FAVOR+ Linearization with Exact Rank Bound. We apply Lemma A.5 to the low-dimensional embeddings ˜qi (rows of ˜Q) and ˜kj (rows of ˜K). From Lemma 1, the original query/key vectors are bounded, so the low-dimensional embeddings are also uniformly bounded by a constant B > 0 independent of L. For the background set, exp 
+
+
+
+˜qTi ˜kj
+
+
+
+= exp(˜ si,j ) is bounded below by a constant c > 0 (since ˜si,j is bounded for the smooth background). The required feature dimension is: 
+
+R = O
+
+ rδ2
+
+> rel
+
+log 
+
+ L2
+
+δfail 
+
+ 
+
+We substitute the two core terms: 1. Pre-softmax truncation rank: r = O  dh log   τ
+
+> E
+
+ ; 2. Relative error tolerance: δrel = E 
+
+> 4τ
+
+.26 Substituting these into the rank bound: 
+
+R = O dh log   τ
+
+> E
+
+  E
+
+> 4τ
+
+2 log 
+
+ L2
+
+δfail 
+
+!
+
+Critically, since δfail = O(L−c), we have: 
+
+log 
+
+ L2
+
+δfail 
+
+
+
+= O(log L)
+
+We thus obtain the final, simplified rank bound: 
+
+R = O
+
+
+
+dh ·
+
+ τ
+
+E
+
+2
+
+· log 
+
+ τ
+
+E
+
+
+
+· log L
+
+
+
+Let ˆEi,j = Φ( ˜qi)T Φ( ˜kj ) be the approximated exponential kernel matrix. By Lemma A.5, with probability at least 1 − δfail , the approximation satisfies: 
+
+| ˆEi,j − exp(˜ si,j )| ≤ δrel exp(˜ si,j ) = E
+
+4τ exp(˜ si,j )
+
+By construction, rank( ˆE) ≤ R, since it is the product of two L × R matrices. 
+
+Step 4: Error Propagation via Exponential Inequalities. We now propagate the pre-softmax approximation error and FAVOR+ error to the final post-softmax attention matrix. Since τ ∈ [2 E, 1) , we have E 
+
+> τ
+
+≤ 0.5, so all exponential inequalities apply. First, we bound the error between exp(˜ sp,q ) and exp( sp,q ). From Step 1, we have |˜sp,q − sp,q | ≤ E 
+
+> 4τ
+
+≤ 0.125 .Using the exponential inequalities: 
+
+exp 
+
+
+
+sp,q − E
+
+4τ
+
+
+
+≤ exp(˜ sp,q ) ≤ exp 
+
+
+
+sp,q + E
+
+4τ
+
+
+
+Applying the bounds ex ≤ 1 + 2 x and e−x ≥ 1 − x for x ≤ 0.5:
+
+exp( sp,q )
+
+
+
+1 − E
+
+4τ
+
+
+
+≤ exp(˜ sp,q ) ≤ exp( sp,q )
+
+
+
+1 + 2 · E
+
+4τ
+
+
+
+= exp( sp,q )
+
+
+
+1 + E
+
+2τ
+
+
+
+Next, we combine this with the FAVOR+ error bound from Step 3. The FAVOR+ bound can be rewritten as: 
+
+exp(˜ sp,q )
+
+
+
+1 − E
+
+4τ
+
+
+
+≤ ˆEp,q ≤ exp(˜ sp,q )
+
+
+
+1 + E
+
+4τ
+
+
+
+Substituting the bounds for exp(˜ sp,q ) into this inequality, we get the compounded error bound for ˆEp,q 
+
+relative to the true exponential kernel exp( sp,q ):
+
+exp( sp,q )
+
+
+
+1 − E
+
+4τ
+
+2
+
+≤ ˆEp,q ≤ exp( sp,q )
+
+
+
+1 + E
+
+2τ
+
+  
+
+1 + E
+
+4τ
+
+
+
+We expand the upper bound product explicitly: 
+
+
+
+1 + E
+
+2τ
+
+  
+
+1 + E
+
+4τ
+
+
+
+= 1 + E
+
+2τ + E
+
+4τ + E2
+
+8τ 2 = 1 + 3E
+
+4τ + E2
+
+8τ 2
+
+Since E 
+
+> τ
+
+≤ 0.5, the quadratic term is bounded by: 
+
+E2
+
+8τ 2 = E
+
+8τ · E
+
+τ ≤ E
+
+8τ · 0.5 = E
+
+16 τ
+
+27 Substituting this back, the upper bound becomes: 
+
+1 + 3E
+
+4τ + E
+
+16 τ = 1 + 13 E
+
+16 τ < 1 + E
+
+τ
+
+For the lower bound, we expand the square: 
+
+
+
+1 − E
+
+4τ
+
+2
+
+= 1 − E
+
+2τ + E2
+
+16 τ 2 ≥ 1 − E
+
+2τ > 1 − E
+
+τ
+
+Combining the upper and lower bounds, we get the final relative error bound for the exponential kernel: 
+
+ˆEp,q − exp( sp,q ) ≤ E
+
+τ exp( sp,q )
+
+Finally, we normalize by the true row partition function Zp to get the attention matrix. Define the low-rank attention matrix: 
+
+ˆAlowrank (p, q ) = ˆEp,q 
+
+Zp
+
+Dividing both sides of the relative error bound by Zp, and using the definition of the true attention weight 
+
+A(p, q ) = exp( sp,q ) 
+
+> Zp
+
+, we get: 
+
+| ˆAlowrank (p, q ) − A(p, q )| ≤ E
+
+τ A(p, q )
+
+For (p, q ) ∈ Ωcτ , we have A(p, q ) ≤ τ by definition. Substituting this yields the absolute error bound on the background set: 
+
+| ˆAlowrank (p, q ) − A(p, q )| ≤ E 
+
+Crucially, by Definition 1, the true background target Abg (p, q ) = A(p, q ) for all (p, q ) ∈ Ωcτ . Therefore, we have formally established that our globally unmasked low-rank branch tightly approximates the background target: 
+
+max 
+
+> (p,q )∈Ωcτ
+
+| ˆAlowrank (p, q ) − Abg (p, q )| ≤ E 
+
+with probability at least 1 − δfail .
+
+Step 5: Residual Reconstruction. We emphasize that ˆAlowrank is defined on the entire image. Formally: 
+
+ˆAlowrank = D ˆE, where D = diag (1 /Z 1, . . . , 1/Z L)
+
+From Lemma 6, left-multiplying by the invertible diagonal matrix D preserves rank: 
+
+rank( ˆAlowrank ) = rank( ˆE) ≤ R = O
+
+
+
+dh
+
+ τ
+
+E
+
+2
+
+log 
+
+ τ
+
+E
+
+
+
+log L
+
+
+
+We use the residual reconstruction defined in Definition 2 to preserve low-rankness: 
+
+ˆAfinal = ˜Asparse + ˆAlowrank 
+
+We now prove the global uniform error guarantee by splitting the analysis into the two disjoint sets Ωτ and 
+
+Ωcτ :
+
+Case 1: (p, q ) ∈ Ωτ (High-Energy Spike Set). By Definition 2, the residual sparse branch acts as an exact compensator for the low-rank output: ˜Asparse (p, q ) = A(p, q ) − ˆAlowrank (p, q ). Thus, the final reconstructed matrix guarantees zero error on the spike set: 
+
+ˆAfinal (p, q ) = 
+
+
+
+A(p, q ) − ˆAlowrank (p, q )
+
+
+
++ ˆAlowrank (p, q ) = A(p, q ) = ⇒ | ˆAfinal (p, q ) − A(p, q )| = 0 
+
+Case 2: (p, q ) ∈ Ωcτ (Low-Energy Background Set). By Definition 2, the sparse branch is masked out ( ˜Asparse (p, q ) = 0 ). Thus, the final reconstructed matrix relies entirely on the low-rank approximator: 
+
+ˆAfinal (p, q ) = ˆAlowrank (p, q )
+
+28 Since A(p, q ) = Abg (p, q ) on this set, we directly apply the bound established at the end of Step 4: 
+
+| ˆAfinal (p, q ) − A(p, q )| = | ˆAlowrank (p, q ) − Abg (p, q )| ≤ E 
+
+Global Error Bound. Combining both cases, the maximum error is exactly bounded by E everywhere: 
+
+max  
+
+> p,q
+
+| ˆAfinal (p, q ) − A(p, q )| ≤ E 
+
+Step 6: Conditional Monotonicity and Asymptotic Scaling of the Rank Bound. We now prove the conditional monotonicity of the required rank R with respect to τ , and analyze its asymptotic behavior. The rank bound is: 
+
+R(τ ) = C · dh
+
+ τ
+
+E
+
+2
+
+log 
+
+ τ
+
+E
+
+
+
+log L
+
+where C > 0 is a constant independent of τ . We analyze the behavior of the function f (x) = x2 log x for 
+
+x > 0. The derivative is: 
+
+f ′(x) = 2 x log x + x2 · 1
+
+x = x(2 log x + 1) 
+
+For x ≥ 2 (since τ ≥ 2E =⇒ x = τ / E ≥ 2), log x ≥ log 2 > 0, so f ′(x) > 0. Thus, f (x) is strictly increasing for x ≥ 2.
+
+## A.6 Main theorem and result analysis 
+
+Theorem 3. Under Assumption 1 and 2 (empirically validated bounded projection weights and exponential spectral concentration of 3D RoPE), for any sequence length L, choosing the energy threshold τ and error tolerance E as: 
+
+τ = cL 12
+
+, E = τ
+
+2 = c
+
+2L 12
+
+where c > 0 is a constant independent of L, the post-softmax attention matrix A inherently decomposes into a high-energy sparse target ( Asparse ) and a smooth background target ( Abg ). Consequently, there exists a sparse-low-rank reconstructed matrix ˆAfinal = ˜Asparse + ˆAlowrank satisfying the following properties: 1. Sub-quadratic Sparsity: The residual sparse branch ˜Asparse , which acts as an exact error com-pensator on the spike set ( ˜Asparse (p, q ) = A(p, q ) − ˆAlowrank (p, q ) for (p, q ) ∈ Ωτ ), has total non-zero entries bounded by NNZ ( ˜Asparse ) = O(L 32 ).2. Sub-linear Rank: The globally unmasked low-rank branch ˆAlowrank , which acts as a dense approxi-mator for the background target Abg , requires a bottleneck rank of R = O (dh · log L).3. Asymptotic Error Bound: With high probability 1 − δfail , the global reconstruction error is uniformly bounded by max p,q | ˆAfinal (p, q ) − A(p, q )| = O
+
+
+
+L− 12
+
+
+
+.
+
+Proof. We prove each statement sequentially: 
+
+Proof of Statement 1 (Sparse Branch Complexity). Given τ = cL 12
+
+, by Theorem 2, the total number of non-zero entries is: NNZ ( ˜Asparse ) ≤ L ·
+
+ 1
+
+τ
+
+
+
+= L ·
+
+$
+
+L 12
+
+c
+
+%
+
+= O(L 32 )
+
+Proof of Statement 2 (Low-Rank Branch Rank). Given E = τ 
+
+> 2
+
+, we have τ 
+
+> E
+
+= 2 . Substituting into the rank bound from the main theorem: 
+
+R = O
+
+
+
+dh · (2) 2 · log (2) · log L
+
+
+
+29 Thus: 
+
+R = O (dh · logL )
+
+The rank decreases as sequence length increases. 
+
+Proof of Statement 3 (Global Reconstruction Error). By theorem 3, the global reconstruction error is bounded by the tolerance E. Substituting E = c 
+
+> 2L12
+
+, we obtain the high-probability upper bound: 
+
+max  
+
+> p,q
+
+| ˆAfinal (p, q ) − A(p, q )| ≤ c
+
+2L 12
+
+= O
+
+
+
+L− 12
+
+
+
+Remark 2 (Relation to Stable Rank) . Our theorem guarantees Abg = ˆAlowrank +E, where rank ( ˆAlowrank ) ≤ R
+
+and ∥E∥∞ ≤ E . Because the residual error E is uniformly bounded element-wise by a small tolerance E,the energy of the background matrix is overwhelmingly concentrated in the top R singular components. This structural forces the stable rank of Abg to be heavily dominated by R.
+
+Remark 3 (Asymptotic Superiority for Long-Sequence Inference) . Theorem 3 provides the fundamental mathematical justification for why RoPeSLR is exceptionally suited for long-sequence video generation. Consider the asymptotic behavior as sequence length L → ∞ :1. Vanishing Sparse Overhead : The ratio of preserved high-energy sparse computations relative to full attention scales as O(L3/2) 
+
+> O(L2)
+
+= O(L−1/2). As L approaches infinity, this ratio converges to 0. This guarantees that longer sequences naturally permit exponentially higher sparsity ratios without sacrificing vital semantic spikes. 2. Sub-linear Rank Bottleneck : The rank required to closely capture the global background continuum grows only logarithmically ( R = O( log L)). Compared to the rapid scaling of the sequence itself, this dictates that the low-rank branch becomes increasingly compact and heavily compressed as video length expands. Together, these bounds prove that RoPeSLR actively benefits from sequence scaling, bypassing the O(L2) curse and establishing an asymptotically optimal theoretical foundation for ultra-long video synthesis. 
+
+Remark 4 (The Indispensable Role of 3D RoPE in This Proof) . The tight sequence-length-independent rank bound we derive is exclusively enabled by the mathematical structure of 3D RoPE , with two non-substitutable theoretical contributions directly grounded in our proofs: 1. It enables an exact Fourier series expansion of the pre-softmax QK inner product over relative positions ( Lemma 2 ), which decomposes the full attention matrix into a sum of rank-≤ 2 frequency-specific matrices ( Lemma 3 ). 2. Its standard exponential frequency schedule induces exponential decay of high-frequency interaction coefficients (empirically validated in Section B.1). Leveraging this property, Lemma 4 proves that the background matrix can be approximated with a rank bound of O(dh log(1 /δ )), which is independent of sequence length L.
+
+Remark 5 (Understanding the Token-Wise Context Compensator: Core Insights) . To bridge the logical gap between matrix-level low-rankness (Theorem 3) and point-wise implementation, we frame the compensator as an amortized implicit proxy .
+
+1. Algebraic Factorization of Global Aggregation: While trigonometric identities explicitly decouple the pre-softmax 3D RoPE logits into absolute spatial bases, the non-linear softmax operation typically breaks this pairwise separation. However, because Theorem 3 guarantees that the background continuum Abg is exceptionally low-rank, it admits a low-dimensional matrix factorization. Following the principles of kernelized linear attention [ 3 , 25 ], this low-rank post-softmax matrix can be decomposed into Abg (p, q ) ≈ Prk=1 ϕk(p)ψk(q),
+
+30 where ϕk and ψk denote the k-th dimension of the decoupled spatial embeddings. Consequently, the global aggregation (Abg V )p at position p factorizes as: 
+
+(Abg V )p =
+
+> L
+
+X
+
+> q=1
+
+Abg (p, q )Vq ≈
+
+> r
+
+X
+
+> k=1
+
+ϕk(p)
+
+> L
+
+X
+
+> q=1
+
+ψk(q)Vq
+
+!| {z } 
+
+> Global Context Ck
+
+This derivation formally proves that the smooth background context is essentially a linear combination of spatial bases ϕk(p), weighted by global coefficients Ck that are entirely invariant to the query position p.
+
+2. Amortized Decoding via Dense State Encapsulation: While Ck represents a global sequence-level sum, it does not require explicit re-computation if the token Xp already "perceives" the macroscopic state. In deep DiTs, Xp is a dense semantic capsule: it has accumulated global context via preceding self-attention layers and is strictly modulated by global timestep and prompt embeddings. Thus, Xp inherently encapsulates the descriptors Ck. By combining Xp with explicit 3D positional bases ( PE 3D ), the MLP functions as a conditional decoder, evaluating the spatial field point-wise. This is supported by spectral bias theory [ 17 ], which suggests MLPs are naturally biased toward learning such low-frequency global manifolds. 
+
+3. Empirical Verification: The structural validity of this proxy is confirmed by our Stage-I alignment objective Lalign = ∥Ototal − AV ∥2 
+
+> F
+
+, which converges rapidly to a minimal floor ( Figure 5 ). Mechanistically, our Gram spectral analysis (Appendix B.8) proves that the MLP’s output eigenvectors perfectly match the geometric standing waves of the ground-truth background, confirming that the learned proxy successfully captures the theoretically predicted manifold. 
+
+Remark 6 (Superiority of Sparse-Low-Rank Structure in DiTs and LLMs) . Our framework proves that DiTs possess a more pronounced sparse-low-rank nature than LLMs, grounded in two mathematical inequalities: 1. Cubic Acceleration of Spectral Decay (Rank Inequality) : As derived in Lemma 4, the truncation index Mk required to bound the error depends on the exponential decay constant ρ. For LLMs using 1D RoPE with head dimension dh, the decay rate is ρLLM = 10000 −α/d h . For DiTs using 3D RoPE, the dimension is partitioned ( dt, d x, d y ). Assuming a uniform partition dk = dh/3, the per-axis decay rate is ρDiT = 10000 −α/ (dh/3) = ρ3
+
+> LLM
+
+.Recall from the proof of Lemma 4 that the required rank R to achieve an error δ scales inversely with 
+
+− log( ρ). Therefore, we have the theoretical relationship: 
+
+RDiT ∝ 1
+
+− log( ρDiT ) = 1
+
+−3 log( ρLLM ) = 13 RLLM 
+
+This guarantees that under the exact same error tolerance, the stable rank of the background matrix in DiTs is asymptotically one-third that of LLMs , massively amplifying the efficiency of the low-rank branch. 2. Empirical Tightness of the Deterministic Sparsity Bound : While the theoretical O(L3/2) sparsity upper bound (derived via NNZ ≤ L · ⌊ 1/τ ⌋) is a deterministic property holding for any row-stochastic attention matrix, its practical utility heavily depends on the data domain. In LLMs, tasks like in-context learning scatter semantic spikes across the causal history, causing this universal bound to be vacuous in practice. Conversely, the inherent spatiotemporal locality of video naturally clusters high-energy semantic interactions. This physical structure ensures that the theoretical deterministic bound aligns tightly with the empirical attention manifold in DiTs, rendering the O(L3/2) extraction practically effective. 3. Empirical Evidence : We provide experimental evidence to validate this remark, see figure 2 and 11 for more details. 
+
+31 B Additional Experiments 
+
+## B.1 Empirical Validation of Spectral Concentration (Assumption 2) 
+
+B.1.1 Spectral Evolution and Justification of Exponential Decay 
+
+To verify the exponential decay ρm0 
+
+> k
+
+(ρk < 1) proposed in Assumption 2, we measure the contribution of each frequency index m for axis k ∈ { t, x, y }. We define the Maximum Interaction Magnitude M(k, m ) using the 99 th percentile: 
+
+M(k, m ) = Percentile 99% 
+
+
+
+⟨Q(k,m ) 
+
+> p
+
+, R k(∆) K(k,m ) 
+
+> q
+
+⟩
+
+
+
+Using a strict maximum over all L2 pairs is vulnerable to isolated sparse spikes. Filtering the top 1% extreme interactions provides a statistically robust proxy for the true supremum of the smooth background continuum [25]. We simultaneously compute the Cumulative Tail Energy : Tail (m0) = Pdk /2 
+
+> m=m0
+
+M(k, m ).
+
+Understanding the Visualizations. We evaluate these metrics on Wan2.1-T2V-1.3B, Wan2.1-T2V-14B, and HunyuanVideo-13B across multiple denoising stages. In Figure 6, the horizontal axes denote the RoPE dimension index m (larger m corresponds to a lower rotational frequency). The vertical axes are on a 
+
+logarithmic scale (log 10 ). An exponential decay f (m) = C · ρm translates to a linear downward trend on a semi-log plot. 
+
+Key Observations & Generalization. Figure 6 shows that across all three models , the interaction energy along the t, h, and w dimensions consistently exhibits a clear decline on the Log-Y axes as m increases. This confirms that the exponential spectral concentration is a universal structural property of 3D RoPE-equipped DiTs, rooted in RoPE’s long-term decay prior [ 20 ]. Furthermore, as denoising progresses from Gaussian noise to semantic generation, this decay steepens (i.e., ρk decreases). This comprehensively justifies Assumption 2. 
+
+## B.2 Ablation Study 
+
+B.2.1 Ablation Study on Sparsity 
+
+We perform an ablation study on sparsity. Since the threshold scheme of VMoBA cannot precisely control the exact sparsity ratio, all sparsity values in the experiments are approximate results with an error within 1%. Results in Table 3 show that increasing sparsity from 85% to 90% induces nearly no quality loss, while a further rise from 90% to 95% causes obvious performance degradation. The sparsity of 90% is therefore a favorable sweet spot. Table 3: Ablation Study on Sparsity.         
+
+> Sparsity sc bc ms aq iq 80% 0.9607 0.9502 0.9899 0.6075 0.6475 90% 0.9510 0.9487 0.9898 0.6071 0.6440 95% 0.9387 0.9127 0.9763 0.5870 0.6193
+
+B.2.2 Ablation Study on Low-Rank Dimension 
+
+Figure 7 illustrates the Stage-I alignment dynamics across varying low-rank dimensions on Wan2.1-T2V-1.3B. While all configurations converge reliably, aggressively compressed bottlenecks (e.g., r = 8 ) exhibit higher loss floors and optimization variance, indicating constrained representational capacity. Conversely, expanding the bottleneck dimension monotonically improves approximation fidelity and convergence stability. Specifically, 
+
+r = 64 achieves the lowest MSE loss and optimal optimization behavior, demonstrating a superior capacity to decode the continuous background manifold . Consequently, we adopt r = 64 as our default structural prior, balancing extreme parameter efficiency with high-fidelity context restoration. 
+
+B.2.3 Ablation Study on Activation Function 
+
+We further conduct an ablation study on the activation function used in the low-rank compensator. In this experiment, we keep the sparse branch fixed as VMoBA and only replace the non-linear activation in the 32 Figure 6: Evolution of QK Spectral Concentration Driven by 3D RoPE. We evaluate three pre-trained DiTs (Wan2.1-1.3B, Wan2.1-14B, and HunyuanVideo-13B) using 3 representative text prompts at 
+
+480 × 832 resolution, 49 frames. The X-axis is the RoPE dimension index m ∈ [1 , d k/2] . We display the maximum interaction magnitude (approximated via the 99 th percentile to filter sparse outliers and evaluate the background) and cumulative tail energy on a Log-Y scale . The consistent downward linear trends across models validate the structural exponential decay formalized in Assumption 2. 33 Figure 7: Training MSE loss under different low-rank dimensions. low-rank compensator, so that the effect of different activation choices can be isolated. As shown in Table 4, Sigmoid achieves the best overall performance among the tested activation functions. It obtains the highest scores on SC, BC, MS, and AQ, while maintaining a competitive IQ score. This indicates that a bounded and smooth activation is more suitable for the low-rank compensator, helping it provide stable complementary information to the sparse attention branch. Table 4: Comparison of Activation Functions in the low-rank compensator 
+
+Activation Function SC ↑ BC ↑ MS ↑ AQ ↑ IQ ↑
+
+ReLU 0.9353 0.9346 0.9871 0.5689 0.6458 GELU 0.9371 0.9395 0.9884 0.5906 0.6291 Tanh 0.9433 0.9414 0.9854 0.5421 0.6465 Sigmoid 0.9510 0.9487 0.9898 0.6071 0.6440 
+
+B.2.4 Ablation Study on Training Schedule Robustness 
+
+To validate the stability of our two-stage post-training pipeline, we analyze the loss dynamics under varying Stage-I alignment durations (ranging from 400 to 1000 steps). As illustrated in Figures 8 and 9, the Stage-I MSE loss reliably converges to a shared minimum regardless of the scheduled length, ensuring sufficient structural alignment of the newly introduced low-rank compensator . Furthermore, upon transitioning to Stage-II full fine-tuning, the optimization trajectories swiftly stabilize and converge to comparable optimal levels across all settings. These observations conclusively demonstrate that our decoupled training strategy is robust and insensitive to the specific transition threshold .
+
+## B.3 Sparsity-Aligned Evaluation of SVG2 
+
+We perform a sparsity-aligned evaluation on SVG2. Since the original implementations of SVG2 cannot precisely control the exact sparsity ratio, all reported results in this section are approximate values with a sparsity error no larger than 1%. To further demonstrate the superiority of our RoPeSLR, the evaluation is conducted by aligning the sparsity of SVG2 to 90%, consistent with the sparsity setting of RoPeSLR. Results in Table 5 show that even after sparsity alignment, our RoPeSLR still comprehensively outperforms SVG2 in core VBench quality metrics and efficiency, further validating the superiority of our proposed method. 34 Figure 8: Stage-I training loss on Wan2.1-T2V-1.3B under different stage-I lengths (400, 600, 800, and 1000 steps). Table 5: Sparsity-Aligned Evaluation of SVG2. 
+
+Method Sparsity SC MS BC IQ AQ SVG2 90% 0.8980 0.9701 0.9265 0.5877 0.4988 RoPeSLR (Ours) 90% 0.9510 0.9898 0.9487 0.6440 0.6071 
+
+## B.4 Quantitative results of Wan2.1-T2V-14B 
+
+Table 6 reports the quantitative results on the Wan2.1-T2V-14B model. We conduct inference using 81-frame videos at a resolution of 720 × 1280 , and evaluate both generation quality and attention FLOPs under the same sampling setting. Compared with Wan2.1-T2V-1.3B, this setting further examines whether RoPeSLR can scale to a substantially larger video generation backbone and higher-resolution generation scenario. The quantitative results show that RoPeSLR achieves a favorable quality–efficiency trade-off on Wan2.1-T2V-14B. Compared with existing sparse baselines, RoPeSLR is expected to better preserve generation quality while maintaining high computational efficiency. This suggests that the low-rank compensator effectively restores global context under extreme sparsity, enabling RoPeSLR to retain strong visual fidelity and semantic consistency on large-scale video generation models. Table 6: Quantitative comparison on Wan2.1-14B benchmark.                                             
+
+> Model Method VBench Quality Efficiency SC ↑MS ↑BC ↑IQ ↑AQ ↑FLOPs ↓Sparsity
+> Wan2.1-14B Full 0.9697 0.9884 0.9668 0.7006 0.6246 4682.02 TFLOPs 0% SVG2 0.9511 0.9833 0.9548 0.5978 0.5932 1655.77 TFLOPs 64% VSA 0.8595 0.9849 0.9470 0.4959 0.5954 468.60 TFLOPs 90% SLA 0.9479 0.9860 0.9489 0.6468 0.6021 480.09 TFLOPs 90%
+> RoPeSLR (Ours) 0.9615 0.9868 0.9546 0.6624 0.6139 472.19 TFLOPs 90%
+
+## B.5 Efficiency Analysis 
+
+B.5.1 Efficiency Analysis of the Low-Rank compensator 
+
+We analyze the computational overhead of different approximation methods for the lowrank compensator (bottom-90%), comparing our low-rank auxiliary compensator against two baseline implementations: full softmax attention and linear attention. 35 Figure 9: Overall training loss on Wan2.1-T2V-1.3B under different stage-I lengths (400, 600, 800, and 1000 steps). The loss increase near the transition point is caused by the change of training objective between stage I and stage II. 
+
+Figure 10: FLOPs and latency comparison of attention approximation methods for the non-top-k branch on Wan2.1-1.3B. (a) FLOPs-latency trade-off on a log-log scale; (b) absolute inference latency per forward pass. As shown in Figure 10, RoPESLR delivers the best overall efficiency among the three methods. Compared to full softmax attention, it reduces FLOPs by 256 × and end-to-end inference latency by 12 ×. It also outperforms linear attention, delivering 1.25 × faster inference with lower computational overhead. 
+
+B.5.2 Efficiency Analysis of Latency for Long-Sequence Video Tokens 
+
+We further evaluate the latency of RoPeSLR on long-sequence video generation using HunyuanVideo-13B. The inference is conducted with 129 frames at 720 × 1280 resolution, corresponding to 33 × 45 × 80 = 118 ,800 
+
+video tokens after VAE compression and patchification. We compare the end-to-end inference latency of the full-attention baseline and RoPeSLR under the same inference setting, as shown in Table 7. 
+
+## B.6 Sparse and Low-Rank Characteristics of LLM Attention 
+
+We analyze the causal self-attention weight matrices from Qwen2-7B-Instruct (28 GQA layers, 28 query heads per layer). For each row of the attention matrix, we retain the entries with the top 90% cumulative energy 36 Table 7: End-to-end latency comparison on HunyuanVideo-13B with 118,800 long-sequence video tokens. 
+
+Method Latency (s) ↓ Speedup ↑
+
+Full Attention 3354s –RoPeSLR (Ours) 1482s 2.26 ×
+
+and exclude them, then analyze the remaining low-energy residual part. Rows with fewer than 128 visible keys are excluded, resulting in 784 valid (layer, head) combinations. As illustrated in Figure 11, the left energy concentration curve presents a steeper rising trend at the initial segment compared with video diffusion Transformers, which is mainly attributed to the inherent attention sink effect in LLMs. The right subfigure presents the stable rank distribution of low-energy residuals, with a median stable rank around 40. Compared with video DiT, the substantially higher stable rank of LLM residuals indicates that LLMs do not exhibit the prominent sparse and low-rank structural patterns observed in video diffusion models (see Figure 2). 
+
+Figure 11: Analysis of causal self-attention matrices from Qwen2-7B-Instruct under a 90% energy threshold over 784 valid combinations. 
+
+## B.7 Visualization of Learned Gate Distributions 
+
+We visualize the gate activation intensity across denoising timesteps to examine whether the gating mechanism captures content-dependent spatial structure. As shown in Figure 12, we present the gate activation maps for five representative layers at ten uniformly sampled denoising timesteps, alongside a reference frame from the generated video. Two consistent patterns can be observed. 
+
+Spatial structure in gate activation aligns with scene content. The gate activation maps are not spatially uniform but exhibit structural contours that correspond to the scene layout visible in the reference frame: the airplane body, the sky–ground boundary, and the grass–runway edge are all visibly delineated in the gate intensity maps across all five layers. This indicates that the gate responds to the semantic content of the video rather than assigning uniform weight across spatial positions. 
+
+Spatial structure becomes more pronounced in later denoising steps. In early denoising steps (t ≤ 11 ), gate activation is relatively uniform across spatial positions. As denoising progresses ( t ≥ 22 ), the spatial contours become increasingly distinct, with higher gate activation concentrated around semantically meaningful regions such as the airplane body and scene boundaries. This evolution suggests that the gate progressively adapts to the emerging content structure as the video is refined through the denoising process. 
+
+## B.8 Mechanistic Interpretability via Gram Spectral Analysis 
+
+To mechanistically validate the algebraic insights in Remark 5 , we perform Singular Value Decomposition (SVD) on the unnormalized sequence-level outputs of the rank-64 compensator, Olr ∈ RL×dh . By factoring 
+
+Olr = U ΣV ⊤, we extract the singular values σi (which quantify the energy or variance captured by each mode) and the left singular vectors ui ∈ RL (which represent the spatial principal components). Reshaping 
+
+ui back to the native spatiotemporal grid allows us to directly visualize the learned coordinate mappings. 37 Reference frame 
+
+Figure 12: Gate activation intensity maps of our RoPeSLR on Wan2.1-T2V-1.3B (480P), shown for five representative layers (L0, L4, L13, L23, L27) alongside a reference frame from the generated video (prompt: 
+
+“an airplane taking off ” ). Each row corresponds to one transformer layer; each column is a uniformly sampled denoising timestep ( t=0 to t=49 , 10 steps). Each cell shows the mean gate value over all attention heads, averaged over T =21 latent frames and projected onto the 30 ×52 spatial latent grid. Each row uses an independent color scale. 
+
+Eigenspectrum Analysis: Spectral Collapse and Structural Alignment. The normalized eigenspec-trum ( Figure 13, Top ) plots the energy distribution across the principal components. Without 3D positional priors, the compensator suffers from severe spectral collapse : its spectrum degenerates into a flat noise floor, demonstrating an inability to express meaningful spatial variations. Conversely, the explicit injection of 3D PE causally restores this spatial variance. The resulting spectrum tracks the Full Attention oracle, exhibiting a exponential decay. Notably, the sharp energy drop near the truncation index ( r = 64 ) provides strong empirical validation for the rank choice of RoPeSLR. 
+
+Spatial Mode Analysis: Pure Decoupling and Low-pass Filtering. Visualizing the reshaped dominant spatial modes ( Figure 13, Bottom ) exposes the underlying manifold decoupling mechanism. The principal components of exact Full Attention are visibly entangled with high-frequency, localized semantic spikes (e.g., sharp object outlines). In stark contrast, our 3D PE-equipped compensator completely filters out these local semantics, synthesizing highly pure, low-frequency geometric standing waves. This provides definitive evidence that the low-rank compensator acts as a spatial low-pass filter . It flawlessly decodes the smooth background continuum, explicitly leaving all high-frequency semantic routing to the complementary sparse branch. 
+
+## B.9 Compatibility with Step-Distilled Models 
+
+Our method is orthogonal to various step distillation techniques and can be directly deployed on distilled models to achieve compounded acceleration. Step distillation reduces the number of diffusion denoising steps, while our method significantly lowers the attention computation cost per step. 
+
+Why Sparse Routing Remains Effective. RoPeSLR leverages the inherent spatiotemporal sparsity of natural video signals through chunk-based sparse routing. Due to the strong redundancy across consecutive video frames, attention energy naturally concentrates in local spatiotemporal neighborhoods. This structural property is determined solely by input data characteristics, rather than the number of denoising steps. Step-distilled models require a larger denoising jump in each inference step, which further concentrates attention energy onto informative regions. This improves the efficiency of sparse selection, requiring fewer chunks to reach the predefined energy threshold τ .
+
+Transferability of the Low-Rank Branch. The low-rank compensator of RoPeSLR is formulated as 
+
+σ(σ( ˆXW A)WB ), which learns a compact mapping within the hidden representation space. Step distillation generally preserves the original model architecture, including hidden dimension, number of attention heads, and per-head dimension. Since the representation space remains unchanged, the learned low-rank approximation stays valid. 38 Figure 13: Mechanistic Interpretability via Gram Spectral Analysis. Methodology: Evaluated on Wan2.1-T2V-1.3B (Layer 15, Denoising Step 10) at 480 × 832 resolution. SVD is applied to the pre-activation output Olr over a latent grid of 18 × 30 × 52 (L = 28 , 080 ). Analysis: (Top) The eigenspectrum (energy distribution) shows that 3D PE induces an exponential decay aligning with Full Attention, preventing the spectral collapse seen in the no-PE baseline. The cliff-drop near r = 64 confirms the theoretical rank bounds. 
+
+(Bottom) Heatmaps of the top-4 spatial principal components ( u1 to u4) at center frame t = 9 . Unlike the noisy, high-frequency semantics entangled in Full Attention, our compensator generates clean geometric standing waves, validating its role as a spatial low-pass filter. 
+
+Architectural Compatibility Analysis. A key characteristic of step distillation is that it generally maintains the core architecture of the original model. It mainly optimizes the denoising step count without modifying the fundamental model structure. Specifically, step distillation does not alter the self-attention configuration, including network depth, number of attention heads, per-head dimension dhead , and the projection dimensions of Q/K/V, thus preserving the integrity and consistency of the self-attention pathway. Furthermore, RoPeSLR can also be fine-tuned on distilled models to achieve better performance. 39 C Algorithm and Hyperparameters 
+
+Algorithm 1 RoPeSLR Attention Mechanism 
+
+Require: Input sequence X ∈ RL×dmodel , 3D coordinates (t, x, y ), energy threshold τ , low-rank dimension r,and learnable parameters Θ.
+
+Ensure: Refined representation O ∈ RL×dmodel .
+
+// Step 1: Positional Context Recovery  
+
+> 1:
+
+Construct 3D Absolute PE using trigonometric bases: PE 3D = f (t, x, y ); 
+
+> 2:
+
+Inject geometric priors: ˆX = X + α ⊙ PE 3D; ▷ Eq. 4.2 in text 
+
+// Step 2: Dual-Branch Routing (Per Head h) 
+
+> 3:
+
+for each attention head h ∈ { 1, . . . , H } do  
+
+> 4:
+
+Sparse Branch (Energy-Driven):  
+
+> 5:
+
+Extract localized high-energy spikes guided by τ : O(h) 
+
+> sparse
+
+= SparseAttn (X, N (p); τ ); ▷ via VMoBA[26]  
+
+> 6:
+
+Low-Rank Compensator:  
+
+> 7:
+
+Perform implicit context decoding: O(h) 
+
+> lowrank
+
+= σ
+
+
+
+σ( ˆXW (h) 
+
+> A
+
+)W (h)
+
+> B
+
+
+
+; ▷ W (h) 
+
+> A
+
+∈ Rdhead ×r ,
+
+W (h) 
+
+> B
+
+∈ Rr×dhead  
+
+> 8:
+
+end for 
+
+// Step 3: Distribution Alignment and Gated Fusion  
+
+> 9:
+
+Stabilize outputs: ˜Osparse = RMSNorm (Osparse ), ˜Olowrank = RMSNorm (Olowrank ); 
+
+> 10:
+
+Compute adaptive gating: g = σ( ˆXW g + bg ); ▷ Token-wise gate 4.4  
+
+> 11:
+
+Final Synthesis: O = ˜Osparse + g ⊙ ˜Olowrank ; ▷ Eq. 4.4 in text  
+
+> 12:
+
+return O
+
+Table 8 lists the main hyperparameters used for fine-tuning. Table 8: Training and Model Hyperparameters for our RoPeSLR on Wan2.1-T2V-1.B 
+
+Hyperparameter Value 
+
+Optimizer AdamW 
+
+β1, β2 0.9, 0.99 Weight decay 10 −5
+
+Max gradient norm 1.0 Precision BF16 Low-rank dimension r 64 
+
+Two-Stage Training Schedule 
+
+Stage I loss MSE Stage II loss Flow Matching Loss Stage I LR schedule Constant Stage II LR schedule Cosine 
+
+Learning Rates (Stage I / Stage II) 
+
+Backbone — / 10 −5
+
+Low-rank projections (proj_a/b) 3 × 10 −4 / 10 −4
+
+Gate projection 3 × 10 −4 / 10 −4
+
+Gate bias 3 × 10 −4 / 10 −4
+
+PE scale 3 × 10 −4 / 10 −4
+
+40 D Computational Complexity Analysis 
+
+To evaluate the efficiency of RoPeSLR, we provide a detailed theoretical analysis of the floating-point operations (FLOPs) required during the forward pass. Based on our network implementation, we prove two core conclusions: 
+
+• Under identical sparsity, RoPeSLR is strictly more computationally efficient than existing sparse-plus-linear attention frameworks; 
+
+• Compared to pure sparse attention, the extra computational overhead introduced by our low-rank compen-sator is asymptotically negligible for long sequences. 
+
+## D.1 Notation and Basic Definitions 
+
+Let us define the architectural dimensions and hyperparameters as follows: 
+
+• B: Batch size. 
+
+• L: Spatiotemporal sequence length. 
+
+• H: Number of attention heads. 
+
+• dh: Feature dimension per head, yielding a total hidden dimension of dmodel = H × dh.
+
+• S: Sparsity ratio of the sparse branch (the proportion of masked tokens). The active computation ratio is 
+
+(1 − S).
+
+• r: The uniform low-rank bottleneck dimension applied across all attention heads. Note: For standard matrix multiplication between X ∈ RM ×N and Y ∈ RN ×P , the required FLOPs are 
+
+2M N P . Memory-bound operations (e.g., element-wise addition for 3D PE injection, RMSNorm, and Sigmoid activations) scale linearly with the tensor size O(BHLd h) and are structurally negligible compared to the dominant multiply-accumulate (MAC) FLOPs. 
+
+## D.2 Complexity Anatomy of RoPeSLR 
+
+The attention computation within a single RoPeSLR transformer block can be decoupled into three primary components: 
+
+Adaptive Sparse Branch. For block-sparse attention (e.g., VMoBA) with a sparsity ratio of S, each query token attends to L(1 − S) key tokens. The computation involves the QK ⊤ similarity and the subsequent Softmax (·)V aggregation. The total FLOPs are: 
+
+Csparse =
+
+> H
+
+X
+
+> h=1
+
+(2 · B · L · [L(1 − S)] · dh + 2 · B · L · [L(1 − S)] · dh) = 4 BHL 2(1 − S)dh
+
+Head-wise Low-Rank Compensator. Unlike standard linear attention, which computes a global sequence-level K⊤V state explicitly, we parameterize the global context implicitly via a head-wise two-layer MLP: 
+
+ˆX(h) → W (h) 
+
+> A
+
+→ σ → W (h) 
+
+> B
+
+→ σ. For the input slice ˆX(h) ∈ RB×L×dh corresponding to head h:
+
+• Down-projection ˆX(h)W (h) 
+
+> A
+
+, where W (h) 
+
+> A
+
+∈ Rdh×r . FLOPs: 2BLd hr.
+
+• Up-projection σ(·)W (h) 
+
+> B
+
+, where W (h) 
+
+> B
+
+∈ Rr×dh . FLOPs: 2BLrd h.Summing over all H heads, the computational cost of the uniform low-rank compensator is: 
+
+Clowrank =
+
+> H
+
+X
+
+> h=1
+
+(2 BLd hr + 2 BLrd h) = 4 BHLd hr
+
+Gating and Fusion. This includes the gating projection ( Wg ∈ Rdmodel ×1) and the final gated convex combination: 41 • Gating projection ˆXW g : 2BLd model · 1 = 2 BHLd h FLOPs. 
+
+Cfusion = 2 BHLd h
+
+Thus, the total MAC complexity of RoPeSLR is: 
+
+CRoPeSLR = 4 BHL 2(1 − S)dh + 4 BHLd hr + 2 BHLd h
+
+## D.3 Theoretical Superiority over Sparse-Linear Frameworks 
+
+State-of-the-art fusion methods (e.g., SLA) adopt a "Sparse + Linear Attention" paradigm. The linear attention branch utilizes a feature map ϕ(·) : Rdh → Rdh and computes the attention via matrix associativity: 1. Global Context Aggregation. KV ctx = ϕ(K)⊤V . Here, ϕ(K), V ∈ RL×dh . The FLOPs are 2BHLd 2
+
+> h
+
+.2. Context Retrieval. Olin = ϕ(Q)KV ctx . Here, ϕ(Q) ∈ RL×dh and KV ctx ∈ Rdh×dh . The FLOPs are 
+
+2BHLd 2
+
+> h
+
+.Therefore, the baseline linear attention branch fundamentally imposes an O(d2
+
+> h
+
+) bottleneck per token: 
+
+Clinear_branch = 4 BHLd 2
+
+> h
+
+Assuming identical sparse branches and gating mechanisms, the efficiency disparity between RoPeSLR and standard linear hybrids lies entirely in the global context approximation branches. The ratio of their computational costs is exactly: Clowrank 
+
+Clinear_branch 
+
+= 4BHLd hr
+
+4BHLd 2
+
+> h
+
+= rdh
+
+Conclusion 1. In modern video DiTs, the head dimension dh is typically large (e.g., dh = 128 ). As established in Theorem 3, the exponential spectral decay of 3D RoPE yields an extremely low stable rank for the background context. This structural prior allows us to employ a highly compact, uniform bottleneck rank r ≪ dh (e.g., r = 64 ) across all heads without sacrificing representation capacity. Consequently, 
+
+Clowrank ≪ C linear_branch . This theoretically proves that RoPeSLR is structurally more compute-efficient than existing sparse-plus-linear architectures at identical sparsity levels .
+
+## D.4 Negligible Overhead Compared to Pure Sparse Attention 
+
+To address potential concerns regarding the computational overhead introduced by our low-rank compensator, we analyze the extra overhead ratio η relative to the pure sparse attention baseline: 
+
+η = Clowrank + Cfusion 
+
+Csparse 
+
+= 4BHLd hr + 2 BHLd h
+
+4BHL 2(1 − S)dh
+
+= 4r + 2 4L(1 − S) = r + 0 .5
+
+L(1 − S)
+
+Conclusion 2. In high-fidelity video generation, scaling up spatiotemporal resolution inherently leads to a cubic explosion in sequence length ( L ≥ 10 4). Even at extreme sparsity settings (e.g., S = 0 .90 ), the number of active tokens L(1 − S) remains firmly in the thousands. Crucially, whether the uniform rank 
+
+r scales strictly according to our logarithmic theoretical bound ( r = O( log L)) or is set as a fixed small hyperparameter ( r = O(1) ), its growth is overwhelmingly eclipsed by the linear denominator L. Taking the asymptotic limit as sequence length scales: 
+
+lim  
+
+> L→∞
+
+η = 0 
+
+This proves that as the sequence length scales towards ultra-long videos, the additional computa-tional overhead of the RoPeSLR compensator strictly converges to zero . In empirical practice, this overhead accounts for less than 5% of the total computation. Therefore, RoPeSLR successfully restores the critical global distance decay of 3D RoPE while perfectly preserving the extreme acceleration benefits of pure sparse attention. 42 E Broader Impacts 
+
+This work introduces RoPeSLR, an efficient attention framework for Diffusion Transformers (DiTs). By significantly reducing the computational overhead and memory footprint of high-fidelity video generation, our method contributes to the development of "Green AI" by lowering energy consumption and carbon emissions associated with large-scale video inference. Furthermore, it democratizes access to most widely used video generation models, enabling researchers and practitioners with limited computational resources to deploy and build upon these powerful generative tools. 43

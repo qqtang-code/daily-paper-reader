@@ -1,0 +1,451 @@
+Title: Augmenting Attention with Exponentially Decaying Memory Improves Query-Aware KV Sparsity
+
+URL Source: https://arxiv.org/pdf/2605.28640v1
+
+Published Time: Thu, 28 May 2026 01:31:23 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# Augmenting Attention with Exponentially Decaying Memory Improves Query-Aware KV Sparsity 
+
+Xiuying Wei 
+
+EPFL, CLAIRE Lausanne, Switzerland 
+
+xiuying.wei@epfl.ch 
+
+Caglar Gulcehre 
+
+EPFL, CLAIRE Lausanne, Switzerland 
+
+caglar.gulcehre@epfl.ch 
+
+Abstract 
+
+Efficient inference is critical for long-context language models, where attention computation and KV-cache access dominate the cost. Re-cent work, RAT+ (Wei and Gulcehre, 2026), introduces a recurrence-augmented attention backbone that enables flexible dilated attention at inference time. In this paper, we investigate whether this exponentially decaying memory can also improve existing query-aware sparse inference methods. Using representative meth-ods including Quest, MoBA, and SnapKV, we show that RAT+ consistently improves accu-racy over standard attention across sparse bud-gets on eight needle-in-a-haystack tasks. We validate these gains both on the released check-points from the RAT+ paper and on OLMo2-7B, which we continue pretraining with the added memory module for 10B tokens. Finally, we propose two hypotheses explaining why this memory module benefits query-aware sparse inference and design targeted experiments to support them. 
+
+1 Introduction 
+
+Efficiency has become a major concern for atten-tion modules (Vaswani, 2017), whose computation and memory costs scale quadratically with context length. Many works study sparse attention at infer-ence time, ranging from local patterns (Xiao et al., 2023) to dynamic query-aware patterns. Instead of attending to all tokens, some methods select critical blocks of tokens for lightweight computation, mo-tivated by the sparsity of attention maps (Lu et al., 2025; Tang et al., 2024; Lin et al., 2025; Xiao et al., 2024). Others reduce the KV cache by identifying critical tokens for each input and retaining them for subsequent decoding (Zhang et al., 2023; Li et al., 2024; Feng et al., 2024). While effective, these methods still show clear accuracy degradation un-der challenging settings, such as 98% sparsity for Quest (Tang et al., 2024; Sun et al., 2025), over 75% KV cache storage reduction for SnapKV (Li et al., 2024; Feng et al., 2024), and evaluations on harder tasks. RAT+ (Wei and Gulcehre, 2026) introduces a recurrence-augmented attention backbone that ap-plies a exponentially decaying memory over KV states, enabling flexible-budget dilated attention at inference time. While RAT+ focuses on dilated in-ference, we investigate whether the same architec-ture can also improve existing query-aware sparsity methods with dynamic patterns. We evaluate three representative query-aware sparse inference methods from different efficiency categories: Quest (Tang et al., 2024) for re-ducing decoding-time FLOPs, MoBA (Lu et al., 2025) for reducing prefilling-time FLOPs, and SnapKV (Li et al., 2024) for reducing KV-cache storage. On needle-in-a-haystack (NIAH) tasks from the RULER benchmark (Hsieh et al., 2024), these methods achieve substantially higher accu-racy when applied to the RAT+ backbone rather than to the standard attention backbone. We vali-date this finding both on the released RAT+ check-points (Wei and Gulcehre, 2026) and on OLMo2-7B (OLMo et al., 2024), which we continue pre-training with the additional memory module for only 10B tokens. For instance, SnapKV improves by 34.11 and 40.03 points on average across eight tasks under 1/4 and 1/8 budgets, respectively; on OLMo2-7B, Quest improves from 68.0 to 98.6 on MK-2 under a 1/16 budget, while MoBA improves from 53.6 to 94.8 on MK-3. Finally, we propose two hypotheses to explain these gains: exponentially decaying memory im-proves critical-token selection accuracy, and it pro-vides an additional information path for selected candidates, thereby preserving more answer-related information. We carefully design experiments to demonstrate both hypotheses. Overall, we hope our work sheds new light on efficient inference: besides focusing solely on improving downstream inference methods, we can also design upstream 1
+
+> arXiv:2605.28640v1 [cs.LG] 27 May 2026
+
+architectures that are inherently more capable with sparse inference. 
+
+2 Method 
+
+2.1 Exponentially decaying memory 
+
+RAT+ (Wei and Gulcehre, 2026) augments stan-dard attention with a lightweight recurrence and uses additional optimization techniques to obtain an effective recurrence length of 64. We view this recurrence as an exponentially decaying memory. At each time step t, the value and key states are updated as 
+
+˜vt = gt ⊙ ˜vt−1 + (1 − gt) ⊙ vt,
+
+˜kt = gt ⊙ ˜kt−1 + (1 − gt) ⊙ kt, (1) where gt is an input-dependent gate. By controlling the effective memory length to 64, RAT+ allows this lightweight module to operate stably. It intro-duces only O(1) additional computation and stor-age per token, and can be implemented efficiently. While this was originally introduced to support flexible dilated attention at inference time, we use its dense version as a memory-augmented back-bone. Given a sparse inference method S, we com-pare two instantiations: applying S to the original KV states from a standard attention backbone, or to the memory-augmented states from RAT+: 
+
+S(K, V ) vs. S( ˜K, ˜V ). (2) We instantiate S with three representative sparse inference variants below. 
+
+2.2 Sparse Inference Instantiations 
+
+We formulate query-aware sparse inference as a two-stage procedure: selecting critical KV candi-dates and computing attention over the selected states. Given the augmented KV states ( ˜K, ˜V )
+
+and a selection query qsel , the selected index set is 
+
+I = TopK i s
+
+
+
+qsel , ρ ( ˜Ki)
+
+
+
+, (3) where s is a scoring function and ρ( ˜Ki) is the representation of the candidate i. Attention is then computed only over the selected states: 
+
+yt = f
+
+
+
+qt ˜K⊤I
+
+ ˜VI . (4) We consider three representative methods, as shown in Table 1, each targeting a different aspect of inference efficiency. Quest for decoding and             
+
+> Table 1: Our evaluated sparse patterns with RAT+.
+> Method Unit FLOPs reduction KV storage reduction
+> Quest Block Decode No MoBA Block Prefill No SnapKV Token Decode Yes
+
+MoBA for prefilling operate at the block level, us-ing block representatives as ρ and the current query 
+
+qt as qsel . SnapKV instantiates the candidates as individual KV tokens and uses the last prefilling tokens as an observation window for qsel . By dis-carding unselected entries, SnapKV reduces both KV cache size and FLOPs in subsequent decoding. 
+
+2.3 Analyses 
+
+We analyze the effect of this memory module from both candidate selection and sparse computation. 
+
+H1: Exponentially decaying memory improves critical-token selection. This hypothesis corre-sponds to the selection stage in Eq. (3). We hypoth-esize that memory-augmented states increase the likelihood that answer-relevant KV candidates are included in the selected blocks or tokens. To test this, we use a strict head-level hit rate aligned with exact-match retrieval. Let gt denote the golden an-swer position required at decoding step t, and let 
+
+Ih,t denote the candidates selected by head h at that step. We define 
+
+Hit h = 1 [∀t ∈ { 1, . . . , T }, g t ∈ I h,t ] ,
+
+where a head receives a score of 1 only if its se-lected candidates contain the required golden an-swer position at every decoding step. 
+
+H2: Exponentially decaying memory serves as an additional information path for selected candidates. This hypothesis corresponds to the sparse computation stage in Eq. (4). We hypoth-esize that memory-augmented states carry more answer-relevant information, even when the se-lected blocks or tokens miss the exact answer posi-tions. This is motivated by Dai et al. (2019), where recurrence propagates information across distant positions. To isolate this effect from selection qual-ity, we replace the original selector in Eq. (3) with a random selector: 
+
+Irand ∼ Unif ( {I ⊆ { 1, . . . , M } : |I| = K}) ,
+
+where M is the number of available candidates and 
+
+K is the original sparsity budget. We repeat each randomized evaluation with five seeds and report the averaged performance. 2Accuracy   
+
+> KV -cache budget Figure 1: Performance on eight NIAH tasks of two types of checkpoint. Due to space limits, the three NIAH-Single tasks and additional challenging settings are reported in Table 3 and Table 4. Top row : evaluation on the 7B checkpoints from Wei and Gulcehre (2026), where standard attention and RAT+ are pretrained from scratch on 100B tokens. Bottom row : evaluation on OLMo2-7B (OLMo et al., 2024), which is pretrained on trillions of tokens; the corresponding RAT+ backbone is obtained by 10B-token continued pretraining with the additional exponentially decaying memory module. The KV budget denotes per-query KV access; Quest and MoBA still store the full KV cache. Some curves overlap due to near-perfect accuracy.
+
+3 Experiments 
+
+3.1 Setup 
+
+We consider two model settings: (1) the 7B check-points released by Wei and Gulcehre (2026), where both standard attention and RAT+ are pretrained from scratch on 100B tokens; and (2) OLMo2-7B (OLMo et al., 2024), a standard-attention model pretrained on trillions of tokens, for which we ob-tain a RAT+ counterpart by continuing pretraining for 10B tokens with the additional memory mod-ule. Note that the exponentially decaying memory receives only limited training compared with the original model parameters due to our resource lim-its; our later used supervised fine-tuning can en-able fairer comparisons. We apply Quest, MoBA, and SnapKV following Table 1 to all layers under 
+
+1/4, 1/8, and 1/16 sparse budgets, which spec-ify the fraction of activated KV entries per query and approximately correspond to FLOPs reduction. Evaluation is conducted on the eight needle-in-a-haystack tasks from RULER (Hsieh et al., 2024), which require models to retrieve inserted numbers or UUID-like strings from 4K context window with distractors. We apply lightweight one-stage su-pervised fine-tuning before evaluation to reduce prompt-following sensitivity and focus on architec-tural differences, especially for the pretrained-only checkpoints. Details are provided in Subsec. A.1. 
+
+3.2 Main results 
+
+Fig. 1 show that RAT+ consistently outperforms standard attention in sparse inference methods and KV budgets. This trend not only holds for check-points in Wei and Gulcehre (2026), but also the OLMo2-7B, for which we additionally train the exponentially decaying memory with 10B tokens. This suggests that the benefit also transfers to exist-ing industry-scale pretrained models. In the 1/16 
+
+budget, RAT+ improves SnapKV in S-1 from 39.2 to 84.2 in Table 3. For Quest, standard attention is already near-perfect on simple NIAH-Single tasks, but RAT+ substantially improves harder multi-key settings, e.g., MK-2 from 76.4 to 99.4 and MK-3 from 68.0 to 98.6 on the OLMo checkpoints. We further evaluate more challenging settings for Quest and MoBA in Table 3, Table 4 and observe stronger gains. 
+
+3.3 Analyses H1 results. Since NIAH tasks are retrieval-heavy, the final answer often depends on a few retrieval heads (Wu et al., 2024). We therefore rank heads by hit rate and compare the top heads between standard attention and RAT+. For SnapKV, the candidate set is fixed after prefilling, so the hit 3Hit Rate 
+
+> Top -50 heads
+
+Figure 2: H1: Head-level hit-rate distributions for the top-50 heads ranked by hit rate. We mainly analyze Quest ( top row ) and SnapKV ( bottom row ) in H1, be-cause their token selection during decoding is more di-rectly aligned with individual generated answer tokens. Results are reported on the released 7B checkpoints from Wei and Gulcehre (2026). Additional results are provided in Fig. 4, Fig. 3. 
+
+rate directly measures whether answer-relevant to-kens are retained in the reduced KV cache. For Quest, which selects blocks at each decoding step, the hit rate reflects the final result of step-wise dy-namic selection. MoBA performs selection only during prefilling, so its selected blocks are less di-rectly aligned with each generated answer token; we therefore focus the H1 analysis on Quest and SnapKV. As shown in Fig. 2, RAT+ consistently yields higher hit rates, especially in settings with larger accuracy gains. 
+
+H2 results. Table 2 supports our second hypothe-sis. We replace the designed selector in Eq. (3) with a random selector and evaluate all methods with the budget of 1/4. RAT+ consistently outperforms standard attention, e.g., improving Quest from 53.4 to 84.9 on MK-1 and from 39.6 to 74.4 on MV. Since the selected candidates are random, these gains cannot be explained by more accurate selec-tion. Instead, they suggest that memory-augmented selected states carry more answer-relevant informa-tion, leading to higher accuracy and closing much of the gap to the original selector even when the candidate set is imperfect. 
+
+4 Related work 
+
+Motivated by the sparsity of attention maps, many works study sparse attention for efficient infer-
+
+Table 2: Random selector performance with 1/4 budgets reported on mean ± std with five seeds on OLMo2-7B checkpoints. See Table 5 for full performance.                                                                  
+
+> Backbone MK-1 MK-2 MK-3 MV MQ Quest
+> Attention 53.4 ±0.67 63.3 ±2.42 0.1 ±0.10 39.6 ±0.61 56.9 ±1.20 RAT+ 84.9 ±0.73 91.5 ±0.90 10.1 ±1.16 74.4 ±0.77 79.9 ±0.31 MoBA
+> Attention 73.6 ±1.15 77.4 ±2.97 65.1 ±1.42 89.2 ±0.65 94.7 ±0.38 RAT+ 94.8 ±0.85 97.1 ±0.81 85.7 ±0.64 92.3 ±0.32 98.9 ±0.21
+
+ence. Static methods use fixed patterns such as local-window attention (Xiao et al., 2023), while recent query-aware methods dynamically select im-portant tokens or blocks for each query or sam-ple. Representative examples include Quest (Tang et al., 2024), which uses min/max block statis-tics, MoBA (Lu et al., 2025), which uses mean-pooled block representations, and Twilight (Lin et al., 2025), which replaces selection of the top-k
+
+with selection of the top-p. These methods reduce per-query computation and KV access, but usually keep the full KV cache. A separate line of work reduces the KV cache storage by retaining only important entries for later decoding. H2O (Zhang et al., 2023) identifies heavy-hitter tokens, while SnapKV (Li et al., 2024) maintains important KV entries based on attention scores from an obser-vation window. Unlike these downstream sparse inference designs, we study whether an upstream memory-augmented attention backbone can make existing query-aware sparse methods more accu-rate. The backbone we used Wei and Gulcehre (2026) which was originally proposed for flexi-ble dilated attention; here, we conduct a thorough study of whether this backbone without dilation can benefit existing query-aware sparse methods. 
+
+5 Conclusion 
+
+We investigate whether exponentially decay-ing memory improves query-aware KV sparsity. Across three representative methods with differ-ent efficiency goals, RAT+ substantially improves sparse inference accuracy over standard attention across inference budgets. Our analyses further ex-plain the sources of these gains. These results sug-gest a broader view of efficient inference: it can also be improved by building more capable up-stream architectures. 
+
+Limitations 
+
+Our experiments mainly evaluate two types of 7B checkpoints with a maximum sequence length of 44K. Therefore, we do not evaluate longer context lengths. Moreover, we mainly focus on needle-in-a-haystack tasks from the RULER benchmark. Their synthetic property allows us to generate train-ing splits and tune both the original checkpoints and the newly added parameters, which are not trained as sufficiently as the original parameters in OLMo2-7B, providing a fairer comparison between backbones. Although the RULER tasks include eight variants with different retrieval patterns and are suitable for controlled continued-pretraining experiments, we do not evaluate other downstream tasks. Finally, we study three representative query-aware sparse inference methods: Quest, MoBA, and SnapKV. While they cover different efficiency goals, we do not evaluate other sparse inference methods. 
+
+Acknowledgments 
+
+Xiuying Wei’s work is supported by the DVPS project, funded by the European Union’s Horizon Europe Framework. We also sincerely thank the Swiss AI Initiative and the Swiss National Super-computing Centre (CSCS) for supporting the com-putation through grants under project IDs a109. We extend our appreciation to Karin Getaz for admin-istrative support. 
+
+References 
+
+Zihang Dai, Zhilin Yang, Yiming Yang, Jaime Car-bonell, Quoc V Le, and Ruslan Salakhutdinov. 2019. Transformer-xl: Attentive language mod-els beyond a fixed-length context. arXiv preprint arXiv:1901.02860. Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S Kevin Zhou. 2024. Ada-kv: Optimizing kv cache eviction by adaptive budget allocation for efficient llm inference. arXiv preprint arXiv:2407.11550. Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shan-tanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. 2024. Ruler: What’s the real context size of your long-context language models? arXiv preprint arXiv:2404.06654. Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. Snapkv: Llm knows what you are looking for before gener-ation. Advances in Neural Information Processing Systems, 37:22947–22970. Chaofan Lin, Jiaming Tang, Shuo Yang, Hanshuo Wang, Tian Tang, Boyu Tian, Ion Stoica, Song Han, and Mingyu Gao. 2025. Twilight: Adaptive atten-tion sparsity with hierarchical top-p pruning. arXiv preprint arXiv:2502.02770. Enzhe Lu, Zhejun Jiang, Jingyuan Liu, Yulun Du, Tao Jiang, Chao Hong, Shaowei Liu, Weiran He, Enming Yuan, Yuzhi Wang, and 1 others. 2025. Moba: Mix-ture of block attention for long-context llms. arXiv preprint arXiv:2502.13189. Team OLMo, Pete Walsh, Luca Soldaini, Dirk Groen-eveld, Kyle Lo, Shane Arora, Akshita Bhagia, Yuling Gu, Shengyi Huang, Matt Jordan, and 1 others. 2024. 2 olmo 2 furious. arXiv preprint arXiv:2501.00656. Guilherme Penedo, Hynek Kydlíˇ cek, Anton Lozhkov, Margaret Mitchell, Colin A Raffel, Leandro Von Werra, Thomas Wolf, and 1 others. 2024. The fineweb datasets: Decanting the web for the finest text data at scale. Advances in Neural Information Processing Systems, 37:30811–30849. Yutao Sun, Tianzhu Ye, Li Dong, Yuqing Xia, Jian Chen, Yizhao Gao, Shijie Cao, Jianyong Wang, and Furu Wei. 2025. Rectified sparse attention. arXiv preprint arXiv:2506.04108. Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. 2024. Quest: Query-aware sparsity for efficient long-context llm inference. arXiv preprint arXiv:2406.10774. A Vaswani. 2017. Attention is all you need. Advances in Neural Information Processing Systems. Xiuying Wei and Caglar Gulcehre. 2026. Rat+: Train dense, infer sparse–recurrence augmented attention for dilated inference. arXiv preprint arXiv:2602.18196. Wenhao Wu, Yizhong Wang, Guangxuan Xiao, Hao Peng, and Yao Fu. 2024. Retrieval head mechanisti-cally explains long-context factuality. arXiv preprint arXiv:2404.15574. Chaojun Xiao, Pengle Zhang, Xu Han, Guangxuan Xiao, Yankai Lin, Zhengyan Zhang, Zhiyuan Liu, and Maosong Sun. 2024. Infllm: Training-free long-context extrapolation for llms with an efficient context memory. Advances in Neural Information Processing Systems, 37:119638–119661. Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2023. Efficient streaming language models with attention sinks. arXiv preprint arXiv:2309.17453. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuan-dong Tian, Christopher Ré, Clark Barrett, and 1 others. 2023. H2o: Heavy-hitter oracle for effi-cient generative inference of large language mod-els. Advances in Neural Information Processing Systems, 36:34661–34710. 
+
+5A Appendix 
+
+A.1 Implementation details Models. We first evaluate the 7B checkpoints re-leased by Wei and Gulcehre (2026), which include a standard attention backbone and a RAT+ back-bone trained from scratch for 100B tokens. We further evaluate on OLMo2-7B, a pretrained model trained on up to 5T tokens. To obtain its RAT+ counterpart, we continue pretraining OLMo2-7B for 10B tokens from Penedo et al. (2024) with added exponentially decaying memory. We use a learning rate of 6.0 × 10 −4 for the memory param-eters and 6.0 × 10 −5 for the remaining parameters. The global batch size is 768, the sequence length is 4096, the warmup ratio is 2%, and the weight decay is 0.1. Since the added parameters receive only limited additional training compared with the original model parameters due to our resource limi-tations, we further apply supervised fine-tuning on NIAH tasks to tune both backbones and make the results fairer. 
+
+Sparse inference settings. Quest (Tang et al., 2024) is a KV-block selection method for decoding-time sparse attention. It partitions the KV cache into blocks and maintains lightweight block-level representatives constructed from the dimension-wise minimum and maximum key values. During decoding, each new query first interacts with these representatives to identify the most relevant top-k
+
+blocks, and attention is then computed only over the KV entries within the selected blocks. There-fore, Quest reduces KV memory access and at-tention computation during decoding, while still retaining the full KV cache in memory. For Quest, we mainly use a block size of 64 and vary the num-ber of selected blocks from 16 to 4, corresponding to different KV budgets. Compared with the orig-inal block size of 16, a block size of 64 makes selection more challenging because it operates at a coarser granularity, but it also introduces fewer additional FLOPs and enables more contiguous memory access. We also evaluate an extreme set-ting with block size 16 and 4 selected blocks in Table 3. MoBA (Lu et al., 2025) is a block-sparse atten-tion method mainly used in the prefilling stage. The original method applies continued pretrain-ing, but it also claims as a training-free paradigm and does not introduce new parameters, so we di-rectly use it at inference time. Similar to Quest, MoBA routes each query to a subset of relevant KV blocks. Unlike Quest, however, MoBA uses mean pooled block representations for routing instead of dimension-wise minimum and maximum statistics. We mainly use a block size of 64 in the main ex-periments and further evaluate a block size of 128, since larger block sizes are often more favorable for prefilling due to better parallel efficiency. For both Quest and MoBA, we always include the first block and local blocks following their original designs. SnapKV (Li et al., 2024) is a KV-cache reduc-tion method applied after prefilling. It uses an observation window near the end of the prompt to estimate the importance of previous KV positions based on their attention scores. Only the selected important KV entries are retained in the KV cache, while the remaining entries are discarded. During subsequent decoding, attention is computed only over the retained KV entries. Therefore, SnapKV reduces both KV-cache storage and decoding-time attention cost. For SnapKV, we follow the original paper and use an observation window of 64. We set the number of retained KV entries K to 1024, 512, and 256, corresponding to 1/4, 1/8, and 1/16 
+
+KV budgets. 
+
+Tasks. We evaluate on needle-in-a-haystack tasks from the RULER benchmark (Hsieh et al., 2024) with 500 examples for each sub-tasks. These retrieval-heavy tasks require models to identify target keys and values, such as numbers or long UUID-like strings, from long contexts with back-ground noise or similar key-value pairs. We use eight NIAH settings: S-1 retrieves a single num-ber from irrelevant background noise; S-2 retrieves a single number from natural-text background; S-3 retrieves a single UUID string from a context containing similar needle-like distractors; MK-1 retrieves the number corresponding to a target key among multiple key-value pairs with different keys; MK-2 increases the number of distracting key-value pairs; MK-3 further increases the distractor complexity and uses UUID strings as values; MQ requires retrieving numbers for multiple queried keys; and MV requires retrieving multiple numbers associated with the same key. To isolate architectural differences from prompt-following sensitivity, we apply a one-stage su-pervised fine-tuning procedure before evaluation. We synthesize an additional training split from the same task generator using a different random seed, resulting in approximately 7M training to-6kens. This step helps the models better follow task-specific prompts, since the checkpoints from Wei and Gulcehre (2026) are not instruction-tuned. For supervised fine-tuning, we use a learning rate of 
+
+1.0 × 10 −5 and a global batch size of 32 for all models. 
+
+Experiment budgets For continued pretraining, we use 16 NVIDIA GH200 120GB nodes, each with 4 GPUs, to train the 7B model for 10B tokens. This takes approximately 10 hours. For supervised fine-tuning, we use 4 nodes for approximately 2 hours. Evaluation on all eight tasks takes about 20 minutes per setting. 
+
+A.2 Supplementary experiments 
+
+Additional experimental results are provided in the appendix. We report more NIAH results in Table 3 and Table 4. We provide further analysis support-ing H1 in Fig. 4 and Fig. 3, and additional results supporting H2 in Table 5. Interestingly, for H2, we find that under ran-dom selection, SnapKV performs better than Quest, whereas it falls behind Quest under the original se-lectors. We conjecture that this is because SnapKV performs selection only once after prefilling, while Quest applies random selection at every decod-ing step, which introduces more dynamic noise throughout generation. 
+
+A.3 License information 
+
+• FineWeb-Edu (dataset): Open Data Commons License Attribution family. Link: https://huggingface.co/ datasets/HuggingFaceFW/fineweb-edu 
+
+• RULER benchmark (dataset): Apache 2.0 Li-cense. Link: https://github.com/NVIDIA/RULER 
+
+• OLMo2-7B (model): Apache 2.0 License. Link: https://huggingface.co/allenai/ OLMo-2-1124-7B 
+
+• RAT+ (model): Apache 2.0 License. Link: https://huggingface.co/barpitf/ ratplus 
+
+7Table 3: Performance on eight NIAH tasks using the 7B checkpoints from Wei and Gulcehre (2026), where both the standard attention and RAT+ backbones are pretrained from scratch on 100B tokens. The budget denotes the fraction of KV entries accessed per token. Note that Quest and MoBA reduce KV access but still store the full KV cache. We also report results with a block size B of 128 for MoBA with better parallel efficiency, and a block size of 16 and number of block of 4 for Quest as an extreme setting. 
+
+Backbone Top-K Budget S-1 S-2 S-3 MK-1 MK-2 MK-3 MV MQ Quest ( B = 64 )
+
+Attention K = 16 1/4 100 100 100 100 99.2 45.2 100 100 Attention K = 8 1/8 100 100 100 100 81.4 7.4 100 100 Attention K = 4 1/16 100 100 99.8 99.6 34.4 0.2 96.45 97.6 RAT+ K = 16 1/4 100 100 100 99.8 100 94.2 100 100 RAT+ K = 8 1/8 100 100 100 99.8 97.2 64.8 100 100 RAT+ K = 4 1/16 100 100 99.6 99.6 70.4 18.6 99.45 99.5 
+
+Quest ( B = 16 )
+
+Attention K = 4 1/64 100 100 90.6 99 49.6 0 94.65 94.5 RAT+ K = 4 1/64 100 100 95.4 99.4 92 26.2 98.6 98.2 
+
+MoBA ( B = 64 )
+
+Attention K = 16 1/4 100 100 97.2 99.8 99 90.4 97.85 99.7 Attention K = 8 1/8 96 92.6 80 97 92.4 71.4 87.15 97.9 Attention K = 4 1/16 87 69.2 46 75.8 83.8 50 73.9 93.85 RAT+ K = 16 1/4 100 100 100 99.8 100 99.4 100 100 RAT+ K = 8 1/8 100 100 100 99.8 100 99.2 99.8 99.95 RAT+ K = 4 1/16 100 100 100 99.8 100 96.2 98.35 99.85 
+
+MoBA ( B = 128 )
+
+Attention K = 8 1/4 97.8 98.4 83.6 98.2 97.2 77.2 93.8 98.9 Attention K = 4 1/8 82.8 71.4 46.4 80 86 57.4 77.3 94.5 RAT+ K = 8 1/4 100 100 100 99.8 100 98 99.95 99.95 RAT+ K = 4 1/8 99.8 100 99.8 99.8 99.6 90.4 97.8 99.75 
+
+SnapKV 
+
+Attention K = 1024 1/4 94.2 73.8 3 59.2 50.2 8.4 24.5 20.45 Attention K = 512 1/8 71.6 33.8 0.4 32.8 19.2 1.4 12.15 6.5 Attention K = 256 1/16 39.2 8.2 0.2 8.8 5.2 0 4.15 1.95 RAT+ K = 1024 1/4 97.2 97.8 39.6 94.4 88.2 18.8 82.8 87.85 RAT+ K = 512 1/8 93.8 91.6 24.2 85 69 4.6 60.75 69.15 RAT+ K = 256 1/16 84.2 73.6 15.8 70.4 41.2 0.4 42.9 50.35 
+
+8Table 4: Performance on eight NIAH tasks using OLMo2-7B (OLMo et al., 2024), which is trained on trillions of tokens. The RAT+ backbone is obtained through 10B-token continued pretraining with an additional exponentially decaying memory module. The budget denotes the fraction of KV entries accessed per token. Note that Quest and MoBA reduce KV access but still store the full KV cache. We also report results with a block size of 128 for MoBA for better parallel efficiency, and with a block size of 16 and four selected blocks for Quest as an extreme setting. 
+
+Backbone Top-K Budget S-1 S-2 S-3 MK-1 MK-2 MK-3 MV MQ Quest ( B = 64 )
+
+Attention K = 16 1/4 100 100 99.8 100 93.8 79.6 100 100 Attention K = 8 1/8 100 100 99.8 99.2 87.2 28.2 98.55 99.55 Attention K = 4 1/16 100 99 97.4 76.4 68 1 63.65 82.8 RAT+ K = 16 1/4 100 100 99.8 100 100 99.8 100 100 RAT+ K = 8 1/8 100 100 99.8 100 100 94.4 100 100 RAT+ K = 4 1/16 100 100 96.2 99.4 98.6 12.4 97.65 98.45 
+
+Quest ( B = 16 )
+
+Attention K = 4 1/64 99.8 100 70.4 96.6 44.6 0 80.1 93.1 RAT+ K = 4 1/64 100 100 79 100 99 3 99.9 99.3 
+
+MoBA ( B = 64 )
+
+Attention K = 16 1/4 100 100 99.8 100 99.8 99.4 100 100 Attention K = 8 1/8 98.6 100 99.2 98.6 91.8 90.4 99.35 99.65 Attention K = 4 1/16 90.6 97.6 95.2 91.2 63.4 53.6 90.5 97.6 RAT+ K = 16 1/4 100 100 99.8 100 99.8 99.8 100 100 RAT+ K = 8 1/8 100 100 99.6 100 98 99.6 100 100 RAT+ K = 4 1/16 99.8 100 99.6 99.4 85.6 94.8 98.4 99.85 
+
+MoBA ( B = 128 )
+
+Attention K = 8 1/4 99.8 100 99.8 99.2 95.6 94.6 99.6 99.6 Attention K = 4 1/8 90 95.2 93.8 88.6 66 56.6 92.15 95.4 RAT+ K = 8 1/4 100 100 99.6 99.6 99 99.6 99.95 100 RAT+ K = 4 1/8 99.6 100 99.2 98 82.2 92.4 98.05 99.45 
+
+SnapKV 
+
+Attention K = 1024 1/4 95.4 100 28 100 100 0.8 82.3 100 Attention K = 512 1/8 84.2 99.8 4.2 99.6 100 0 61.35 98.55 Attention K = 256 1/16 28.8 97 2.4 97.8 0.4 0 34.85 83.95 RAT+ K = 1024 1/4 100 100 77.6 100 100 98.4 99.9 100 RAT+ K = 512 1/8 100 100 35.8 100 100 84.6 96.05 100 RAT+ K = 256 1/16 100 100 3.2 100 100 32 65.25 100 
+
+Table 5: Random-selector performance under a 1/4 budget on OLMo checkpoints, reported as mean ± standard deviation over five seeds. Quest and MoBA use a block size of 64 and select 16 blocks. SnapKV selects 1024 tokens.                                                         
+
+> Backbone S-1 S-2 S-3 MK-1 MK-2 MK-3 MV MQ Quest
+> Attention 48.36 ± 1.97 65.44 ± 1.25 0.88 ± 0.10 53.40 ± 0.67 63.28 ± 2.42 0.08 ± 0.10 39.57 ± 0.61 56.89 ± 1.20 RAT+ 83.80 ± 1.92 91.80 ± 1.60 30.00 ± 1.73 84.92 ± 0.73 91.52 ± 0.90 10.12 ± 1.16 74.40 ± 0.77 79.88 ± 0.31
+> MoBA
+> Attention 58.88 ± 1.84 91.12 ± 1.16 79.72 ± 1.63 73.64 ± 1.15 77.36 ± 2.97 65.08 ± 1.42 89.24 ± 0.65 94.66 ± 0.38 RAT+ 99.40 ± 0.13 100.00 ± 0.00 95.60 ± 0.63 94.84 ± 0.85 97.12 ± 0.81 85.72 ± 0.64 92.32 ± 0.32 98.85 ± 0.21
+> SnapKV
+> Attention 43.88 ± 1.54 63.24 ± 2.32 2.64 ± 0.08 63.16 ± 1.87 73.60 ± 1.96 0.56 ± 0.15 52.52 ± 0.98 60.63 ± 0.68 RAT+ 98.36 ± 0.66 99.56 ± 0.29 71.72 ± 1.37 99.16 ± 0.34 98.12 ± 0.70 35.56 ± 1.12 96.66 ± 0.35 98.93 ± 0.21
+
+90 20 40 
+
+0.90 
+
+0.95 
+
+1.00 
+
+S-1 
+
+0 20 40 
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+S-2 
+
+0 20 40 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+S-3 
+
+0 20 40 
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+MK-1 
+
+0 20 40 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+MK-2 
+
+0 20 40 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+MK-3 
+
+0 20 40 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+MV 
+
+0 20 40 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+MQ 
+
+Top-50 head (Quest) 
+
+> Hit Rate
+
+1/4 1/8 1/16 Attention RAT+ Figure 3: Head-level hit-rate distributions for the top-50 heads ranked by hit rate for Quest. 0 20 40 
+
+0.6 
+
+0.7 
+
+0.8 
+
+0.9 
+
+1.0 
+
+S-1 
+
+0 20 40 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+S-2 
+
+0 20 40 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+S-3 
+
+0 20 40 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+MK-1 
+
+0 20 40 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+MK-2 
+
+0 20 40 
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+MK-3 
+
+0 20 40 
+
+0.6 
+
+0.8 
+
+1.0 
+
+MV 
+
+0 20 40 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+MQ 
+
+Top-50 head (SnapKV) 
+
+> Hit Rate
+
+1/4 1/8 1/16 Attention RAT+ 
+
+Figure 4: Head-level hit-rate distributions for the top-50 heads ranked by hit rate for SnapKV. 
+
+10

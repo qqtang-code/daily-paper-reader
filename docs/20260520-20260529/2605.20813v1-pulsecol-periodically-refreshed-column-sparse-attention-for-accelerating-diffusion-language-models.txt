@@ -1,0 +1,594 @@
+Title: PulseCol: Periodically Refreshed Column-Sparse Attention for Accelerating Diffusion Language Models
+
+URL Source: https://arxiv.org/pdf/2605.20813v1
+
+Published Time: Thu, 21 May 2026 00:48:09 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# PulseCol: Periodically Refreshed Column-Sparse Attention for Accelerating Diffusion Language Models 
+
+Yanyi Lyu ∗ Letian Chen ∗ Futing Sun Miao Zhang † Weili Guan Liqiang Nie †
+
+Harbin Institute of Technology (Shenzhen) 
+
+{lvyanyi, chenlltt, sunfuting}@stu.hit.edu.cn {zhangmiao, guanweili}@hit.edu.cn nieliqiang@gmail.com 
+
+> ∗
+
+Equal contribution. †Corresponding authors. 
+
+## Abstract 
+
+Inference in diffusion large language models (dLLMs) is computationally expen-sive, as full self-attention must be repeatedly executed at each step of the denoising process without KV cache. Recent sparse attention methods for dLLMs mitigate this cost via block-sparse computation, which is applied only in later iterations when model performance is less sensitive to coarse-grained sparse approximation, but yields limited improvements in computational efficiency and acceleration. This motivates a finer-grained sparsification strategy that can be applied from earlier iterations and leverages reusable sparsity patterns, enabling further efficiency gains. In this work, we introduce PulseCol, a periodically refreshed column-sparse atten-tion method for accelerating diffusion language models. PulseCol replaces coarse block-level sparsity with a finer-grained column-sparse structure, allowing impor-tant attention interactions to be retained more precisely while exposing greater sparsity. Built on this column-level formulation, PulseCol further identifies sparse patterns at the early denoising step and reuses them across subsequent iterations, refreshing them only at a small number of intermediate steps to track the evolution of sparse attention patterns during denoising. Experiments show that PulseCol achieves higher sparsity and greater practical speedup than prior sparse attention methods for dLLMs, while maintaining model quality. Enabled by optimized GPU kernels for column-sparse attention, PulseCol delivers up to 1.95 × end-to-end speedup over FlashAttention across several context lengths. 50% 60% 70% 80%      
+
+> Sparsity
+> 60%
+> 65%
+> 70%
+> 75%
+> 80%
+> Accuracy (bars)
+> (a) GSM8K Accuracy and Attention Recall
+> Ours SparseD
+> 4k 8k 16k 32k 64k
+> Context Window Size
+> 0
+> 50
+> 100
+> 150
+> 200
+> Latency (min)  1.49x
+> Speedup
+> 1.95x
+> Speedup
+> (b) Latency and Speedup
+> Flash Attention
+> SparseD
+> Ours
+> 30%
+> 40%
+> 50%
+> 60%
+> 70%
+> 80%
+> 90%
+> 100%
+> Attention Recall (lines)
+
+Figure 1: PulseCol improves the sparsity-efficiency trade-off of dLLM inference. (a) On GSM8K, PulseCol preserves higher accuracy and oracle per-token top-k attention recall than SparseD under increasing sparsity, indicating that column-level sparsity better retains important attention interactions. (b) On LLaDA-1.5 with 1024 denoising steps, PulseCol achieves lower inference latency than both FlashAttention-based full attention and SparseD, reaching a 1.95 × speedup at a 64K context window. 
+
+Preprint. 
+
+> arXiv:2605.20813v1 [cs.CL] 20 May 2026
+
+## 1 Introduction 
+
+Diffusion language models have recently attracted growing interest as a complementary direction to autoregressive language modeling [ 1, 9 , 14 , 16 , 18 , 19 , 21 , 28 , 31 ]. By iteratively refining a sequence with a bidirectional context, dLLMs offer a flexible generation paradigm beyond the strict left-to-right decoding [ 18 , 28 ]. However, this flexibility comes with a substantial inference cost, since full attention must be recomputed at each denoising step [ 15 , 17 , 24 , 25 ]. This attention cost accumulates across repeated denoising steps, posing a practical challenge to efficient dLLM inference. Given this accumulated attention cost, exploiting the sparsity in attention is a natural way to improve the dLLM inference efficiency. However, sparse attention methods developed for autoregressive language models do not transfer directly to dLLMs because their inference processes differ fundamen-tally [ 6, 13 , 24 , 26 , 27 , 29 , 30 ]. Autoregressive models generate tokens by extending a prefix over time and reusing a persistent KV [ 12 , 27 , 30 ], whereas dLLMs iteratively update a sequence-level denoising state [ 17 , 18 , 25 , 28 ]. As a result, sparse attention in dLLMs cannot be determined solely by static token positions or a single-step importance estimate, since useful attention connections may change as denoising progresses[ 22 , 24 , 26 ]. These differences call for sparse attention designs that explicitly characterize how attention patterns evolve across denoising steps. Recent studies on dLLM inference have further observed that attention patterns exhibit noticeable similarity across adjacent denoising steps [ 15 , 17 , 22 , 24 , 26 ]. This observation suggests that the sparse attention structure need not be recomputed from scratch at every iteration, motivating a line of methods that accelerate dLLM inference by reusing sparsity patterns over the denoising process. Despite their effectiveness, these methods typically apply sparsification only in the later stages of inference. The underlying assumption is that early denoising steps are highly influential to the final generation quality and therefore should preserve full attention [ 24 ]. This design choice reveals a key unresolved question. Why is early-stage attention sparsification in dLLMs so fragile? In this work, we investigate attention patterns in early denoising iterations. We observe that attention in the early stage of inference is not truly dense. Instead, high-scoring attention is consistently concentrated on a small number of key columns, revealing a pronounced column-wise sparsity pattern. This finding provides a possible explanation for the fragility of existing sparse dLLM inference methods in early steps. Their block-level approximations impose a coarse sparsity granularity that is misaligned with the intrinsic column-wise structure of attention, and may therefore discard important attention connections during early denoising. Motivated by this observation, we propose PulseCol, a periodically refreshed column-sparse attention method for efficient dLLM inference. Instead of approximating attention with coarse block-level sparsity [ 24 , 26 ], PulseCol directly targets the column-wise sparsity structure prominent in early denoising steps. By replacing block sparsity with column sparsity, PulseCol better approximates the underlying attention patterns, enabling sparse attention to be introduced more safely from earlier denoising stages. Since attention patterns still evolve during denoising, PulseCol reuses column-sparse indices across nearby steps while periodically refreshing them to adapt to this evolution. This design enables early-stage sparsity reuse without assuming a fixed sparsity pattern throughout inference, thereby expanding the acceleration window of dLLM inference. Experiments show that PulseCol achieves a favorable trade-off between generation quality and inference efficiency. Under the same sparsity budget, PulseCol outperforms prior sparse-attention baselines on average. At 80% sparsity, it remains only slightly behind full attention while maintaining a clear advantage over existing sparse methods. With our optimized GPU kernel for column-sparse attention, PulseCol further translates its algorithmic sparsity into practical inference speedups, achieving up to 1.95× speedup over FlashAttention [8] across different context lengths. 
+
+## 2 Related Works 
+
+2.1 Diffusion Language Models 
+
+Diffusion language models have recently been explored as a complementary approach to autoregres-sive generation [ 3 , 18 , 28 , 32 ]. Recent work such as LLaDA [ 18 ] has shown that this paradigm can scale to large models under standard pretraining and instruction tuning, while supporting parallel refinement over an entire sequence with competitive performance. These strengths have made dLLMs 2an increasingly attractive framework for language generation. At the same time, their iterative de-noising process repeatedly invokes bidirectional full attention over multiple steps, making inference efficiency a central challenge [24, 25]. Existing efforts to accelerate dLLM inference largely fall into two categories. The first exploits KV caching and cross-step reuse. Methods such as Fast-dLLM [ 25 ], FlashDLM [ 11 ], and dLLM-Cache [ 15 ] reduce redundant computation across neighboring denoising steps through approximate caching, selective updates, or more effective reuse of intermediate states. The second focuses on sampling and decoding policies. These approaches improve inference efficiency through confidence-or entropy-aware scheduling [ 2, 25 ], pipelined generation [ 23 ], or distillation-based methods designed for parallel decoding [ 5 ]. While effective, these methods primarily reduce the number of effective iterations or reuse computation across steps, rather than addressing the cost of attention computation within each denoising step. 
+
+2.2 Sparse Attention for dLLMs 
+
+Sparse attention has long been a common approach for reducing attention cost and has been studied extensively in autoregressive models. By comparison, its application to dLLMs remains much less explored [ 24 , 26 ]. SparseD is one of the first works to explore sparse attention for dLLMs. Its key idea is to reuse sparse attention patterns across denoising steps, while preserving full attention in early iterations and adopting block-wise sparsity to balance stability and efficiency. Beyond sparse attention methods themselves, recent analysis of dLLM attention dynamics suggests that attention in dLLMs exhibits distinctive dynamic properties. In particular, [ 20 ] shows that sink locations in dLLMs shift over the denoising process and are often associated with semantic or structural tokens, in contrast to the more stable sink patterns commonly observed in autoregressive models. Together, these studies suggest that attention in dLLMs exhibits both reusable structure across steps and dynamic variation over the course of refinement, which makes the timing, update frequency, and granularity of sparsification especially important. Our work studies how to sparsify attention effectively during iterative dLLM inference. Unlike prior methods that introduce sparsity in later iterations and rely on block-level constraints, we exploit reusable attention structure earlier in the denoising process using finer-grained sparse patterns. 
+
+## 3 Method 
+
+3.1 Preliminaries and Problem Setup Discrete Diffusion Language Models. dLLMs formulate text generation as an iterative denoising process over discrete tokens. Given a prompt c = ( c1, . . . , c m) and a target generation length N , the response is initialized as fully masked, forming xT = [ c1, . . . , c m, [M] , . . . , [M]] , where [M] denotes the mask token. A pretrained denoising model then gradually transforms this fully masked response into a complete sequence through T reverse denoising steps. At step t, let Mt = {i : xit = [M] } be the set of masked positions. The model predicts token distributions pθ (xi 
+
+> 0
+
+| xt) for all i ∈ M t in parallel, and a decoding policy selects a subset Ut ⊆ M t to unmask, often according to a generation schedule and token confidence. For example, the confidence of position i can be measured as 
+
+max v pθ (v | xt), so high-confidence positions are committed earlier while the remaining positions stay masked and are refined in later steps. The process terminates when all response positions are unmasked. Unlike autoregressive language models, which produce one token at a time, dLLMs can refine multiple positions within the same denoising step. This parallel refinement makes dLLMs attractive for efficient generation. However, since the denoising network must be repeatedly evaluated over the evolving sequence across multiple steps, the overall inference cost remains substantial, especially when the sequence is long or the number of denoising steps is large. 
+
+Sparse Attention for dLLM Inference. At denoising step t, consider the attention computation at model layer ℓ and head h. Given hidden states of length n = m + N , the attention logits are computed as 
+
+Zℓ,h t = Qℓ,h t (Kℓ,h t )⊤
+
+√dh
+
+, (1) 3Figure 2: Early denoising attention in LLaDA-1.5 exhibits column sparsity. We visualize representa-tive attention heads at an early denoising step, step 4 of 128. The top row shows attention heatmaps, with brighter colors indicating larger attention scores. The bottom row shows per-token top-k attention positions, where brighter orange denotes higher-ranked positions and the blue background marks the columns selected by our group-wise column-sparse pattern. Important attention mass concentrates on a small set of columns, motivating column-level sparsity in early denoising. where Qℓ,h t , K ℓ,h t , V ℓ,h t ∈ Rn×dh . Standard full attention then produces Aℓ,h t = softmax( Zℓ,h t )V ℓ,h t .Since dLLMs repeatedly perform full-sequence bidirectional attention over T denoising steps, the total attention cost scales as O(T LHn 2dh), where L is the number of layers and H is the number of heads. This repeated quadratic computation makes attention a major bottleneck in dLLM inference. Sparse attention reduces this cost by restricting the set of query-key interactions. For each step, layer, and head, let Sℓ,h t ∈ { 0, 1}n×n be a sparse attention mask, where Sℓ,h t (i, j ) = 1 indicates that query position i can attend to key position j. The sparse attention output is computed as 
+
+eAℓ,h t = softmax 
+
+
+
+Zℓ,h t + M (Sℓ,h t )
+
+
+
+V ℓ,h t , (2) where M (Sℓ,h t )ij = 0 if Sℓ,h t (i, j ) = 1 , and M (Sℓ,h t )ij = −∞ otherwise. We characterize the sparsity level by the number of retained query-key interactions in each attention head. Specifically, for a target sparsity ρ, each sparse mask is constrained by 
+
+∥Sℓ,h t ∥0 ≤ (1 − ρ)n2, ∀ t, ℓ, h. (3) Under a fixed computation budget, an effective sparse attention pattern should retain query-key interactions that are important for the current denoising prediction while removing those with limited contribution. A common way to impose such sparsity is through block-sparse attention, which reduces the selection space by grouping tokens into blocks. Suppose the sequence is partitioned into blocks {B 1, . . . , BB }, and let b(i) denote the block index of token i. The token-level sparse mask 
+
+Sℓ,h t ∈ { 0, 1}n×n is then induced by a block-level binary matrix Gℓ,h t ∈ { 0, 1}B×B , where 
+
+Sℓ,h t (i, j ) = Gℓ,h t (b(i), b (j)) . (4) This design forces all token pairs within the same block pair to share a sparsity decision, which may retain low-importance interactions while discarding isolated important ones, leading to information loss in early denoising steps. 
+
+3.2 Motivation 
+
+Prior sparse attention work on dLLMs adopts a block-sparse design and treats early denoising steps as more sensitive to sparse approximation, therefore keeping full attention in these steps [ 24 ]. This design is motivated by the empirical observation that directly applying the block-sparse approximation to early denoising steps can lead to noticeable performance degradation. However, this degradation does not necessarily imply that early attention lacks exploitable sparse structure. It may instead reflect a mismatch between early-stage attention patterns and the block-sparse structure used in prior work. We therefore revisit early-stage attention maps to examine whether they contain structures that can support a more suitable sparsification strategy. 4Feed Forward            
+
+> With Norm
+> Full Attention
+> With RoPE
+> Query Token Grouping
+> Score -based Top -K
+> 1
+> 2
+> Prompt Tokens
+> Decoded Tokens
+> Masked Tokens
+> Sparse Index Retrieval 3
+> x N
+> Step 1
+> output
+> Initial Sparse Pattern Periodic Sparsity Refresh Persistent Sparsity Reuse
+> Step Τ3+1
+> Feed Forward
+> With Norm
+> Column -Sparse
+> Attention With RoPE
+> Feed Forward
+> With Norm
+> x N
+> Step Τ3
+> output
+> Column -Sparse
+> Attention With RoPE
+> Feed Forward
+> With Norm
+> Full Attention
+> With RoPE
+> Step Τ3
+> Step 1+ Τ2~Τ3
+> Feed Forward
+> With Norm
+> Column -Sparse
+> Attention With RoPE
+> Feed Forward
+> With Norm
+> Full Attention
+> With RoPE
+> Step Τ2
+> Feed Forward
+> With Norm
+> x N
+> Step 2 ~ Τ2
+> output
+> Column -Sparse
+> Attention With RoPE refresh
+
+Figure 3: Overview of PulseCol. By constructing, refreshing, and reusing column-sparse indices, PulseCol enables early sparse attention while limiting pattern-construction cost. Our analysis shows that early denoising attention already exhibits a clear column-sparse pattern. As illustrated in Figure 2, high-scoring attention interactions involve only a small subset of keys, which are repeatedly attended to by multiple query positions, while many other keys contribute little to the attention output. This suggests that important interactions in early dLLM attention are better characterized by fine-grained sparsity along the key dimension than by coarse block-shaped regions. This observation provides a new perspective on why prior block-sparse work avoids sparse attention in early denoising steps. Early attention does contain exploitable sparsity, but block-level approxi-mation is too coarse to match its fine-grained key-wise structure. Since important interactions are concentrated around a small subset of keys, column-sparse patterns provide a better aligned sparsity form and can enable sparse computation in earlier denoising steps. After identifying the exploitable column-sparse structure in early attention, the next question is how to maintain such sparse structure efficiently throughout iterative denoising. Prior work on efficient dLLM inference has observed similar attention patterns across adjacent denoising iterations, providing the basis for reusing sparse indices across steps. However, for early denoising, directly fixing the initially constructed sparse indices for a long interval may still be unstable. As token predictions and attention patterns change across denoising steps, the important keys selected at the beginning may no longer align with those receiving high attention scores in later iterations. Therefore, PulseCol introduces a low-frequency periodic refresh mechanism in the early inference stage, allowing sparse indices to be updated when the attention structure is still rapidly evolving. 
+
+3.3 PulseCol 
+
+Based on these observations, we propose PulseCol, a periodically refreshed column-sparse attention method for accelerating dLLM inference. PulseCol follows three design choices. First, it adopts column-level sparsity to match early denoising attention, where important interactions involve only a small subset of keys. Second, it enables sparse computation in earlier denoising steps by selecting important keys rather than coarse blocks, reducing the granularity mismatch of block-sparse approximation. Third, it balances reuse and adaptation by reusing selected keys across nearby denoising steps and periodically refreshing them in the early stage as attention patterns change. As illustrated in Figure 3, PulseCol is organized as a three-stage pipeline that follows the design choices above. In the Initial Sparse Pattern stage, PulseCol constructs group-wise column-sparse indices by selecting important keys from the first denoising step. In the Periodic Sparsity Refresh stage, it keeps applying sparse attention in early denoising steps while refreshing the sparse indices at a small number of intermediate steps, allowing the sparse pattern to remain aligned with changing attention patterns. In the Persistent Sparsity Reuse stage, PulseCol fixes the sparse indices after the early refresh period and reuses them for the remaining steps to avoid repeated pattern construction. 5Group-wise Column-Sparse Pattern Estimation. At each refresh step τr , PulseCol computes full attention to collect P (τr ) ∈ Rn×n and estimate a group-wise column-sparse pattern. We partition query positions into groups {G 1, . . . , GU }, where queries in the same group share one set of selected keys. For each query group Gu, PulseCol computes a key importance score by aggregating attention weights within the group as 
+
+s(τr ) 
+
+> u,j
+
+= 1
+
+|G u|
+
+X
+
+> i∈G u
+
+P (τr ) 
+
+> ij
+
+, j = 1 , . . . , n. (5) The score s(τr ) 
+
+> u,j
+
+measures how strongly the j-th key is attended to by queries in Gu on average. PulseCol then selects the top-k keys for each group, 
+
+C(r) 
+
+> u
+
+= TopK 
+
+
+
+s(τr ) 
+
+> u
+
+, k 
+
+
+
+. (6) The resulting sparse mask is shared within each query group, with S(r) 
+
+> ij
+
+= 1{j ∈ C(r) 
+
+> u
+
+} for i ∈ G u.This selection is equivalent to solving a group-level column selection objective formulated as 
+
+C(r) 
+
+> u
+
+∈ arg max 
+
+> C⊆[n]
+> |C|=k
+
+X
+
+> i∈G u
+
+X
+
+> j∈C
+
+P (τr ) 
+
+> ij
+
+. (7) The objective selects the keys that preserve the largest aggregate attention scores for each query group. This group-wise design provides a middle ground between per-query key selection and head-level global sharing. Per-query selection can better match individual attention distributions but produces highly irregular indices. Head-level sharing is more regular but may ignore differences across query regions. By sharing selected keys only within local query groups, PulseCol preserves region-specific important interactions while keeping the sparse pattern structured enough for efficient reuse. Compared with block-sparse patterns, group-wise column sparsity selects keys directly rather than retaining all token pairs inside selected blocks. It therefore avoids introducing many low-contribution interactions solely due to block boundaries, while reducing the chance of discarding isolated important keys. This makes the estimated pattern better aligned with the fine-grained key-wise structure observed in early denoising attention. 
+
+Periodic Sparse Pattern Refresh and Persistent Reuse. After obtaining the column sets C(r) 
+
+> u
+
+for all query groups, PulseCol reuses them across subsequent denoising steps. We use a simple refresh schedule controlled by two hyperparameters. The first is a refresh-window ratio η ∈ (0 , 1] , which specifies the fraction of inference steps where sparse patterns can be refreshed. The second is a refresh budget R, which specifies how many refreshes are performed within this interval. Given a total of T denoising steps, we define the refresh window length as Twin = ⌊ηT ⌋. We distribute the R
+
+refreshes uniformly over the first Twin steps, yielding the refresh set Tref = {τ1, τ 2, . . . , τ R}. When 
+
+R = 1 , we set τ1 = 1 . For R ≥ 2,
+
+τr = 1 + 
+
+ (r − 1)( Twin − 1) 
+
+R − 1
+
+
+
+, r = 1 , . . . , R. (8) Under this schedule, sparse patterns are refreshed only during the early inference stage and are reused between consecutive refresh steps. When t > T win , PulseCol stops refreshing the pattern and keeps using the column sets obtained at the last refresh. This design allows the sparse indices to adapt during early denoising while avoiding repeated pattern construction in later steps. 
+
+3.4 Column-Sparse Attention Kernel 
+
+We implement a column-sparse attention kernel that computes attention over a given set of sparse column indices. Following FlashAttention, the kernel operates on tiles, keeps intermediate softmax statistics in on-chip memory, and avoids materializing the full attention matrix in HBM. Unlike dense kernels, it traverses only the indexed key-value columns, so each query block attends to the positions specified by its sparse index list. Figure 4 shows the kernel workflow. Given Q, K, V ∈ Rn×dh , we partition the query sequence into nq blocks of size BM . The i-th query block is denoted by Qi ∈ RBM ×dh . The column sparse pattern is represented by an index tensor 6S ∈ Nnq ×ns , where S[i, :] stores the ns key-value position indices selected for query block i. Thus, rather than attending to the entire key value sequence, the computation for Qi is restricted to the subset of columns indexed by S[i, :] .Gather   
+
+> K
+> V
+> Load
+> Gather
+> Store to HBM
+> Q
+> Compute
+> on SRAM
+> Q@K T
+> O
+> Outer Loop (grid)
+> Inner Loop
+> Load Indices
+> Sparse Indices
+
+Figure 4: Workflow of the column-sparse atten-tion kernel. Each query block attends only to indexed key-value tiles, updates online softmax statistics in SRAM, and writes the normalized output back to HBM without materializing the full attention matrix. The kernel schedules computation at the granu-larity of query blocks. For each query block i, it loads Qi from HBM into SRAM, initializes the row-wise online softmax statistics and output ac-cumulator, and then traverses the sparse column indices in tiles of size BN . At each step, the ker-nel reads a contiguous tile from S[i, :] , gathers the corresponding rows of K and V , computes attention scores with the current query tile, and updates the online softmax state and output accu-mulator in SRAM without materializing the full attention matrix. After all ns selected key-value columns have been processed, the accumulated output is normalized with the maintained softmax statistics and written back to HBM. Repeating this procedure across query blocks preserves the memory efficiency of FlashAttention while sup-porting externally specified sparse patterns, with both computation and memory traffic scaling with 
+
+ns rather than the full sequence length. 
+
+## 4 Experiments 
+
+4.1 Experimental Setup Baselines and Datasets. We evaluate our method on two representative open-source dLLMs, LLaDA-1.5 [ 32 ] and Dream [ 28 ]. We compare with the original models with full attention and several sparse attention baselines, including Sliding Window, StreamingLLM [ 27 ], and SparseD [ 24 ]. We conduct experiments on GSM8K [ 7], HumanEval [ 4], and RULER [ 10 ] to evaluate mathematical reasoning, code generation, and long-context understanding, respectively. GSM8K is evaluated in a 4-shot setting, while HumanEval and RULER are evaluated in 0-shot settings. 
+
+Implementation Details. We use the same experimental configurations as SparseD for all baselines. The original dLLMs are implemented with FlashAttention. For Sliding Window and StreamingLLM, we set the window size to 256 on short-context benchmarks, including GSM8K and HumanEval. On RULER, the window size is set to 2048 for 4K contexts and 4096 for 8K contexts. For StreamingLLM, the first 10% key tokens are additionally preserved as sink tokens. For SparseD, we set block_size = 32 and the sparsity ratio ρ = 50% on short-context tasks. On RULER, we set block_size = 128 and ρ = 30% . We set skip = 20% in all SparseD experiments. During the first 20% skipped stages, full attention is accelerated with FlashAttention. For the remaining stages, customized sparse attention patterns are implemented with FlexAttention. For PulseCol, we use a refresh-window ratio of η = 30% , with refresh budgets of R = 16 for LLaDA-1.5 and R = 8 for Dream. These settings are kept fixed across all benchmarks. 
+
+4.2 Main Result Accuracy. Table 1 reports the main results on LLaDA-1.5 and Dream. Overall, our method maintains strong performance under sparse attention, generally improving over existing sparse attention baselines while remaining competitive with the original full attention models. On LLaDA-1.5, our method with 80% sparsity reaches an average score of 66.58, which is only 1.00 point lower than the full-attention baseline, while outperforming SparseD at the same sparsity by 2.69 points. When the sparsity is decreased to 50%, our method achieves an average score of 67.47, nearly matching the full-attention model and outperforming SparseD. The advantage of our method is more evident on Dream. At 80% sparsity, SparseD suffers from a substantial performance drop, with its average score decreasing to 49.85. In contrast, our method 7Table 1: Main results across benchmarks. Numbers in parentheses denote the attention sparsity. 
+
+Model Method GSM8K HumanEval RULER-4K RULER-8K Avg. 
+
+LLaDA-1.5 Full Attention 79.76 39.63 90.69 60.22 67.58 Sliding Window 54.28 28.05 43.35 32.65 39.58 StreamingLLM 58.98 37.20 45.02 38.38 44.90 SparseD (50%) 77.48 39.63 90.62 61.34 67.27 Ours (50%) 81.05 38.41 90.36 60.06 67.47 SparseD (80%) 64.22 39.02 90.95 61.38 63.89 Ours (80%) 76.19 38.41 91.72 59.98 66.58 Dream Full Attention 76.65 56.71 89.90 70.98 73.56 Sliding Window 70.13 45.73 46.74 31.36 48.49 StreamingLLM 69.98 55.49 50.52 36.91 53.23 SparseD (50%) 72.55 54.87 89.83 66.16 70.85 Ours (50%) 77.79 57.93 89.82 70.77 74.08 SparseD (80%) 38.44 17.68 81.55 61.76 49.85 Ours (80%) 74.07 57.32 89.40 70.53 72.83 
+
+achieves 72.83, which is only 0.73 points below the full-attention model and improves over SparseD by 22.98 points. This suggests that our column-wise sparse attention pattern preserves important attention interactions more effectively than block-level sparsity, making it more robust in high-sparsity settings. At 50% sparsity, our method further improves the average score to 74.08, surpassing both SparseD and the original full-attention model. 50% 60% 70% 80% 90% 
+
+> Sparsity
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> Speedup
+> Context Length
+> 4K
+> 8K
+> 16K
+> 32K
+> 64K
+> 128K
+
+Figure 5: Speedup of our column-sparse ker-nel over FlashAttention under different spar-sity levels and context lengths. 
+
+Latency. We evaluate the standalone efficiency of the column-sparse attention kernel. Unless otherwise stated, all latency measurements are conducted on an NVIDIA RTX PRO 6000 GPU. Figure 5 shows the speedup over FlashAttention with the query group size fixed to BM = 128 . The column-sparse ker-nel achieves consistent speedups across all tested settings, and the speedup generally increases with context length. For example, at a sparsity of 90% ,the speedup improves from 7.21 × to 10 .54 × as the context length increases from 4K to 128K tokens. Re-sults with other query group sizes are reported in Ap-pendix 8 and follow the same trend. This shows that column sparsity can be turned into practical kernel-level latency reduction, rather than only lowering the nominal FLOPs. We further evaluate end-to-end inference latency, in-cluding the cost of the dedicated score-collection kernel used for sparse-index construction. Fig-ure 1(b) reports results on LLaDA-1.5 with 1024 denoising steps. Compared with the FlashAttention baseline, our method achieves up to 1.95× speedup at 64K context, with larger gains at longer contexts. The same trend is observed on Dream, with full results in Appendix C.3. Our method also outperforms SparseD, reducing latency by 23.5% on LLaDA-1.5 at 64K context. This is because SparseD mainly applies block sparsity in late denoising stages, whereas our method enables sparse computation earlier and further benefits from the column-sparse kernel. Complete latency results across denoising steps are reported in Appendix C.2. 
+
+4.3 Ablation Study Effectiveness of Each Component. We ablate the sparsity pattern and refresh strategy in Table 2. Replacing column sparsity with block sparsity causes performance drops on both models, with an average degradation of 8.16 points across the two benchmarks. This indicates that block sparsity fails to capture critical early-stage attention patterns that are better represented by column-wise selection. Replacing periodic refresh with SparseD’s skipping sparse also degrades performance on both models, 816 32 64 128                          
+
+> Group Size
+> 40
+> 50
+> Accuracy
+> (a) Effect of Group Size
+> 37.19 38.41 37.80 35.36
+> 49.39 57.31
+> 55.48
+> 46.95
+> 4816 32 64
+> Refresh Count
+> 40
+> 50
+> Accuracy
+> (b) Effect of Refresh Count
+> 35.37 36.58 38.41 37.20 35.97
+> 54.88
+> 57.32
+> 54.27 51.83 56.70
+> 10% 20% 30% 50% 100%
+> Refresh Window Size
+> 40
+> 50
+> Accuracy
+> (c) Effect of Refresh Window Size
+> 37.80 35.98
+> 38.41 37.20 37.20
+> 54.88
+> 52.44 57.32 56.09 57.31
+> LLaDA-1.5 Dream
+
+Figure 6: Hyperparameter analysis on HumanEval. We study the effects of query group size, sparse-index refresh count, and refresh window size on LLaDA-1.5 and Dream. with an average drop of 5.00 points across the two benchmarks. This suggests that sparse patterns should be updated during denoising, as a fixed pattern can become misaligned with the evolving attention distribution. Overall, these results show that column sparsity and periodic refresh are both key components of our method, and their combination achieves the best performance. Table 2: Ablation of sparsity pattern and re-fresh strategy. CS and BS denote column-and block-sparse attention; PR and SS denote periodic refresh and skipping sparse. LLaDA-1.5 Dream Cfg. GSM8k HE GSM8k HE CS+PR 76.19 38.41 74.07 57.32 
+
+BS+PR 58.00 33.54 72.40 49.39 CS+SS 69.14 34.15 70.28 52.44 
+
+Hyperparameter Analysis. We study the effect of query group size in Figure 6(a). Performance peaks at a group size of 32, while larger groups lead to a clear drop. This suggests that the group size needs to bal-ance indexing overhead and query-specific sparsity. Larger groups reduce indexing overhead by sharing column indices across more queries, but the shared indices become less aligned with individual attention patterns, weakening the approximation quality. Figure 6(b) shows the effect of the number of sparse-index refreshes. The performance is non-monotonic on both models. LLaDA-1.5 peaks at 16 refreshes, while Dream peaks at 8 refreshes, and further increasing the refresh count does not consistently improve performance. This reflects a trade-off in refresh frequency. Too few refreshes make the sparse indices stale, while overly frequent refreshes can make the discrete column selection sensitive to transient changes in attention scores, leading to unstable sparse supports. We further analyze the effect of the sparse-index refresh window, as shown in Figure 6(c). Refreshing sparse indices in the early denoising stage is usually sufficient and gives the best trade-off. This suggests that index updates are most useful early in denoising, when token distributions may change more substantially. Later iterations appear to mainly refine already-formed predictions, making additional refreshes less beneficial. This supports our choice of limiting refreshes to the early stage. 
+
+## 5 Conclusion 
+
+In this work, we introduced PulseCol, a periodically refreshed column-sparse attention method for accelerating dLLM inference. By using column-level sparsity, PulseCol retains important attention interactions more precisely than block-sparse alternatives and enables sparse computation from earlier denoising steps. By reusing sparse indices across nearby iterations and refreshing them only in the early stage, it reduces pattern construction overhead while tracking changes in attention. With opti-mized column-sparse kernels, PulseCol achieves practical end-to-end speedups over FlashAttention and prior dLLM sparse attention methods without sacrificing model quality. Our results show that combining fine-grained sparsity with temporal reuse is an effective way to reduce the inference cost of diffusion language models. 9References 
+
+[1] Jacob Austin, Daniel D Johnson, Jonathan Ho, Daniel Tarlow, and Rianne Van Den Berg. Structured denoising diffusion models in discrete state-spaces. Advances in neural information processing systems , 34:17981–17993, 2021. [2] Heli Ben-Hamu, Itai Gat, Daniel Severo, Niklas Nolte, and Brian Karrer. Accelerated sampling from masked diffusion models via entropy bounded unmasking. arXiv preprint arXiv:2505.24857 , 2025. [3] Tiwei Bie, Maosong Cao, Kun Chen, Lun Du, Mingliang Gong, Zhuochen Gong, Yanmei Gu, Jiaqi Hu, Zenan Huang, Zhenzhong Lan, et al. Llada2. 0: Scaling up diffusion language models to 100b. arXiv preprint arXiv:2512.15745 , 2025. [4] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 , 2021. [5] Zigeng Chen, Gongfan Fang, Xinyin Ma, Ruonan Yu, and Xinchao Wang. dparallel: Learnable parallel decoding for dllms. arXiv preprint arXiv:2509.26488 , 2025. [6] Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers. arXiv preprint arXiv:1904.10509 , 2019. [7] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 , 2021. [8] Tri Dao. Flashattention-2: Faster attention with better parallelism and work partitioning. arXiv preprint arXiv:2307.08691 , 2023. [9] Shansan Gong, Shivam Agarwal, Yizhe Zhang, Jiacheng Ye, Lin Zheng, Mukai Li, Chenxin An, Peilin Zhao, Wei Bi, Jiawei Han, et al. Scaling diffusion language models via adaptation from autoregressive models. arXiv preprint arXiv:2410.17891 , 2024. [10] Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. Ruler: What’s the real context size of your long-context language models? arXiv preprint arXiv:2404.06654 , 2024. [11] Zhanqiu Hu, Jian Meng, Yash Akhauri, Mohamed S Abdelfattah, Jae-sun Seo, Zhiru Zhang, and Udit Gupta. Flashdlm: Accelerating diffusion language model inference via efficient kv caching and guided diffusion. arXiv preprint arXiv:2505.21467 , 2025. [12] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention. In Proceedings of the 29th symposium on operating systems principles , pages 611–626, 2023. [13] Xunhao Lai, Jianqiao Lu, Yao Luo, Yiyuan Ma, and Xun Zhou. Flexprefill: A context-aware sparse attention mechanism for efficient long-sequence inference. arXiv preprint arXiv:2502.20766 , 2025. [14] Xiang Li, John Thickstun, Ishaan Gulrajani, Percy S Liang, and Tatsunori B Hashimoto. Diffusion-lm improves controllable text generation. Advances in neural information processing systems , 35:4328–4343, 2022. [15] Zhiyuan Liu, Yicun Yang, Yaojie Zhang, Junjie Chen, Chang Zou, Qingyuan Wei, Shaobo Wang, and Linfeng Zhang. dllm-cache: Accelerating diffusion large language models with adaptive caching. arXiv preprint arXiv:2506.06295 , 2025. [16] Aaron Lou, Chenlin Meng, and Stefano Ermon. Discrete diffusion modeling by estimating the ratios of the data distribution. arXiv preprint arXiv:2310.16834 , 2023. [17] Xinyin Ma, Runpeng Yu, Gongfan Fang, and Xinchao Wang. dkv-cache: The cache for diffusion language models. arXiv preprint arXiv:2505.15781 , 2025. 10 [18] Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. Large language diffusion models. arXiv preprint arXiv:2502.09992 , 2025. [19] Jingyang Ou, Shen Nie, Kaiwen Xue, Fengqi Zhu, Jiacheng Sun, Zhenguo Li, and Chongxuan Li. Your absorbing discrete diffusion secretly models the conditional distributions of clean data. 
+
+arXiv preprint arXiv:2406.03736 , 2024. [20] Maximo Eduardo Rulli, Simone Petruzzi, Edoardo Michielon, Fabrizio Silvestri, Simone Scardapane, and Alessio Devoto. Attention sinks in diffusion language models. arXiv preprint arXiv:2510.15731 , 2025. [21] Subham S Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin T Chiu, Alexander Rush, and Volodymyr Kuleshov. Simple and effective masked diffusion language models. Advances in Neural Information Processing Systems , 37:130136–130184, 2024. [22] Yuerong Song, Xiaoran Liu, Ruixiao Li, Zhigeng Liu, Zengfeng Huang, Qipeng Guo, Ziwei He, and Xipeng Qiu. Sparse-dllm: Accelerating diffusion llms with dynamic cache eviction. In 
+
+Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 33038–33046, 2026. [23] Xu Wang, Chenkai Xu, Yijie Jin, Jiachun Jin, Hao Zhang, and Zhijie Deng. Diffusion llms can do faster-than-ar inference via discrete diffusion forcing. arXiv preprint arXiv:2508.09192 ,2025. [24] Zeqing Wang, Gongfan Fang, Xinyin Ma, Xingyi Yang, and Xinchao Wang. Sparsed: Sparse attention for diffusion language models. arXiv preprint arXiv:2509.24014 , 2025. [25] Chengyue Wu, Hao Zhang, Shuchen Xue, Zhijian Liu, Shizhe Diao, Ligeng Zhu, Ping Luo, Song Han, and Enze Xie. Fast-dllm: Training-free acceleration of diffusion llm by enabling kv cache and parallel decoding. arXiv preprint arXiv:2505.22618 , 2025. [26] Haocheng Xi, Harman Singh, Yuezhou Hu, Coleman Hooper, Rishabh Tiwari, Aditya Tomar, Minjae Lee, Wonjun Kang, Michael Mahoney, Chenfeng Xu, et al. Losa: Locality aware sparse attention for block-wise diffusion language models. arXiv preprint arXiv:2604.12056 , 2026. [27] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. arXiv preprint arXiv:2309.17453 , 2023. [28] Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong. Dream 7b: Diffusion large language models. arXiv preprint arXiv:2508.15487 , 2025. [29] Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, et al. Big bird: Transformers for longer sequences. Advances in neural information processing systems , 33: 17283–17297, 2020. [30] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Processing Systems , 36:34661–34710, 2023. [31] Lin Zheng, Jianbo Yuan, Lei Yu, and Lingpeng Kong. A reparameterized discrete diffusion model for text generation. arXiv preprint arXiv:2302.05737 , 2023. [32] Fengqi Zhu, Rongzhen Wang, Shen Nie, Xiaolu Zhang, Chunwei Wu, Jun Hu, Jun Zhou, Jianfei Chen, Yankai Lin, Ji-Rong Wen, et al. Llada 1.5: Variance-reduced preference optimization for large language diffusion models. arXiv preprint arXiv:2505.19223 , 2025. 11 A Additional Visualizations of Column-Sparse Patterns 
+
+Figure 7 provides additional attention visualizations from LLaDA-1.5. For each layer, we use a representative attention head to show the attention scores and the corresponding per-token top-k
+
+attention positions. These visualizations follow the same format as Figure 2: the heatmaps show attention scores, the orange marks indicate the ranked top-k positions, and the blue background denotes the columns selected by our group-wise column-sparse pattern. The additional examples show that high-attention positions are concentrated on a small subset of columns across different layers, further supporting the column-sparse pattern used by PulseCol. 
+
+Figure 7: Additional attention visualizations in LLaDA-1.5. Each layer shows one representative head. For each head, we show the attention heatmap and the corresponding per-token top-k positions. 
+
+## B Column-Sparse Kernel Pseudocode 
+
+Algorithm 1 gives the pseudocode of our column-sparse attention kernel. The kernel takes the column indices for each query group as input, and gathers only the corresponding K and V blocks. Attention is then computed on the gathered blocks without materializing the full attention matrix. This pseudocode abstracts away low-level CUDA scheduling details and focuses on the data flow used by PulseCol. 12 Algorithm 1 Column-Sparse Attention Forward 
+
+Require: Q, K, V ∈ RN ×d stored in HBM; sparse indices S ∈ NTq ×ns stored in HBM; query block size BM ; sparse KV tile size BN . 
+
+> 1:
+
+Tq ← ⌈ N/B M ⌉ 
+
+> 2:
+
+Ts ← ⌈ ns/B N ⌉ 
+
+> 3:
+
+Allocate O ∈ RN ×d in HBM.  
+
+> 4:
+
+Divide Q into Tq blocks Q1, . . . , Q Tq of size BM × d. 
+
+> 5:
+
+Divide O into Tq blocks O1, . . . , O Tq of size BM × d. 
+
+> 6:
+
+for 1 ≤ i ≤ Tq do  
+
+> 7:
+
+Load Qi ∈ RBM ×d from HBM to SRAM.  
+
+> 8:
+
+Initialize mi ← (−∞ )BM , ℓi ← (0) BM , and acc i ← 0BM ×d in SRAM.  
+
+> 9:
+
+Load sparse index set Ii ← S [i] ∈ Nns from HBM to SRAM.  
+
+> 10:
+
+for 1 ≤ t ≤ Ts do  
+
+> 11:
+
+Ii,t ← I i[( t − 1) BN : tB N ] 
+
+> 12:
+
+Gather KIi,t , V Ii,t ∈ RBN ×d from HBM to SRAM.  
+
+> 13:
+
+Ri,t ← QiK⊤ 
+
+> Ii,t
+
+∈ RBM ×BN 
+
+> 14:
+
+Apply attention scaling to Ri,t . 
+
+> 15:
+
+emi,t ← rowmax( Ri,t ) ∈ RBM 
+
+> 16:
+
+ePi,t ← exp( Ri,t − emi,t ) ∈ RBM ×BN 
+
+> 17:
+
+eℓi,t ← rowsum( ePi,t ) ∈ RBM 
+
+> 18:
+
+mnew  
+
+> i
+
+← max( mi, emi,t ) 
+
+> 19:
+
+ℓnew  
+
+> i
+
+← exp( mi − mnew  
+
+> i
+
+) ⊙ ℓi + exp( emi,t − mnew  
+
+> i
+
+) ⊙ eℓi,t  
+
+> 20:
+
+acc i ← exp( mi − mnew  
+
+> i
+
+) ⊙ acc i + exp( emi,t − mnew  
+
+> i
+
+) ⊙ ePi,t VIi,t  
+
+> 21:
+
+ℓi ← ℓnew  
+
+> i
+
+, mi ← mnew  
+
+> i
+> 22:
+
+end for  
+
+> 23:
+
+Oi ← diag( ℓi)−1acc i 
+
+> 24:
+
+Write Oi ∈ RBM ×d from SRAM to HBM.  
+
+> 25:
+
+end for  
+
+> 26:
+
+return O
+
+## C Additional Efficiency Results 
+
+This section provides additional latency results that complement the efficiency analysis in the main paper. We include additional kernel benchmarks, complete LLaDA-1.5 latency results, and long-context latency results on both LLaDA-1.5 and Dream. 
+
+C.1 Kernel Speedup with Different Query Group Sizes 
+
+Figure 8 reports kernel-level speedups over FlashAttention with additional query group sizes. The column-sparse kernel remains faster across densities and context lengths, with larger gains at higher sparsity and longer context length. Larger query group sizes further improve speedup, as they increase contiguous computation and reduce indexing overhead. 
+
+C.2 End-to-End Latency on LLaDA-1.5 
+
+Table 3 reports the complete end-to-end latency results on LLaDA-1.5 across different context lengths and denoising steps. These results complement Figure 1(b), which shows the 1024-step setting in the main paper. PulseCol consistently reduces latency over both the FlashAttention-based full attention baseline and SparseD, with larger gains in long-context settings. 
+
+C.3 64K Latency on LLaDA-1.5 and Dream 
+
+Table 4 and Table 5 report 64K-context latency on LLaDA-1.5 and Dream under different denoising steps and SparseD sparsity settings. PulseCol remains faster across the tested settings, confirming that the long-context efficiency gain holds for both dLLM models. 13 50% 60% 70% 80% 90% 
+
+Sparsity 
+
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> Speedup
+> 1.08
+> 1.33
+> 1.76
+> 2.62
+> 5.17
+
+BM = 32     
+
+> 50% 60% 70% 80% 90%
+
+Sparsity 
+
+> 1.24
+> 1.50
+> 1.99
+> 2.95
+> 5.80
+
+BM = 64     
+
+> Context Length
+> 4K 8K 16K 32K 64K
+
+Figure 8: Kernel speedup over FlashAttention with different query group sizes. The two panels report results for query group sizes of 32 and 64 under varying sparsity levels and context lengths. Table 3: Performance comparison across different context lengths and denoising steps. Speedup relative to the baseline is shown in parentheses. Step Method Context Length 4k 8k 16k 32k 64k 128 Baseline 31.15 69.25 175.11 471.07 1462.88 SparseD 30.17 (1.03 ×) 67.26 (1.03 ×) 159.92 (1.09 ×) 396.48 (1.19 ×) 1143.66 (1.28 ×)Ours 30.11 (1.03 ×) 64.59 (1.07 ×) 148.52 (1.18 ×) 346.50 (1.36 ×) 925.63 (1.58 ×)256 Baseline 64.16 141.77 352.16 945.57 2932.34 SparseD 61.26 (1.05 ×) 131.93 (1.07 ×) 307.00 (1.15 ×) 749.36 (1.26 ×) 2101.23 (1.40 ×)Ours 60.60 (1.06 ×) 129.15 (1.10 ×) 285.90 (1.23 ×) 647.66 (1.46 ×) 1656.04 (1.77 ×)512 Baseline 150.45 293.38 712.90 1905.61 5908.74 SparseD 143.26 (1.05 ×) 269.22 (1.09 ×) 609.68 (1.17 ×) 1470.46 (1.30 ×) 4046.84 (1.46 ×)Ours 141.31 (1.06 ×) 260.43 (1.13 ×) 564.21 (1.26 ×) 1256.99 (1.52 ×) 3138.28 (1.88 ×)1024 Baseline 324.88 616.40 1477.18 3906.59 11930.43 SparseD 310.18 (1.05 ×) 562.63 (1.10 ×) 1247.98 (1.18 ×) 2961.99 (1.32 ×) 7983.49 (1.49 ×)Ours 304.35 (1.07 ×) 541.82 (1.14 ×) 1143.75 (1.29 ×) 2512.99 (1.55 ×) 6106.12 (1.95 ×)Table 4: 64K-context latency on LLaDA-1.5 across denoising steps. Latency is reported in seconds, and parentheses denote speedup over FlashAttention. 
+
+Method 64 128 256 512 1024 
+
+FlashAttention 726.97 1462.88 2932.34 5908.74 11930.43 SparseD (50%) 741.93 (0.98 ×) 1304.80 (1.12 ×) 2432.93 (1.21 ×) 4708.87 (1.25 ×) 9321.75 (1.28 ×)SparseD (70%) 661.77 (1.10 ×) 1143.66 (1.28 ×) 2101.23 (1.40 ×) 4046.84 (1.46 ×) 7983.49 (1.49 ×)SparseD (80%) 629.64 (1.15 ×) 1068.86 (1.37 ×) 1936.38 (1.51 ×) 3695.13 (1.60 ×) 7260.83 (1.64 ×)Ours (80%) 559.80 (1.30 ×) 925.63 (1.58 ×) 1656.04 (1.77 ×) 3138.28 (1.88 ×) 6106.12 (1.95 ×)
+
+Table 5: 64K-context latency on Dream across denoising steps. Latency is reported in seconds, and parentheses denote speedup over FlashAttention. 
+
+Method 64 128 256 512 1024 
+
+FlashAttention 572.05 1144.76 2294.38 4610.00 9348.86 SparseD (50%) 570.00(1.00 ×) 1010.16(1.13 ×) 1881.91(1.22 ×) 3636.74(1.27 ×) 7206.96(1.30 ×)SparseD (70%) 520.36(1.10 ×) 910.80(1.26 ×) 1677.17(1.37 ×) 3217.54(1.43 ×) 6360.47(1.47 ×)SparseD (80%) 484.06(1.18 ×) 832.12(1.38 ×) 1517.49(1.51 ×) 2883.79(1.60 ×) 5681.51(1.65 ×)Ours (80%) 363.09(1.58 ×) 654.55(1.75 ×) 1238.99(1.85 ×) 2417.10(1.91 ×) 4804.59(1.95 ×)
+
+14 D Additional Ablation on Refresh Schedule 
+
+We further study how refresh steps are placed within the early refresh window. All variants use the same temporal coverage ratio η and refresh budget R, and differ only in the refresh schedule. Our default schedule places refreshes uniformly within the early refresh window of ⌊ηT ⌋ denoising steps. The random schedule samples the same number of refresh steps uniformly at random from this window. The power-based schedule instead uses normalized positions (i/ (R − 1)) 2 for i = 0 , . . . , R − 1,which concentrates refreshes near the beginning of the window. As shown in Table 6, the uniform schedule gives a more balanced result across LLaDA-1.5 and Dream. While the power-based schedule slightly improves LLaDA-1.5, it leads to a large drop on Dream. Random refresh is also weaker than the uniform schedule on both models. These results show that the refresh schedule has a clear effect on performance. They also suggest that the uniform schedule is a reasonable default, while more adaptive refresh scheduling may further improve the method. Table 6: Ablation of refresh schedules on HumanEval. 
+
+Method ours random power-based 
+
+LLaDA-1.5 38.41 36.58 39.02 Dream 57.32 56.71 52.43 
+
+## E Limitations 
+
+PulseCol currently uses a fixed sparse-reuse schedule, controlled by the refresh window and the number of refreshes. The same configuration is used across all benchmarks, which keeps the method simple and stable. However, our hyperparameter and refresh schedule analyses show that performance can depend on when and how often sparse indices are refreshed. This suggests that a fixed schedule may not be optimal for every model or input. Adaptive refresh strategies based on attention changes during inference may further improve the accuracy-latency trade-off. 15
