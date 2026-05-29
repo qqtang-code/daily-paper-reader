@@ -1,0 +1,1022 @@
+Title: Veda: Scalable Video Diffusion via Distilled Sparse Attention
+
+URL Source: https://arxiv.org/pdf/2605.30325v1
+
+Published Time: Fri, 29 May 2026 01:54:11 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+Shihao Han 1 2 * Hao Yang 1 † Xiaofeng Mei 1 Xinting Hu 3 Yi Jiang 1 Xiaojuan Qi 250K 122K 245K       
+
+> Sequence Length
+> 0
+> 250
+> 500
+> 750
+> 1000
+> 1250
+> 1500
+> 1750
+> 2000
+> Per-layer Latency (ms)
+> O(N)
+> O(N2)
+> 65.6ms 25.5ms 315.3ms 78.3ms 1576.5ms 309.1ms
+> FA3 Veda (Ours)
+> 5.1 ×Faster
+> Performance Scaling
+> Full Attention (FA3) |Sample Time:
+
+19.4 minutes    
+
+> Veda (Ours, 95% Sparsity) |Sample Time:
+
+3.8 minutes 
+
+Figure 1. Veda achieves a 5.1 × end-to-end GPU speedup for high-resolution, long-video generation. Evaluated on Waver-T2V-12B (720P / 241 frames), Veda at 95% sparsity reduces the sample time from 19.4 to 3.8 minutes without compromising visual quality. 
+
+Abstract 
+
+Scaling Diffusion Transformers to generate high-resolution, long videos is constrained by the quadratic cost of self-attention, and existing sparse attention methods degrade under high spar-sity. We show empirically that generation quality is determined not by the sparsity ratio itself, but by how well the sparse mask aligns with the tile-wise geometry of full attention. Based on this insight, we propose Veda, a distilled sparse atten-tion framework that formulates tile selection as an explicit reconstruction problem from full at-tention. Veda integrates statistics-aware tile scor-ing with head-aware tiling to reduce estimation error and structural mismatch, enabling aggres-sive sparsity. A hardware-efficient tile-skipping kernel converts theoretical sparsity into practical wall-clock speedups. Experiments on large video diffusion models, including Waver and Wan2.1, demonstrate substantial acceleration with no no-ticeable degradation in generation quality. To gen-erate 720P 10-second videos on Waver-T2V-12B, Veda achieves a 5.1 × end-to-end speedup and a 10.5 × self-attention speedup, reducing attention overhead from 92% to 50%. Notably, the gains in-
+
+> 1
+
+ByteDance Inc. 2The University of Hong Kong 3University of Science and Technology of China *Work done during internship at ByteDance. †Project Lead. Correspondence to: Xinting Hu 
+
+<xinting@ustc.edu.cn >, Xiaojuan Qi <xjqi@hku.hk >.
+
+Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s). 
+
+crease with sequence length, indicating that Veda scales favorably with spatiotemporal resolution across models. 
+
+1. Introduction 
+
+Diffusion Transformers (DiTs) (Peebles & Xie, 2023) have emerged as the leading architecture for high-fidelity video synthesis (Lin et al., 2024; StepVideoTeam, 2025; Wan-Team, 2025; Team et al., 2025; Yang et al., 2025; Hunyuan-Team, 2025). Nevertheless, their scalability is bottlenecked by the quadratic computational and memory complexity of self-attention (Vaswani et al., 2017) with respect to the spa-tiotemporal token sequence length. Sparse attention offers a natural path toward alleviating this bottleneck by restricting attention computation to a subset of token pairs. In practice, however, sparse attention must be realized at the granularity of tiles rather than individual tokens to align with modern GPU hardware, which performs attention through block-wise matrix multiplications (Markidis et al., 2018; Zhang et al., 2025c). This reformulates sparse attention as a tile selection problem: tokens are grouped into tiles, and each query tile attends to only a small number of key tiles, pro-ducing a tile-wise mask that can be directly materialized by a tile-skipping kernel for efficient execution. However, translating sparsity into wall-clock acceleration often comes at the cost of generation quality. To preserve spatiotemporal structure, existing approaches construct tile masks with two main paradigms. Methods such as SVG (Xi et al., 2025) and STA (Zhang et al., 2025c) leverage in-ductive biases of pretrained models to define candidate spa-1  
+
+> arXiv:2605.30325v1 [cs.CV] 28 May 2026 Veda: Scalable Video Diffusion via Distilled Sparse Attention
+> Figure 2. Architectural comparison of sparse attention methods. We compare the proposed Veda (ours) with representative methods that use (i) static sparse patterns (SVG (Xi et al., 2025)) and (ii) dynamically learned sparse masks (VSA (Zhang et al., 2025b)). Solid lines indicate the inference data flow, while dashed lines denote auxiliary components used only during training.
+
+tiotemporal masks and employ online or offline search strate-gies to select the most effective pre-defined patterns (see Fig. 2, SVG). While these methods are simple and hardware-friendly, they lack adaptability to the highly dynamic and head-specific attention structures learned by DiTs. In contrast, VMOBA (Wu et al., 2025) and VSA (Zhang et al., 2025b) adopt dynamic tile selection by estimating tile importance from compressed representations, such as pooled features or low-rank approximations, and ranking tiles to synthesize dynamic tile-selection masks. Although more flexible (see Fig. 2, VSA), these approaches suffer from inaccurate estimation: tile importance is learned only implicitly through the diffusion objective, without explicit supervision to preserve the structural geometry of full atten-tion. Moreover, their reliance on coarse statistics, such as mean pooling, fails to capture salient signal peaks within tiles, causing the estimated tile scores to misrepresent true query-key correlations. As a result, both paradigms exhibit pronounced quality degradation (Fig. 3) when sparsity is pushed beyond moderate levels, producing structured arti-facts including spatial warping, water-ripple patterns, and temporal flickering. To understand what limits sparse attention in video diffu-sion, we conduct an empirical study on the relationship between sparsity and generation quality (see Fig. 4). We construct an “Oracle” sparse mask by max-pooling the full-attention matrix into a tile-level score map and retaining the highest-response tiles, thereby inducing a reference per-query ranking of key tiles. Models using this Oracle mask preserve generation quality even under very high sparsity, demonstrating that sparsity itself is not the primary cause of degradation (Fig. 4). Instead, we find that mask quality, specifically, the degree to which the sparse mask aligns with the tile-wise structure of full attention, dominates perfor-mance. Consistent with this observation, existing methods fail for two complementary reasons: methods with pre-defined sparse patterns suffer from structural mismatch with head-specific attention geometry, while dynamic methods incur estimation error due to implicit supervision and insufficient tile statistics. Furthermore, we observe substantial hetero-geneity across attention heads and diffusion timesteps, in-dicating that a single, uniform tiling strategy is inherently suboptimal. This suggests that sparse attention must control two coupled factors: how tokens are grouped into tile, and which tiles are selected. Guided by these findings, we propose Veda (Fig. 2, Veda), a distilled sparse attention framework that preserves the tile-wise structure and ranking of full attention even un-der extreme sparsity. Unlike prior dynamic methods in which tile selection emerges implicitly from the diffusion objective, Veda learns tile selection as an explicit target. Specifically, Veda employs a lightweight estimator to dis-till tile-level attention scores from a full-attention back-bone. To reduce estimation error, we enrich tile represen-tations with extrema-aware statistics that preserve salient peaks beyond simple mean pooling. To further mitigate structural mismatch, Veda introduces a Head-Aware Tiling strategy: under a fixed hardware tile budget, heads that primarily capture local spatial interactions and those that 2Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+model long-range temporal dependencies are assigned dis-tinct spatiotemporal factorizations of tiles. Together, these components enable aggressive pruning of attention tiles while maintaining alignment with the intrinsic structure of full attention. Finally, to translate theoretical FLOPs reduc-tion into practical end-to-end acceleration, we implement a tile-skipping sparse attention kernel. This kernel materi-alizes the predicted sparsity through efficient tile skipping and reaches approximately 80% of the MFU achieved by FlashAttention-3 (Shah et al., 2024) while executing sparse attention, ensuring that sparsity yields tangible latency gains rather than overhead-dominated speedups. We conduct extensive experiments on the Waver and Wan2.1 video diffusion models and consistently observe substantial acceleration with no noticeable degradation in generation quality. Across both backbones, Veda maintains stable vi-sual fidelity and temporal coherence even at high sparsity, indicating that the speed gains do not come at the cost of structural artifacts. On Waver-T2V-12B generating 720P 10-second videos, Veda achieves a 5.1× end-to-end speedup and a 10 .5× self-attention speedup, reducing attention over-head from 92% to 50%. On Wan2.1-T2V-14B 720P 5-second, Veda further delivers a 2.63 × end-to-end speedup with a 7.08 × acceleration in self-attention. Notably, the speedup increases with sequence length, demonstrating that Veda scales favorably with spatiotemporal resolution across models (Fig. 8). 
+
+2. Related Work 
+
+Sparse Attention in Language Modeling Sparse atten-tion was first developed and stress-tested at scale in lan-guage modeling (Touvron et al., 2023; QwenTeam, 2025; DeepSeekTeam, 2025a). Early works introduced static spar-sity constraints like Sliding Window Attention (Hassani et al., 2023; Fu et al., 2024) and StreamingLLM (Xiao et al., 2023) that restrict attention to local neighborhoods or specific sinks to maintain efficiency. More recent ap-proaches have evolved toward dynamic sparsity, utilizing either heuristic approximations ( e.g. , MMInference (Li et al., 2025), MoBA (Lu et al., 2025), NSA (Yuan et al., 2025)) or predictive mechanisms that estimate significant attention tiles (e.g., SeerAttention (Gao et al., 2025), DSA (DeepSeek-Team, 2025b)). Our approach is closely related to this pre-dictive paradigm. However, direct transfer to video gener-ation is non-trivial: tightly coupled spatiotemporal depen-dencies can amplify small sparsity errors into structured distortions and temporal flicker, motivating video-specific sparsity designs. 
+
+Sparsity Mechanisms for Video Synthesis Sparsifying the attention matrix in Video DiTs offers a pathway to efficient long-video generation. Works such as SVG (Xi et al., 2025), Sparse-vDiT (Chen et al., 2025), VORTA (Sun et al., 2025) and STA (Zhang et al., 2025c) rely on static sparsity patterns, which are either manually defined or derived from offline statistics. To produce content-adaptive sparsity at runtime, methods like VSA (Zhang et al., 2025b) and VMOBA (Wu et al., 2025) rely on the backbone network to implicitly learn the optimal sparse structure alongside the video generation task. Despite wall-clock gains, the learned selection can drift away from the tile structure implicitly relied upon by the pretrained full-attention model, leading to visible artifacts under high sparsity. This motivates our key stance: learning where to attend benefits from explicit objectives that preserve the tile-wise structure of full attention. 
+
+Efficiency for Video DiTs Beyond Sparse Attention Be-yond sparse attention, research on accelerating Video DiTs generally follows complementary paradigms. Methods such as PAB (Zhao et al., 2025) and TeaCache (Fan et al., 2025) reuse intermediate activations across denoising steps, but the locality assumption can break in few-step regimes where large timestep jumps induce substantial feature disparity. In parallel, sampling distillation methods such as CausVid (Yin et al., 2025) and rCM (Zheng et al., 2025) reduce the number of model evaluations by compressing the diffusion trajectory, yet the per-step spatial cost remains quadratic ( O(N 2)). Our sparse attention framework is orthogonal to both directions and can be combined with them to maximize end-to-end acceleration. 
+
+3. What Matters for a Good Sparse Model? 
+
+3.1. Preliminary 
+
+Modern video diffusion DiTs (Peebles & Xie, 2023) model global dependencies over spatiotemporal tokens, yet atten-tion quickly becomes the primary computation and memory bottleneck at high resolution and long duration. Specifically, a video latent of shape (T, H, W ) is flattened into a token sequence of length N = T HW . For a single attention head, let Q, K, V ∈ RN ×d denote the query, key, and value matrices. Attention (Vaswani et al., 2017) is computed as 
+
+A = Softmax QK ⊤
+
+√d
+
+!
+
+, O = AV , (1) which incurs O(N 2) computation and memory complexity. To mitigate the quadratic cost, sparse attention introduces a mask to restrict computation to a subset of token pairs. Following VSA (Zhang et al., 2025b), this can be written as A = Softmax( QK ⊤/√d + M), where full attention corresponds to M = 0, and sparsity is induced by setting most entries of M to −∞ .Modern hardware accelerators (e.g., GPUs with Tensor Cores) are optimized for tile-level data movement and com-putation. Accordingly, we formulate sparse attention at the tile granularity. Concretely, N tokens are grouped into NT
+
+3Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+tiles of size B, yielding tiled tensors eQ, eK, eV ∈ RNT ×B×d.
+
+fMij ∈ { 0, 1} denotes a binary tile-selection mask for the 
+
+(i, j ) tile pair; selected tile pairs are evaluated by the sparse kernel, while unselected pairs are equivalently assigned ad-ditive mask value −∞ in the softmax. Under a fixed Top-k
+
+budget, each query tile eQi attends to k key tiles and masks out the rest, yielding a tile mask fM that satisfies 
+
+{ j | fMij = 1 } = k, ∀i ∈ { 1, . . . , N T }.
+
+The sparse attention for query tile eQi is computed as: 
+
+ˆKi = Concat j: fMij =1 ( eKj ), ˆVi = Concat j: fMij =1 ( eVj ),
+
+Oi = Softmax eQi ˆK⊤
+
+> i
+
+√d
+
+!
+
+ˆVi.
+
+(2) This enables a tile-skipping kernel to bypass the masked tiles for practical wall-clock speedups. 
+
+3.2. Empirical Study 
+
+We first consider two common sparse attention designs that follow the pipeline in 3.1: (i) Static-pattern methods that instantiate a tile-structured mask fM from pre-defined spa-tiotemporal layouts; and (ii) Dynamic methods that con-struct tile representations via tile pooling and predict tile importance for per-query Top-k selection. Frame t Frame t + 1 Frame t + 2 Frame t + 3 
+
+Figure 3. Sparsity-Induced Artifacts. At 90% sparsity, samples generated with average pooling exhibit “water-ripple” distortions and stochastic noise, which are distinct from standard hallucina-tions. 1
+
+Observation 1: structural artifacts emerge at high spar-sity. At high sparsity ( ≥ 90% ), both static and dynamic baselines exhibit a distinct class of structural artifacts that are different from semantic hallucinations of the base model. Typical failures include water-ripple patterns, local geo-metric distortions, and temporal flickering across frames (Fig. 3). 
+
+Observation 2: mask quality dominates sparsity ratio. 
+
+To disentangle the effect of the sparsity ratio from mask 
+
+> 1
+
+Human faces are used because video artifacts are subtle in static images, whereas facial distortions are immediately percepti-ble to humans. Full Attention Oracle Mask Average Pooling Veda (Ours) 
+
+Figure 4. Impact of Mask Precision. At a fixed sparsity level (90% ), generation quality is governed by the accuracy of tile selec-tion. The Oracle Mask , selected from full-attention Top-k scores, preserves high-fidelity structure and serves as an upper bound. In contrast, the Average Pooling mask used in VSA (Zhang et al., 2025b) misestimates tile importance and causes severe artifacts. Veda distills the oracle selection into an efficient sparse mask, re-covering oracle-like quality under the same budget. 
+
+quality, we perform a controlled intervention at a fixed spar-sity level (e.g., 90% ). Using the “optimal” mask derived from full attention scores yields substantially better gener-ations than a pooling-based mask under the same sparsity budget (Fig. 4). This gap indicates that the bottleneck is not the sparsity ratio itself, but whether the tile mask preserves the tile-wise structure of full attention. Key Tiles     
+
+> Query Tiles
+> Oracle Mask
+> Key Tiles
+> Average Pooling Mask
+> Recall: 34.2%
+> Key Tiles
+> Veda Mask
+> Recall: 66.4%
+> True Positive False Positive False Negative
+
+Figure 5. Tile recall analysis against full attention oracle. Vi-sualization of tile-level selection agreement with the full attention oracle mask (Top-k tiles by aggregated attention scores). Orange indicates true positives (correctly selected tiles), red denotes false positives (incorrectly selected), and blue shows false negatives (missed tiles). 
+
+Metric: tile recall w.r.t. full attention. To quantify tile-wise alignment, we define a simple recall metric against full attention. For each query tile i, let fMfu  
+
+> i
+
+be the mask of Top-
+
+k key tiles under full attention (computed by aggregating token-level scores into tile scores), and fMsp  
+
+> i
+
+be the mask of selected Top-k tiles of a sparse method. Define the selected key-tile sets as Sfu  
+
+> i
+
+= {j | fMfu  
+
+> ij
+
+= 1 } and Ssp  
+
+> i
+
+= {j |
+
+fMsp  
+
+> ij
+
+= 1 }. We report tile recall :
+
+Recall@ k = 1
+
+NTNTX
+
+> i=1
+
+|S sp  
+
+> i
+
+∩ S fu  
+
+> i
+
+|
+
+k . (3) Across sparsity levels, higher tile recall correlates strongly with fewer structural artifacts, making it a reliable indicator of stability under extreme sparsity (Fig. 5). 4Veda: Scalable Video Diffusion via Distilled Sparse Attention Key Tiles       
+
+> Query Tiles
+> Layer 1 Head 4 Timestep 1000
+> Before Padding
+> Key Tiles
+> After Padding - Tiling [2,4,16]
+> Recall: 20.5%
+> Key Tiles
+> After Padding - Tiling [4,4,8]
+> Recall: 31.2%
+> Key Tiles
+> After Padding - Tiling [8,16,1]
+> Recall: 80.9%
+> Key Tiles
+> Query Tiles
+> Layer 9 Head 8 Timestep 109
+> Key Tiles
+> Recall: 48.7%
+> Key Tiles
+> Recall: 63.6%
+> Key Tiles
+> Recall: 57.4%
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+
+Figure 6. Diversity of Attention Patterns. Distinct attention heads exhibit varying spatial and temporal footprints that evolve across diffusion timesteps, indicating the need for head-specific adaptation. 
+
+Observation 3: head-wise heterogeneity challenges uni-form tile designs. Finally, inspecting attention patterns reveals pronounced head-wise diversity across layers and diffusion timesteps (Fig. 6). A single, uniform tiling strat-egy can under-aggregate critical correlations for some heads while over-aggregating others, which degrades tile recall under high sparsity and motivates head-aware tile designs. 
+
+4. Veda 
+
+We introduce Veda, a sparse attention framework designed to distill the intrinsic structure and ranking of full attention. As a lightweight, architecturally modular component, Veda actively aligns tile selection with the full-attention backbone even under extreme sparsity. The overall architecture is shown in Fig. 2, and this section is organized as follows. In Sec. 4.1, Veda casts tile selection as an explicit alignment objective: a statistics-aware score estimator is supervised to recover full-attention query-key tile scores. Sec. 4.2 addresses head-wise heterogeneity with Head-Aware Tiling, assigning head-dependent spatiotemporal tile configurations to reduce structural mismatch. Finally, Sec. 4.3 presents a hardware-efficient tile-skipping kernel that materializes the predicted masks into practical end-to-end acceleration. 
+
+4.1. Distilled Tile Scoring for Sparse Attention 
+
+Veda optimizes a binary tile mask fM under a fixed Top-k
+
+budget to preserve the tile-wise structure and ranking in-duced by full attention. Rather than relying on the diffusion objective to shape sparsity implicitly, we cast tile selection as an explicit alignment problem with supervision derived from the full-attention backbone. 
+
+Target: Full-Attention Score Construction. To guide the sparse selection, we first derive a reference tile ranking from the full-attention backbone. Given the query and key features Q, K ∈ RN ×d, the full attention map is A∗ =
+
+Softmax (QK ⊤/√d). To map this token-level density to tile-level importance, we apply a max-pooling operation over the corresponding query-key tile regions: 
+
+Stgt 
+
+ij = max 
+
+(u,v )∈Tile (i,j ) A∗
+
+uv . (4) We opt for max-pooling rather than averaging because atten-tion distributions are typically sparse and peaky; averaging tends to dilute salient high-frequency signals with back-ground noise, whereas max-pooling preserves the existence of critical dependencies. 
+
+Statistic-Aware Estimator. We employ a lightweight es-timator Eϕ to reconstruct the target scores using compressed tile representations. First, for each query/key tile, we con-struct a TripPool descriptor by concatenating Avg, Max, Min triplet statistics: TripPool [·] = Avg[ ·] ⊕ Max[ ·] ⊕ Min[ ·], (5) where ⊕ denotes the concatenation. To capture heteroge-neous dependency patterns, the estimator employs head-specific MLP projections ϕq and ϕk. For a given attention head, these projections map the statistics into a shared latent space. The predicted score Spred 
+
+ij between query tile eQi and key tile eKj is then computed as: 
+
+Spred 
+
+ij = ϕq (TripPool [ eQi]) · ϕk(TripPool [ eKj ]) ⊤
+
+√d′ , (6) where d′ is the estimator latent dimension. Note that while we omit the head index for brevity, distinct projection weights are learned for each head. 
+
+Optimization. We align the predicted tile-score distribu-tion to the full-attention reference via a row-wise distillation objective. Concretely, we apply row-wise normalization on 
+
+Stgt and Softmax on Spred over key tiles to obtain per-query attention weights Atgt and Apred , and minimize 
+
+Ldistill = DKL 
+
+ Atgt ∥ Apred  , (7) averaged over query tiles and heads. By applying per-query Top-k selection on Stgt and Spred ,we retain the k highest-scoring key tiles for each query tile and mask out the rest, constructing the oracle and predicted binary tile masks fM∗ and fM. The resulting mask is materi-alized by a tile-skipping sparse attention kernel to compute sparse attention outputs. The backbone is trained under this sparse execution with the standard diffusion denoising objective Ldiff , while Ldistill provides explicit supervision to improve tile-score estimation and the induced Top-k selec-tion. Crucially, to ensure the estimator actively adapts to the back-bone without perturbing the pre-trained generative manifold, we apply a stop-gradient (sg) operation on the backbone 5Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+features feeding into the estimator. This decouples mask learning from feature learning, ensuring stable convergence. In our experiments, we observed that allowing the gradient to propagate back into the base model leads to a noticeable degradation in generation quality. This empirical finding indicates that implicitly coupling sparse mask learning with the diffusion objective is detrimental; forcing the generative backbone itself to learn how to perform sparse attention fundamentally disrupts its pre-trained representation capa-bilities. 
+
+4.2. Head-aware Tiling Search 
+
+Attention heads in Video DiTs exhibit pronounced hetero-geneity in their spatiotemporal dependency patterns, so a single uniform tiling can be suboptimal under high sparsity. Veda therefore assigns a per-layer-per-head tiling configu-ration πl,h = ( pt, p h, p w): For each head h at layer l, πl,h 
+
+defines how the N tokens are grouped into NT tiles over temporal, spatial-height, and spatial-width dimensions. To remain hardware-efficient, we restrict π to factorizations of the hardware tile size B (e.g., B=128 ), and the configura-tion set Ω is: 
+
+Ω = {(pt, p h, p w) ∈ N3 | ptphpw = B}, (8) We select πl,h offline on a calibration set by directly mini-mizing the approximation error of full-attention output Ofu 
+
+after applying sparse attention. For each candidate π ∈ Ω
+
+and calibration sample x ∼ D cal , we first tile the head-specific tokens according to π and derive a reference Top-k
+
+mask fM∗(x; π) from the full-attention map, following the score pooling and per-query Top-k selection in Sec. 4.1. We then apply fM∗(x; π) to execute tile-sparse attention and obtain the corresponding output Osp 
+
+> l,h
+
+(x; π) after mapping tokens back to the original order, while Ofu 
+
+> l,h
+
+(x) denotes the full-attention output of the same head. The optimal configuration is chosen as 
+
+π∗ 
+
+> l,h
+
+= arg min  
+
+> π∈Ω
+
+Ex∼D cal 
+
+
+
+Ofu 
+
+> l,h
+
+(x) − Osp 
+
+> l,h
+
+(x; π) 2
+
+> F
+
+
+
+,
+
+(9) which favors tilings that preserve the full-attention output most faithfully under the fixed Top-k budget. Algorithm 1 summarizes the procedure. 
+
+4.3. Hardware Implementation Hardware-Efficient Tile-sparse Kernel. To translate the theoretical reduction in FLOPs into tangible wall-clock ac-celeration, we implement a highly optimized tile-skipping attention kernel leveraging the ThunderKittens DSL (Spec-tor et al., 2024). We address the irregular memory access patterns introduced by sparse attention by exploiting the asynchronous Tensor Memory Access (TMA) and Warp Specialization features of the NVIDIA Hopper (Markidis et al., 2018). Our kernel decouples data movement from computation via a producer-consumer paradigm. The pro-ducer warps orchestrate TMA instructions to fetch only the selected non-contiguous key/value tiles from global mem-ory into a circular shared memory buffer. Simultaneously, 
+
+consumer warps execute tensor core operations (WGMMA) on the buffered data. This design effectively hides the la-tency of sparse memory gathering behind dense matrix math. Consequently, our kernel reaches approximately 80% of the MFU achieved by the highly optimized FlashAttention-3 (Shah et al., 2024) on 480P, 81-frame resolution sequences (sequence length L ≈ 34 K). 
+
+Efficient Ground-Truth Heatmap Generation. Train-ing the sparse predictor requires a ground-truth tile-wise heatmap derived from the full-attention distribution A. Gen-erating exact pooled scores without storing A is non-trivial because softmax normalization couples all keys within each query row. We address this with a TileLang (Wang et al., 2025) kernel that computes pooled tile scores in two passes. The first pass performs tile-wise QK ⊤ in SRAM and writes per-tile unnormalized maxima together with running row statistics to global memory. The second pass finalizes the row statistics and normalizes the cached maxima to recover exact tile-wise scores. This implementation reaches ∼ 0.9×
+
+FlashAttention-3 throughput while producing the pooled supervision, and its tile-wise independence further supports 
+
+partial query processing by supervising only a random sub-set of query tiles. Such sparse supervision dramatically reduces the supervision overhead and accelerates the overall training process, all without substantially compromising the final model performance. 
+
+5. Experiments 
+
+Implementation Details. We evaluate Veda using the Waver-T2V (1B/12B) (Zhang et al., 2025d) and Wan2.1-T2V (1.3B/14B) (WanTeam, 2025) architectures. To assess scalability, we conduct experiments across varying resolu-tions and token counts: 480P (81 frames, 34,020 tokens) for the 1B/1.3B models; 720P (81 frames, 75,600 tokens) for Wan2.1-14B; and 720P (241 frames, 219,600 tokens) for Waver-T2V-12B. All models are trained on an internal dataset encompassing a broad spectrum of general scenes. For Veda, we employ a two-stage training protocol. In the first stage, the backbone is frozen while the projector is op-timized for 1,000 steps using Xavier uniform initialization and a learning rate of 6 × 10 −4 to align the sparse predic-tor. In the second stage, we unfreeze all parameters and perform sparse fine-tuning at the target sparsity level using a learning rate of 6 × 10 −5 for backbone and 6 × 10 −4 for sparse predictor. Unlike prior dynamic sparse methods that require a handcrafted, slow sparsity warm-up to prevent 6Veda: Scalable Video Diffusion via Distilled Sparse Attention 0 20 40 60 80 100 
+
+Overall Quality 
+
+Motion Quality 
+
+Visual Quality 
+
+Prompt Following 
+
+Overall Quality 
+
+Motion Quality 
+
+Visual Quality 
+
+Prompt Following 
+
+Overall Quality 
+
+Motion Quality 
+
+Visual Quality 
+
+Prompt Following 
+
+Veda Better Tie Baseline Better 
+
+> 35%
+> 19%
+> 50%
+> 32%
+> 25%
+> 21%
+> 54%
+> 38%
+> 39%
+> 35%
+> 76%
+> 40%
+> 35%
+> 63%
+> 38%
+> 52%
+> 59%
+> 31%
+> 45%
+> 50%
+> 30%
+> 31%
+> 18%
+> 49%
+> 30%
+> 24%
+> 20%
+> 46%
+> 31%
+> 16%
+> 15%
+> 24%
+> 30%
+
+Veda (90% Sparsity) vs. Full Attn. 
+
+Veda (95% Sparsity) vs. VSA (87.5% Sparsity) 
+
+Veda (95% Sparsity) vs. VSA (95% Sparsity) 
+
+Percentage (%) 
+
+Figure 7. Human evaluation on Waver-bench 1.0 using Waver-T2V-1B. We compare Veda against Full Attention and VSA . Videos are generated at 480P, 81 frames (sequence length ≈ 34k). Veda achieves a parity win/tie rate against Full Attention at 90% sparsity. Notably, Veda at 95% sparsity yields superior results compared to VSA even when VSA operates at a significantly lower sparsity (87.5%), and demonstrates a substantial performance margin over VSA at equivalent (95%) sparsity levels. 
+
+training collapse, Veda’s Stage 1 explicitly decouples mask learning from feature learning via a stop-gradient operation. This provides a highly stable initialization, allowing Stage 2 to rapidly adapt to target sparsity levels without fragile scheduling, and we therefore maintain the sparsity ratio at a fixed value without warmup across both stages. For experi-ments at the 1B/1.3B scale, models are trained for 23k steps, and we report results using Exponential Moving Average (EMA) weights with a decay of 0.9999. 
+
+Evaluation Metrics. We assess generation performance through a combination of human evaluation and standard-ized benchmarks. For human evaluation, we utilize Waver-bench 1.0 (Zhang et al., 2025d), a curated dataset of 304 prompts that cover a wide range of scenarios. Comple-mentary to human ratings, we report quantitative metrics evaluated on the VBench (Huang et al., 2024) suite. To ensure fair comparison, all latency and speedup measure-ments are conducted on identical GPU hardware; dense baselines use FlashAttention-3, and sparse methods use the same tile-skipping sparse attention kernel. 
+
+Comparison with Existing Baselines. We benchmark Veda against Full Attention, Oracle mask and VSA (Zhang et al., 2025b). To ensure a fair comparison, all methods are trained on the identical dataset and number of steps as our approach, utilizing the specific warm-up settings proposed in their respective literature. Similarly, for all post-training sparse baselines, we strictly adhere to an equivalent training budget and learning rate schedule. 
+
+5.1. Generation Quality Comparison 
+
+We evaluate generation quality via a blinded Side-by-Side (SBS) study on Waver-bench 1.0 across four dimensions: 
+
+Overall Quality (OQ), Motion Quality (MQ), Visual Quality 
+
+(VQ), and Prompt Following (PF). Results are shown in Fig. 7. Comparing Veda (90% sparsity) to the Full Attention base-Full Attn Veda (Ours)      
+
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> 300
+> 350
+> Layer Latency (ms)
+> 315.3
+> 78.3
+> 274.1
+> 41.2
+> 36.9
+> 39.5
+> 4.03x
+> Waver-T2V-12B, 720P/121 Frames (SP=4)
+> Full Attn Veda (Ours)
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70 65.6
+> 25.5
+> 48.6
+> 17.0
+> 8.6
+> 5.5
+> 11.4
+> 2.57x
+> Waver-T2V-1B, 480P/121 Frames
+> Full Attn Veda (Ours)
+> 0
+> 100
+> 200
+> 300
+> 400
+> 500
+> 600
+> Layer Latency (ms)
+> 583.7
+> 220.7
+> 405.0
+> 178.7
+> 36.7
+> 163.6
+> 2.64x
+> Wan2.1-T2V-14B, 720P/81 Frames
+> Full Attn Veda (Ours)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> 40 37.2
+> 21.1
+> 22.6
+> 14.6
+> 3.9
+> 3.2
+> 13.9
+> 1.76x
+> Wan2.1-T2V-1.3B, 480P/81 Frames
+> MLP
+> Prepare Mask
+> Attention Forward
+
+Figure 8. Wall-clock latency decomposition and speedup analy-sis. We measure the end-to-end per-layer inference latency of Veda against a FlashAttention-3 baseline on Waver-T2V and Wan2.1-T2V at two resolutions (720p and 480p). Stacked bars break down the runtime into MLP computation, sparse mask preparation (Prepare Mask ), and attention kernel execution. Veda delivers substantial speedups, reaching up to 4.03 × on Waver-T2V and 
+
+2.64 × on Wan2.1-T2V at 720p. 
+
+7Veda: Scalable Video Diffusion via Distilled Sparse Attention Prompt: Wide shot of an underwater scene in the Great Barrier Reef, coral structures and colorful fish visible in clear blue water. Small schools of striped fish swim past vivid corals, while a green sea turtle moves its flippers and glides slowly above the reef. A pair of butterflyfish dart between coral branches, circling each other around waving anemones. The camera pans smoothly from this lively section to an 
+
+> area with pale, bleached coral, where fewer fish swim and a lone parrotfish pecks at the damaged structure. In a recovery zone, tiny coral polyps extend from new growth as small wrasse and cleaner shrimp crawl over the rocky surface.
+> Prompt: A surreal and humorous scene unfolds on a wide highway. An elderly man with gray hair, wearing a loose scarf, glasses, a retro jacket and trousers, rides a vintage bicycle at a surprising speed. He leans forward, his face showing determination and slight joy, while his colorful scarf flies wildly behind him. To his right, a modern, streamlined sports car with a driver inside appears shocked as the elderly
+> man swiftly overtakes it. The highway background blurs with bands of light and dynamic lines, creating a strong sense of speed. Dust rises under the bicycle s wheels, and wind effects swirl around, heightening the race atmosphere. The blue sky dotted with a few white clouds sits above, and several modern road signs line the roadside, underlining the urban setting. The camera slowly tracks the elderly man from a
+> medium wide angle as he surges ahead.
+
+Figure 9. Qualitative results of Waver-T2V-12B with 95% sparsity using Veda. Two representative samples are shown, each synthesized at 720P resolution with 241 frames. The text prompt for each sample is shown beneath the corresponding image. More qualitative comparisons are included in the supplementary material. 
+
+Table 1. VBench evaluation of Veda against full attention and state-of-the-art sparsification methods on video diffusion models. 
+
+We compare Veda against Full Attention and state-of-the-art sparsification techniques on Waver-T2V and Wan2.1-T2V. Sparsity indicates the reduction in computation. “Full Attn.” serves as the dense baseline. ↑ and ↓ denote better performance. 
+
+Model Config Method Subject Background Motion Dynamic Aesthetic Image Sparsity ↑ FLOPs ↓ Wall Time ↓
+
+Cons. ↑ Cons. ↑ Smooth. ↑ Deg. ↑ Quality ↑ Quality ↑
+
+Waver 1.0 1B 480P 81F Full Attn. 0.938 0.955 0.979 0.969 0.655 0.693 0% 4.83 × 10 16 69.3s Oracle Mask 0.907 0.950 0.974 0.993 0.639 0.685 90% – 126.3s VSA 0.933 0.949 0.978 0.983 0.648 0.692 87.5% 1.56 × 10 16 34.3s 
+
+Ours (S=90%) 0.940 0.954 0.980 0.963 0.650 0.699 90% 1.47 × 10 16 31.9s 
+
+Ours (S=95%) 0.934 0.951 0.978 0.979 0.649 0.698 95% 1.28 × 10 16 30.6s Wan2.1 1.3B 480P 81F Full Attn. 0.940 0.969 0.977 0.844 0.629 0.670 0% 5.82 × 10 16 58.5s Oracle Mask 0.957 0.968 0.931 0.861 0.325 0.642 90% – 94.6s VSA 0.911 0.950 0.975 0.795 0.549 0.661 87.5% 2.55 × 10 16 42.5s 
+
+Ours (S=90%) 0.887 0.941 0.972 0.913 0.543 0.663 90% 2.46 × 10 16 37.6s 
+
+Ours (S=95%) 0.790 0.926 0.928 0.733 0.394 0.661 95% 2.27 × 10 16 35.8s 
+
+line, we observe perceptual parity. Preference rates for VQ and PF are nearly identical (e.g., 50% vs. 49% for VQ), while a 63% tie rate in MQ confirms temporal consistency is maintained. Consequently, OQ remains indistinguish-able from the full model, proving Veda preserves generative capabilities despite aggressive pruning. Against VSA (Zhang et al., 2025b), Veda excels even under stricter constraints. Veda (95% sparsity) surpasses VSA (87.5% sparsity) in VQ (54% vs. 46%). At equal 95% sparsity, Veda dominates VQ (76% vs. 24%) and OQ (39% vs. 16%). This validates that our distillation strategy retains information-dense regions better than prior heuristic pooling methods. In addition to human evaluation, we provide a quantitative analysis using the VBench suite in Table 1. The results demonstrate that Veda effectively retains key generative ca-pabilities despite the significant reduction in computation. On the Waver-T2V architecture, our method maintains sub-ject consistency and motion smoothness scores that are com-parable to the Full Attention baseline, even at 95% sparsity. Across differing model scales, Veda consistently exhibits a favorable efficiency-quality trade-off relative to the VSA baseline, delivering competitive metric performance while achieving lower FLOPs and reduced wall-clock latency. 
+
+5.2. Inference Efficiency Comparison 
+
+We analyze wall-clock latency on NVIDIA Hopper GPUs to quantify practical speedups over FlashAttention-3 (FA3) (Shah et al., 2024). We report the end-to-end latency of a single Transformer layer, including both the sparse mask predictor overhead and the sparse attention kernel execution. In Fig. 8, for Waver-T2V-12B at 720P with 121 frames, a dense Transformer layer takes 315.3 ms, while Veda reduces it to 78.3 ms (4.03 ×). The Veda breakdown is 39.5 ms for MLP computation, 1.9 ms for sparse mask preparation, and 36.9 ms for sparse attention execution, so the combined sparse-attention overhead remains well below dense atten-tion. We observe a similar trend on Wan2.1-T2V-14B at 720P with 81 frames: layer latency decreases from 583.7 ms to 220.7 ms (2.64 ×), demonstrating consistent gains across backbones with different architectures and sequence configurations. We further evaluate scalability with sequence length. As shown in Fig. 1, at 50,220 tokens (480P, 121 frames), Veda achieves a 2.57 × speedup over FA3 (25.5 ms vs. 65.6 ms). When scaling to 245,760 tokens (720P, 241 frames, SP=8), FA3 grows quadratically to 1576.5 ms, whereas Veda scales near-linearly and remains at 309.1 ms, yielding 8Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+a 5.1 × speedup. Overall, these results confirm that Veda mitigates the quadratic attention cost and delivers robust wall-clock improvements for high-resolution, long-sequence video generation. 
+
+5.3. Ablation Study Ablation on Head-aware Tiling. We compare various static tile configurations against our Head-aware Tiling strategy. The static baselines include configurations em-phasizing spatial granularity ( [8 , 8, 2] ), temporal granular-ity ( [4 , 4, 8] ), and alternative spatial-temporal trade-offs ([4 , 8, 4] ). Among these fixed configurations, [4 , 4, 8] 
+
+demonstrates the strongest performance and serves as the primary static baseline for comparison. We evaluate our Head-aware Tiling method against this optimal static con-figuration ( [4 , 4, 8] ). As shown in Fig. 10, our approach achieves consistent improvements across all metrics, with notable gains of +7.2% in Motion Quality and +9.6% in 
+
+Overall Quality . These results demonstrate the superiority of head-aware tiling over uniform static tiling strategies.        
+
+> Table 2. Ablation on tile statistics for the score estimator. Results report the average training loss. Triplet pooling (mean, maximum, minimum) best reconstructs the oracle attention structure.
+> Pooling Strategy Training Loss ( ↓)
+> MaxMin + Projector 0.982 Avg + Projector 0.965
+> Triplet + Projector (Ours) 0.912
+
+Ablation on Tile Score Estimator. We evaluate three pooling schemes for compressing token-wise features into tile-level representations: (1) Avg , (2) MaxMin (concatenat-ing maximum and minimum), and (3) Triplet (concatenating mean, maximum, and minimum). We train the score estima-tor with the diffusion backbone frozen and report the mean squared error (MSE) to oracle full-attention tile scores. As shown in Table 2, Triplet achieves the lowest MSE ( 0.912 ), outperforming Avg and MaxMin .
+
+5.4. Qualitative Results 
+
+Fig. 9 illustrates qualitative generation results of Waver-T2V-12B at 720p resolution for 241-frame sequences under 95% sparsity. Despite the extreme sparsity (95%), Veda maintains high visual quality and coherent motion, without noticeable sparse-induced structural artifacts (e.g., warping, water-ripple patterns, or temporal flickering). More qualita-tive examples are included in the Supplementary Material. 
+
+6. Conclusion and Future Work 
+
+We presented Veda, a hardware-aware sparse attention framework that addresses the scalability bottleneck of high-resolution video Diffusion Transformers. Veda reformulates sparsity as an explicit tile selection problem and supervises tile scoring via full-attention distillation, rather than rely-ing on the diffusion objective to implicitly shape sparse patterns. The induced Top-k masks preserve the tile-wise structure and ranking of full attention even under extreme pruning. By combining a statistics-aware tile score estimator and Head-Aware Tiling with a custom tile-skipping kernel, Veda translates algorithmic sparsity into practical wall-clock gains, achieving up to 5.1× end-to-end speedup on Waver and Wan2.1 with no noticeable degradation in generation quality, while exhibiting favorable scaling as spatiotemporal sequence length increases. Looking forward, further im-provements may come from tighter kernel-level fusion to reduce mask preparation overhead, more advanced schedul-ing to sustain high MFU at sparsity levels beyond 95% , and richer distillation signals or adaptive sparsity strategies that allocate computation across timesteps and heads. Incorpo-rating lightweight temporal caching of tile scores across adjacent diffusion steps could further improve stability. 
+
+Impact Statement 
+
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here. 
+
+References 
+
+Chen, P., Zeng, X., Zhao, M., Ye, P., Shen, M., Cheng, W., Yu, G., and Chen, T. Sparse-vdit: Unleashing the power of sparse attention to accelerate video diffusion transformers. arXiv preprint arXiv:2506.03065 , 2025. DeepSeekTeam. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 , 2025a. DeepSeekTeam. Deepseek-v3.2: Pushing the fron-tier of open large language models. arXiv preprint arXiv:2512.02556 , 2025b. Fan, Z., Wang, Z., and Zhang, W. Taocache: Structure-maintained video generation acceleration. arXiv preprint arXiv:2508.08978 , 2025. Fu, T., Huang, H., Ning, X., Zhang, G., Chen, B., Wu, T., Wang, H., Huang, Z., Li, S., Yan, S., Dai, G., Yang, H., and Wang, Y. Mixture of attention spans: Optimizing llm inference efficiency with heterogeneous sliding-window lengths. arXiv preprint arXiv:2406.14909 , 2024. Gao, Y., Zeng, Z., Du, D., Cao, S., Zhou, P., Qi, J., Lai, J., So, H. K.-H., Cao, T., Yang, F., and Yang, M. Seerat-tention: Learning intrinsic sparse attention in your llms. 
+
+arXiv preprint arXiv:2410.13276 , 2025. 9Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+Hassani, A., Walton, S., Li, J., Li, S., and Shi, H. Neigh-borhood attention transformer. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pp. 6185–6194, 2023. Huang, Z., He, Y., Yu, J., Zhang, F., Si, C., Jiang, Y., Zhang, Y., Wu, T., Jin, Q., Chanpaisit, N., Wang, Y., Chen, X., Wang, L., Lin, D., Qiao, Y., and Liu, Z. VBench: Compre-hensive benchmark suite for video generative models. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024. HunyuanTeam. Hunyuanvideo 1.5 technical report. arXiv preprint arXiv:2511.18870 , 2025. Li, Y., Jiang, H., Zhang, C., Wu, Q., Luo, X., Ahn, S., Abdi, A. H., Li, D., Gao, J., Yang, Y., et al. Mmin-ference: Accelerating pre-filling for long-context vlms via modality-aware permutation sparse attention. arXiv preprint arXiv:2504.16083 , 2025. Lin, B., Ge, Y., Cheng, X., Li, Z., Zhu, B., Wang, S., He, X., Ye, Y., Yuan, S., Chen, L., Jia, T., Zhang, J., Tang, Z., Pang, Y., She, B., Yan, C., Hu, Z., Dong, X., Chen, L., Pan, Z., Zhou, X., Dong, S., Tian, Y., and Yuan, L. Open-sora plan: Open-source large video generation model. 
+
+arXiv preprint arXiv:2412.00131 , 2024. Litman, E. Scaled-dot-product attention as one-sided entropic optimal transport. arXiv preprint arXiv:2508.08369 , 2025. Lu, E., Jiang, Z., Liu, J., Du, Y., Jiang, T., Hong, C., Liu, S., He, W., Yuan, E., Wang, Y., Huang, Z., Yuan, H., Xu, S., Xu, X., Lai, G., Chen, Y., Zheng, H., Yan, J., Su, J., Wu, Y., Zhang, N. Y., Yang, Z., Zhou, X., Zhang, M., and Qiu, J. Moba: Mixture of block attention for long-context llms. arXiv preprint arXiv:2502.13189 , 2025. Markidis, S., Chien, S. W. D., Laure, E., Peng, I. B., and Vetter, J. S. Nvidia tensor core programmability, per-formance and precision. In 2018 IEEE International Parallel and Distributed Processing Symposium Work-shops (IPDPSW) , pp. 522–531. IEEE, May 2018. doi: 10.1109/ipdpsw.2018.00091. Peebles, W. and Xie, S. Scalable Diffusion Models with Transformers . In 2023 IEEE/CVF International Confer-ence on Computer Vision (ICCV) , pp. 4172–4182, Los Alamitos, CA, USA, October 2023. IEEE Computer So-ciety. doi: 10.1109/ICCV51070.2023.00387. QwenTeam. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 , 2025. Ramsauer, H., Sch ¨afl, B., Lehner, J., Seidl, P., Widrich, M., Adler, T., Gruber, L., Holzleitner, M., Pavlovi ´c, M., Sandve, G. K., Greiff, V., Kreil, D., Kopp, M., Klambauer, G., Brandstetter, J., and Hochreiter, S. Hopfield networks is all you need. arXiv preprint arXiv:2008.02217 , 2021. Shah, J., Bikshandi, G., Zhang, Y., Thakkar, V., Ramani, P., and Dao, T. Flashattention-3: Fast and accurate atten-tion with asynchrony and low-precision. arXiv preprint arXiv:2407.08608 , 2024. Spector, B. F., Arora, S., Singhal, A., Fu, D. Y., and R ´e, C. Thunderkittens: Simple, fast, and adorable ai kernels. 
+
+arXiv preprint arXiv:2410.20399 , 2024. StepVideoTeam. Step-video-t2v technical report: The prac-tice, challenges, and future of video foundation model. 
+
+arXiv preprint arXiv:2502.10248 , 2025. Sun, W., Tu, R.-C., Ding, Y., Jin, Z., Liao, J., Liu, S., and Tao, D. Vorta: Efficient video diffusion via routing sparse attention. arXiv preprint arXiv:2505.18809 , 2025. Team, M. L., Cai, X., Huang, Q., Kang, Z., Li, H., Liang, S., Ma, L., Ren, S., Wei, X., Xie, R., and Zhang, T. Longcat-video technical report. arXiv preprint arXiv:2510.22200 ,2025. Touvron, H., Lavril, T., Izacard, G., Martinet, X., Lachaux, M.-A., Lacroix, T., Rozi `ere, B., Goyal, N., Hambro, E., Azhar, F., Rodriguez, A., Joulin, A., Grave, E., and Lam-ple, G. Llama: Open and efficient foundation language models. arXiv preprint arXiv:2302.13971 , 2023. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, L., and Polosukhin, I. Attention is all you need. In Proceedings of the 31st International Conference on Neural Information Processing Systems ,NIPS’17, pp. 6000–6010, Red Hook, NY, USA, 2017. Curran Associates Inc. ISBN 9781510860964. Wang, L., Cheng, Y., Shi, Y., Tang, Z., Mo, Z., Xie, W., Ma, L., Xia, Y., Xue, J., Yang, F., et al. Tilelang: A com-posable tiled programming model for ai systems. arXiv preprint arXiv:2504.17577 , 2025. WanTeam. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 ,2025. Wu, J., Hou, L., Yang, H., Tao, X., Tian, Y., Wan, P., Zhang, D., and Tong, Y. Vmoba: Mixture-of-block attention for video diffusion models. arXiv preprint arXiv:2506.23858 ,2025. Xi, H., Yang, S., Zhao, Y., Xu, C., Li, M., Li, X., Lin, Y., Cai, H., Zhang, J., Li, D., Chen, J., Stoica, I., Keutzer, K., and Han, S. Sparse videogen: Accelerating video diffu-sion transformers with spatial-temporal sparsity. arXiv preprint arXiv:2502.01776 , 2025. 10 Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+Xiao, G., Tian, Y., Chen, B., Han, S., and Lewis, M. Ef-ficient streaming language models with attention sinks. 
+
+arXiv preprint arXiv:2309.17453 , 2023. Yang, Z., Teng, J., Zheng, W., Ding, M., Huang, S., Xu, J., Yang, Y., Hong, W., Zhang, X., Feng, G., Yin, D., Zhang, Y., Wang, W., Cheng, Y., Bin, X., Gu, X., Dong, Y., and Tang, J. Cogvideox: Text-to-video diffusion models with an expert transformer. In Yue, Y., Garg, A., Peng, N., Sha, F., and Yu, R. (eds.), International Conference on Learning Representations , volume 2025, pp. 83048– 83077, 2025. Yin, T., Zhang, Q., Zhang, R., Freeman, W. T., Durand, F., Shechtman, E., and Huang, X. From slow bidirectional to fast autoregressive video diffusion models. arXiv preprint arXiv:2412.07772 , 2025. Yuan, J., Gao, H., Dai, D., Luo, J., Zhao, L., Zhang, Z., Xie, Z., Wei, Y. X., Wang, L., Xiao, Z., Wang, Y., Ruan, C., Zhang, M., Liang, W., and Zeng, W. Native sparse attention: Hardware-aligned and natively trainable sparse attention. arXiv preprint arXiv:2502.11089 , 2025. Zhang, J., Xiang, C., Huang, H., Wei, J., Xi, H., Zhu, J., and Chen, J. Spargeattention: Accurate and training-free sparse attention accelerating any model inference. arXiv preprint arXiv:2502.18137 , 2025a. Zhang, P., Chen, Y., Huang, H., Lin, W., Liu, Z., Stoica, I., Xing, E., and Zhang, H. VSA: Faster Video Diffu-sion with Trainable Sparse Attention. arXiv preprint arXiv:2505.13389 , 2025b. Zhang, P., Chen, Y., Su, R., Ding, H., Stoica, I., Liu, Z., and Zhang, H. Fast video generation with sliding tile attention. arXiv preprint arXiv:2502.04507 , 2025c. Zhang, Y., Yang, H., Zhang, Y., Hu, Y., Zhu, F., Lin, C., Mei, X., Jiang, Y., Peng, B., and Yuan, Z. Waver: Wave your way to lifelike video generation. arXiv preprint arXiv:2508.15761 , 2025d. Zhao, X., Jin, X., Wang, K., and You, Y. Real-time video generation with pyramid attention broadcast. arXiv preprint arXiv:2408.12588 , 2025. Zheng, K., Wang, Y., Ma, Q., Chen, H., Zhang, J., Balaji, Y., Chen, J., Liu, M.-Y., Zhu, J., and Zhang, Q. Large scale diffusion distillation via score-regularized continuous-time consistency. arXiv preprint arXiv:2510.08431 , 2025. 11 Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+A. Theoretical Framework for Veda 
+
+In this section, we establish the theoretical foundations of our approach and provide deeper algorithmic and mathematical insights into the nature of sparse attention. 
+
+A.1. The Necessity of Accurate Oracle Masks 
+
+The self-attention mechanism can be formally viewed as an Energy-Based Model (EBM)(Ramsauer et al., 2021; Litman, 2025). Let u ∈ RN denote the logits (pre-softmax scores), where uj = qT kj . The generating potential function of the attention distribution is the Log-Sum-Exp (LSE) function(Litman, 2025), Ψ( u):
+
+Ψ( u) = τ log 
+
+> N
+
+X
+
+> j=1
+
+exp( uj /τ ), (10) where τ is the temperature parameter. The attention probability distribution P is the gradient of this potential, P = ∇Ψ( u).The LSE function is dominated by the maximum term, umax .
+
+Proposition A.1 (Distributional Shift via Mask Error) . Let M∗ be the set of indices corresponding to the true Top-k keys (Oracle), and let ˆM be an estimated mask such that argmax( u) /∈ ˆM. The perturbed potential ˜Ψ excludes the dominant energy term. This exclusion forces a renormalization of probability mass over the retained keys ˆM:
+
+˜Pj = exp( uj /τ )
+
+P  
+
+> r∈ˆM
+
+exp( ur /τ ) = Z
+
+ˆZ Pj > P j , ∀j ∈ ˆM, (11) 
+
+where Z = PNr=1 exp( ur /τ ) and ˆZ = P  
+
+> r∈ˆM
+
+exp( ur /τ ).
+
+This renormalization can assign inflated confidence to noise or irrelevant tokens, a phenomenon we term structural hallucination . Unlike linear operations, where errors are additive, the softmax nonlinearity can amplify mask errors through exponentiated logits and row-wise renormalization. Thus, accurate recovery of the Oracle Mask is a structural prerequisite for high-sparsity attention. 
+
+A.2. Limitations of Linear Pooling Representations 
+
+Existing methods like VSA(Zhang et al., 2025b) or Sparge Attention(Zhang et al., 2025a) often employ Average Pooling to compress tiles. We argue that linear pooling is theoretically insufficient for approximating the bilinear attention operation. From a spectral perspective, Average Pooling is a low-pass filter equivalent to a projection matrix Wavg . The approximated score becomes ˆuij = qTi W Tavg Wavg kj .
+
+Lemma A.2 (Loss of Second-Order Statistics) . The inner product ⟨q, k⟩ depends on both the angle and magnitude of the high-frequency components of the vectors. The projection Wavg collapses the vector variance onto the mean, discarding the high-frequency harmonics required to distinguish orthogonal vectors. Mathematically, ⟨¯q, ¯k⟩̸ = ⟨q, k⟩. The loss of orthogonality leads to rank deficiency in the approximated attention matrix, making it impossible to distinguish between distinct but mean-similar tiles. 
+
+A.3. Reconstructing Attention via Sufficient Statistics 
+
+To reconstruct the attention distribution accurately with minimal I/O, we propose a statistical estimator based on vector decomposition. We treat the elements of dimension-d vectors q and k as samples from a distribution. 
+
+Theorem A.3 (Dot Product Decomposition) . The dot product of two vectors q, k ∈ Rd can be decomposed into a mean product term and a covariance term: 
+
+q · k = dμ q μk + d Cov( q, k), (12) 
+
+where Cov( q, k) = ρσ q σk.
+
+While μ (Avg) captures the centroid, reconstructing the covariance requires information about the spread ( σ) and correlation (ρ). We employ the Bhatia-Davis inequality to bound the variance using only extremum statistics. 
+
+Lemma A.4 (Variance Bound via Extrema) . For any bounded random variable X with support [m, M ] and mean μ, the variance is bounded by: 
+
+σ2 ≤ (M − μ)( μ − m). (13) 12 Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+Assuming the vector elements follow a unimodal distribution (e.g., Gaussian or Laplacian, typical in LayerNorm-normalized embeddings), the standard deviation is proportional to the range: σ ≈ M −mα . By retaining the triplet {μ, m, M } (Avg, Min, Max), we effectively construct a hyper-rectangle bounding box that constrains the manifold of the vectors. We derive our estimator S(q, k) as: 
+
+S ≈ d · μq μk + λ∆q ∆k (14) where ∆x = p(Mx − μx)( μx − mx) represents the dispersion bound for x ∈ { q, k }. Here, the first term anchors the centroid interaction, while the second term approximates the maximal energy potential of the covariance. 
+
+A.4. The Necessity of Intra-Tile Similarity 
+
+We now justify why tokens within a tile should be similar for this approximation to hold. Consider tile-sparse attention where a single statistic represents a tile of size B. Let μq and μk denote the tile means, and define the residual vectors 
+
+rqi = qi − μq and rki = ki − μk. The approximation error E from the neglected residual interactions can be written as: 
+
+E =
+
+> B
+
+X
+
+> i=1
+
+⟨rqi , rki ⟩ . (15) By the Cauchy-Schwarz inequality, this error is bounded by the product of the tile-wise standard deviations: 
+
+E ≤
+
+> B
+
+X
+
+> i=1
+
+∥rqi ∥22
+
+!1/2 BX
+
+> i=1
+
+∥rki ∥22
+
+!1/2
+
+= B · σq · σk, (16) where σ2 
+
+> q
+
+= 1
+
+> B
+
+PBi=1 ∥rqi ∥22 and σ2 
+
+> k
+
+= 1
+
+> B
+
+PBi=1 ∥rki ∥22.
+
+Corollary A.5 (Clustering Condition) . A sufficient condition for the sparse approximation to be robust (i.e., E → 0) is 
+
+σq → 0 or σk → 0, and reducing both variances tightens the bound. This implies that tokens within a tile should lie on a local low-dimensional manifold with minimal variance. If tiles contain diverse tokens (high σ), the uncertainty bound of the estimator grows, rendering the sparse mask unreliable. 
+
+A.5. Token Clustering as Bandwidth Minimization 
+
+To satisfy the condition σ → 0, we formulate token clustering as a graph labeling problem. Let G = ( V, E) be the token graph where edge weights Wij ∝ exp( qTi kj ). We seek a bijective mapping ϕ : V → { 1, . . . , N } that minimizes the matrix bandwidth. 
+
+Definition A.6 (Manifold Embedding under 3D RoPE) . Let tokens xi reside on a 3D spatio-temporal manifold M induced by Rotary Positional Embeddings (RoPE). The attention affinity decays with the geodesic distance on this manifold: 
+
+Wij ≈ f (∥xi − xj ∥Σ). A locality-preserving mapping ϕ must satisfy the H¨ older continuity condition: 
+
+|ϕ(u) − ϕ(v)| ≤ C · ∥ xu − xv ∥α 
+
+> 2
+
+. (17) Standard raster scanning ( ϕflat ) violates this condition for temporal neighbors, yielding a Lipschitz constant C ∝ H × W ,resulting in a dispersed, high-bandwidth attention matrix. We propose Head-aware 3D Tiling , which creates a mapping 
+
+ϕtile where temporal neighbors satisfy |ϕtile (u) − ϕtile (v)| ≤ phpw. This effectively folds the 3D manifold into 1D memory while preserving local neighborhoods, implicitly performing graph clustering. Furthermore, we employ Anisotropic Metric Adaptation to search for optimal tile shapes (pt, p h, p w), aligning the tiling strategy with the specific induced metric 
+
+dh(xi, xj ) of each attention head. This topological optimization minimizes attention bandwidth, effectively clustering high-affinity tokens to lower intra-tile variance σ. Consequently, the geometric regularization satisfies the spectral approximation conditions, validating the representational power of the compressed statistics {μ, m, M }.
+
+A.6. Projector Optimization via Information Geometry 
+
+Finally, we address the non-differentiability of the Top-k selection required to train the MLP projector. We leverage the framework of Entropic Optimal Transport (EOT) (Litman, 2025). The attention mechanism operates on a statistical manifold equipped with the Fisher-Rao metric. The standard Euclidean gradient is suboptimal for optimization on the probability simplex. 13 Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+Theorem A.7 (Local KL Geometry) . Let Poracle be the ground truth distribution derived from full attention, and Ppred be the distribution predicted by the MLP. Around the oracle parameters θt, the Kullback-Leibler (KL) divergence admits the local second-order approximation: 
+
+L = DKL (Poracle ∥Ppred ) ≈ 12 (θt − θs)T I(θt)( θt − θs). (18) 
+
+Thus, KL supervision locally weights prediction errors by the Fisher Information Matrix I(θt), matching the natural geometry of the probability simplex. 
+
+By utilizing KL divergence as the training objective, we train the score estimator before the discrete Top-k operation and therefore avoid differentiating through Top-k. Instead, we force the MLP to learn the geometry of the energy landscape (the LSE potential field). This encourages the predicted logits ˆu to maintain the same ranking and local geometry as the oracle logits u, leading to accurate mask recall during inference. 
+
+B. Detailed Implementation Algorithms for Veda 
+
+We provide the complete algorithmic pseudocode for the core components of Veda, which are omitted from the main text due to space constraints below. 
+
+Algorithm 1 Head-Aware Tiling Search 
+
+1: Input: Latent dims (T, H, W ), Calibration Set Dcal , Tile Size B = 128 , Top-k Budget ktop .
+
+2: Output: Optimal Configuration Map π∗ ∈ ΩL×Nh .
+
+3: // Construct hardware-aligned search space 
+
+4: Ω ← { (pt, p h, p w) ∈ N3 | ptphpw = B}
+
+5: Initialize cumulative error E ∈ RL×Nh×| Ω| to 0.
+
+6: for sample x ∈ D cal do 
+
+7: Perform inference to cache {Q, K, V}
+
+8: for layer l ∈ { 1 . . . L }, head h ∈ { 1 . . . N h} do 
+
+9: // Get Full-Attention Map and Output 
+
+10: Afu  
+
+> l,h
+
+← Softmax (Ql,h K⊤
+
+> l,h
+
+/√d)
+
+11: Ofu  
+
+> l,h
+
+← Afu 
+
+> l,h
+
+Vl,h 
+
+12: for π ∈ Ω do 
+
+13: // 1. Tiling QKV and Full-Attention Map 
+
+14: ˜Q, ˜K, ˜V ← Tiling ({Ql,h , Kl,h , Vl,h }, π )
+
+15: Aπ ← Softmax ( ˜Q ˜K⊤/√d)
+
+16: // 2. Generate Oracle Mask from Full Attention 
+
+17: Stile ← RowNorm (MaxPool (Aπ )) 
+
+18: fM ← Top-k(Stile , k top )
+
+19: // 3. Compute Sparse Output and Error 
+
+20: Osp  
+
+> l,h
+
+← UnTile (SparseAttn ( ˜Q, ˜K, ˜V, fM), π )
+
+21: El,h,π ← E l,h,π + ∥Ofu  
+
+> l,h
+
+− Osp 
+
+> l,h
+
+∥2
+
+> F
+
+22: end for 
+
+23: end for 
+
+24: end for 
+
+25: // Select configuration minimizing expected error 
+
+26: π∗ 
+
+> l,h
+
+← arg min π∈Ω El,h,π ∀l, h 
+
+27: return π∗
+
+14 Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+Algorithm 2 Tile Score Estimation & Mask Generation 
+
+1: Input: Query Q, Key K ∈ RNh×N ×d, Tile Size B, Top-k Budget ktop , Latent Dim d′
+
+2: Output: Predicted distribution Apred and binary mask fM ∈ { 0, 1}Nh×Tq ×Tk
+
+3: // Tiling 
+
+4: Tq ← N/B, Tk ← N/B 
+
+5: ˜Q ← Tile (Q, {Nh, T q , B, d })
+
+6: ˜K ← Tile (K, {Nh, T k, B, d })
+
+7: // Triplet Statistics Extraction (TripPool) 
+
+8: Zq ← Avg[ ˜Q] ⊕ Max[ ˜Q] ⊕ Min[ ˜Q]
+
+9: Zk ← Avg[ ˜K] ⊕ Max[ ˜K] ⊕ Min[ ˜K]
+
+10: // Projection & Score Estimation 
+
+11: for each head h ∈ { 1, . . . , N h} do 
+
+12: ˆqh ← ϕ(h) 
+
+> q
+
+(Zq,h ), ˆkh ← ϕ(h) 
+
+> k
+
+(Zk,h )
+
+13: Spred  
+
+> h
+
+← ˆqh ˆk⊤
+
+> h√d′
+
+14: Apred  
+
+> h
+
+← Softmax( Spred  
+
+> h
+
+) // row-wise over key tiles 
+
+15: fMh ← I(Spred  
+
+> h
+
+≥ Top-k-Threshold (Spred  
+
+> h
+
+, k top )) 
+
+16: end for 
+
+17: return Apred , fM
+
+Algorithm 3 Tile-Wise Distillation for Tile Score Estimator 
+
+1: Input: Query Q, Key K ∈ RNh×N ×d, Tile Size B, Top-k Budget ktop , Latent Dim d′
+
+2: Output: Distillation Loss Ldistill 
+
+3: // Full-Attention Teacher 
+
+4: A∗ ← Softmax 
+
+ QK ⊤
+
+> √d
+
+
+
+5: // Target Construction (Score & Weight) 
+
+6: Stgt ← MaxPool (A∗, kernel = B, stride = B)
+
+7: Atgt ← RowNormalize (Stgt )
+
+8: // Student Prediction (Estimator with Stop-Gradient) 
+
+9: Apred , fM ← Algorithm 2 (sg (Q), sg (K), B, k top , d ′)
+
+10: // Distribution Alignment 
+
+11: Ldistill ← Mean h,i 
+
+DKL 
+
+ Atgt [h, i, :] ∥ Apred [h, i, :]  
+
+12: backward Ldistill 
+
+15 Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+C. Waver-T2V Implementation Details 
+
+This section provides specifications for both the Waver-T2V-1B and Waver-T2V-12B models (Zhang et al., 2025d). The tables below detail the architectural configurations and training hyperparameters. The 1B variant employs a Multimodal Diffusion Transformer (MM-DiT) (Yang et al., 2025) backbone with 8 Dual Flow blocks and 22 Single Flow blocks. The 12B variant scales to 16 Dual Flow layers and 40 Single Flow layers with expanded dimensionality. Both models utilize the Wan-VAE for latent representation and Flan-T5-XXL for text encoding.  
+
+> Table 3. Model configuration comparison between Waver-T2V-1B and Waver-T2V-12B. Both architectures utilize a hybrid backbone comprising Dual Flow and Single Flow Multimodal Diffusion Transformer (MM-DiT) blocks.
+
+Waver-T2V-1B Model Config Value 
+
+Model Size 1B Backbone Architecture MM-DiT Dual Flow Layers 8Single Flow Layers 22 Patch Size 1 × 2 × 2
+
+Hidden Dimension (Attention Head) 128 Num Heads 12 In Channels 16 Out Channels 16 Cross Attention Dim 1536 Text Embedding Dim 4096 VAE Model Wan-VAE Activation Function GELU Normalization RMS Norm Positional Embedding RoPE 
+
+Waver-T2V-12B Model Config Value 
+
+Model Size 12B Backbone Architecture MM-DiT Dual Flow Layers 16 Single Flow Layers 40 Patch Size 1 × 2 × 2
+
+Hidden Dimension (Attention Head) 128 Num Heads 24 In Channels 36 Out Channels 16 Cross Attention Dim 3072 Text Embedding Dim 4096 VAE Model Wan-VAE Activation Function GELU Normalization AdaLayerNormZero Positional Embedding RoPE  
+
+> Table 4. Training hyperparameters comparison between Waver-T2V-1B and Waver-T2V-12B. Both models employ Rectified Flow matching objectives with distinct optimization configurations.
+
+Waver-T2V-1B Hyperparameter Value 
+
+Learning Rate 6.0 × 10 −5
+
+LR Scheduler Constant Batch Size 128 Resolution 480 × 864 (161 frames) Optimizer AdamW AdamW β (0 .9, 0.999) 
+
+Weight Decay 1.0 × 10 −2
+
+Gradient Clipping 1.0 Precision BF16 Training Objective Flow Matching 
+
+Waver-T2V-12B Hyperparameter Value 
+
+Learning Rate 5.0 × 10 −6
+
+LR Scheduler Constant Batch Size 64 Resolution 720 × 1280 (241 frames) Optimizer AdamW AdamW β (0 .9, 0.999) 
+
+Weight Decay 1.0 × 10 −2
+
+Gradient Clipping 1.0 Precision BF16 Training Objective Flow Matching 16 Veda: Scalable Video Diffusion via Distilled Sparse Attention 
+
+D. Human Evaluation of Dynamic versus Static Tile Size Configurations 
+
+To empirically validate the effectiveness of our Head-aware dynamic tile size selection strategy, we conduct a human evaluation study comparing various static tile configurations against our proposed approach, where human annotators assess the perceptual quality and generation fidelity of the outputs. Overall Quality  
+
+> Motion Quality Visual Quality
+> Prompt Following
+> -10% 0% 10%
+> StaticTile Size [4,8,4] vs [4,4,8]
+> StaticTile Size [8,8,2] vs [4,4,8]
+> Head-aware Tile Size vs [4,4,8]
+
+Figure 10. Human evaluation of dynamic versus static tile size configurations. We benchmark various static tile size settings alongside our proposed Head-aware dynamic selection method against the strongest static baseline ( [4 , 4, 8] ). While the [4 , 4, 8] configuration emerges as the optimal fixed setting, our dynamic approach consistently outperforms all static alternatives, achieving positive net win rates across evaluations and demonstrating superior generation quality through adaptive tile size allocation. 
+
+17

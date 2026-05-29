@@ -1,0 +1,402 @@
+Title: Moment-KV: Momentum-Based Decode-Time KV Cache Compression for Long Generation
+
+URL Source: https://arxiv.org/pdf/2605.29873v1
+
+Published Time: Fri, 29 May 2026 01:36:18 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Moment-KV: Momentum-Based Decode-Time KV Cache Compression for Long Generation 
+
+Soumyadeep Jana *, Sagar Nishad * and Sanasam Ranbir Singh 
+
+Indian Institute of Technology Guwahati, India 
+
+{sjana, sagar.nishad, ranbir}@iitg.ac.in 
+
+Abstract 
+
+Key-Value (KV) cache remains a major bot-tleneck for deploying Large Language Models (LLMs) in long-generation tasks. Prior work often applies uniform compression across both prefill and decoding caches, but compressing the prefill cache degrades performance by cor-rupting critical context. While preserving the prefill cache is essential, decoding-phase com-pression remains underexplored, with existing methods relying on rigid recency windows or instantaneous attention. Our analysis of atten-tion dynamics reveals strong temporal patterns: critical tokens receive sustained attention over long horizons, while local reasoning involves short-lived bursts. Static heuristics fail to cap-ture this behavior, leading to premature evic-tion of important tokens or retention of stale ones. We propose Moment-KV , a decoding-time KV cache compression method based on momentum-driven temporal attention aggrega-tion. Our method models token importance as a continuously evolving state, where atten-tion is aggregated with decay, capturing both long-term influence and recent relevance. Ex-periments show that Moment-KV significantly improves generation fidelity in long-generation tasks (2.3-3.2 % ↑) while maintaining decoding latency. 
+
+1 Introduction 
+
+Large Language Models (LLMs) like LLaMA (Tou-vron et al., 2023) and Qwen (Bai et al., 2023), have shown strong capabilities for text generation. As they scale, their ability to handle longer context windows has improved significantly. This has en-abled more effective long-output sequence genera-tion for tasks such as synthesizing large codebases and writing long-form documents. However, scaling to these extended output lengths introduces major computational challenges, 
+
+> *Equal contribution.
+
+as the Transformer’s self-attention grows quadrat-ically ( O(N 2)) with the number of output tokens, leading to high latency in long-generation tasks. To address this, modern LLMs use a Key-Value (KV) cache that stores previously computed keys and values, avoiding redundant computations dur-ing autoregressive generation. While this reduces computation, it creates a memory bottleneck: the KV cache grows linearly ( O(N )) with sequence length, consuming significant GPU memory in long-generation scenarios. For instance, in a 8B pa-rameter model (e.g., Llama-3.1-8B-Instruct), stor-ing the KV cache in 16-bit precision consumes exactly 128 KB per token. Generating a sequence of 100K tokens requires nearly 13 GB of GPU memory for the KV cache alone, often exceeding the memory footprint of the model weights them-selves. To better understand this bottleneck, it is useful to distinguish between two phases of KV caching. In the prefill phase , the model processes the input prompt in parallel, constructing a fixed KV cache that encodes the full context. In the de-coding phase , tokens are generated sequentially, and their KV states are appended at each step, caus-ing the cache to grow unbounded and dominate memory usage. Prior work (Li et al., 2024; Cai et al., 2024; Park et al., 2025) has largely focused on compressing only the prefill cache or applying unified method to both prefill and decoding caches (Zhang et al., 2023; Yang et al., 2024; Xiao et al., 2023). How-ever, recent studies (Wu et al., 2024; Liu et al., 2025) show that compressing the prefill cache can harm performance, as it preserves critical instruc-tions and contextual semantics. Our experiments reported in Table 2 corroborate these findings, high-lighting that maintaining full fidelity of the prefill cache is essential for high-quality generation. In contrast, the decoding cache, despite being the pri-mary driver of memory growth in long-generation tasks, remains relatively underexplored, with exist-1 
+
+> arXiv:2605.29873v1 [cs.AI] 28 May 2026 Figure 1: Attention Heatmap of LLaMA-3.1-8B-Instruct on GSM8K, showing token attention patterns during prefill and decoding phases for Layers 16 and 25. The zoomed region highlights a temporary dip in attention weights during decoding, where important tokens momentarily receive low attention.
+> Figure 2: Cumulative attention mass of recently-decoded tokens (window size of 256) for LLaMA-3.1-8B-Instruct on GSM8K.
+
+ing methods (Wu et al., 2024) relying on simple heuristics (e.g., sliding window or recency) that fail to capture the evolving importance of tokens during generation. To better understand decode-time KV cache be-havior, we analyze attention patterns during long-generation in §3 and identify two key limitations of existing methods: (L1) Temporal Attention Dy-namics: Attention is inherently temporal. Heavy hitters 1 influence generation over long horizons but exhibit non-monotonic behavior, with tempo-rary dips in attention before regaining importance. Methods based on instantaneous attention fail to capture this, leading to premature eviction of im-portant tokens. (L2) Fixed Recent Window: Ex-isting methods reserve a fixed portion of the KV cache for recently decoded tokens, assuming re-cency implies importance. However, attention is often concentrated on only a few recent tokens, causing low-utility tokens to occupy cache space. Together, ignoring temporal dynamics and over-
+
+> 1Tokens that receive sustained attention over multiple de-coding steps.
+
+relying on recency leads to suboptimal KV cache utilization. To address these limitations, we propose 
+
+Moment-KV (Moment um-Based Decode-Time 
+
+KV Cache Compression), a decode-time KV cache compression strategy based on momentum-driven temporal attention aggregation. Instead of relying on instantaneous attention, we model token impor-tance as a continuously evolving state, where atten-tion is aggregated with decay over decoding steps. This allows tokens with sustained influence, despite temporary dips, to retain high importance, mitigat-ing premature eviction of critical tokens (L1). At the same time, eviction is performed purely based on aggregated importance, without any recency bias, ensuring that memory is allocated to truly rel-evant tokens rather than recent or stale ones (L2). Concretely, we freeze the prefill cache and com-press only the decoding cache by maintaining im-portance scores for each token and evicting the lowest-scoring ones when capacity is exceeded. This design adapts to shifting attention patterns, preserving persistent heavy hitters while discard-ing irrelevant tokens. We evaluate Moment-KV on two long genera-tion benchmarks, LongGenBench and HelloBench, featuring output lengths ranging from 4K to 16K tokens. Across both moderate (decode budget of 1024 tokens) and extreme (decode budget of 512 tokens) compression settings, Moment-KV consis-tently outperforms existing baselines, achieving av-erage relative improvements of 2.32% on LongGen-Bench and 3.26% on HelloBench, while maintain-ing decoding throughput. Furthermore, Moment-KV is fully compatible with existing prefill-time compression strategies and consistently improves performance by 7.26% when combined with them. 2Our contributions can be summarized as follows: 
+
+Contributions: (1) We identify key limitations of decode-time KV cache compression, namely temporal attention dynamics and rigid recency bias. 
+
+(2) We propose Moment-KV, a momentum-based framework for decode-time KV cache compression. 
+
+(3) We demonstrate consistent gains on long-output benchmarks while maintaining throughput. 
+
+2 Related Works 
+
+Unified KV Compression: Early works primar-ily adopt unified compression strategies, treating the prefill and decoding stages as a single cache. StreamingLLM (Xiao et al., 2023) retains initial attention sinks along with a sliding window of re-cent tokens to enable long-sequence generation. H2O (Zhang et al., 2023) tracks cumulative atten-tion to preserve heavy-hitter tokens under a fixed recency buffer, while PyramidInfer (Yang et al., 2024) exploits layer-wise sparsity to progressively compress the cache. Although effective in reducing memory, these methods fail to distinguish between the distinct roles of prefill and decoding tokens. 
+
+Prefill-Time KV Compression: Subsequent works focus on compressing the prefill cache dur-ing prompt processing. SnapKV (Li et al., 2024) identifies salient KV positions via attention-based voting, while PyramidKV (Cai et al., 2024) intro-duces layer-wise capacity allocation. More recent approaches, such as KeyDiff (Park et al., 2025) and KNorm (Devoto et al., 2024), attempt to fur-ther refine prefill compression by selectively prun-ing tokens based on cosine similarity or key-norm statistics to retain only the most informative repre-sentations. Any loss of critical instruction tokens in this phase can significantly degrade reasoning and instruction-following performance. 
+
+Decode-Time KV Compression: Recent meth-ods such as SCOPE (Wu et al., 2024) decouple the two phases and focus on decoding-time com-pression. Despite this shift, existing approaches rely on rigid recency heuristics or instantaneous attention signals, failing to capture the temporal dy-namics of token importance. Our work addresses this gap by introducing a momentum-based tem-poral importance formulation, enabling adaptive cache utilization during decoding. 
+
+3 Observations 
+
+3.1 Temporal Nature of Attention 
+
+We analyze attention patterns across different lay-ers of LLaMA-3.1 (Dubey et al., 2024) during long-sequence generation. As shown in Figure 1, certain tokens receive sustained attention over many de-coding steps. We refer to these as heavy hitters ,as they persistently influence future tokens over extended horizons, appearing as continuous verti-cal bands in the attention maps. However, their attention is not strictly monotonic. As highlighted in the zoomed-in region, even important tokens can exhibit temporary dips during local reasoning, before becoming highly relevant again. This tem-poral behavior reveals a key limitation of existing decoding cache compression methods based on in-stantaneous attention. By relying on single-step signals, such approaches risk evicting important tokens during brief periods of inactivity, despite their long-term relevance. 
+
+3.2 Curse of Fixed Recent Window 
+
+To better understand how attention is distributed across recently decoded tokens typically retained by existing KV cache compression methods, we analyze the attention mass within a fixed-size re-cency window (i.e., the last 256 decoded tokens) in LLaMA-3.1 (Dubey et al., 2024) during long-sequence generation (Figure 2). We observe that attention is highly concentrated: a small fraction of tokens accounts for the majority of attention, as indicated by the steep rise of the curves relative to the uniform baseline. This pattern holds consis-tently across early, middle, and late layers, with the strongest concentration in middle layers. These re-sults reveal a key inefficiency of fixed KV slots for recent-decoded tokens. Out of all cached tokens, only a small subset meaningfully contributes to generation, while most receive negligible attention. This results in wasted cache capacity for low-utility tokens solely because of their position. 
+
+4 Methodology 
+
+4.1 KV Cache Preliminaries Prefill Phase: Given an input prompt P =
+
+{p1, p 2, . . . , p M } of M tokens with hidden dimen-sion d, the model processes the entire prompt in a single parallel forward pass. The key and value ten-sors for the prefill context are computed as: KP =
+
+P W K , VP = P W V , where WK , W V ∈ Rd×d
+
+3are the learned key and value projection matrices. The resulting pair (KP , V P ) constitutes the pre-fill KV cache and is written to the cache pool Φp.The prefill cache encodes the complete contextual representation of the user’s prompt. 
+
+Decoding Phase: During the decoding phase, the model generates output tokens autoregressively. At each step t ∈ { 1, . . . , T }, a new token xt is processed and its key-value pair is computed as 
+
+Kt = xtWK , Vt = xtWV . The pair (Kt, V t)
+
+is appended to the decoding KV cache Φd, so the total cache pool at step t is: 
+
+Φt = Φ p∪Φdt , Φdt = {(Ks, V s) : s ∈ { 1, . . . , t }} 
+
+(1) The attention output for the current query qt over the full cache is then: 
+
+Att t = softmax qt (KΦt )⊤
+
+√d
+
+!
+
+VΦt (2) where KΦt and VΦt represents the cached keys and values at decoding timestep t. Because Φd grows by one entry at every step, the total cache size at step T is M + T , growing linearly with the output length. In long-output scenarios, this unbounded growth rapidly exhausts available GPU memory. 
+
+4.2 Moment-KV 
+
+Motivated by the observations in §3, we propose a decoding cache management strategy, presented in Algorithm 1, that preserves the prefill cache while enforcing a strict memory budget on the dynamically growing decoding cache. Rather than evaluating a token importance from asingle decode step based on its instantaneous attention , we estimate token’s importance through momentum-based attention aggregation across multiple decoding steps. This allows the frame-work to distinguish tokens that are momentarily unattended but historically critical from tokens that are genuinely obsolete, a distinction that rigid sliding-window or greedy-selection heuristics cannot make. 
+
+Cache Architecture 
+
+We partition the total cache pool into two indepen-dent sub-pools: 
+
+Prefill pool Φp (frozen): The complete KV cache produced during the prefill phase is retained in full and never evicted during decoding. Its size 
+
+Algorithm 1 Decoding with Moment-KV                                                                            
+
+> Require: Current token xt, prefill cache Φp, decoding cache
+> Φd, importance vector I, decoding budget Bd, momentum factor α
+> Ensure: Updated cache pool Φt
+> 1: (qt, K t, V t)←COMPUTE QKV (xt)
+> 2: Φd←Φd∪ { (Kt, V t)}
+> 3: I←I∪ { 0}
+> 4: Φt←Φp∪Φd
+> 5: At←Softmax
+> qtK⊤
+> Φt√d
+> 
+> 6: ¯At←Mean( At,dim = heads)
+> 7: adec ←¯At[|Φp|: ]
+> 8: for i←1to |Φd|do
+> 9: Ii(t)←αI i(t−1) + ¯ ai(t)
+> 10: end for
+> 11: if |Φd|> B dthen
+> 12: overflow ← | Φd| − Bd
+> 13: Et←arg min overflow (I)
+> 14: Φd←Φd\Et
+> 15: I←I\Et
+> 16: end if
+> 17: return Φp∪Φd
+
+|Φp| = M is constant throughout generation. Pre-serving Φp intact ensures that the model retains full access to the task instruction and contextual grounding, which is essential for reasoning tasks. 
+
+Decoding pool Φd (compressed): All KV pairs generated during the decoding phase are managed in Φd, which is subject to a fixed capacity con-straint Bd. When |Φd| exceeds Bd, tokens with the lowest accumulated importance are evicted. The to-tal cache budget at any step t is therefore bounded by: 
+
+|Φt| ≤ M + Bd (3) 
+
+Momentum-Based Attention Aggregation 
+
+At each decoding step t, after the new token xt
+
+is appended to the cache, attention is computed over the complete pool Φt . We extract the atten-tion weights restricted to the decoding sub-cache averaged across all H attention heads: 
+
+¯ai(t) = 1
+
+H
+
+> H
+
+X
+
+> h=1
+
+aht [i], i ∈ Φdt (4) where aht [i] denotes the attention weight that a to-ken i in the decoding cache recieves at head h. Crit-ically, the index i ranges over all decoding tokens currently in the cache, including the freshly ap-pended token xt. The per-token importance score is updated as: 
+
+Ii(t) = α · Ii(t − 1) + ¯ ai(t) (5) 4where α ∈ (0 , 1) is the momentum factor that preserves historical importance while integrating newly observed attention. This momentum-based aggregation allows tokens with sustained attention to build and maintain high importance, while inactive tokens decay toward zero. The parameter 
+
+α thus controls the memory horizon, with larger values preserving long-term contributions and smaller values emphasizing recent attention. 
+
+Handling Newly Generated Tokens 
+
+When a new token xt is appended to the cache, its importance is initialized to zero: Ixt (t − 1) = 0 .However, eviction is performed after the impor-tance update in Eq. (7), not before. By the time capacity is checked, the new token has already re-ceived its first importance contribution: 
+
+Ixt (t) = α · 0 + ¯ axt (t) = ¯ axt (t) > 0 (6) The value ¯axt (t) is the self-attention weight the current query assigns to itself, a strictly positive quantity guaranteed by the softmax operation. In practice, the current query token typically attends strongly to itself, so this initial importance is non-trivial. This design choice prevents trivially evict-ing freshly generated tokens before they have had any opportunity to demonstrate their relevance, while still permitting eviction of very recent tokens if their self-attention is lower than the accumulated importance of older tokens. 
+
+Capacity Enforcement and Eviction 
+
+After updating importance scores at step t, we check whether the decoding cache exceeds its bud-get: overflow = max(0 , |Φdt | − Bd) (7) If overflow > 0, we identify the overflow-many tokens with the lowest importance scores and evict them permanently from Φd:
+
+Et = arg min 
+
+> S⊆Φdt
+> |S|=overflow
+
+X
+
+> i∈S
+
+Ii(t) (8) 
+
+Φdt+1 = Φ dt \ Et (9) The importance vector is pruned to discard entries of evicted tokens. Eviction is purely score-driven. Any token in the decoding cache, regardless of po-sition or recency, is a candidate for eviction if its accumulated importance is sufficiently low. Con-versely, any token with a high historical importance score is retained regardless of when it was gener-ated. 
+
+5 Experiments 
+
+5.1 Benchmarks 
+
+As our method targets decoding-time compression, we focus on benchmarks with long output lengths. We evaluate on LongGenBench (Wu et al., 2024) with output lengths of 4K and 8K tokens, respec-tively. Each benchmark consists of three question-answering datasets from GSM8K (Cobbe et al., 2021), CSQA (Hendrycks et al., 2020), and MMLU (Hendrycks et al., 2020). We further evaluate on the heuristic text generation task from HelloBench 
+
+(Que et al., 2024), with output lengths of 4K and 8K tokens. Additionally, we test on the EnSum task from ∞Bench (Zhang et al., 2024), which has an average output length of approximately 1.1K tokens. Additional details are in Appendix A. 
+
+5.2 Baselines 
+
+We compare Moment-KV against Full Cache and SOTA compression methods, including 
+
+StreamingLLM (Xiao et al., 2023), H2O (Zhang et al., 2023) and PyramidInfer (Yang et al., 2024), and SCOPE (Wu et al., 2024). To demonstrate the compatibility of our decoding-based compression method, we further integrate Moment-KV with ex-isting prefill-time compression methods such as 
+
+SnapKV (Li et al., 2024) and PyramidKV (Yang et al., 2024). Baseline details are in Appendix C. 
+
+5.3 Implementation Details 
+
+We conduct experiments using two open-source LLMs, LLaMA-3.1-8B-Instruct and Mistral-7B-Instruct-v0.3. For LongGenBench, we evaluate two output lengths (4K and 8K tokens) and for Hel-loBench, the output length varies from 2k to 16k tokens. We test our method under two compression settings, retaining 1024 and 512 tokens in Φd. The prefill cache Φp is preserved in full and remains uncompressed throughout generation. The momen-tum factor α is set based on grid-search for dif-ferent benchmarks. To ensure strict parity when comparing against unified compression methods (H2O, StreamingLLM, and PyramidInfer), we constrain their total KV cache capacity (prefill + decode) to the prompt length together with the corresponding decoding budget of either 512 or 1024 tokens . Hyperparameter details are in the Appendix D. 5Method LongGenBench-4K LongGenBench-8K GSM8K MMLU CSQA Avg. GSM8K MMLU CSQA Avg.                                                                                                                                                                                     
+
+> LLaMA-3.1-8B-Instruct
+> Full Cache 53.18 54.27 71.54 59.63 44.51 50.92 64.81 53.41 Decoding Budget = 1024 Tokens Decoding Budget = 1024 Tokens StreamingLLM 50.93 54.84 71.91 59.23 39.36 48.29 63.83 50.49 H2O 50.38 53.81 69.66 57.95 38.29 48.02 64.9 50.40 PyramidInfer 46.20 53.60 69.58 56.46 34.28 45.00 57.16 45.48 SCOPE 52.01 52.82 71.91 58.91 44.20 49.00 66.16 53.12
+> Moment-KV 52.86 55.12 72.83 60.27 40.31 50.00 66.33 52.21 Decoding Budget = 512 Tokens Decoding Budget = 512 Tokens StreamingLLM 44.49 55.57 71.83 57.30 33.88 48.53 64.25 48.89 H2O 38.75 51.42 64.58 51.58 25.07 44.38 47.16 38.87 PyramidInfer 37.10 51.80 63.5 50.80 24.68 42.72 52.0 39.8 SCOPE 48.68 54.78 72.41 58.62 27.85 47.39 63.25 46.16 Moment-KV 50.38 55.63 73.66 59.89 35.63 49.92 63.33 49.63 Mistral-7B-Instruct-v0.3
+> Full Cache 11.94 28.17 64.21 34.77 9.45 20.28 51.63 27.12 Decoding Budget = 1024 Tokens Decoding Budget = 1024 Tokens StreamingLLM 11.93 27.06 64.33 34.44 6.58 21.08 46.5 24.72 H2O 11.24 27.81 63.91 34.32 6.03 20.22 48.41 24.89 PyramidInfer 11.16 28.24 64.0 34.47 7.22 19.51 42.91 23.21 SCOPE 11.39 25.09 64.75 33.74 5.79 18.00 53.25 25.68 Moment-KV 13.41 28.45 66.04 35.97 8.80 19.63 53.33 27.25
+> Decoding Budget = 512 Tokens Decoding Budget = 512 Tokens StreamingLLM 9.22 28.51 65.41 34.38 4.68 18.64 53.58 25.63 H2O 9.92 26.87 61.20 32.66 5.63 18.31 43.25 22.40 PyramidInfer 9.92 26.87 61.25 32.68 5.87 17.86 39.83 21.19 SCOPE 11.16 24.03 65.08 33.42 6.58 16.44 51.75 24.92 Moment-KV 12.63 28.57 65.84 35.68 7.61 19.62 50.08 25.77
+
+Table 1: Performance comparison with baselines on LongGenBench under different decoding compression settings. Reported metrics denote accuracy(mean of 5 runs). LongGenBench-xk denotes x tokens in the output. 
+
+6 Results and Discussions 
+
+6.1 Results on LongGenBench 
+
+Table 1 compares Moment-KV with existing KV cache compression methods on LongGen-Bench under different decoding budgets and con-text lengths. Overall, Moment-KV consistently achieves the strongest or highly competitive per-formance across both LLaMA-3.1-8B-Instruct and Mistral-7B-Instruct-v0.3. Under the 4K setting, Moment-KV achieves the best average perfor-mance for both decoding budgets on LLaMA-3.1-8B-Instruct, reaching 60.27 at a 1024-token bud-get and 59.89 at a 512-token budget. In particu-lar, it shows strong gains on reasoning-intensive tasks such as GSM8K and MMLU, indicating that momentum-based importance tracking effec-tively preserves semantically critical decoding to-kens even under aggressive compression. For the more challenging 8K setting, Moment-KV remains highly competitive and consistently outperforms most baselines. At a 512-token budget, it achieves the highest average score among all methods on LLaMA-3.1-8B-Instruct 49.63, demonstrating im-proved robustness under long-context decoding constraints. Similar trends are observed on Mistral-7B-Instruct-v0.3. Moment-KV achieves the best over-all average performance in nearly all settings, par-ticularly under tighter decoding budgets where to-ken selection becomes more critical. These results suggest that modeling token importance as a tem-porally evolving momentum state is more effective than relying solely on instantaneous attention statis-tics. 
+
+6.2 Results on HelloBench 
+
+Table 3 presents the performance comparison on the HTG (Heuristic Text Generation) task from HelloBench, which corresponds to the ability of 6Method Prefill Phase Full Cache SnapKV PyramidKV                
+
+> Full Cache 53.26 27.75 27.75 Decoding Budget = 1024 Tokens SCOPE 52.17 26.90 26.90 Moment-KV 52.86 27.67 27.67 Decoding Budget = 512 Tokens SCOPE 49.69 22.56 22.56 Moment-KV 50.38 25.19 25.19
+> Table 2: Plug-in experiment results of LLaMA-3.1-8B on the GSM8K task from LongGenBench-4K. Prefill budget is 2048 tokens. Reported metric is accuracy.
+
+the model to generate original, long-form con-tent. Compared to baselines, the improvements of Moment-KV suggest that it is better at generation-intensive tasks where token importance evolves over time. Notably, Moment-KV with a budget of 1024 achieves the best overall performance at 2K, 4K, and 8K generation lengths, while remaining comparable to Full Cache at 16K. 
+
+6.3 Integration of Moment-KV with Prefill Compression Techniques 
+
+We evaluate the compatibility of Moment-KV with existing prefill compression methods, namely SnapKV and PyramidKV, on the GSM8K task from LongGenBench-4K (Table 2). Using a pre-fill KV budget of 2048 tokens following (Wu et al., 2024), Moment-KV consistently outperforms SCOPE across both decode budgets of 1024 and 512 tokens. In particular, Moment-KV maintains stronger performance under aggressive compres-sion (25.19 vs 22.56 at 512 tokens), demonstrat-ing that momentum-based temporal aggregation provides more robust token retention than instan-taneous decode-time heuristics. Overall, Moment-KV acts as an effective plug-and-play decode-time compression strategy that seamlessly complements existing prefill compression methods. 
+
+7 Analysis 
+
+7.1 Mitigating the Curse of Fixed Recent Window 
+
+Figure 3(a) compares the attention distribution over the recent decoding window for SCOPE (we only show for SCOPE as it manages decode KV cache separately) and Moment-KV. SCOPE concentrates most of its attention on only the most recent to-kens, while a large portion of the reserved recent                              
+
+> Method Budget Generation Length 2K 4K 8K 16K
+> Full Cache ∞0.184 0.182 0.437 0.204 SCOPE 512 0.186 0.181 0.431 0.188 1024 0.191 0.184 0.421 0.205 Moment-KV 512 0.191 0.184 0.437 0.203 1024 0.201 0.192 0.445 0.199
+> Table 3: Performance Comparison of of LLaMA-3.1-8B on HTG task of HelloBench. Budget of 512/1024 indicates the decode-time KV cache size. Reported metric is ROUGE-L.
+
+window receives very little attention, indicating inefficient utilization of the decoding cache bud-get. In contrast, Moment-KV maintains a more dis-tributed attention pattern across the window, sug-gesting that the cache budget is allocated more effectively to tokens that remain useful during gen-eration. These results show that momentum-based temporal aggregation mitigates the limitations of rigid recency-based cache management and im-proves long-horizon context preservation. 
+
+7.2 Enhanced Long-Horizon Stability 
+
+Figure 3(b) shows the accuracy across sequential reasoning steps (Question Index) comparison of our approach vs SCOPE (we only show for SCOPE as it manages decode KV cache separately), for long answer generation in GSM8K dataset. As the context lengthens and the task becomes more com-plex, both models naturally experience a decline in accuracy. However SCOPE suffers a rapid and se-vere degradation. By comparison, Moment-KV ex-hibits significantly higher robustness, maintaining a consistently higher accuracy curve relative to the baseline at advanced question indices. This demon-strates that Moment KV effectively preserves the critical long-term context necessary to support com-plex, multi-turn generation over extended horizons. 
+
+7.3 Sensitivity of Momentum Factor α
+
+The momentum factor α controls the temporal memory horizon of Moment-KV by balancing his-torical importance against newly observed atten-tion. Larger values of α retain historical attention contributions for longer durations, while smaller values emphasize more recent attention patterns and cause token importance to decay more aggres-7Figure 3: Analysis of Moment-KV across cache utilization, positional robustness, and momentum factor sensitivity. 
+
+sively. Figure 3(c) shows the effect of varying α
+
+across the GSM8K, MMLU, and CSQA subsets of LongGenBench-4K for LLaMA-3.1-8B-Instruct under a decoding budget of 512 tokens. Across all three datasets, we observe consistently stronger performance for relatively larger values of α, sug-gesting that long-form generation benefits from preserving temporally persistent heavy hitters to-kens rather than relying primarily on short-term attention dynamics. At the same time, performance remains relatively stable across a broad range of 
+
+α values, demonstrating that Moment-KV is not overly sensitive to precise hyperparameter selec-tion. 
+
+7.4 Throughput Analysis 
+
+Figure 4 compares the decoding throughput of dif-ferent methods. Full Cache achieves the highest throughput (34.32 tokens/s), as it avoids any cache management overhead. Among compressed meth-ods, StreamingLLM (22.37 tokens/s) and Pyra-midInfer (20.81 tokens/s) are slightly faster due to their lightweight heuristics, while H 2O (20.78 tokens/s) and SCOPE (20.71 tokens/s) incur mi-nor overhead, due to cumulative attention score computation. Moment-KV achieves competitive throughput (20.65 tokens/s), closely matching ex-isting methods while introducing minimal overhead despite its momentum-based importance tracking. 
+
+7.5 Generalization of Moment-KV 
+
+Results on the En-Sum task in ∞Bench (Figure 5) show that Moment-KV achieves the highest per-formance among all compression methods, nearly matching the full-cache setting. It consistently out-performs SCOPE and other baselines, highlighting the advantage of momentum-based temporal im-portance over heuristic or instantaneous strategies. These results further confirm that our approach gen-eralizes effectively to long-form generation tasks such as summarization under constrained memory. Full Cache StreamingLLM H2O PyramidInfer SCOPE Moment-KV    
+
+> Method
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> Tokens / s
+> 34.32
+> 22.37
+> 20.78 20.81 20.71 20.65
+
+Figure 4: Throughput comparison across KV cache compression methods. Moment-KV achieves competi-tive performance under constrained memory budgets. 16.00 16.25 16.50 16.75 17.00 17.25 17.50 17.75 18.00 
+
+> Rogue-L
+> Full Cache
+> StreamingLLM
+> H2O
+> Pyramid Infer
+> Scope
+> Moment-KV
+> Method
+> 17.97
+> 16.42
+> 17.5
+> 17.79
+> 17.52
+> 17.95
+
+Figure 5: Performance comparison on En-Sum task of 
+
+∞Bench. 
+
+8 Conclusion 
+
+We introduced Moment-KV, one of the first decode-time KV cache compression frameworks for long-sequence generation. We identify two major lim-itations of existing methods: the temporal insta-bility of attention and the reliance on fixed-size recency windows that can evict important tokens while retaining stale ones. To address this, Moment-KV models token importance as a momentum-driven evolving state by aggregating attention over decoding steps with decay. Extensive experi-ments on LongGenBench and HelloBench show that Moment-KV consistently outperforms exist-ing baselines under aggressive KV compression, while introducing minimal latency overhead and re-maining fully compatible with existing prefill-time compression methods. 8Limitations 
+
+While Moment-KV demonstrates strong perfor-mance in preserving long-horizon context during decoding, several directions remain for future work. As one of the first methods targeting decode-time KV cache compression, Moment-KV currently re-lies on self-attention as a practical proxy for to-ken importance, which may not always perfectly capture true semantic relevance. Additionally, all newly generated tokens are initialized uniformly and subjected to the same momentum aggregation, despite differences in their informational signifi-cance. Future work can explore richer importance estimation strategies and adaptive token initializa-tion mechanisms for further improving cache reten-tion decisions. 
+
+References 
+
+Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan, Wenhang Ge, Yu Han, Fei Huang, Binyuan Hui, Luo Ji, Mei Li, Junyang Lin, Runji Lin, Dayiheng Liu, Gao Liu, Chengqiang Lu, K. Lu, and 31 others. 2023. Qwen technical report. ArXiv .Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Baobao Chang, Junjie Hu, and Wen Xiao. 2024. Pyramidkv: Dynamic kv cache compression based on pyramidal information funneling. ArXiv .Karl Cobbe, Vineet Kosaraju, Mo Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. 2021. Training verifiers to solve math word problems. ArXiv .Alessio Devoto, Yu Zhao, Simone Scardapane, and Pasquale Minervini. 2024. A simple and effective 
+
+l_2 norm-based strategy for KV cache compression. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , Miami, Florida, USA. Association for Computational Lin-guistics. Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, Anirudh Goyal, Anthony S. Hartshorn, Aobo Yang, Archi Mitra, Archie Sravankumar, Artem Ko-renev, Arthur Hinsvark, Arun Rao, Aston Zhang, and 510 others. 2024. The llama 3 herd of models. Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Xiaodong Song, and Jacob Steinhardt. 2020. Measuring massive multitask language understanding. ArXiv .Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr F. Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. Snapkv: Llm knows what you are looking for before genera-tion. ArXiv .Xiang Liu, Hong Chen, Xuming Hu, and Xiaowen Chu. 2025. Flowkv: Enhancing multi-turn conversational coherence in llms via isolated key-value cache man-agement. ArXiv .Junyoung Park, Dalton Jones, Matthew Morse, Raghavv Goel, Mingu Lee, and Christopher M. Lott. 2025. Keydiff: Key similarity-based kv cache eviction for long-context llm inference in resource-constrained environments. ArXiv .Haoran Que, Feiyu Duan, Liqun He, Yutao Mou, Wangchunshu Zhou, Jiaheng Liu, Wenge Rong, Zekun Moore Wang, Jian Yang, Ge Zhang, Junran Peng, Zhaoxiang Zhang, Songyang Zhang, and Kai Chen. 2024. Hellobench: Evaluating long text gener-ation capabilities of large language models. ArXiv .Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, Aur’elien Rodriguez, Armand Joulin, Edouard Grave, and Guillaume Lample. 2023. Llama: Open and efficient foundation language models. ArXiv .Jialong Wu, Zhenglin Wang, Linhai Zhang, Yilong Lai, Yulan He, and Deyu Zhou. 2024. Scope: Optimizing key-value cache compression in long-context genera-tion. ArXiv .Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2023. Efficient streaming language models with attention sinks. ArXiv .Dongjie Yang, Xiaodong Han, Yan Gao, Yao Hu, Shilin Zhang, and Hai Zhao. 2024. Pyramidinfer: Pyra-mid kv cache compression for high-throughput llm inference. ArXiv .Xinrong Zhang, Yingfa Chen, Shengding Hu, Zihang Xu, Junhao Chen, Moo Hao, Xu Han, Zhen Thai, Shuo Wang, Zhiyuan Liu, and Maosong Sun. 2024. 
+
+∞Bench: Extending long context evaluation beyond 100K tokens. In Proceedings of the 62nd Annual Meeting of the Association for Computational Lin-guistics (Volume 1: Long Papers) , Bangkok, Thai-land. Association for Computational Linguistics. Zhenyu (Allen) Zhang, Ying Sheng, Tianyi Zhou, Tian-long Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark W. Barrett, Zhangyang Wang, and Beidi Chen. 2023. H2o: Heavy-hitter oracle for efficient generative inference of large language models. ArXiv .
+
+A Dataset Description 
+
+Throughout our experiments on long-context gen-eration, we evaluate our method on three diverse 9benchmarks: LongGenBench , InfiniteBench , and 
+
+HelloBench . These benchmarks collectively as-sess a broad range of long-context reasoning and long-form generation capabilities. The characteris-tics and evaluated sub-tasks of each benchmark are described below. 
+
+A.1 LongGenBench 
+
+LongGenBench restructures traditional evaluation formats by sequentially concatenating a batch of questions. This requires the model to generate a cohesive, singular long-context response that ad-dresses each question in order. We utilize all three core domains synthesized within this benchmark: GSM8K, MMLU, and CSQA. The specific struc-tural configurations for both the 4K and 8K vari-ants, delineating the number of concatenated ques-tions per query ( K) alongside their respective eval-uation iteration counts ( T ), are comprehensively detailed in Table 4: 
+
+GSM8K : Evaluates arithmetic problem-solving skills using grade-school-level math word prob-lems. 
+
+MMLU : Measures world knowledge and reason-ing capabilities across 57 diverse categories. 
+
+CSQA : Tests commonsense reasoning capabili-ties using questions grounded in ConceptNet. 
+
+A.2 InfiniteBench 
+
+InfiniteBench evaluates LLM capabilities on ex-treme context lengths surpassing 100K tokens. For our evaluation, we focus on the Text Summariza-tion ( En.Sum ) task, utilizing 103 examples from the official repository. This task requires the model to read an entire novel and generate a concise sum-mary. To accommodate the maximum context win-dow limits of the evaluated models, we apply a bidirectional truncation strategy to oversized in-puts. If a tokenized prompt exceeds the model’s maximum capacity, we extract the first 50% and the final 50% of the allowed token budget, drop-ping the intermediate text. This ensures the model retains the initial system instructions and the final querying prompt while strictly adhering to memory constraints. 
+
+A.3 HelloBench 
+
+HelloBench is a comprehensive benchmark for evaluating open-ended long-text generation based on Bloom’s Taxonomy (Que et al., 2024). We focus 
+
+on the Heuristic Text Generation task, which corre-sponds to the “Create” cognitive level and evaluates a model’s ability to generate coherent long-form content from heuristic prompts. Since HelloBench does not provide reference outputs, we use com-pletions generated by Meta’s LLaMA-3.1-70B as pseudo-reference texts for evaluation and report ROUGE-L scores. 
+
+B Prompt Templates 
+
+This section outlines the exact prompt templates utilized across all benchmark datasets. Figures 6, 7, and 8 detail the specific templates used for LongGenBench, InfiniteBench, and HelloBench, respectively. 
+
+C Baselines 
+
+We compare Moment-KV against representative KV cache compression methods spanning three categories: unified KV compression, prefill-time compression, and decoding-time compression. 
+
+Unified KV Compression. Unified compression methods apply cache management jointly over both the prefill and decoding phases without explicitly distinguishing their functional roles. We evaluate against: StreamingLLM (Xiao et al., 2023), which preserves attention sink tokens together with a slid-ing window of recent tokens; H2O (Zhang et al., 10 Type GSM8K MMLU CSQA                  
+
+> KTKTKT
+> LongGenBench-4K 30 129 30 110 40 60 LongGenBench-8K 60 42 60 167 80 30
+
+Table 4: Configuration details for the experiment. The table shows the number of questions in one query ( K)and the number of iteration times ( T ). 
+
+2023), which retains heavy-hitter tokens based on accumulated attention statistics while reserving a fixed recency window; and PyramidInfer (Yang et al., 2024), which progressively compresses the KV cache using layer-wise sparsity patterns. For fair comparison, these methods are evaluated under the same total KV cache budget as Moment-KV, i.e., the prompt length plus the designated decoding budget (512 or 1024 tokens). 
+
+Prefill-Time KV Compression. Prefill compres-sion methods reduce the KV cache during prompt processing while leaving the decoding process unchanged. We consider: SnapKV (Li et al., 2024), which identifies salient prompt tokens using attention-based voting; and PyramidKV (Cai et al., 2024), which allocates compression capacity across layers using a pyramidal strategy. Since Moment-KV is a decoding-only compression framework, these methods are integrated with our decoding strategy to evaluate compatibility and modular-ity. Specifically, we preserve the compressed pre-fill cache produced by these methods and apply Moment-KV only during decoding under the same decoding cache budget. 
+
+Decoding-Time KV Compression. Our primary comparison is with SCOPE (Wu et al., 2024), a decoding-time KV cache compression method that preserves the prefill cache while compressing only the decoding cache. SCOPE employs a sliding-window based eviction strategy guided by instanta-neous attention and recency heuristics. Since both                               
+
+> Bd
+> LongGenBench-4K LongGenBench-8K GSM8K MMLU CSQA GSM8K MMLU CSQA
+> LLaMA-3.1-8B-Instruct
+> 1024 0.98 0.98 0.55 0.97 0.97 0.80 512 0.98 0.96 0.75 0.97 0.75 0.30
+> Mistral-7B-Instruct-v0.3
+> 1024 0.97 0.97 0.75 0.95 0.95 0.95 512 0.90 0.95 0.83 0.95 0.95 0.97
+
+Table 5: Selected momentum factor α across different LongGenBench experiments. 
+
+Bd Full Cache SnapKV PyramidKV 
+
+1024 0.98 0.97 0.97 512 0.98 0.97 0.97 
+
+Table 6: Selected momentum factor α for plug-in cache experiments using LLaMA-3.1-8B-Instruct on the GSM8K task from LongGenBench-4K. 
+
+SCOPE and Moment-KV exclusively target the decoding phase while preserving the prefill cache intact, this comparison isolates the effectiveness of different decoding-time cache management strate-gies under identical memory budgets. 
+
+Full Cache. We additionally report results using Full Cache, where no KV compression is applied and all prefill and decoding tokens are retained throughout generation. 
+
+D Hyperparameter Details 
+
+In our Moment-KV token importance tracking, we utilize a single primary hyperparameter: the mo-mentum factor α. This parameter controls the decay of historical importance while integrating newly observed attention scores. The importance 
+
+Ii(t) of token i at decoding step t is updated as follows: 
+
+Ii(t) = αI i(t − 1) + ai(t)
+
+where ai(t) represents the attention score of token i
+
+at the current decoding step. Exact hyperparameter settings used across different datasets and models are provided in Table 5, 6, and 7. All hardware evaluations and experiments are conducted using an NVIDIA A100 80GB GPU. 
+
+Budget Setup To ensure a fair and standardized evaluation framework across all experiments, we 11 Bd
+
+Generation Length 2K 4K 8K 16K 512 0.65 0.20 0.95 0.25 1024 0.95 0.65 0.65 0.95   
+
+> Table 7: Selected momentum factor αfor HelloBench experiments with LLaMA-3.1-8B-Instruct.
+
+establish a strict KV cache budget allocation strat-egy. Our approach distinctly separates the memory budgets for the prefill and decoding phases. 
+
+Prefill Phase: We do not apply any compression to the KV cache during the initial prefill stage. Therefore, the cache budget allocated for this phase is dynamically set to equal the exact number of to-kens present in the input prompt. 
+
+Decoding Phase: During the autoregressive de-coding phase, we maintain a strictly bounded de-coding cache budget of either 512 or 1024 tokens across all experimental configurations. Consequently, the total memory footprint uti-lized by our proposed method at any given step is explicitly limited to the sum of the initial prompt length and the designated decoding budget (i.e., Prompt Length + 512, or Prompt Length + 1024). 
+
+Baseline Comparison Strategy To maintain strict parity when evaluating against baseline uni-fied compression algorithms, we constrain their total available KV cache to this exact same global limit. Specifically, the maximum allowable KV cache for any unified compression baseline is strictly restricted so that it never exceeds the com-bined capacity of the prompt length plus the respec-tive 512 or 1024 decoding token budget. 12 13 14 15
