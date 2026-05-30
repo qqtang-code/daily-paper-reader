@@ -6,71 +6,56 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-29
-- 运行时间：2026-05-29 21:51:44 UTC
+- 最新运行日期：2026-05-30
+- 运行时间：2026-05-30 20:18:40 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：6
-- 速读区：11
+- 本次总论文数：12
+- 精读区：2
+- 速读区：10
 
 ### 今日简报（AI）
-今日推荐17篇论文，精读6篇，其中《Interdomain Attention》与《IndexMem》均获9.0满分，聚焦长上下文LLM推理的注意力与缓存革新。值得关注的两大方向：跨域注意力超越Token级记忆，以及学习型KV缓存淘汰结合潜在记忆，均旨在突破长序列效率瓶颈。建议优先精读这两篇9.0分论文，掌握如何通过结构化缓存与层级注意力降低长上下文推理成本。
-- 详情：[/202605/29/README](/202605/29/README)
+今日共推荐12篇论文，精选2篇精读、10篇速读，覆盖Transformer内存优化与视频生成加速。重点聚焦《固定大小循环状态的长程Transformer》与《未来感知的无训练KV缓存策略》，分别解决长序列建模与视频生成效率瓶颈。建议优先阅读这两篇精读论文，深入理解其创新设计与实际应用潜力。
+- 详情：[/202605/30/README](/202605/30/README)
 
 ### 精读区论文标签
-1. [Interdomain Attention: Beyond Token-Level Key-Value Memory](/202605/29/2605.24330v1-interdomain-attention-beyond-token-level-key-value-memory)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：将SSM集成到注意力模块实现固定大小压缩KV状态
-2. [IndexMem: Learned KV-Cache Eviction with Latent Memory for Long-Context LLM Inference](/202605/29/2605.25475v1-indexmem-learned-kv-cache-eviction-with-latent-memory-for-long-context-llm-inference)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：面向长上下文LLM的可学习KV缓存淘汰策略
-3. [Moment-KV: Momentum-Based Decode-Time KV Cache Compression for Long Generation](/202605/29/2605.29873v1-moment-kv-momentum-based-decode-time-kv-cache-compression-for-long-generation)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：基于动量的解码阶段KV缓存压缩，利用注意力动态
-4. [Veda: Scalable Video Diffusion via Distilled Sparse Attention](/202605/29/2605.30325v1-veda-scalable-video-diffusion-via-distilled-sparse-attention)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：蒸馏稀疏注意力用于视频扩散
-5. [Energy-Gated Attention: Spectral Salience as an Inductive Bias for Transformer Attention](/202605/29/2605.21842v1-energy-gated-attention-spectral-salience-as-an-inductive-bias-for-transformer-attention)  
+1. [Tensor Memory: Fixed-Size Recurrent State for Long-Horizon Transformers](/202605/30/2605.27686v1-tensor-memory-fixed-size-recurrent-state-for-long-horizon-transformers)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：提出能量门控注意力聚焦信息丰富token以减少计算
-6. [Inference Time Context Sparsity: Illusion or Opportunity?](/202605/29/2605.24168v1-inference-time-context-sparsity-illusion-or-opportunity)  
+   evidence：固定大小的循环3D记忆替代增长的KV缓存
+2. [Future Forcing: Future-aware Training-free KV Cache Policy for Autoregressive Video Generation](/202605/30/2605.30083v1-future-forcing-future-aware-training-free-kv-cache-policy-for-autoregressive-video-generation)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：立场论文倡导极端上下文稀疏性
+   evidence：面向视频生成的未来感知KV缓存策略
 
 ### 速读区论文标签
-1. [ArborKV: Structure-Aware KV Cache Management for Scaling Tree-based LLM Reasoning](/202605/29/2605.22106v1-arborkv-structure-aware-kv-cache-management-for-scaling-tree-based-llm-reasoning)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：面向树结构推理的KV缓存管理
-2. [Meta-Attention: Bayesian Per-Token Routing for Efficient Transformer Inference](/202605/29/2605.28384v1-meta-attention-bayesian-per-token-routing-for-efficient-transformer-inference)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：动态路由选择稀疏注意力策略
-3. [Parallax: Parameterized Local Linear Attention for Language Modeling](/202605/29/2605.29157v1-parallax-parameterized-local-linear-attention-for-language-modeling)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：参数化局部线性注意力用于高效语言建模
-4. [VideoMLA: Low-Rank Latent KV Cache for Minute-Scale Autoregressive Video Diffusion](/202605/29/2605.30351v1-videomla-low-rank-latent-kv-cache-for-minute-scale-autoregressive-video-diffusion)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：低秩潜在KV缓存用于视频扩散
-5. [Approaching I/O-optimality for Approximate Attention](/202605/29/2605.23751v1-approaching-io-optimality-for-approximate-attention)  
+1. [Steered Generation via Gradient-Based Optimization on Sparse Query Features](/202605/30/2605.23040v1-steered-generation-via-gradient-based-optimization-on-sparse-query-features)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：近似注意力的I/O最优，近线性代价
-6. [Language Models Need Sleep](/202605/29/2605.26099v1-language-models-need-sleep)  
+   evidence：对注意力查询激活应用稀疏自编码器进行稀疏特征引导
+2. [CachePrune: Privacy-Aware and Fine-Grained KV Cache Sharing for Efficient LLM Inference](/202605/30/2605.23640v1-cacheprune-privacy-aware-and-fine-grained-kv-cache-sharing-for-efficient-llm-inference)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：通过快速权重整合清除键值缓存
-7. [Energy-Gated Attention and Wavelet Positional Encoding: Complementary Inductive Biases for Transformer Attention](/202605/29/2605.26355v1-energy-gated-attention-and-wavelet-positional-encoding-complementary-inductive-biases-for-transformer-attention)  
+   evidence：隐私感知的细粒度KV缓存共享用于高效LLM推理
+3. [DiSC: Resolution-Scalable Acceleration of Diffusion Models by Exploiting Sparsity and Cached Token Reuse with Hash-based Distribution](/202605/30/2605.25798v1-disc-resolution-scalable-acceleration-of-diffusion-models-by-exploiting-sparsity-and-cached-token-reuse-with-hash-based-distribution)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：能量门控注意力实现高效Transformer注意力
-8. [JetViT: Efficient High-Resolution Vision Transformer with Post-Training Attention Search](/202605/29/2605.26636v1-jetvit-efficient-high-resolution-vision-transformer-with-post-training-attention-search)  
+   evidence：通过软最大值阈值化实现稀疏注意力，并重用缓存token
+4. [LLaVA-OneVision-2: Towards Next-Generation Perceptual Intelligence](/202605/30/2605.25979v1-llava-onevision-2-towards-next-generation-perceptual-intelligence)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：训练后搜索将注意力替换为高效变体
-9. [Preisach Attention: A Hysteretic Model of Sequential Memory](/202605/29/2605.23603v1-preisach-attention-a-hysteretic-model-of-sequential-memory)  
+   evidence：窗口注意力和自适应令牌压缩用于长视频
+5. [AdaMerge: Salience-Aware Adaptive Token Merging for Training-Free Acceleration of Vision Transformers](/202605/30/2605.27465v1-adamerge-salience-aware-adaptive-token-merging-for-training-free-acceleration-of-vision-transformers)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：无需训练的令牌合并加速视觉Transformer
+6. [Knowledge Offloading: Decomposing LLMs into Sparse Backbones and Memory Modules](/202605/30/2605.29075v1-knowledge-offloading-decomposing-llms-into-sparse-backbones-and-memory-modules)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：稀疏骨干和可学习KV缓存用于LLM分解
+7. [AsymVLM: Asymmetric Token Pruning for Efficient Vision-Language Model Inference](/202605/30/2605.29535v1-asymvlm-asymmetric-token-pruning-for-efficient-vision-language-model-inference)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：面向VLM的非对称Token剪枝，包含KV缓存驱逐
+8. [SwInception -- Local Attention Meets Convolutions](/202605/30/2605.29954v1-swinception----local-attention-meets-convolutions)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：提出SwInception，融合局部注意力与卷积，提升Transformer效率
+9. [PARCEL: Pool-Anchored Resampling with Conditioned Elastic Queries for Efficient Vision-Language Understanding](/202605/30/2605.30126v1-parcel-pool-anchored-resampling-with-conditioned-elastic-queries-for-efficient-vision-language-understanding)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：通过池化重采样实现视觉-语言模型的高效视觉令牌压缩
+10. [How Far Can Disaggregation Go? A Design-Space Exploration of Attention-FFN Disaggregation for Efficient MoE LLM Serving](/202605/30/2605.28302v1-how-far-can-disaggregation-go-a-design-space-exploration-of-attention-ffn-disaggregation-for-efficient-moe-llm-serving)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：替代softmax的新型注意力机制
-10. [A generative pre-trained transformer with Kerr-soliton attention](/202605/29/2605.24124v1-a-generative-pre-trained-transformer-with-kerr-soliton-attention)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：新型硬件高效注意力机制
-11. [Quaternion Self-Attention with Shared Scores](/202605/29/2605.24920v1-quaternion-self-attention-with-shared-scores)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：基于共享分数的四元数自注意力高效计算
+   evidence：注意力-FFN分解用于高效MoE大模型服务
 
 
 <div class="dpr-home-promo-card">
