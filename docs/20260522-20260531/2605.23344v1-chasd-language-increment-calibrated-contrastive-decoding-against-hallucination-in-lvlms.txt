@@ -1,0 +1,656 @@
+Title: CHASD: Language Increment-Calibrated Contrastive Decoding against Hallucination in LVLMs
+
+URL Source: https://arxiv.org/pdf/2605.23344v1
+
+Published Time: Mon, 25 May 2026 00:41:53 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# CHASD: Language Increment-Calibrated Contrastive Decoding against Hallucination in LVLMs 
+
+Xiaoyi Huang 1 Kejia Zhang 2 Zhiming Luo 21Institute of Artificial Intelligence, Xiamen University 
+
+> 2
+
+Department of Artificial Intelligence, Xiamen University 
+
+## Abstract 
+
+Large Vision-Language Models have shown strong multimodal reasoning capa-bilities, yet they remain susceptible to object hallucinations when language priors dominate insufficient or misaligned visual evidence. Training-free contrastive decoding methods mitigate this issue by comparing predictions from original and perturbed visual inputs, but existing approaches either apply global pertur-bations that may alter useful visual evidence or invoke an additional negative branch at every decoding step. In this paper, we observe that hallucination risks are transient and token-specific : visual attention shifts across generated tokens, while some functional tokens are produced with high confidence and do not re-quire contrastive calibration. Based on this observation, we propose Contrastive Hallucination-Aware Step-wise Decoding (CHASD) for Large Vision-Language Models, an inference-time framework for "calibration on demand" . CHASD uses an uncertainty-driven confidence gate to activate the contrastive branch only when the maximum probability of the next-token is less than the threshold, and con-structs the negative branch through attention-guided localized perturbations of the currently salient visual tokens. This design reduces unnecessary negative-branch forward passes while preserving the original distribution for high-confidence steps. Experiments on POPE, AMBER, MME, MMHal-Bench, and CHAIR show that CHASD improves hallucination-related metrics over strong training-free baselines with competitive inference efficiency. 
+
+## 1 Introduction 
+
+Large Vision-Language Models (LVLMs) have achieved remarkable success in bridging visual perception with linguistic reasoning [ 2 , 29 , 41 ]. However, they remain susceptible to object hallu-cinations, wherein the models generate descriptions of non-existent objects or incorrect relation-ships [ 9, 30 , 40 ]. Recent studies indicate that this issue primarily stems from an over-reliance on language priors [ 3 , 30 , 34 ]; when visual evidence is ambiguous or attention misaligned, LVLMs tend to produce high-frequency token sequences that override the actual visual context. To mitigate this without retraining costs, training-free contrastive decoding (CD) [ 4, 19 , 32 ] has emerged as a promising paradigm. The pioneering VCD [ 18 ] amplifies visual signals by contrasting predictions from original and globally blurred images. Despite its effectiveness, the undifferentiated global perturbation in VCD can also modify useful visual features. Subsequent efforts have sought to refine this via more granular interventions. Specifically, AvisC [ 33 ] identifies irrelevant visual tokens through hierarchical attention analysis to enable localized processing. Nevertheless, its negative sample is static , failing to adapt to the dynamic shift of visual focus during the decoding process. Conversely, works such as SID [ 12 ] and HICD [ 15 ] recognize the transient nature of hallucinations, employing context-aware or incremental strategies to generate token-specific negative examples. However, these methods essentially require dual forward passes for all tokens in a sequence, which increases the computational burden and inference latency.                           
+
+> Preprint.
+> arXiv:2605.23344v1 [cs.CV] 22 May 2026 Attention for “ of ”Attention for “ dogs ”Attention for “ meal ”
+> The image features agroup of animals ,likely
+> 0.90 0.79 0.41 0.57 0.15 0.99 0.45 0.74 0.39
+> dogs
+> 0.19
+> ,
+> 0.81
+> sitting
+> 0.51
+> around
+> 0.61
+> a
+> 0.96
+> dining table
+> 0.42 0.93
+> .
+> 0.99
+> they are enjoying
+> 0.34 0.51 0.26
+> a
+> 0.85
+> meal .
+> 0.82 0.74
+
+Figure 1: Visualization of step-wise probabilities and cross-attention maps during the LVLM generation process. Top: The model assigns varying confidence scores to each token. The high confidence observed in functional tokens suggests that the contrastive decoding branch can be 
+
+selectively bypassed to enhance inference efficiency. Bottom: The model’s visual focus areas shift dynamically when generating different tokens. This variation highlights the necessity of constructing negative samples on a token-by-token basis to ensure precise spatial alignment. Our motivation stems from the empirical observation that hallucination risks are highly transient and token-specific. As illustrated in Figure. 1, the visual regions attended by the model vary across tokens, necessitating a dynamic formulation of negative samples. Furthermore, prediction confidence exhibits extreme variance: functional or syntactic tokens (e.g., " of ") often present near-unity confidence and diffused attention, indicating they are driven by stable linguistic logic. In contrast, hallucination-prone entities (e.g., " dogs ") exhibit lower confidence coupled with spurious visual anchors. This suggests that applying a continuous, sequence-level contrastive penalty is both computationally redundant and theoretically sub-optimal. Driven by these insights, we propose that effective hallucination suppression requires "calibration on demand" . We introduce Contrastive Hallucination-Aware Step-wise Decoding ( CHASD ) for Large Vision-Language Models, an inference framework governed by a spatio-temporal joint constraint .Temporally, CHASD utilizes an uncertainty-driven confidence gating mechanism to determine when 
+
+to intervene, activating the contrastive branch only when the maximum probability of the next-token falls below the threshold. Spatially, CHASD identifies the most salient visual tokens based on cross-modal attention weights to determine where to perturb the visual evidence for the negative branch. By applying localized perturbations to these specific visual anchors only during vulnerable decoding steps, CHASD reduces unnecessary negative-branch forward passes while preserving the original distribution for high-confidence text. The primary contributions of this work are summarized as follows: • We demonstrate that hallucination risks are token-specific rather than uniformly distributed across the sequence. We reveal that contrastive decoding is only essential for specific "vulnerable" steps, providing a empirical basis for efficiency optimization. • We propose CHASD , a training-free framework that introduces a spatio-temporal joint constraint. It dynamically couples temporal confidence gating with spatial attention guidance to calibrate only selected low-confidence decoding steps. • Extensive evaluations across POPE [ 20 ], AMBER [ 31 ], MME [ 8], MMHal-Bench [ 27 ] and CHAIR [ 25 ] show that CHASD improves hallucination-related metrics over strong training-free baselines. It reduces unnecessary negative-branch forward passes while maintaining competitive generation quality. 22 Related Work 
+
+2.1 Object Hallucination and Mitigation Strategies 
+
+Object hallucination [ 9, 38 , 39 ] remains a primary impediment to the reliable deployment of LVLMs. This phenomenon typically originates from data-level biases, an over-reliance on language priors [ 3 ,30 , 34 ], and the model’s inherent difficulty in grounding real-world contexts [ 14 ]. Early mitigation efforts primarily focused on training-based approaches [7 , 27 , 40 ] and data optimization [ 23 , 36 ,37 ]. However, these methods often incur prohibitive computational overhead and time costs, while risking the degradation of the model’s general-purpose capabilities. To bypass the cost of retraining, training-free methods have gained significant attention. For instance, OPERA [ 10 ] alleviates hallucinations through an over-trust penalty and a rollback allocation strategy. Recently, contrastive decoding [19 ] has emerged as a dominant paradigm. The pioneering work, VCD [ 18 ], amplifies visual signals by contrasting predictions from original and blurred images. Building upon this, the research community has proposed various strategies for negative sample construction, such as using sub-image cropping [ 4], blank images [ 6], hallucination visualization [ 24 ]and visual token shuffling [ 35 ]. Other advancements focus on optimizing the CD process itself, including fuzzy reasoning [ 16 ], decider-based selection strategies [ 17 , 28 ] and instruction-based contrastive decoding [32]. 
+
+2.2 Fine-grained Contrastive Decoding 
+
+Despite its milestone status in hallucination mitigation, VCD suffers from performance and efficiency bottlenecks due to its fixed global perturbation strategy and full-sequence contrastive decoding. Subsequent research has sought to improve upon these coarse-grained characteristics by leveraging internal model states to implement more targeted interventions. In the spatial dimension, AvisC [ 33 ] identifies blind tokens through hierarchical attention analysis to enable localized processing. However, its negative sample construction remains inherently static ,making it difficult to adapt to the dynamic shift of visual focus during the generation process. Conversely, some studies recognize the transient nature of hallucinations and employ various methods to alleviate them: SID [ 12 ] develops a context-aware and text-aware token selection strategy to amplify hallucinations via progressively chosen irrelevant tokens, while HICD [ 15 ] constructs negative samples by step-wise selecting and shuffling key attention heads. Nonetheless, these methods essentially tend to perform dual calculations for every token in the sequence, which severely increases the computational burden and inference latency. In summary, existing fine-grained methods treat spatial localization and temporal selection as isolated problems, leading to an imbalance between spatial precision and temporal efficiency. Our proposed 
+
+CHASD addresses this limitation by introducing a spatio-temporal coupled constraint . By ensuring that contrastive decoding is performed only when necessary (temporal dimension) and only where 
+
+relevant (spatial dimension), CHASD reduces unnecessary negative-branch computation while retaining localized visual calibration. 
+
+## 3 Methodology 
+
+3.1 Preliminaries Token Generation in LVLMs. LVLMs typically employ an autoregressive decoding strategy to bridge visual and linguistic modalities. Formally, given an input image X and a prefix sequence Y<t 
+
+(comprising task instructions and previously generated tokens), the model fθ computes the probability of the next token yt by applying a Softmax normalization over the original logits: 
+
+P (yt | Y<t , X ) = Softmax (L(t)
+
+> ori
+
+)[ yt], where L(t) 
+
+> ori
+
+= fθ (Y<t , X ) (1) During decoding, the model iteratively samples tokens to construct coherent responses. However, this process is highly susceptible to language priors. The model often relies excessively on statistical patterns learned during pre-training rather than the factual visual evidence provided in X, intrinsically leading to object hallucinations. 3Input Image 𝐀                     
+
+> Attention Map 𝐀 𝐀 Negative Sample 𝐀 𝐀 Negetive Logits 𝐀 𝐀𳰀𝐀
+> (𝐀 )
+> Final Logits 𝐀 𝐀𱰀𝐀𲠀𝐀
+> (𝐀 )Positive Logits 𝐀 𝐀𴀀𱰀
+> (𝐀 )
+> basketball
+> football
+> baseball
+> tennis
+> basketball
+> football
+> baseball
+> tennis
+> basketball
+> football
+> baseball
+> tennis
+> LVLM 𝐀 >𝐀
+> II. Attention-guided Localized Visual Perturbation
+> I. Uncertainty-driven Confidence Gating
+> basketball
+> football
+> baseball
+> tennis
+> A man is playing __
+> Candidate
+> Token 𝐀 𝐀
+> Calibrated
+> Token 𝐀 𝐀
+> Confidence Gating
+> Frozen LVLM
+> Gauss Noise 𝐀
+> 𝐀𝐀𝐀𝐀𝐀𲠀𝐀
+> ∗𝐀 𝐀𱰀𝐀𲠀𝐀
+> (𝐀 )= ( 𝐀 +𝐀 )𝐀 𝐀𴀀𱰀
+> (𝐀 )−𝐀 𝐀 𝐀𳰀𝐀
+> (𝐀 )
+> *
+> *
+
+⨁ Visual Tokens  
+
+> Prefix
+> Instruction
+> 𝐀 𝐀 +𝐀 Generation
+> II
+
+Figure 2: Overview of the CHASD at time step t. For the initial token generated at the current step, it first undergoes (I) Uncertainty-driven Confidence Gating : if the maximum predictive probability 
+
+P exceeds the threshold τ , the system directly outputs the candidate token. Otherwise, the system enters the (II) Attention-guided Localized Visual Perturbation branch, leveraging an attention map to identify salient regions and constructing a negative sample via localized Gaussian noise injection. By contrasting the resulting negative logits with the original distribution, the system produces the final calibrated token. 
+
+VCD Framework. To mitigate this bias, Visual Contrastive Decoding (VCD) [ 18 ] introduces a calibration mechanism that penalizes hallucination-prone distributions. Specifically, VCD calculates a negative logit distribution L(t) 
+
+> neg
+
+based on a statically corrupted image X′ (usually by applying global noise), and formulates the calibrated logits as: 
+
+L(t) 
+
+> CD
+
+= (1 + α) · L(t) 
+
+> ori
+
+− α · L(t) 
+
+> neg
+
+(2) where α denotes the contrastive strength. Furthermore, to prevent the contrastive operation from amplifying irrelevant tokens, VCD utilizes the Adaptive Probabilistic Constraint (APC), which truncates the sampling space to a candidate set Vt:
+
+Vt = {w ∈ W | P (w | Y<t , X ) > β · max  
+
+> w′∈W
+
+P (w′ | Y<t , X )} (3) While APC effectively circumvents semantic collapse, the construction of negative samples in VCD relies entirely on static, global noise injection. This limits its capacity to perceive and respond to the dynamically drifting visual attention of the model during decoding, thereby motivating our exploration of a fine-grained, dynamic calibration mechanism. 
+
+3.2 Contrastive Hallucination-Aware Step-wise Decoding 
+
+To address the limitations of existing contrastive decoding methods in capturing transient attentional shifts, we propose the Contrastive Hallucination-Aware Step-wise Decoding ( CHASD ) for Large Vision-Language Models framework. CHASD transitions the hallucination calibration strategy from static, global perturbations to a dynamic, step-wise localized intervention. The execution of CHASD is comprised of two core modules: 
+
+3.2.1 Uncertainty-driven Confidence Gating 
+
+To mitigate computational redundancy and prevent over-calibration of high-confidence predic-tions—such as common functional words or unambiguous visual entities—we introduce a confidence gating mechanism (Stage I in Figure 2). At decoding step t, the gate is applied to the original next-token distribution before sampling. The contrastive calibration process is activated only if the 4Algorithm 1 The Inference Procedure of CHASD 
+
+Require: Image X, Prefix sequence Y<t , Contrastive strength α, Gating threshold τ , Attention sparsity ratio k, Gaussian perturbation scale σ.
+
+Ensure: Generated sequence Y 
+
+> 1:
+
+Y ← ∅ , t ← 1 
+
+> 2:
+
+while yt̸ = [EOS] do  
+
+> 3:
+
+Obtain original logits: L(t) 
+
+> ori
+
+← fθ (Y<t , X ) //Original Logits Generation  
+
+> 4:
+
+Ct ← max( Softmax (L(t)
+
+> ori
+
+))[ yt] 
+
+> 5:
+
+if Ct < τ then  
+
+> 6:
+
+At ← Extract last-layer cross-attention weights //Attention-Guided Saliency Modeling  
+
+> 7:
+
+s(t) 
+
+> i
+
+= 1
+
+> H
+
+PHh=1 A(t)
+
+> h,i
+
+, i ∈ { 1, . . . , N } 
+
+> 8:
+
+m ← ⌈ kN ⌉ 
+
+> 9:
+
+M′ 
+
+> t
+
+← SpatialMap (I(s(t) 
+
+> i
+
+∈ Top-m(s(t), m ))) //Localized Dynamic Perturbation  
+
+> 10:
+
+˜Xt ← X ⊙ (1 − M ′
+
+> t
+
+) + ( X + ϵ) ⊙ M ′
+
+> t
+
+, ϵ ∼ N (0 , σ 2I) 
+
+> 11:
+
+L(t) 
+
+> neg
+
+← fθ (Y<t , ˜Xt) 
+
+> 12:
+
+L(t) ← (1 + α)L(t) 
+
+> ori
+
+− αL(t) 
+
+> neg
+> 13:
+
+else  
+
+> 14:
+
+L(t) ← L(t) 
+
+> ori
+> 15:
+
+end if  
+
+> 16:
+
+Vt = {w ∈ W | P (w | Y<t , X ) > β · max w′∈W P (w′ | Y<t , X )} 
+
+> 17:
+
+yt ← Sample from L(t) restricted to Vt 
+
+> 18:
+
+Y ← Y ∪ { yt} 
+
+> 19:
+
+t ← t + 1  
+
+> 20:
+
+end while  
+
+> 21:
+
+return Y
+
+maximum prediction probability of this distribution falls below a predefined threshold τ :
+
+L(t) 
+
+> f inal
+
+=
+
+(
+
+L(t) 
+
+> CD
+
+, if max v∈V Pori (v|Y<t , X ) < τ 
+
+L(t)
+
+> ori
+
+, otherwise (4) where V denotes the vocabulary. This mechanism ensures that CHASD concentrates the additional negative-branch computation on steps exhibiting high uncertainty, thereby suppressing hallucinations while preserving the model’s intrinsic generation capability at high-confidence steps. 
+
+3.2.2 Attention-guided Localized Visual Perturbation 
+
+If the next-token distribution fails the confidence gate, the spatial calibration process is triggered (Stage II in Figure 2). At each triggered decoding step t, we extract the cross-modal attention weights from the model’s last layer, denoted as At ∈ RH×N . By averaging across the H attention heads, we calculate the saliency score s(t) 
+
+> i
+
+for each visual token: 
+
+s(t) 
+
+> i
+
+= 1
+
+H
+
+> H
+
+X
+
+> h=1
+
+A(t)
+
+> h,i
+
+, i ∈ { 1, . . . , N } (5) The vector s(t) characterizes the model’s instantaneous reliance on specific visual regions during the current token prediction. Unlike global blinding techniques, CHASD implements localized perturbation based on these saliency scores. We define k ∈ (0 , 1] as the attention sparsity ratio and select m = ⌈kN ⌉ visual tokens at each triggered step. The dynamic binary mask Mt anchors these 
+
+m most salient visual tokens: 
+
+Mt(i) = I(s(t) 
+
+> i
+
+∈ Top-m(s(t), m )) , m = ⌈kN ⌉ (6) Subsequently, Gaussian noise is injected exclusively into these high-attention regions to dynamically construct the negative sample ˜Xt for step t:
+
+˜Xt = X ⊙ (1 − M ′
+
+> t
+
+) + ( X + ϵ) ⊙ M ′ 
+
+> t
+
+(7) 5where σ is a fixed standard Gaussian perturbation scale and M′ 
+
+> t
+
+is upsampled from the 1D token mask Mt. The resulting negative logits L(t) 
+
+> neg
+
+= fθ (Y<t , ˜Xt) allow the model to compare its original next-token distribution with a distribution obtained after perturbing the currently attended visual evidence. Detailed algorithms are provided in Algorithm 1. 
+
+## 4 Experiments 
+
+4.1 Experimental Setups Models and Hyperparameters. Following the experimental protocols of existing mainstream literature, we adopt two representative LVLMs as our evaluation backbones: LLaVA-1.5-7B [ 22 ] and InstructBLIP-7B [ 5] (scalability analyses on more different models are provided in Appendix E). For the hyperparameters of CHASD, we set the contrastive strength to α = 1 .0 and the APC threshold to 
+
+β = 0 .1, keeping them consistent with the default settings of VCD [ 18 ]. Furthermore, the confidence gating threshold is set to τ = 0 .5, and the attention sparsity ratio is defined as k = 0 .1, which selects the top ⌈0.1N ⌉ visual tokens from N visual tokens at each triggered step. The Gaussian perturbation scale σ = 1 is fixed across all experiments rather than tuned per benchmark or backbone. 
+
+Evaluation Benchmarks. To evaluate the effectiveness of CHASD in hallucination mitigation, we employ five diverse benchmarks: • POPE [ 20 ]: Formulates hallucination evaluation as a binary QA task across three different data distributions, serving as a core benchmark for object hallucination. In addition, POPE uses image-label pairs from three different large-scale datasets to ensure a comprehensive and robust evaluation across diverse visual contexts. • AMBER [ 31 ]: A multi-dimensional framework that systematically assesses overall reliabil-ity by providing a unified metric that aggregates performance across decoupled generative (image captioning) and discriminative (existence-based probing) tasks. • MME [8 ]: Performs fine-grained evaluation of hallucinations across 14 sub-tasks, from perception to cognition dimensions. • MMHal-Bench [ 27 ]: Utilizes advanced LLMs, such as GPT-4o [ 13 ], as evaluators to subjectively score the consistency of long-form generated responses, focusing on the balance between the richness of information and factual accuracy in the model’s answers. • CHAIR [25 ]: Strictly quantifies the proportion of hallucinated objects among all mentioned objects in long-form generation tasks. For a detailed description of the procedures for the above benchmarks and the corresponding methods for calculating the metrics, please refer to Appendix D. 
+
+Baselines. We evaluate the performance of CHASD by comparing it against a suite of strong training-free strategies. These include VCD [ 18 ], the pioneering work that introduced multi-modal contrastive decoding, as well as more recent attention-guided approaches such as AvisC [33 ] and SID [ 12 ]. These comparisons are designed to evaluate whether CHASD’s dynamic and localized intervention mechanism improves hallucination-related metrics under comparable inference-time settings. 
+
+4.2 Experimental Results Performance on POPE. Table 1 summarizes the performance of various backbone models on the POPE benchmark. All values reported are the averages across MSCOCO [ 21 ], A-OKVQA [ 26 ], and GQA [11] datasets. Empirical results show that, while CHASD achieves an F1 score comparable to the best baseline under the Random setting with LLaVA-1.5, it obtains the best results across most backbone models and query configurations. Notably, when utilizing InstructBLIP as the backbone, CHASD achieves an absolute accuracy improvement of 1.39% over the previous best method under the most challenging Adversarial setting. This gain suggests that attention-guided local perturbation helps reduce over-extrapolation from misaligned or insufficient visual evidence. 
+
+Performance on AMBER. Unlike single-task benchmarks, AMBER introduces a systematic evalua-tion of generated text content. As shown in Table 2, CHASD yields the best results on several core metrics, including CHAIR and F1-score, across both generative and discriminative tasks. Overall, 6Table 1: Comparison results from different CD methods on POPE benchmark . The results reported in the table are the average results across three datasets. 
+
+Setting Random Popular Adversarial 
+
+Model Method Acc F1 Acc F1 Acc F1 LLaVA-1.5 [22] Greedy 81.19 80.15 76.81 76.68 72.97 73.57 VCD [18] 82.51 83.96 77.12 75.28 71.96 76.54 AvisC [33] 85.21 86.22 78.65 81.37 71.64 76.66 SID [12] 88.11 88.48 81.85 83.52 75.56 78.96 
+
+Ours(CHASD) 88.58 87.93 84.71 84.57 80.55 81.20 InstructBLIP [5] Greedy 81.80 81.33 77.37 77.87 74.48 75.64 VCD [18] 84.50 84.11 81.77 81.88 78.20 78.98 AvisC [33] 86.14 86.16 79.76 80.96 74.73 77.47 SID [12] 87.23 86.90 81.00 82.30 74.45 77.57 
+
+Ours(CHASD) 88.02 87.23 83.05 82.91 79.59 80.15 
+
+Table 2: AMBER results for different CD methods and backbones. CHASD achieved the highest scores on multiple sub-task metrics as well as the overall composite metric                                                                                                      
+
+> Model Method Generative Discriminative AMBER ↑
+> CHAIR ↓Cover ↑Hal ↓Cog ↓Acc. ↑Prec. ↑Rec. ↑F1 ↑
+> LLaVA-1.5  Greedy 8.90 45.00 31.50 2.20 69.90 83.70 68.10 75.10 83.10 VCD [18] 6.60 49.30 28.50 2.00 67.80 93.30 55.60 69.70 81.55 AvisC [33] 7.20 45.70 29.10 2.30 70.90 85.10 68.00 75.60 84.20 SID [12] 6.20 47.50 19.40 1.60 74.90 93.60 66.80 78.00 85.90
+> Ours(CHASD) 6.10 45.90 24.70 2.20 76.60 88.60 74.50 80.90 87.40 InstructBLIP  Greedy 9.80 45.90 35.20 2.70 68.30 78.20 71.50 74.70 82.45 VCD [18] 5.90 50.00 26.90 2.10 75.40 84.10 76.70 80.20 87.15 AvisC [33] 7.50 47.00 29.10 2.50 73.00 81.50 76.80 79.10 85.80 SID [12] 5.60 48.00 22.70 2.00 75.80 83.20 79.60 81.40 87.90
+> Ours(CHASD) 5.30 47.30 22.90 1.80 76.90 83.70 80.40 82.00 88.35
+
+CHASD attains the highest AMBER score. Specifically, compared to the best-performing base-line, CHASD achieves performance boosts of 1.5% and 0.45% on LLaVA-1.5 and InstructBLIP, respectively, indicating improved reliability across AMBER’s mixed evaluation settings. 
+
+Performance on MME. The MME benchmark provides a fine-grained exploration of models’ per-ceptual capabilities, and the specific results are shown in Table 3. CHASD achieves the highest total scores on both LLaVA-1.5 (592.35) and InstructBLIP (471.72) while exhibiting an exceptionally balanced performance distribution. Although certain baseline methods occasionally show local-ized advantages in specific sub-tasks—such as the performance of SID in the counting task under LLaVA—they suffer from significant performance degradation when transferred across architectures or tasks. In contrast, CHASD maintains a high level of stability across all evaluation dimensions without obvious perceptual bottlenecks. MME-Fullset results are deferred to Appendix E. 
+
+Results on MMHal-Bench and CHAIR. As illustrated in Table 4, CHASD improves several long-form hallucination metrics. On LLaVA-1.5, CHASD improves the MMHal-Bench score from 1.70 to 1.82 and reduces the hallucination rate to 0.70. Regarding the CHAIR metric, which directly quantifies object hallucination density, CHASD shows strong results on InstructBLIP: reducing CHAIR s from 52.2 to 44.0, and further reducing CHAIR i from 14.2 to 11.2. These results indicate that CHASD can improve visual faithfulness during long-form generation. 
+
+Case Study on LLaVA-Bench. Figure 3 intuitively visualizes text generation examples from different methods. From the red highlights (hallucinated segments), it is evident that Greedy decoding is highly susceptible to hallucinating object identities, spatial locations, and quantities. While VCD partially alleviates this issue, CHASD can most precisely anchor genuine visual evidence, significantly suppressing hallucination generation. For instance, in the right-side example, only CHASD correctly identifies the fruit as a mangosteen. 7Table 3: MME benchmark (Object-level and Attribute-level) results. Model Method Object-level Attribute-level Total Score ↑                                                         
+
+> Existence ↑Count ↑Position ↑Color ↑
+> LLaVA-1.5 [22] Greedy 173.57 125.82 118.33 114.02 531.74 VCD [18] 172.14 120.14 115.00 108.96 516.24 AvisC [33] 189.29 115.76 119.13 120.00 544.18 SID [12] 185.00 143.33 133.33 120.00 581.66
+> Ours(CHASD) 185.00 148.33 145.00 114.02 592.35 InstructBLIP [5] Greedy 155.00 65.00 55.00 138.33 413.33 VCD [18] 183.00 60.00 50.00 125.00 418.00 AvisC [33] 185.00 80.00 63.33 120.00 448.33 SID [12] 185.00 60.00 50.00 120.00 415.00
+> Ours(CHASD) 190.00 80.00 58.39 143.33 471.72
+
+Table 4: MMHal-Bench and Object-Hallucination results. Model Method MMHal-Bench Object-Hallucination Score ↑ HalRate ↓ CHAIR s ↓ CHAIR i ↓
+
+LLaVA-1.5 [22] Greedy 1.70 0.71 49.6 14.0 VCD [18] 1.31 0.81 50.6 15.7 AvisC [33] 1.69 0.73 59.4 17.5 SID [12] 1.69 0.72 49.0 13.5 
+
+Ours(CHASD) 1.82 0.70 47.0 14.2 InstructBLIP [5] Greedy 1.55 0.70 52.2 21.6 VCD [18] 1.48 0.74 51.8 14.2 AvisC [33] 1.56 0.71 59.2 24.4 SID [12] 1.54 0.70 50.0 21.4 
+
+Ours(CHASD) 1.57 0.71 44.0 11.2 
+
+Figure 3: Comparison of image descriptions generated by different methods on LLaVA-Bench (Left: LLaVA; Right: InstructBLIP). Hallucinated content is highlighted in red. 
+
+4.3 Ablation Study 
+
+In this section, we first evaluate the computational efficiency of CHASD by comparing the inference latency and GPU memory footprint across various methods. Subsequently, we conduct a sensitivity analysis on the key hyperparameters, namely the attention sparsity k and the confidence gating 80.8310  
+
+> 0.8315
+> 0.8320
+> Score
+> Accuracy F1
+> 0.1 0.2 0.3 0.4 0.5
+> k
+> 0.8205
+> 0.8210
+> 0.8215
+> 0.8220
+
+Figure 4: Sensitivity of the hyperparameter for the attention sparsity k0.2 0.4 0.6 0.8 1.0 
+
+> 0.818
+> 0.820
+> 0.822
+> 0.824
+> 0.826
+> 0.828
+> 0.830
+> 0.832
+> 0.834
+> Score
+> Accuracy
+> F1
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> Time (s/img)
+
+Figure 5: Sensitivity of the hyperparameter for the confidence gating threshold τ .threshold τ , to investigate their impact on the balance between performance and overhead. All of the above experiments were conducted on POPE benchmark (LLaVA-1.5, COCO, Adversarial ). Table 5: Comparison of different decoding methods on accuracy, runtime, and memory usage. 
+
+Method Time (s) ↓ Memory (MB) ↓ Accuracy ↑
+
+Greedy 564 14328 0.7665 VCD [18] 1073 14822 0.7645 AVISC [33] 1170 16698 0.7798 SID [12] 1221 16628 0.8040 
+
+CHASD 1069 15594 0.8319 
+
+Efficiency Comparison. In Table 5, we compared the runtime and resource con-sumption of CHASD with other CD meth-ods, and also reported their respective ac-curacy. Specifically, while achieving the best accuracy of 83.19%, CHASD’s infer-ence latency was roughly on par with that of VCD. Compared to recently proposed attention-guided methods, our approach achieves a 9% to 12% acceleration in in-ference and saves approximately 1.0 GB of GPU memory usage. This efficiency ad-vantage mainly stems from the confidence gate, which avoids negative-branch forward passes for high-confidence next-token distributions. 
+
+Impact of Attention Sparsity k. As shown in Figure 4, as k decreases and the perturbation becomes more focused, the model performance consistently improves, peaking at k = 0 .1. This confirms that precisely perturbing the most salient visual tokens is significantly more effective than global blurring in exposing and penalizing spurious confidence induced by language priors. 
+
+Trade-off between Gating Threshold τ and Efficiency. Figure 5 illustrates the trade-off between predictive performance and computational latency with respect to τ . While τ = 1 .0 (universal calibration) approaches the performance upper bound, it requires more negative-branch forward passes. We observe a stable performance plateau for τ ∈ [0 .5, 0.9] , alongside an efficiency inflection point at τ = 0 .5. Considering this trade-off, we adopt τ = 0 .5 as the default configuration. Under this setting, CHASD saves over 50% of inference time while incurring a 0.18% drop in accuracy. This result supports the use of uncertainty-based adaptive gating to reduce redundant computation while preserving generation quality. 
+
+## 5 Conclusion 
+
+In this paper, we propose CHASD , a training-free inference framework designed to mitigate object hallucinations in LVLMs. Addressing the spatiotemporal heterogeneity of hallucination risks, we introduce a spatiotemporal coupled constraint to achieve "calibration on demand," reducing the need for persistent, global perturbations. By combining uncertainty-driven confidence gating with 
+
+attention-guided localized perturbation , CHASD applies contrastive calibration only to selected low-confidence decoding steps and perturbs the currently salient visual tokens for the negative branch. Evaluations across POPE, AMBER, MME, MMHal-Bench, and CHAIR show that CHASD improves hallucination-related metrics over strong training-free baselines while reducing unnecessary negative-branch computation. A remaining limitation is that the confidence gate may bypass high-confidence hallucinated tokens, suggesting that future work could incorporate richer uncertainty signals beyond maximum token probability. 9References 
+
+[1] S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin. Qwen2.5-vl technical report. arXiv preprint arXiv:2502.13923 , 2025. [2] K. Chen, Z. Zhang, W. Zeng, R. Zhang, F. Zhu, and R. Zhao. Shikra: Unleashing multimodal llm’s referential dialogue magic. arXiv preprint arXiv:2306.15195 , 2023. [3] Z. Chen, Z. Zhao, H. Luo, H. Yao, B. Li, and J. Zhou. Halc: Object hallucination reduction via adaptive focal-contrast decoding. In ICML , 2024. [4] Y. Cho, K. Kim, T. Hwang, and S. Cho. Do you keep an eye on what i ask? mitigating multimodal hallucination via attention-guided ensemble decoding. In ICLR , 2025. [5] W. Dai, J. Li, D. Li, A. Tiong, J. Zhao, W. Wang, B. Li, P. N. Fung, and S. Hoi. Instructblip: Towards general-purpose vision-language models with instruction tuning. In NeurIPS , 2023. [6] A. Favero, L. Zancato, M. Trager, S. Choudhary, P. Perera, A. Achille, A. Swaminathan, and S. Soatto. Multi-modal hallucination control by visual information grounding. In CVPR , 2024. [7] S. Feng, W. Shi, Y. Wang, W. Ding, V. Balachandran, and Y. Tsvetkov. Don’t hallucinate, abstain: Identifying llm knowledge gaps via multi-llm collaboration. In ACL , 2024. [8] C. Fu, P. Chen, Y. Shen, Y. Qin, M. Zhang, X. Lin, J. Yang, X. Zheng, K. Li, X. Sun, Y. Wu, R. Ji, C. Shan, and R. He. MME: A comprehensive evaluation benchmark for multimodal large language models. In NeurIPS , 2025. [9] T. Guan, F. Liu, X. Wu, R. Xian, Z. Li, X. Liu, X. Wang, L. Chen, F. Huang, Y. Yacoob, et al. Hallusionbench: an advanced diagnostic suite for entangled language hallucination and visual illusion in large vision-language models. In CVPR , 2024. [10] Q. Huang, X. Dong, P. Zhang, B. Wang, C. He, J. Wang, D. Lin, W. Zhang, and N. Yu. Opera: Alleviating hallucination in multi-modal large language models via over-trust penalty and retrospection-allocation. In CVPR , 2024. [11] D. A. Hudson and C. D. Manning. Gqa: A new dataset for real-world visual reasoning and compositional question answering. In CVPR , 2019. [12] F. Huo, W. Xu, Z. Zhang, H. Wang, Z. Chen, and P. Zhao. Self-introspective decoding: Alleviating hallucinations for large vision-language models. In ICLR , 2025. [13] A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford, et al. Gpt-4o system card. arXiv preprint arXiv:2410.21276 , 2024. [14] Z. Ji, N. Lee, R. Frieske, T. Yu, D. Su, Y. Xu, E. Ishii, Y. J. Bang, A. Madotto, and P. Fung. Survey of hallucination in natural language generation. ACM computing surveys , 2023. [15] X. Jiang, H. Ye, Y. Zhu, X. Zheng, Z. Chen, and J. Gong. Hicd: Hallucination-inducing via attention dispersion for contrastive decoding to mitigate hallucinations in large language models. In ACL , 2025. [16] J. Kim, J. Kim, Y. Kim, and S.-B. Cho. Fuzzy contrastive decoding to alleviate object hallucina-tion in large vision-language models. In ICCV , 2025. [17] S. Kim, B. Cho, S. Bae, S. Ahn, and S.-Y. Yun. Vacode: Visual augmented contrastive decoding. 
+
+arXiv preprint arXiv:2408.05337 , 2024. [18] S. Leng, H. Zhang, G. Chen, X. Li, S. Lu, C. Miao, and L. Bing. Mitigating object hallucinations in large vision-language models through visual contrastive decoding. In CVPR , 2024. [19] X. L. Li, A. Holtzman, D. Fried, P. Liang, J. Eisner, T. B. Hashimoto, L. Zettlemoyer, and M. Lewis. Contrastive decoding: Open-ended text generation as optimization. In ACL , 2023. 10 [20] Y. Li, Y. Du, K. Zhou, J. Wang, X. Zhao, and J.-R. Wen. Evaluating object hallucination in large vision-language models. In EMNLP , 2023. [21] T.-Y. Lin, M. Maire, S. Belongie, J. Hays, P. Perona, D. Ramanan, P. Dollár, and C. L. Zitnick. Microsoft coco: Common objects in context. In ECCV , 2014. [22] H. Liu, C. Li, Q. Wu, and Y. J. Lee. Visual instruction tuning. In NeurIPS , 2023. [23] F. Ma, X. Jin, H. Wang, Y. Xian, J. Feng, and Y. Yang. Vista-llama: Reducing hallucination in video language models via equal distance to visual tokens. In CVPR , 2024. [24] Y. Park, D. Lee, J. Choe, and B. Chang. Convis: Contrastive decoding with hallucination visualization for mitigating hallucinations in multimodal large language models. In AAAI , 2025. [25] A. Rohrbach, L. A. Hendricks, K. Burns, T. Darrell, and K. Saenko. Object hallucination in image captioning. In EMNLP , 2018. [26] D. Schwenk, A. Khandelwal, C. Clark, K. Marino, and R. Mottaghi. A-okvqa: A benchmark for visual question answering using world knowledge. In ECCV , 2022. [27] Z. Sun, S. Shen, S. Cao, H. Liu, C. Li, Y. Shen, C. Gan, L. Gui, Y.-X. Wang, Y. Yang, et al. Aligning large multimodal models with factually augmented rlhf. In ACL , 2024. [28] W. Suo, L. Zhang, M. Sun, L. Y. Wu, P. Wang, and Y. Zhang. Octopus: Alleviating hallucination via dynamic contrastive decoding. In CVPR , 2025. [29] Q. Team. Qwen-vl: A versatile vision-language model for understanding, localization, text reading, and beyond. arXiv preprint arXiv:2308.12966 , 2023. [30] S. Tong, Z. Liu, Y. Zhai, Y. Ma, Y. LeCun, and S. Xie. Eyes wide shut? exploring the visual shortcomings of multimodal llms. In CVPR , 2024. [31] J. Wang, Y. Wang, G. Xu, J. Zhang, Y. Gu, H. Jia, J. Wang, H. Xu, M. Yan, J. Zhang, et al. Amber: An llm-free multi-dimensional benchmark for mllms hallucination evaluation. arXiv preprint arXiv:2311.07397 , 2023. [32] X. Wang, J. Pan, L. Ding, and C. Biemann. Mitigating hallucinations in large vision-language models with instruction contrastive decoding. In ACL , 2024. [33] S. Woo, D. Kim, J. Jang, Y. Choi, and C. Kim. Don’t miss the forest for the trees: Attentional vision calibration for large vision language models. In ACL , 2025. [34] M. Wu, J. Ji, O. Huang, J. Li, Y. Wu, X. Sun, and R. Ji. Evaluating and analyzing relationship hallucinations in lvlms. arXiv preprint arXiv:2406.16449 , 4, 2024. [35] Y. Xia, S. Wang, and P. Li. Sdcd: Structure-disrupted contrastive decoding for mitigating hallucinations in large vision-language models. arXiv preprint arXiv:2601.03500 , 2026. [36] H. You, H. Zhang, Z. Gan, X. Du, B. Zhang, Z. Wang, L. Cao, S.-F. Chang, and Y. Yang. Ferret: Refer and ground anything anywhere at any granularity. In ICLR , 2024. [37] Z. Yue, L. Zhang, and Q. Jin. Less is more: Mitigating multimodal hallucination from an eos decision perspective. In ACL , 2024. [38] K. Zhang, K. Tao, Z. Luo, C. Liu, J. Tang, and H. Wang. Tars: Minmax token-adaptive preference strategy for hallucination reduction in mllms. arXiv e-prints , 2025. [39] M. Zhang, O. Press, W. Merrill, A. Liu, and N. A. Smith. How language model hallucinations can snowball. In ICML , 2024. [40] Y. Zhou, C. Cui, J. Yoon, L. Zhang, Z. Deng, C. Finn, M. Bansal, and H. Yao. Analyzing and mitigating object hallucination in large vision-language models. In ICLR , 2024. [41] D. Zhu, J. Chen, X. Shen, X. Li, and M. Elhoseiny. Minigpt-4: Enhancing vision-language understanding with advanced large language models. In ICLR , 2024. 11 Appendix Overview 
+
+This appendix provides additional details and analyses to complement the main paper. It is organized as follows: • Section A. Social Impact. We discuss the ethical implications of the CHASD framework, focusing on its contribution to AI reliability. • Section B. Limitations. We acknowledge and analyze the potential risks of model over-confidence and the generalization of hyperparameters across different model scales. • Section C. Comprehensive Complexity Analysis. We provide a theoretical analysis of the time and space complexity of CHASD , focusing on the effect of confidence-gated negative-branch computation. • Section D. Detailed Benchmark Specifications and Metric Calculations. We detail the taxonomy and mathematical formulations for POPE, AMBER, MME, and MMHal-Bench. • Section E. More Results. We present the MME-Fullset performance and extend our evaluation to more recent and larger-scale backbones, including Qwen2.5-VL [ 1] and LLaVA-1.5-13B [22]. • Section F. Visualizations. We provide qualitative comparisons of image descriptions to highlight the efficacy of our method in mitigating hallucinations. • Section G. Prompts for GPT-4o [ 13 ]. We disclose the full prompt templates used to enable GPT-4o to act as a judge during the MMHal-Bench evaluation. 
+
+## A Social Impact 
+
+The proposed CHASD framework contributes to the development of trustworthy and sustainable AI by effectively mitigating object hallucinations while maintaining high inference efficiency. By enabling " calibration on demand ," our work enhances the reliability of LVLMs in critical, high-stakes applications—such as automated medical diagnosis and assistive technologies—while reducing the carbon footprint typically associated with dual-branch contrastive inference. While CHASD promotes more "honest" AI outputs, it remains susceptible to biases inherited from the backbone models; hence, we emphasize the importance of pairing this framework with robust ethical safeguards and bias-detection tools to ensure its responsible deployment and minimize the risk of generating convincing misinformation. 
+
+## B Limitations 
+
+While CHASD establishes a robust and efficient paradigm for mitigating object hallucinations, we acknowledge several limitations that warrant further investigation. 
+
+Risks of Model Over-confidence. CHASD relies on the uncertainty-driven gating mechanism to determine when to intervene. However, LVLMs occasionally exhibit overconfidence—assigning high probability ( p ≥ τ ) to hallucinated tokens due to overwhelming language priors. In such rare cases, CHASD might bypass the calibration process (Stage I in Figure 2), failing to rectify the error. Future work could explore integrating multi-dimensional uncertainty metrics (e.g., entropy or semantic consistency) to enhance the sensitivity of the gating trigger. 
+
+Generalization of Hyperparameters. Although we provide sensitivity analyses for the threshold 
+
+τ and sparsity k, the optimal values may vary across different model scales (e.g., 7B vs. 70B) or vision-language alignment strategies (e.g., CLIP-based vs. SigLIP-based encoders). Developing an automated, model-agnostic parameter tuning mechanism would be a promising direction for enhancing the plug-and-play capability of CHASD. 
+
+## C Comprehensive Complexity Analysis 
+
+In this section, we provide a rigorous theoretical analysis of the computational and memory efficiency of CHASD compared to vanilla decoding and standard contrastive decoding methods. 12 C.1 Time Complexity 
+
+Let L be the sequence length and Tf wd be the time for a single model forward pass. • Vanilla Decoding: Each token is generated with one forward pass, resulting in O(L · Tf wd ).• Standard CD (e.g., VCD) : Requires dual forward passes (original and negative) at every step, yielding a constant complexity of O(2 L · Tf wd ).• CHASD (Ours): By introducing the confidence gate τ , the negative branch is only activated when the maximum next-token probability p < τ . Let θ ∈ [0 , 1] denote the trigger rate (the ratio of tokens requiring calibration). The expected number of forward passes is (1 + θ)L,and the expected time complexity is O[(1 + θ)L · Tf wd ].
+
+C.2 Space Complexity and Memory Footprint 
+
+• Weight Redundancy: As a training-free framework, CHASD requires zero additional trainable parameters, maintaining O(1) parameter growth. • Negative-Branch Cache Usage: Standard CD evaluates the negative branch at every decoding step. CHASD invokes this branch only at triggered steps, so auxiliary cache usage and related activation memory are proportional to the trigger rate in implementations that allocate the negative branch on demand. • Localized Masking: CHASD’s attention-guided localized perturbation selects m = ⌈kN ⌉
+
+visual tokens for corruption while preserving the full visual token sequence as input. The memory overhead for the dynamic mask Mt is O(N ) bits, which is negligible compared to model activations. 
+
+## D Detailed Benchmark Specifications and Metric Calculations 
+
+D.1 Benchmark Specifications and Taxonomy 
+
+1. POPE [ 20 ]: To mitigate the bias of simple "Yes" answers, POPE employs three progressively difficult sampling settings: • Random: Negative objects are randomly sampled from those not present in the image. • Popular: Negative objects are selected from the most frequent categories in the dataset (e.g., "person," "chair"). • Adversarial: Negative objects are selected from those that frequently co-occur with ground-truth objects but are absent in the current image (e.g., querying "sink" when "toilet" is present). 2. AMBER [ 31 ]: AMBER spans both Discriminative (Yes/No questions based on POPE-style sampling) and Generative (Image Captioning) tasks to provide a multi-faceted assessment. 3. MME [ 8]: A comprehensive benchmark designed to evaluate both perception and cognition capabilities. • The Perception track comprises 10 sub-tasks: Existence, Count, Color, Position, Celebrity, Landmark, Artwork, Poster, Movie, and Design, focusing on basic visual recognition. • The Cognition track consists of the remaining 4 sub-tasks: Commonsense Reasoning, Numerical Computing, Code Reasoning, and Text Translation, which require higher-level logical deduction. 4. MMHal-Bench [ 27 ]: This benchmark evaluates hallucinatory responses across 8 complex reasoning dimensions: Attribute, Comparison, Counting, Existence, Localization, Relation, Scene, and Sport. 
+
+D.2 Precise Metric Calculations 
+
+1. POPE Metrics: We report Accuracy ( Acc ) and F1-score ( F1 ) to analyze the trade-off between sensitivity and specificity: 
+
+Acc = T P + T N T P + T N + F P + F N , F1 = 2T P 
+
+2T P + F P + F N (8) 13 2. AMBER Score Calculation: The final AMBER score is computed as the arithmetic mean of the discriminative F1-score and the generative fidelity (represented by 100 − CHAIR i), providing a balanced metric for both task types: Score AM BER = (100 − CHAIR i) + F1 
+
+2 (9) Where CHAIR i denotes the instance-level hallucination rate in generative tasks and F1 pope 
+
+is the F1-score in discriminative tasks. 3. MME Scoring: For each category c, the score is the sum of raw accuracy ( Acc c) and balanced accuracy ( Acc +c). Let Nc be the number of image-question pairs in category c:
+
+Acc c =
+
+P Correct Responses 
+
+Nc
+
+, Score M M E =
+
+> 14
+
+X
+
+> c=1
+
+(Acc c × 100 + Acc +c ×100) (10) The total maximum score for the Perception track is 2000. 4. MMHal-Bench Scoring: The final informative-hallucination score ( Stotal ) is the average across all 96 samples evaluated by an LLM-based judge: 
+
+Stotal = 196 
+
+> 96
+
+X
+
+> j=1
+
+GPT-4-Judge (Response j ) (11) 
+
+## E More results 
+
+E.1 MME-Fullset 
+
+Detailed subtask evaluations on the MME benchmark are presented here. Figures 6 and 7 illustrate the performance profiles for LLaVA-1.5 [ 22 ] and InstructBLIP [ 5]. While baseline methods like VCD [ 18 ] excel in particular areas such as numerical reasoning, they often fail to maintain a balanced improvement across all categories. In contrast, CHASD outperforms all counterparts in terms of the aggregate score on both architectures, validating its effectiveness as a comprehensive hallucination mitigation framework. 
+
+E.2 Results on Other Backbones 
+
+To further evaluate the versatility of CHASD, we extend our experiments to two additional back-bones: the more recent Qwen2.5-VL [ 1] and the larger-scale LLaVA-1.5-13B [ 22 ]. As illustrated in Table 6, CHASD consistently delivers superior performance, underscoring its robust generalization capabilities across diverse model architectures. 
+
+## F Visualizations 
+
+In Figure 8, we provide further visualizations of hallucinations in the text responses generated by each model. 14 Exist.     
+
+> Count
+> Pos.
+> Color
+> OCR
+> Poster
+> Celeb.
+> Scene
+> Landmark
+> Artwork
+> Commonsense
+> Numeric
+> Translation
+> Code
+> Avg
+> 0
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> 175
+> Score
+> Greedy VCD AvisC SID CHASD
+
+Figure 6: MME-Fullset results for different methods (LLaVA-1.5 as backbone) Exist.     
+
+> Count
+> Pos.
+> Color
+> OCR
+> Poster
+> Celeb.
+> Scene
+> Landmark
+> Artwork
+> Commonsense
+> Numeric
+> Translation
+> Code
+> Avg
+> 0
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> 175
+> Score
+> Greedy VCD AvisC SID CHASD
+
+Figure 7: MME-Fullset results for different methods (InstructBLIP as backbone) Table 6: POPE benchmark results for more backbones. The experiments in the table are conducted on the COCO dataset. 
+
+Setting Random Popular Adversarial 
+
+Model Method Acc F1 Acc F1 Acc F1 Qwen2.5-VL [1] Greedy 81.73 77.94 81.23 77.33 80.83 77.08 VCD [18] 82.67 79.23 82.97 79.89 81.77 78.35 AvisC [33] 85.63 83.43 84.57 82.36 83.90 82.03 
+
+Ours(CHASD) 86.37 84.31 85.57 83.54 84.96 82.97 LLaVA-1.5-13B [22] Greedy 79.33 79.63 76.30 77.32 73.44 75.12 VCD [18] 86.63 86.45 83.42 83.73 79.69 80.66 AvisC [33] 88.40 88.77 85.73 86.53 79.27 81.47 
+
+Ours(CHASD) 88.89 87.97 87.03 86.75 84.91 84.35 
+
+15 Figure 8: Comparison of image descriptions generated by different methods on LLaVA-Bench (Left: LLaVA; Right: InstructBLIP). Hallucinated content is highlighted in red. 
+
+## G Prompts for GPT-4o 
+
+During the MMHal-Benchmark evaluation, we used GPT-4o [ 13 ] to assist with scoring. Here, we will present the specific prompt we used to enable it to act as a judge. 
+
+Please act as an impartial and objective judge and evaluate the quality of the response provided by a Large Multimodal Model (LMM) to the user question. Your evaluation should be mainly based on whether the response is informative, and whether the response contains any hallucination. Hallucination, in this context, refers to a situation where the LMM generates a response that includes information not present or implied in the image or previous conversation. A hallucination could be a false claim about an object, action, emotion, or any other detail that is not grounded in the image. For clarity, consider these examples: ### Example 1: - Image Contents: Lynx, Cat - Question: How many cats can you see in this image? - Standard Human-Generated Answer: There are two cats visible in the image. - LMM Response to Evaluate: There is one cat in the image. - Analysis: The LMM’s response is false because it claims there is only one cat in the image, when in fact there are two. - Hallucination: Yes. ### Example 2: - Image Contents: Tree, Plant, Panda, Animal - Question: What can you see from this photo? - Standard Human-Generated Answer: In this photo we can see branches. We can see a panda on a branch. The background is blurry. - LMM Response to Evaluate: In the photo, I can see a large black and white panda sitting on a tree branch. The image captures the panda’s unique appearance and its natural habitat, showcasing the beauty and rarity of these animals. - Analysis: The LMM’s response is not false because it does not make any false claims about the image contents. For example, it does not claim that the panda is eating bamboo. - Hallucination: No. ### Example 3: - Image Contents: Fashion accessory, Mammal, Dog, Umbrella - Question: Describe this image in details. 
+
+16 - Standard Human-Generated Answer: In this picture I can see a dog laying under a yellow umbrella on a beach, and there is a rope on the right side. In the background I can see few persons talking or lying. At the top of the image, I can see the blue and clear sky. - LMM Response to Evaluate: The image features a brown dog laying on the sand at the beach, underneath a yellow umbrella. The dog is positioned near the water, and there are people in the background. The beach is sandy, and the sun is shining, creating a pleasant atmosphere. The dog is enjoying the shade provided by the umbrella, which is a common way to protect pets from the sun’s harmful rays. The presence of people in the background suggests that the beach is a popular spot for leisure activities, such as sunbathing, swimming, and relaxing. - Analysis: The LMM’s response is false because it claims that the dog is positioned near the water, but there is no water in the image. - Hallucination: Yes. ### Example 4: - Image Contents: Clothing, Luggage and bags, Man, Building, Woman, Person - Question: Where is this photo taken? - Standard Human-Generated Answer: From the slogan "Welcome to Houston, Texas", we can infer that this photo is taken at an airport in Houston, Texas. - LMM Response to Evaluate: This photo is taken at an airport, specifically at the entrance of a terminal. However, the specific location of this airport cannot be determined from the image. - Analysis: Although the LMM’s response does not explicitly mention the location " Houston, Texas" and does not perfectly answer the question, it makes no false claims about the image contents. Therefore, this response is not considered hallucination. It is OK if the LMM fails to directly answer the question, expresses uncertainty, or cannot include all the objects or details in the human-generated answer. - Hallucination: No. ### Example 5: - Image Contents: Tree, Tower - Question: What environmental concerns are involved in this photo? - Standard Human-Generated Answer: This photo shows a smokestack emitting smoke. It may cause severe air pollution which threatens human health. - LMM Response to Evaluate: In the photo, there are several environmental concerns related to the smokestack emitting smoke. The smoke from the smokestack is a byproduct of industrial processes, which can contribute to air pollution, climate change, and negative impacts on human health. The smoke contains harmful pollutants, such as particulate matter, sulfur dioxide, nitrogen oxides, and carbon monoxide, which can lead to respiratory problems, heart disease, and other health issues. Additionally, the smoke contributes to the greenhouse effect, which can lead to global warming and climate change. The smokestack’s emissions also affect the environment, as they can harm wildlife, vegetation, and ecosystems. Therefore, it is essential to address these environmental concerns by implementing measures to reduce emissions and promote sustainable practices in industrial processes. - Analysis: Although the LMM’s response is significantly longer than the standard human-generated answer, it does not contain any false claims about the image contents. Instead, it provides additional general information about the environmental concerns, which can be inferred from the smoke emission. Such detailed analysis or reasoning should be considered as a positive aspect, as long as it contains no false claims. - Hallucination: No. With these examples in mind, please help me evaluate whether the response by the LMM is informative, and whether hallucination exists in it, based on the comparison between the LMM’s response and the factual information provided in the image contents, question, and the standard human-generated answer below. Please note that the standard human-generated answer may only contain factual information but may not give a detailed analysis. Also, the standard human-generated answer may not be completely comprehensive in describing all the 
+
+17 objects and their attributes, so please be a bit more cautious during evaluation. LMM’s detailed analysis or reasoning should be encouraged. To evaluate the LMM responses, first, begin your evaluation by providing a short explanation. Second, after providing your explanation, you must rate the response by choosing from the following options: - Rating: 6, very informative with good analysis or reasoning, no hallucination - Rating: 5, very informative, no hallucination - Rating: 4, somewhat informative, no hallucination - Rating: 3, not informative, no hallucination - Rating: 2, very informative, with hallucination - Rating: 1, somewhat informative, with hallucination - Rating: 0, not informative, with hallucination 
+
+18
