@@ -1,0 +1,695 @@
+Title: OmniMem: Scalable and Adaptive Memory Retrieval for Long Video Generation
+
+URL Source: https://arxiv.org/pdf/2605.30519v1
+
+Published Time: Mon, 01 Jun 2026 00:20:28 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# OmniMem: Scalable and Adaptive Memory Retrieval for Long Video Generation 
+
+Lin Zhao 1,2 ∗ Yushu Wu 1∗ Yifan Gong 2 Yanzhi Wang 1 Pu Zhao 1†
+
+> 1
+
+Northeastern University 2Adobe Research Project Page: https://wuyushuwys.github.io/OmniMem 
+
+Figure 1: OmniMem preserves object identity while maintaining rich motion in long video generation. SWA shows object drift, and Sink-SWA produces repetitive motion. 
+
+## Abstract 
+
+Autoregressive (AR) video generation extends videos by producing latent chunks sequentially, but scaling to long videos requires repeated access to a growing his-torical KV cache. Existing methods reduce this cost by truncating the KV cache or compressing it into implicit memory, but both lose explicit access to query-relevant historical details. We propose OmniMem, an explicit full-range memory retrieval framework that performs sparse KV retrieval over the historical cache. To make this practical for chunk-based AR video generation, OmniMem addresses two issues: (i) local bias in sparse KV selection and (ii) Union Explosion in memory access. Adaptive Window Exclusion removes local-window blocks from the selection candidates when sufficient long-range history is available, preserving the sparse budget for informative long-range retrieval. Query-Shared KV Selection reduces cross-query diversity, while Per-Head Scattered KV Access avoids expanding head-specific selections into a large selected KV buffer. This allows each attention head to retrieve non-contiguous KV blocks according to its own selection pattern. Experiments on long-video generation show that OmniMem improves Dynamic Degree by 52.3% and preserves strong consistency over strong baselines, while maintaining comparable memory usage. 
+
+> ∗Equal contribution.
+> †Corresponding author. Preprint.
+> arXiv:2605.30519v1 [cs.CV] 28 May 2026
+
+## 1 Introduction 
+
+Autoregressive (AR) video generation with Diffusion Transformer (DiT) backbones [ 1, 2 , 3, 4, 5, 6,7, 8] has catalyzed significant progress in long video generation. By generating video sequentially, AR models can go beyond the fixed temporal horizon of standard bidirectional models [ 9 , 10 , 11 , 12 ,13 , 14 , 15 ]. This property is important for applications that require long, coherent visual sequences, such as interactive gaming, robotics, and world models [16, 17, 12]. Nevertheless, scaling AR video generation to long sequences introduces a fundamental computational challenge. As video length increases, the KV cache grows linearly with the number of generated chunks, increasing both memory consumption and the attention computation required at each step. A simple solution is to discard distant KV states once the cache becomes too large. However, this weakens long-range dependencies and causes the generated subject to gradually lose its identity, resulting in noticeable drift in color, shape, and trajectory across frames as illustrated in Fig. 1. Existing methods mainly address this drift issue in two ways. The first retains a fixed set of anchor tokens or memory banks ( e.g ., sink tokens) to stabilize the generation [ 18 , 19 , 20 ]. While these help preserve identity, we observe that they often lead to repetitive motion patterns in long rollouts, indicating a trade-off between consistency and motion dynamics (Fig. 1). The other introduces auxiliary modules (such as SSMs [ 21 ] and Conv3D encoders [ 22 ]) to compress the history into a compact state, but this may lose fine-grained details needed for long-horizon consistency. These limitations call for a memory mechanism that can perform full-range sparse retrieval over the history, explicitly selecting and accessing query-relevant context on demand [ 23 ]. Nevertheless, it is non-trivial to apply the sparse memory retrieval for chunk-based AR video generation models, complicated by two specific challenges: (i) local bias and (ii) union explosion .
+
+Local bias is introduced by the attention scores to select a limited number of full-resolution KV blocks from the pooled historical cache. Since attention naturally favors nearby visual context, the attention scores for selection are dominated by nearby KV blocks, and therefore the selected blocks tend to concentrate heavily around the current chunk, which is unable to retrieve long-range historical memory. Union explosion caused by cross-query and cross-head selection divergence can undermine the memory benefit of sparse retrieval. Although each query retrieves only a small number of KV blocks, chunk-based AR video generation processes thousands of query tokens ( e.g ., 4–5K) simultaneously at each AR step, unlike LLM decoding, which typically generates one query token per step. Different queries within the same chunk may select different historical regions due to the diverse visual content in the chunk. Different attention heads may further prefer different historical regions because of their distinct attention patterns. In this case, sparse retrieval reduces the attention computation for each query, but the union of distinct selected KV blocks across all queries and heads can still be large. Although the method remains sparse in computation, it can still require a large KV memory footprint for the current AR step. We refer to this memory-side blow-up as Union Explosion. To address these issues, we propose OmniMem, an explicit memory retrieval framework for chunk-based AR video generation. OmniMem addresses local bias with Adaptive Window Exclusion, which removes the KV blocks already covered by the sliding-window branch from the selection candidates, and thus preserves the sparse selection budget for informative long-range retrieval. To address Union Explosion, OmniMem introduces Query-Shared KV Selection and Per-Head Scattered KV Access. Query-Shared KV Selection reduces cross-query selection diversity by letting nearby query tokens share the same sparse KV selection. Per-Head Scattered KV Access avoids materializing a large merged cache across attention heads as the video grows longer. Instead, each attention head directly retrieves its own selected non-contiguous KV blocks from the historical cache. Together, these components make explicit long-range retrieval practical for chunk-based AR video generation. Extensive experiments demonstrate that OmniMem sets a new state of the art for long video generation, simultaneously improving motion dynamics and long-range consistency over prior designs, while incurring only 1.7% additional memory over LongLive [18]. Our main contributions are summarized as follows: • We analyze the query regime in chunk-based autoregressive video generation and identify two issues that limit explicit memory retrieval: local bias in block selection and Union Explosion caused by cross-query and cross-head divergence. • We propose OmniMem, combining Adaptive Window Exclusion, Query-Shared KV Selection, and Per-Head Scattered KV Access to enable explicit and scalable long-range memory retrieval. 2Figure 2: Overview of OmniMem. Current-chunk queries attend to recent KV blocks, pooled historical KV blocks, and retrieved full-resolution KV blocks through sliding-window, compression, and selection attention, respectively. The right panels summarize the key retrieval and access designs: filtering near-window candidates before Top-K selection, sharing Top-K selection within query groups, and accessing per-head block slots with on-demand GPU residency. • Our framework improves the Dynamic Degree score by 52.3% over the strongest baseline on VBench-Long, while preserving visual consistency with only 1.7% additional memory overhead. 
+
+## 2 Related Work 
+
+Long Video Generation. Recent video generation models increasingly adopt causal, AR, or stream-ing formulations to improve generation throughput by generating videos sequentially and reusing intermediate states across frames. Prior efforts [ 24 , 25 ] employ chunk-based AR generation and diffusion forcing for long-video synthesis, while distillation-based methods [ 12 , 26 ] convert bidirec-tional models into few-step AR generators with distribution matching. To reduce error accumulation over long rollouts, LongLive [ 18 ] and Self-Forcing++ [ 27 ] introduce rollout-aware training, Rolling Forcing [ 19 ] denoises within a rolling window using attention sinks as global anchors, and MMM [ 28 ]combines long-context flow matching with sliding-window distribution matching in a non-AR setting. These methods improve long-horizon consistency through advanced training and denoising designs, while OmniMem explores a different scheme enabling explicit memory retrieval over the historical KV cache. 
+
+KV Cache Compression and Memory Retrieval in Long Video Generation. KV cache manage-ment is a key bottleneck in long-horizon video generation. In the LLM domain, strategies such as token eviction [ 29 , 30 ], quantization [ 31 ], and streaming inference [ 32 ] have been extensively studied and are now being adapted to autoregressive video generation, where the spatiotemporal cache grows even more aggressively. Recent approaches tackle this through low-bit KV-cache quantization [ 33 ], history compression via learned embeddings [ 22 ] or SSM-based global memory [ 21 ], and cache sparsification, retaining only informative tokens across chunks [ 34 ] or activating relevant memory on demand [ 20 ]. Further refinements exploit head-wise context redundancy [ 35 ] and salience-based policies that distill bidirectional knowledge for token importance estimation [ 36 ]. Building on these efforts, OmniMem introduces a learned explicit retrieval framework to manage the historical KV cache dynamically during chunk-based long-video generation. 
+
+## 3 OmniMem: Explicit Memory Retrieval and Access 
+
+We investigate chunk-based Autoregressive (AR) video generation with a causal DiT backbone. Unlike token-wise AR generation in LLMs, DiT-based chunk generation processes thousands of tokens simultaneously in each chunk, leading to high memory cost especially in long video generation. The preliminary for AR video generation and KV cache are detailed in Appendix Sec. A. 30 4 8 12 16 20 24                    
+
+> kv chunk
+> 0
+> 4
+> 8
+> 12
+> 16
+> 20
+> 24
+> q chunk
+> no AWE
+> 04812 16 20 24
+> kv chunk
+> with AWE (a) Local bias in Top-Kselection 14
+> q chunk
+> Layer 2, Head 1
+> 5678910
+> kv chunk
+> union (b) Cross-Query Divergence 14
+> Layer 2, Head 1
+> 14
+> Layer 2, Head 4
+> 234567
+> kv chunk
+> Union
+> q chunk (c) Cross-Head Divergence
+
+Figure 3: Local bias and Union Explosion in selection attention. (a) Top-K selection focuses near the current chunk without AWE, and shifts to long-range blocks with AWE. (b) Different query chunks in one head select different blocks. (c) Different heads also select different regions. (b) and (c) together cause Union Explosion. Note that each chunk contains a number of tokens ( e.g ., 4-5 K). 
+
+3.1 Framework Problem Formulation. Long-video generation with causal DiTs is bottlenecked by the growing historical KV cache. As shown in the visualization (Appendix Sec. D) of the attention maps from Self-Forcing [ 26 ], many heads rely on scattered long-range historical positions, suggesting that the memory cannot be discarded. This motivates us to treat long-range memory access as an explicit retrieval problem over historical context. The goal is to preserve informative long-range dependencies while avoiding dense attention over the full history. This formulation raises two questions: which historical blocks should be retrieved for the current chunk, and how should these selected blocks be efficiently organized across thousands of queries with multiple attention heads. 
+
+Retrieval over Historical KV Cache. Building on recent advances in sparse attention for LLMs, particularly Native Sparse Attention (NSA) [ 23 ], we formulate long-range memory access as explicit block-level retrieval over the historical KV cache: 
+
+o = X
+
+> c∈C
+
+gc · Attn( Q, K c, V c), C = {CMP , SLC , SWA }, (1) 
+
+where compression attention (CMP), selection attention (SLC), and sliding-window attention (SWA) attend to the pooled historical KV cache, the retrieved full-resolution historical KV blocks, and the recent KV cache, respectively. Their outputs are fused by coefficients gc ∈ [0 , 1] . Selection attention uses compression-attention scores to identify the top-K relevant historical KV blocks for each query. Unlike NSA [ 23 ], our compression pools over 2D spatial neighborhoods to align with the visual semantics, implemented via a one-time token reorder (details and proof in Appendix Sec. J). 
+
+Challenges. In practice, we find that it is non-trivial to apply sparse memory retrieval to chunk-based AR video generation models, owing to two specific challenges, including local bias and union explosion, which we analyze in the following sections. The two challenges correspond to two fundamental questions, respectively: which historical blocks should be retrieved, and how should these selected blocks be efficiently organized. To answer these fundamental questions, OmniMem addresses local bias with Adaptive Window Exclusion (Sec. 3.2), and union explosion through Query-Shared KV Selection and Per-Head Scattered KV Access (Sec. 3.3). 
+
+3.2 Addressing Local Bias with Adaptive Window Exclusion 
+
+We first examine which blocks are actually selected by the top-K mechanism in Eq. (1). As shown in Fig. 3a, the selected blocks are heavily concentrated near the current chunk, leaving most of the long-range history unselected. This local bias makes selection attention redundant with the sliding window and weakens the purpose of explicit retrieval of historical memory. We analyze its cause below and present an effective solution for selecting long-range blocks and jumping out of local bias. 
+
+Local Bias in Top-K Selection. Without an explicit candidate mask, the compressed attention scores driving selection attention are dominated by nearby KV blocks. We attribute local bias to three compounding factors. (i) Strong spatiotemporal correlation among nearby video tokens . While RoPE imposes no explicit locality constraint, its relative-position parameterization can interact with this inherent visual continuity, systematically inflating attention scores between proximate tokens. (ii) Amplification under AR video DiTs . The bias is further exacerbated in AR DiTs, where the current chunk is denoised from a noisy latent while historical chunks supply clean, fully generated visual context. The asymmetry in signal quality between the noisy query and its immediate (clean) neighbors reinforces the tendency of attention to anchor locally. (iii) Granularity mismatch between 
+
+4KV blocks and video chunks . The KV block size is typically far smaller than a single video chunk. Let S denote the number of tokens per chunk, B the tokens per KV block, and Nw the number of chunks covered by the sliding window. The local window then spans approximately ⌈NwS/B ⌉
+
+candidate blocks. Absent any mechanism to exclude these blocks, a top-K selector must satisfy 
+
+K > ⌈NwS/B ⌉ to guarantee, in the worst case, the retrieval of even a single block outside the local window. For video chunks comprising thousands of tokens, this lower bound far exceeds practical sparse budgets, causing selection attention to collapse onto the sliding-window region rather than surface genuinely long-range memory 3.
+
+Adaptive Window Exclusion for Selection Attention. To mitigate local bias in top-K selection, we narrow the candidate set for selection attention to historical KV blocks outside the sliding window. Since recent chunks are already accessed by SWA, selecting them again wastes the sparse budget of selection attention. By removing the blocks covered by SWA from the selection candidates, selection attention is encouraged to retrieve complementary long-range memory outside the local window. Let H(n) denote all historical KV blocks at the nth AR step, and W(n) ⊂ H (n) denote the blocks covered by SWA. Since selection attention retrieves top-K blocks, Adaptive Window Exclusion removes W(n) only when at least K blocks remain outside the window, and top-K selection is performed after Adaptive Window Exclusion:           
+
+> Ω(n)SLC =
+> (
+> H(n)\ W (n),if |H (n)\ W (n)| ≥ K,
+> H(n),otherwise .I(n)
+> h,q = TopK b∈Ω(n)SLC
+> sh,q,b .(2)
+
+For each query token q and attention head h, selection attention uses compression-attention score 
+
+sh,q,b for historical block b to select block indices. The selected indices are used to fetch the corresponding full-resolution KV blocks. Applying exclusion unconditionally can destabilize selection attention when the historical cache is short. If few or no valid blocks exist outside the recent window, the selection output may shift abruptly, which can perturb the fused representation of all attention branches and impede training stability. To mitigate this, we make exclusion conditional on the available history . Before a sufficient number of outside-window blocks have accumulated, selection attention operates over the full historical KV cache. Once this threshold is reached, blocks already covered by SWA are excluded. 
+
+3.3 Mitigating Union Explosion with Query-Shared KV Selection and Per-Head KV Access 
+
+While Adaptive Window Exclusion governs which explicit memory blocks are selected, the efficiency of long-video retrieval equally depends on where these blocks reside. We now turn to the management and access of selected blocks. Under a memory budget, we maintain only a bounded set of explicit memory blocks on the GPU and offload less recently used historical blocks to CPU memory, as illustrated in Fig. 2. Under this design, the selected-block union becomes the critical quantity governing efficiency: prior to computing selection attention, all blocks chosen for the current chunk must be resident on the GPU. A larger union not only increases the volume of KV entries on GPU, but also inflates the temporary buffer required to materialize the selected KV, in a naïve implementation. In LLM decoding, each step generates a single query token, so top-K selection produces a small and temporally stable set of blocks. Chunk-based AR video generation departs from this regime in a fundamental way: thousands of query tokens are processed in parallel, and distinct queries or attention heads may attend to disparate historical regions. Consequently, the union of selected blocks can grow rapidly within a single chunk—a phenomenon we term Union Explosion . We analyze this growth along two complementary axes: (i) cross-query divergence across queries, and (ii) cross-head divergence across attention heads. 
+
+Cross-Query Divergence. LLM decoding generates one query per step, so the top-K selection naturally yields a small set of K historical KV blocks. AR video generation jointly produces a sequence of latent tokens within each chunk. Different queries in the sequence carry different preferences and may select different historical KV blocks, so the chunk-level set of selected blocks is the union of selections across all queries (Fig. 3b), which can grow up to S · K in the worst case 4.               
+
+> 3For example, with S= 4680 ,Nw= 3 , and B= 60 , the local window spans ⌈3×4680 /60 ⌉= 234 KV blocks, far above the top-Kbudget in practice.
+> 4As a simple illustration, consider S= 4 query tokens, each selecting one block from a history of 4 blocks. If the four queries select distinct blocks, the chunk-level union covers the full history despite each per-query budget is one.
+
+5Cross-Head Divergence. Popular video DiTs [ 37 , 38 , 6] use multi-head attention (MHA), where each query head has its own KV head. This one-to-one structure makes both the CMP scores and the retrieved KV blocks head-specific. Empirically, as shown in Fig. 3c, different heads exhibit distinct selection patterns in chunk-based AR video generation. Some heads retrieve long-range context, while others focus on recent chunks. This motivates head-specific retrieval rather than relying only on fixed global memory, such as sink tokens [18, 19]. To effectively address the above challenges, we propose Query-Shared KV Selection for cross-query divergence, and Per-Head Scattered KV Access for cross-head divergence, as detailed below. 
+
+Query-Shared KV Selection. Cross-query divergence manifests at the query-token level. The spatially and temporally adjacent query tokens exhibit strong local correlation, tending to retrieve overlapping sets of historical KV blocks. To effectively mitigate this, we propose Query-Shared KV Selection, which exploits this local correlation explicitly by assigning a single shared KV-block selection to each group of adjacent query tokens, with independent selection across various groups. Formally, the S query tokens are partitioned into R = ⌈S/G q ⌉ adjacent query groups, where Gq
+
+denotes the number of query tokens per group. All query tokens within the same group share a unified top-K block selection, effectively constraining intra-group selection diversity without sacrificing the representational flexibility of inter-group retrieval. Thus, the per-query selection in Eq. (2) becomes      
+
+> ¯sh,r,b = AvgPool q∈G rsh,q,b ,I(n)
+> h,r = TopK b∈Ω(n)SLC
+> ¯sh,r,b ,(3)
+
+where Gr denotes the set of token indices belonging to group r. This reduces the worst-case selected block union along the query dimension from S · K to R · K, while preserving diversity across query groups. It also makes the selected KV access more regular, allowing the selection-attention kernel to use larger dense tiles and improve GPU Tensor Core utilization (details in Appendix Sec. B). 
+
+Per-Head Scattered KV Access. As shown in Fig. 3c, different heads often prefer different historical regions, so forcing all heads to share the same selected blocks under a fixed sparse budget may reduce the expressiveness.Therefore, we perform selection independently for each head. The challenge is how to represent these head-specific selections efficiently. Under the offload-and-reload setting, selected full-resolution KV blocks must be resident on GPU before selection attention is computed. A straightforward implementation gathers these blocks into a temporary selected-KV buffer for the attention kernel. Specifically, following the query sharing above, let I(n) 
+
+> h,r
+
+denote the top-K block indices selected by query group r for head h. The blocks accessed by head h are       
+
+> U(n)
+> h=
+> R[
+> r=1
+> I(n)
+> h,r ,R=
+> SGq
+> 
+> .(4)
+
+The cross-head union determines which physical KV blocks must be resident on GPU or reloaded from CPU memory. The bottleneck here is not the attention computation itself, but rather the selected-KV representation required by the attention kernel. Materializing this union uniformly across all heads, however, introduces a large number of unused KV slots, since each head in practice attends to only a subset of the union. If implemented by materializing a head-aligned selected-KV buffer, the footprint scales as Mmerge ∝ Nh
+
+SNh 
+
+> h=1
+
+U(n) 
+
+> h
+
+.
+
+OmniMem instead uses Per-Head Scattered KV Access, as shown in Fig. 2. The full-resolution KV cache is organized as per-head, chunk-level tensors, and a pointer table maps the indices of selected blocks for each head to addresses within this native storage. The selection attention kernel consumes the per-head selected block indices, reading the corresponding non-contiguous KV blocks directly. This design strictly bounds memory access to the exact blocks required by each head. In the offload-and-reload setting, avoiding the materialization of a padded, cross-head dense tensor saves massive, redundant PCIe data transfers and prevents GPU memory exhaustion. As a result, the selected-KV representation scales with the sum of per-head selections, rather than with the union across heads (see Appendix Sec. C for details):    
+
+> Mscatter ∝
+> NhX
+> h=1
+> U(n)
+> h.(5)
+
+This avoids materializing a cross-head selected-KV buffer while preserving head-specific retrieval. We highlight that OmniMem is specifically designed for chunk-based AR video generation, which sig-nificantly differs from sparse retrieval [ 23 ] in LLMs, with more details above and in Appendix Sec. I. 6Figure 4: Qualitative comparison on long-video generation. Red boxes highlight repetitive frames where LongLive [ 18 ] collapses back to early content. Full videos and additional results are provided in the supplementary material. Table 1: Quantitative comparison on 60-second long video generation under VBench-Long [ 40 ]. Bold denotes the best. VRAM measured on the Nvidia H100. Model VRAM (GB) Total Quality Semantic Subject Imaging Dynamic Score Score Score Consistency Quality Degree SkyReels-V2 [25] 28.7 79.70 82.89 66.97 94.99 60.01 53.19 RollingForcing [19] 25.3 82.46 84.34 74.95 94.97 72.22 47.64 LongLive [18] 22.9 82.28 83.79 76.23 95.00 69.94 53.47 MemFlow [20] 26.2 82.56 84.14 76.24 94.49 70.67 54.03        
+
+> OmniMem 23.3 83.08 84.74 76.46 95.09 71.49 82.29
+
+## 4 Experiments 
+
+Implementation Details. OmniMem is built on Wan2.1-T2V-1.3B [ 38 ]. Following prior autore-gressive video generation pipelines [ 12 , 26 ], we add our memory module and fine-tune the model with ODE initialization on VidProM prompts [ 39 ]. We then continue training with Self-Forcing [ 26 ]and long-video tuning, following LongLive [ 18 ]. For the memory module, we use 15 × 2 pooling blocks, top-4 retrieval per query group, and a query-group size of 15. Adaptive Window Exclusion removes the most recent 3 chunks from selection candidates once enough history is available. The selection-attention kernel is implemented in Triton. More details are provided in Appendix Sec. B. 
+
+4.1 Main Results Long Video Generation. We evaluate 60-second single-prompt video generation under the official VBench-Long [ 40 ] setting to measure long-horizon quality, consistency, and motion dynamics. We compare against the representative methods that target for solving long video problems as shown in Tab. 1. OmniMem achieves the best overall score and improves most long-video metrics, with a particularly large gain in Dynamic Degree. Prior methods obtain Dynamic Degree scores below 55 , in-dicating that they tend to produce limited motion under long rollouts. In contrast, OmniMem achieves 
+
+82 .29 of Dynamic Degree, indicating stronger motion dynamics under the same long-video setting. In terms of memory, OmniMem uses only 1.7% more VRAM than LongLive (sink+SWA) and remains more memory-efficient than other baselines, while preserving strong consistency. The qualitative comparison in Fig. 4 shows a similar trend. Compared with LongLive [ 18 ], OmniMem maintains more stable visual details and richer motion over time, while LongLive shows limited temporal variation in the highlighted regions. Additional qualitative results are provided in Appendix Sec. K. 7Table 2: Quantitative comparison on multi-prompt 60-second long video generation. Imaging Quality (IQ), Subject Consistency (SC), and Background Consistency (BC) are computed under VBench-Long [40]. CLIP scores are computed per 10 -second segment to assess prompt adherence. Model Imaging Subject Background CLIP Score ↑                                   
+
+> Quality Consistency Consistency 0–10 s 10–20 s 20–30 s 30–40 s 40–50 s 50–60 s LongLive [18] 71.94 97.09 96.08 27.51 25.85 25.67 25.26 25.15 24.78 MemFlow [20] 71.44 97.78 96.51 27.35 25.93 25.79 25.69 25.11 24.67
+> OmniMem 73.85 97.72 96.55 27.43 26.07 26.03 25.89 25.72 24.99
+
+Table 3: Ablation on the three attention branches of the fused design. Variant IQ SC BC CLIP                 
+
+> SWA 66.74 96.76 95.85 24.05 CMP + SWA 69.31 97.89 96.80 24.89 SLC + SWA 71.13 97.85 97.02 25.37
+> CMP + SLC + SWA 71.38 98.34 97.30 26.53
+
+Table 4: Comparison of different window ex-clusion chunk size. † means the default setting.                      
+
+> Excluded Chunks IQ SC BC CLIP
+> 0 chunks 66.13 96.78 96.52 24.51 1 chunk 68.95 97.77 96.58 24.67 2 chunks 71.41 97.90 96.71 26.38
+> 3 chunks †71.38 98.45 97.30 26.53
+
+Long Video Generation with Prompt Switching. We further evaluate OmniMem under a multi-prompt long video generation setting, where the input is a sequence of 6 successive prompts, each spanning 10 seconds, that together specify a 60 -second video. Following LongLive [ 18 ], we construct an evaluation set of 100 multi-prompt scripts. We then evaluate the methods that support prompt switching on this set, following VBench-Long [ 40 ]. To assess prompt adherence over time, we additionally compute CLIP scores between each generated 10-second segment and its corresponding prompt. As shown in Tab. 2, OmniMem achieves superior performance on both visual quality and consistency. More importantly, OmniMem maintains stable CLIP scores as the video length grows, with only a 2.44 drop from 0–10 s to 50 –60 s. The results indicate that OmniMem preserves quality, consistency, and video-text alignment throughout long generation. Results on short video generation are provided in Appendix Sec. E. 
+
+4.2 Ablation Study 
+
+We conduct ablations on a 20-second video setting to understand the contribution of each design choice in OmniMem by comparing Image Quality (IQ), Subject Consistency (SC), Background Consistency (BC), and CLIP score. 
+
+Impact of Memory Branches. We ablate the contribution of each attention branch by progressively disabling CMP and SLC, with results reported in Tab. 3. Using SWA alone yields the weakest results, while adding either CMP or SLC brings consistent improvements. Combining all three achieves the best performance, showing that coarse global memory (CMP) and fine-grained retrieval (SLC) are both essential complements to the local window (SWA). 
+
+Impact of Window Exclusion Size. As discussed in Sec. 3.2, Adaptive Window Exclusion reduces the local bias in AR video generation. We vary the number of excluded chunks to study how much of the sliding-window region should be removed from the selection candidates. As shown in Tab. 4, excluding more recent chunks substantially improves performance over no exclusion. Removing the full SWA window ( 3-chunk) yields the best overall result and is used as our default. This supports our design of narrowing the selection candidates to historical KV blocks outside the local window. 
+
+Impact of Query-Shared KV Selection. We vary the group size Gq to demonstrate the effect of query-shared selection. Tab. 5 indicates that increasing Gq from 1 to 15 leaves all metrics nearly unchanged, confirming that adjacent queries within a chunk share similar context needs and can be safely grouped. Therefore, query-shared KV selection mitigates the cross-query Union Explosion without sacrificing generation quality, and additionally improves training efficiency by reducing redundant selection computation. Pushing the group size further to 30 or 60 starts to degrade all metrics, as a single shared selection can no longer cover the diverse content in a large query group. 
+
+Impact of Per-Head KV Access. An alternative way to eliminate cross-head divergence is to group the selection across different heads, so that grouped heads retrieve the same historical blocks. We ablate this design in Tab. 6, where the head-group size Gh denotes the number of heads sharing a 8Table 5: Ablation on query-group size Gq . †: default. 
+
+Gq IQ SC BC CLIP 
+
+1 71.43 98.52 97.24 26.47 15 † 71.38 98.45 97.30 26.53 30 70.14 98.34 97.01 25.98 60 69.52 98.26 96.93 24.80 Table 6: Ablation on head-group size Gh.
+
+Gh IQ SC BC CLIP 
+
+12 69.34 97.13 96.56 23.64 3 70.80 97.85 96.82 26.29 
+
+1 71.38 98.45 97.30 26.53 
+
+Table 7: Ablation on sink to-kens and selection attention.                                
+
+> Variant IQ SC BC CLIP
+> SWA 66.74 96.76 95.85 24.05 SWA+Sink 69.14 96.97 96.90 25.32 SWA+SLC+Sink 70.50 97.76 97.25 25.29
+> SWA+ SLC 71.13 97.85 97.02 25.37 81 165 321 477 717
+> Number of frames
+> 0
+> 25
+> 50
+> 75
+> 100
+> GPU memory (GB)
+> 20.8 21.5 22.2 22.6 23.2 20.8 19.5
+> 28.9
+> 52.3
+> 77.2
+> 15.8 18.5
+> 28.4
+> 51.9
+> 76.7
+> 3.3 ×
+> less
+> OmniMem
+> Naive Sparse
+> Full Attention 81 165 321 477 717
+> Number of frames
+> 0
+> 50
+> 100
+> 150
+> Latency (s)
+> 5.1 11.4 23.0 34.7
+> 53.0
+> 52.3
+> 5.0 12.7
+> 34.2
+> 70.4
+> 145.3
+> 2.7 ×
+> faster
+> OmniMem
+> Naive Sparse
+> Full Attention
+
+Figure 5: Memory access scalability. Naive Sparse reduces latency but loses the memory benefit due to Union Explosion. OmniMem maintains memory usage nearly constant while remaining efficient. common KV selection. Sharing the selection across all 12 heads significantly degrades all metrics, and even a moderate size of Gh = 3 still leaves a clear gap to per-head selection. This indicates that different attention heads attend to genuinely different historical regions, and forcing them to share a single selection hurts generation quality. Additional ablations on pooling size, Top-K, and LRU cache size are deferred to Appendix Sec. F. 
+
+4.3 Scalability of Long-Range Memory Access 
+
+Fig. 5 compares OmniMem with full-history attention and a Naive Sparse baseline, which applies per-query, per-head Top-K retrieval without Query-Shared KV Selection or Per-Head Scattered KV Access. Although Naive Sparse keeps the attention computation sparse, its selected-block union spans a large fraction of historical chunks. To preserve low latency, these chunks must stay resident on GPU, causing memory to grow close to full-history attention. In contrast, OmniMem keeps the active KV set bounded through query sharing and per-head scattered access. At 717 frames, OmniMem uses 
+
+3.3× less memory and runs 2.7× faster than full-history attention, matching Naive Sparse latency. 
+
+## 5 Discussion and Further Analysis 
+
+Dynamic Retrieval over Fixed Sink Tokens. Sink-based long-video methods keep fixed early tokens or chunks as global anchors, motivated by the attention-sink pattern. However, Fig. D1 shows that many heads use historical context beyond the sink region. In contrast, OmniMem dynamically retrieves full-resolution history, so sink-like regions can still be selected when useful without restricting retrieval to fixed anchors. As shown in Tab. 7, adding fixed sink anchors to OmniMem brings no additional gain, indicating dynamic retrieval already captures the useful global context in our setting. 
+
+Selection Attention Uses Historical Tokens More Effectively. We further compare SWA+SLC with SWA+Sink under the same recent-window context. SWA+SLC selects full-resolution historical blocks per query and head, rather than always reserving fixed anchors. As shown in Tab. 7, it achieves better performance with fewer historical tokens, indicating a more effective use of historical memory. In Appendix Sec. G, we additionally observe that different heads exhibit distinct gating preferences across the three memory branches, revealing head-level specialization. We also observe that the explicit retrieval design exhibits promising potential for zero-shot generalization to longer videos. 
+
+## 6 Conclusion 
+
+We presented OmniMem, an explicit memory retrieval framework for chunk-based AR video genera-tion. Instead of relying solely on SWA and sink tokens, OmniMem retrieves selected full-resolution historical KV blocks to enable long-range memory access. To make this practical, OmniMem ad-9dresses local-biased block selection and Union Explosion with Adaptive Window Exclusion, Query-Shared KV Selection, and Per-Head Scattered KV Access. Experiments on 60-second generation show that OmniMem improves long-video quality, temporal consistency, and motion dynamics over SOTA baselines while maintaining practical inference latency and memory footprint. 
+
+## References 
+
+[1] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072 , 2024. [2] Zangwei Zheng, Xiangyu Peng, Tianji Yang, Chenhui Shen, Shenggui Li, Hongxin Liu, Yukun Zhou, Tianyi Li, and Yang You. Open-sora: Democratizing efficient video production for all. arXiv preprint arXiv:2412.20404 , 2024. [3] Bin Lin, Yunyang Ge, Xinhua Cheng, Zongjian Li, Bin Zhu, Shaodong Wang, Xianyi He, Yang Ye, Shenghai Yuan, Liuhan Chen, et al. Open-sora plan: Open-source large video generation model. arXiv preprint arXiv:2412.00131 , 2024. [4] Xuan Shen, Weize Ma, Yufa Zhou, Enhao Tang, Yanyue Xie, Zhengang Li, Yifan Gong, Quanyi Wang, Henghui Ding, Yiwei Wang, Pu Zhao, Jun Lin, and Jiuxiang Gu. Fastcar: Cache attentive replay for fast auto-regressive video generation on the edge. In The Fourteenth International Conference on Learning Representations , 2026. [5] Xuan Shen, Chenxia Han, Yufa Zhou, Yanyue Xie, Yifan Gong, Quanyi Wang, Yiwei Wang, Yanzhi Wang, Pu Zhao, and Jiuxiang Gu. Draftattention: Fast video diffusion via low-resolution attention guidance. 
+
+arXiv preprint arXiv:2505.14708 , 2025. [6] Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang, et al. Hunyuanvideo: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603 , 2024. [7] Adam Polyak, Amit Zohar, Andrew Brown, Andros Tjandra, Animesh Sinha, Ann Lee, Apoorv Vyas, et al. Movie gen: A cast of media foundation models. arXiv preprint arXiv:2410.13720 , 2024. [8] Lin Zhao, Yushu Wu, Aleksei Lebedev, Dishani Lahiri, Meng Dong, Arpit Sahni, Michael Vasilkovsky, Hao Chen, Ju Hu, Aliaksandr Siarohin, et al. S2dit: Sandwich diffusion transformer for mobile streaming video generation. arXiv preprint arXiv:2601.12719 , 2026. [9] Yuqing Wang, Tianwei Xiong, Daquan Zhou, Zhijie Lin, Yang Zhao, Bingyi Kang, Jiashi Feng, and Xihui Liu. Loong: Generating minute-level long videos with autoregressive language models. arXiv preprint arXiv:2410.02757 , 2024. [10] Haoge Deng, Ting Pan, Haiwen Diao, Zhengxiong Luo, Yufeng Cui, Huchuan Lu, Shiguang Shan, Yonggang Qi, and Xinlong Wang. Autoregressive video generation without vector quantization. arXiv preprint arXiv:2412.14169 , 2024. [11] Yang Jin, Zhicheng Sun, Ningyuan Li, Kun Xu, Kun Xu, Hao Jiang, Nan Zhuang, Quzhe Huang, Yang Song, Yadong Mu, and Zhouchen Lin. Pyramidal flow matching for efficient video generative modeling. 
+
+arXiv preprint arXiv:2410.05954 , 2024. [12] Tianwei Yin, Qiang Zhang, Richard Zhang, William T Freeman, Fredo Durand, Eli Shechtman, and Xun Huang. From slow bidirectional to fast autoregressive video diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 22963–22974, 2025. [13] Haoxuan Che, Xuanhua He, Quande Liu, Cheng Jin, and Hao Chen. Gamegen-x: Interactive open-world game video generation. In International Conference on Learning Representations , 2025. [14] Chaorui Deng, Deyao Zhu, Kunchang Li, Shi Guang, and Haoqi Fan. Causal diffusion transformers for generative modeling. arXiv preprint arXiv:2412.12095 , 2024. [15] Yushu Wu, Yanyu Li, Anil Kag, Ivan Skorokhodov, Willi Menapace, Ke Ma, Arpit Sahni, Ju Hu, Aliaksandr Siarohin, Dhritiman Sagar, et al. Taming diffusion transformer for efficient mobile video generation in seconds. arXiv preprint arXiv:2507.13343 , 2025. [16] Lin Li, Qihang Zhang, Yiming Luo, Shuai Yang, Ruilin Wang, Fei Han, Mingrui Yu, Zelin Gao, Nan Xue, Xing Zhu, Yujun Shen, and Yinghao Xu. Causal world modeling for robot control. arXiv preprint arXiv:2601.21998 , 2026. 
+
+10 [17] Jake Bruce, Michael Dennis, Ashley Edwards, Jack Parker-Holder, Yuge Shi, Edward Hughes, Matthew Lai, Aditi Mavalankar, Richie Steigerwald, Chris Apps, Yusuf Aytar, Sarah Bechtle, Feryal Behbahani, Stephanie Chan, Nicolas Heess, Lucy Gonzalez, Simon Osindero, Sherjil Ozair, Scott Reed, Jingwei Zhang, Konrad Zolna, Jeff Clune, Nando de Freitas, Satinder Singh, and Tim Rocktäschel. Genie: Generative interactive environments. Forty-first International Conference on Machine Learning , 2024. [18] Shuai Yang, Wei Huang, Ruihang Chu, Yicheng Xiao, Yuyang Zhao, Xianbang Wang, Muyang Li, Enze Xie, Yingcong Chen, Yao Lu, Song Han, and Yukang Chen. Longlive: Real-time interactive long video generation. arXiv preprint arXiv:2509.22622 , 2025. [19] Kunhao Liu, Wenbo Hu, Jiale Xu, Ying Shan, and Shijian Lu. Rolling forcing: Autoregressive long video diffusion in real time. arXiv preprint arXiv:2509.25161 , 2025. [20] Sihui Ji, Xi Chen, Shuai Yang, Xin Tao, Pengfei Wan, and Hengshuang Zhao. Memflow: Flowing adaptive memory for consistent and efficient long video narratives. arXiv preprint arXiv:2512.14699 , 2025. [21] Yifei Yu, Xiaoshan Wu, Xinting Hu, Tao Hu, Yangtian Sun, Xiaoyang Lyu, Bo Wang, Lin Ma, Yuewen Ma, Zhongrui Wang, et al. Videossm: Autoregressive long video generation with hybrid state-space memory. 
+
+arXiv preprint arXiv:2512.04519 , 2025. [22] Lvmin Zhang, Shengqu Cai, Muyang Li, Chong Zeng, Beijia Lu, Anyi Rao, Song Han, Gordon Wetzstein, and Maneesh Agrawala. Pretraining frame preservation in autoregressive video memory compression. 
+
+arXiv preprint arXiv:2512.23851 , 2025. [23] Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Yuxing Wei, Lean Wang, Zhiping Xiao, et al. Native sparse attention: Hardware-aligned and natively trainable sparse attention. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 23078–23097, 2025. [24] Sand. ai, Hansi Teng, Hongyu Jia, Lei Sun, Lingzhi Li, Maolin Li, Mingqiu Tang, Shuai Han, Tianning Zhang, W. Q. Zhang, Weifeng Luo, Xiaoyang Kang, Yuchen Sun, Yue Cao, Yunpeng Huang, Yutong Lin, Yuxin Fang, Zewei Tao, Zheng Zhang, Zhongshu Wang, Zixun Liu, Dai Shi, Guoli Su, Hanwen Sun, Hong Pan, Jie Wang, Jiexin Sheng, Min Cui, Min Hu, Ming Yan, Shucheng Yin, Siran Zhang, Tingting Liu, Xianping Yin, Xiaoyu Yang, Xin Song, Xuan Hu, Yankai Zhang, and Yuqiao Li. Magi-1: Autoregressive video generation at scale, 2025. [25] Guibin Chen, Dixuan Lin, Jiangping Yang, Chunze Lin, Junchen Zhu, Mingyuan Fan, Hao Zhang, Sheng Chen, Zheng Chen, Chengcheng Ma, Weiming Xiong, Wei Wang, Nuo Pang, Kang Kang, Zhiheng Xu, Yuzhe Jin, Yupeng Liang, Yubing Song, Peng Zhao, Boyuan Xu, Di Qiu, Debang Li, Zhengcong Fei, Yang Li, and Yahui Zhou. Skyreels-v2: Infinite-length film generative model, 2025. [26] Xun Huang, Zhengqi Li, Guande He, Mingyuan Zhou, and Eli Shechtman. Self forcing: Bridging the train-test gap in autoregressive video diffusion. arXiv preprint arXiv:2506.08009 , 2025. [27] Justin Cui, Jie Wu, Ming Li, Tao Yang, Xiaojie Li, Rui Wang, Andrew Bai, Yuanhao Ban, and Cho-Jui Hsieh. Self-forcing++: Towards minute-scale high-quality video generation. arXiv preprint arXiv:2510.02283 ,2025. [28] Shengqu Cai, Weili Nie, Chao Liu, Julius Berner, Lvmin Zhang, Nanye Ma, Hansheng Chen, Maneesh Agrawala, Leonidas Guibas, Gordon Wetzstein, and Arash Vahdat. Mode seeking meets mean seeking for fast long video generation. In arXiv , 2026. [29] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Processing Systems , 36:34661–34710, 2023. [30] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. Snapkv: Llm knows what you are looking for before generation. arXiv preprint arXiv:2404.14469 , 2024. [31] Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W. Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. Kvquant: Towards 10 million context length llm inference with kv cache quantization. Advances in Neural Information Processing Systems , 37, 2024. [32] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. arXiv preprint arXiv:2309.17453 , 2023. 
+
+11 [33] Haocheng Xi, Shuo Yang, Yilong Zhao, Muyang Li, Han Cai, Xingyang Li, Yujun Lin, Zhuoyang Zhang, Jintao Zhang, Xiuyu Li, et al. Quant videogen: Auto-regressive long video generation via 2-bit kv-cache quantization. arXiv preprint arXiv:2602.02958 , 2026. [34] Zeyu Zhang, Shuning Chang, Yuanyu He, Yizeng Han, Jiasheng Tang, Fan Wang, and Bohan Zhuang. Blockvid: Block diffusion for high-quality and consistent minute-long video generation. arXiv preprint arXiv:2511.22973 , 2025. [35] Hang Guo, Zhaoyang Jia, Jiahao Li, Bin Li, Yuanhao Cai, Jiangshan Wang, Yawei Li, and Yan Lu. Efficient autoregressive video diffusion with dummy head. arXiv preprint arXiv:2601.20499 , 2026. [36] Xu Yang et al. Past- and future-informed kv cache policy with salience estimation in autoregressive video diffusion. arXiv preprint arXiv:2601.21896 , 2026. [37] Yoav HaCohen, Nisan Chiprut, Benny Brazowski, Daniel Shalem, Dudu Moshe, Eitan Richardson, Eran Levin, Guy Shiran, Nir Zabari, Ori Gordon, et al. Ltx-video: Realtime video latent diffusion. arXiv preprint arXiv:2501.00103 , 2024. [38] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, Jianyuan Zeng, Jiayu Wang, Jingfeng Zhang, Jingren Zhou, Jinkai Wang, Jixuan Chen, Kai Zhu, Kang Zhao, Keyu Yan, Lianghua Huang, Mengyang Feng, Ningyi Zhang, Pandeng Li, Pingyu Wu, Ruihang Chu, Ruili Feng, Shiwei Zhang, Siyang Sun, Tao Fang, Tianxing Wang, Tianyi Gui, Tingyu Weng, Tong Shen, Wei Lin, Wei Wang, Wei Wang, Wenmeng Zhou, Wente Wang, Wenting Shen, Wenyuan Yu, Xianzhong Shi, Xiaoming Huang, Xin Xu, Yan Kou, Yangyu Lv, Yifei Li, Yijing Liu, Yiming Wang, Yingya Zhang, Yitong Huang, Yong Li, You Wu, Yu Liu, Yulin Pan, Yun Zheng, Yuntao Hong, Yupeng Shi, Yutong Feng, Zeyinzi Jiang, Zhen Han, Zhi-Fan Wu, and Ziyu Liu. Wan: Open and advanced large-scale video generative models, 2025. [39] Wenhao Wang and Yi Yang. Vidprom: A million-scale real prompt-gallery dataset for text-to-video diffusion models. Advances in Neural Information Processing Systems , 37:65618–65642, 2024. [40] Ziqi Huang, Fan Zhang, Xiaojie Xu, Yinan He, Jiashuo Yu, Ziyue Dong, Qianli Ma, Nattapol Chanpaisit, Chenyang Si, Yuming Jiang, Yaohui Wang, Xinyuan Chen, Ying-Cong Chen, Limin Wang, Dahua Lin, Yu Qiao, and Ziwei Liu. VBench++: Comprehensive and versatile benchmark suite for video generative models. IEEE Transactions on Pattern Analysis and Machine Intelligence , 2025. [41] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, et al. Vbench: Comprehensive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 21807–21818, 2024. [42] Haoge Deng, Ting Pan, Haiwen Diao, Zhengxiong Luo, Yufeng Cui, Huchuan Lu, Shiguang Shan, Yonggang Qi, and Xinlong Wang. Autoregressive video generation without vector quantization. arXiv preprint arXiv:2412.14169 , 2024. [43] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer: Enhanced transformer with rotary position embedding. Neurocomputing , 568:127063, 2024. 
+
+12 Limitation and Broader Impact 
+
+OmniMem is evaluated on a single open-sourced DiT backbone, Wan2.1-T2V-1.3B, aligned with recent works. This controlled setting helps isolate the effect of explicit memory retrieval, but validation on larger backbones and other video generation pipelines remains as future work. Our Triton selection-attention kernel is also tuned for current GPUs, and the latency and memory gains may vary across hardware platforms. By making long-video generation more efficient, OmniMem may reduce the compute cost of creative tools, simulation, and world-model research. At the same time, higher-quality long video generation can be misused for disinformation or impersonation, a risk shared with general text-to-video systems. Practical deployments should be paired with safeguards such as content filtering, watermarking, and dataset controls. 
+
+## A Preliminaries 
+
+Autoregressive Video Generation. We consider chunk-based AR video generation with a causal DiT backbone. Given a conditioning signal c (e.g ., a text prompt), the model generates a video as a sequence of latent chunks {z(1) , z(2) , . . . , z(N )}. At the nth AR step, the next chunk is generated conditioned on c and all previously generated chunks,           
+
+> z(<n )={z(1) , . . . , z(n−1) },z(n)∼pθ
+> 
+> z(n)|c, z(<n )
+> ,(A1)
+
+where pθ denotes the conditional generation model. Each chunk contains Tc latent frames with spatial resolution Hs × Ws. After flattening the spatiotemporal dimensions, one chunk yields S = TcHsWs
+
+latent tokens. Unlike token-wise autoregressive generation in LLMs, DiT-based chunk generation processes all S tokens in the current chunk jointly at each denoising step. As a result, a single autoregressive step introduces thousands of query tokens simultaneously, leading to a substantially different attention and memory access pattern from single-token decoding. 
+
+KV Cache. At the nth AR step, attention is computed over both the current chunk and all previously generated chunks, with causality enforced across chunks. For efficiency, the keys and values of previous chunks are cached and reused. For attention layer l and head h, we denote the full causal KV context as               
+
+> K(≤n)
+> l,h = [ K(1)
+> l,h ;. . . ;K(n)
+> l,h ],V(≤n)
+> l,h = [ V(1)
+> l,h ;. . . ;V(n)
+> l,h ].(A2)
+
+Here, the first n−1 entries correspond to the historical KV cache, while the last entry comes from the current chunk. As n increases, the historical cache grows linearly with the number of generated chunks. Dense attention over the full historical cache incurs increasing computation and memory footprint, making long-video generation difficult to scale. 
+
+## B Implementation Details 
+
+Base Model and Training. We build OmniMem on top of Wan2.1-T2V-1.3B [ 38 ] and follow a three-stage recipe. We first attach the memory module and fine-tune with ODE initialization on the VidProM prompts, following CausVid [ 12 ]. We then run Self-Forcing [ 26 ] to reduce the train-test gap during AR rollout, and finally apply the long-video tuning recipe from LongLive [18]. 
+
+Training Hyperparameters. The ODE stage runs for 10K steps with a global batch size of 128 and a learning rate of 1×10 −5. AdamW is used with β = (0 .9, 0.999) . The Self-Forcing stage runs for 600 steps and the long-video tuning stage runs for 500 steps, both with a global batch size of 64. For these two stages, we follow the optimizer settings of Self-Forcing and LongLive, using a learning rate of 4×10 −7 for the generator and 2×10 −6 for the fake score, with AdamW β = (0 , 0.999) and 
+
+0.01 weight decay. All training is performed on 4 nodes with 8× NVIDIA H100 GPUs, with gradient accumulation. 
+
+Memory Module. The pooling block size is 15 × 2, and the compression branch is a plain mean pool over each spatial neighborhood. The query-group size is 15, and each group selects the top-4 historical blocks per head for selection attention. The sliding window covers the 3 most recent chunks. Adaptive Window Exclusion is enabled once at least 3 chunks of history exist outside the sliding window. The compression, selection, and sliding-window outputs are combined through learned 13 per-branch sigmoid gates. The gate parameters are initialized with a normal distribution and trained jointly with the rest of the memory module, starting from the ODE stage. 
+
+Triton Kernel and Tile Padding. We implement both the forward and backward selection attention as Triton kernels (Triton 3.5.1), so that the entire training pipeline runs on the same sparse path as inference. The kernel reads non-contiguous KV blocks via the pointer table described in Sec. 3.3 and computes attention using an online softmax. For efficient use of the H100 tensor cores, the tile size along the sequence axis should be a power of two to match the matrix-multiply shapes the tensor cores expect. Our pooling block covers 15 × 2 = 30 tokens, which is not a power of two. We therefore pad each tile to 32 tokens inside the kernel and mask the two extra positions in the softmax, so that the padded entries do not affect the attention output. The padding overhead is small (about 6.7% of the tile), while the kernel reaches 93.8% utilization, the highest among the candidate pooling shapes we tested. The head dimension is already 128 and needs no padding. A full sweep over other pooling shapes is reported in Tab. H1. 
+
+Inference and Offloading. The efficiency numbers in Sec. 4.3 are measured on a single H100 GPU. The GPU hot cache keeps 7 chunks resident and evicts cold ones with an LRU policy. We ablate this size in Sec. F.3. Offloaded KV blocks live in pinned host memory and are reloaded through PCIe when their chunks are selected. To keep PCIe transfers efficient, we explicitly bind each GPU process to the NUMA (Non-Uniform Memory Access) node that owns its PCIe root, thereby avoiding cross-socket traffic during reload. 
+
+## C Shared Chunk-level KV cache and Per-Head Selection Forward 
+
+Figure C1: Implementation pipeline of selection attention. Step 1 runs on the host and collects the GPU addresses of the KV chunks each head needs. Step 2 is a Triton kernel that turns each selected block index into its final byte address, building the pointer table. Step 3 is the selection forward kernel. It follows each pointer in the table to read the corresponding KV block from its original storage, and skips any entry marked with 0. Only addresses pass through the pipeline; the KV data itself stays in its per-head chunk storage. OmniMem maintains two levels of KV cache. The first level is a compact compressed cache for the compression branch, and the second level is a full-resolution chunk-level cache shared by the sliding-window and selection branches. 
+
+Compressed Cache. For each generated chunk, we pool its KV states into compressed KV blocks and append them to a contiguous compressed history. Since this cache is much shorter than the full-resolution KV cache, keeping it as a contiguous sequence makes compression attention simple and efficient. 14 Full-resolution Chunk-level Cache. The second level is a full-resolution chunk-level KV cache shared by the sliding-window branch and the selection branch. For each layer and head, the cache is stored as a list of chunk tensors, {K(1)  
+
+> l,h
+
+, . . . , K(n) 
+
+> l,h
+
+} and {V(1)  
+
+> l,h
+
+, . . . , V(n) 
+
+> l,h
+
+}. Sliding-window attention accesses the most recent W chunks from this cache. Because the window is contiguous and fixed-size, this requires concatenating only W large chunk tensors. A block-level physical cache would instead require concatenating W ⌈S/B ⌉ small tensors for the same window, where S is the number of tokens per chunk and B is the KV block size. Both layouts access the same tokens and require no padding, but the many-small-tensor concatenation introduces higher overhead in our list-based implementation. 
+
+Selection Access via Pointer Table. Selection attention uses the same full-resolution chunk-level cache, but accesses it through block indices. Each selected block index is mapped to a chunk index and an intra-chunk block offset. For each attention head, the sparse attention kernel receives a variable-length list of selected block indices and directly reads the corresponding KV blocks through a pointer table. The pointer table itself is built by a lightweight GPU kernel that maps each (chunk index, intra-chunk offset) pair to the physical address of the corresponding KV blocks. Only int64 
+
+addresses are gathered, so this step carries address information rather than the raw KV data. An entry of 0 in the pointer table means that the chunk is on CPU, and the selection forward kernel skips these blocks with a single integer check, as shown in Algorithm 1. Thus, selection attention does not concatenate selected KV blocks into a temporary tensor, and different heads do not need to be padded to the same selected length. This two-level layout keeps compression attention compact, sliding-window attention contiguous, and selection attention fine-grained. 
+
+## D The Visualization of Attention Map 
+
+Figure D1: Attention Map across different heads of Self-Forcing [26] with full memory. 
+
+We visualize the per-head attention patterns of an autoregressive video generation model to reveal how different heads attend to the historical context. We adopt Self-Forcing [ 26 ], which retains the full historical KV cache without any compression. Therefore, the resulting attention maps faithfully reflect the intrinsic preference of each head. We generate a 5-second video and show the chunk-level attention map of each head in Fig. D1. We observe two clear patterns: while some heads concentrate on recent frames, many others spread their attention across scattered positions in the history ( e.g ., Heads 0, 3, 4, 8, 10). This confirms that (i) different heads exhibit distinct retrieval preferences (cross-head divergence), and (ii) a substantial fraction of heads rely on non-local historical context, which would be lost under sliding-window or sink-only memory. 15 Algorithm 1 Per-Head Selection Forward via Pointer Table 
+
+Require: Queries Q, selected block ids I[b, g, h, 1: K]
+
+Require: Selection mask M [b, g, h, 1: K] ▷ M = 1 if the block is selected 
+
+Require: Per-head GPU ptr table Πℓ, blocks per chunk Bpc 
+
+Require: Query-group size Gq , softmax scale σ 
+
+> 1:
+
+// Step 1. Build per-(b, g, h, t ) pointer table.  
+
+> 2:
+
+for each (b, g, h, t ) in parallel do  
+
+> 3:
+
+if M [b, g, h, t ] = 0 then  
+
+> 4:
+
+P [b, g, h, t ] ← 0 ▷ not selected; skip in attention  
+
+> 5:
+
+continue  
+
+> 6:
+
+end if  
+
+> 7:
+
+c ← I[b, g, h, t ] ÷ Bpc ▷ chunk id of the selected block  
+
+> 8:
+
+o ← I[b, g, h, t ] mod Bpc ▷ block offset within the chunk  
+
+> 9:
+
+if Πℓ[h, c ] = 0 then  
+
+> 10:
+
+WAIT UNTIL RELOAD (h, c ) ▷ selected chunk is on CPU; wait until resident  
+
+> 11:
+
+end if  
+
+> 12:
+
+P [b, g, h, t ] ← Πℓ[h, c ] + offset (o) 
+
+> 13:
+
+end for  
+
+> 14:
+
+// Step 2. Selection forward with online softmax.  
+
+> 15:
+
+for each (b, g, h ) in parallel do  
+
+> 16:
+
+q ← Q[b, g -th group , h ] ▷ G q query tokens  
+
+> 17:
+
+m ← −∞ ; d ← 0; a ← 0 ▷ online softmax state  
+
+> 18:
+
+for t = 1 , . . . , K do  
+
+> 19:
+
+p ← P [b, g, h, t ] 
+
+> 20:
+
+if p = 0 then  
+
+> 21:
+
+continue ▷ not selected or padded entry  
+
+> 22:
+
+end if  
+
+> 23:
+
+Load Kt, Vt from address p 
+
+> 24:
+
+u ← σ · qK ⊤ 
+
+> t
+> 25:
+
+m′ ← max( m, max u) 
+
+> 26:
+
+w ← exp( u − m′); α ← exp( m − m′) 
+
+> 27:
+
+d ← d · α + P w 
+
+> 28:
+
+a ← a · α + wV t 
+
+> 29:
+
+m ← m′ 
+
+> 30:
+
+end for  
+
+> 31:
+
+O[b, g -th group , h ] ← a/d  
+
+> 32:
+
+end for 
+
+## E Short Video Generation. 
+
+For completeness, we also evaluate OmniMem on base 5-second video generation in Tab. E1 using the standard VBench [ 41 ] prompt suite. Although our method is primarily designed for long-range memory retrieval, we verify that the proposed components also benefit for the short video quality. Among these baselines, Self-Forcing [ 26 ] retains the full historical KV cache and serves as a strong reference for upper-bound quality on short videos. OmniMem achieves a Total VBench score of 
+
+84 .29 , matching Self-Forcing ( 84 .31 ) within 0.02 points, while surpassing all other baselines that rely on memory compression or restricted context. Notably, OmniMem obtains the highest Quality score across the methods, suggesting that explicit per-head retrieval avoids the quality degradation. 16 Table E1: Quantitative comparison on short video generation under the standard VBench [ 41 ]prompt suite. We compare against other autoregressive models. Model #Params Resolution Vbench ↑
+
+Total Quality Semantic CausVid [12] 1.3B 832 ×480 81.20 84.05 69.80 Pyramid Flow [11] 2B 640 ×384 81.72 84.74 69.62 MAGI-1 [24] 4.5B 832 ×480 79.18 82.04 67.74 SkyReels-V2 [25] 1.3B 960 ×540 82.67 84.70 74.53 NOVA [42] 0.6B 768 ×480 80.12 80.39 79.05 LongLive [18] 1.3B 832 ×480 83.26 85.05 76.13 MemFlow [20] 1.3B 832 ×480 83.13 84.94 75.89 Self-Forcing [26] 1.3B 832 ×480 84.31 85.07 81.28 OmniMem 1.3B 832 ×480 84.29 86.28 76.31 Table F1: Ablation of different KV block size 
+
+h × w. h and w denote the height and width of each block.                   
+
+> Pooling IQ SC BC CLIP
+> 15 ×2(Top-8, 240 tokens) 71.42 98.41 97.71 27.12
+> 15 ×4(Top-4, 240 tokens) 71.02 98.31 97.04 26.28 one frame (Top-1, 1560 tokens) 69.98 98.30 97.01 26.71
+
+Table F2: Ablation of Top-K Selection.                         
+
+> Top-KIQ SC BC CLIP
+> K= 1 71.24 97.86 96.56 25.98
+> K= 4 71.38 98.34 97.30 26.53
+> K= 8 71.42 98.41 97.71 27.12
+> K= 12 72.31 98.96 97.69 27.44
+
+## F Extended Ablation Studies 
+
+F.1 Impact of Pooling Size 
+
+We ablate the pooling size in Tab. F1. Since our selection attention is implemented with Triton block-sparse kernels, the pooling size directly affects kernel utilization. As discussed in Tab. H1 of the appendix, we restrict the search to configurations whose utilization exceeds 90% for efficiency. We compare three pooling configurations. The first two ( 15 ×2 with Top-8 and 15 ×4 with Top-4) are matched to access the same total number of historical tokens ( 240 ), isolating the effect of pooling granularity from the token budget. The third uses one frame as the pooling unit (Top-1), which corresponds to the coarsest granularity and accesses substantially more tokens ( 1560 ). Under the same token budget, 15 ×2 outperforms 15 ×4 on each metric, indicating that finer pooling provides more accurate selection than coarser pooling. The frame-level configuration performs worst despite accessing 6.5× more tokens, confirming the importance of fine-grained selection. 
+
+F.2 Impact of Top-K Selection 
+
+Top-K determines how many compressed KV blocks each head selects from the candidate pool per query group. We sweep k ∈ { 1, 4, 8, 12 } and finetune each variant for long video generation from the same short video base model. The results are reported in Tab. F2. All metrics improve monotonically as K increases, with K = 12 achieving the best performance across the board. The improvement exhibits clear diminishing returns: increasing K from 1 to 4 yields a noticeable gain ( e.g ., +0 .55 in CLIP), while further increasing K to 8 or 12 brings smaller marginal improvements. This indicates that a moderate number of selected blocks is sufficient to capture the long-range context relevant to each query group. 
+
+F.3 The Efficiency–Memory Trade-off of LRU Size 
+
+The LRU cache stores recently retrieved KV blocks on the GPU, allowing them to be reused without reloading from CPU memory. Fig. F1 reports the impact of LRU size GLRU on inference latency, GPU memory, and cache hit rate. With GLRU = 1 , the cache is too small to retain frequently selected blocks, leading to a 0% hit rate and a 2.2× higher latency than the optimum due to constant CPU-GPU swapping. Increasing GLRU to 4 already reaches a 99 .9% hit rate, after which both latency and hit rate saturate while GPU memory keeps growing. From GLRU =7 to GLRU =10 , latency improves by 17 1 4 7 10           
+
+> LRU size
+> 20
+> 30
+> 40
+> Latency (s)  36.49
+> 20.58
+> 16.91
+> 16.35 (a) Inference Latency 14710
+> LRU size
+> 15
+> 20
+> 25
+> GPU memory (GB)
+> 16.1
+> 19.5
+> 21.4
+> 24.5 (b) Memory Consumption 14710
+> LRU size
+> 0
+> 50
+> 100
+> Hit rate (%)
+> 0.0
+> 99.9 100.0 100.0 (c) Cache Hit Rate
+
+Figure F1: Impact of LRU cache size on 15-second video generation. We compare (a) inference latency, (b) GPU memory consumption, and (c) cache hit rate under different LRU cache sizes. 
+
+Figure G1: Fusion gate weights across attention heads. We visualize the gate values of the compression ( gcmp ), selection ( gslc ), and sliding-window ( gswa ) branches across frames for three representative attention heads. only 0.56 s ( 16 .91 → 16 .35 s), while memory inflates by over 3 GB ( 21 .4 → 24 .5 GB). This rapid saturation is a direct consequence of our explicit retrieval design. Since each query group selects only a small set of historical blocks, the working set of frequently accessed blocks is naturally compact, so a moderate LRU cache is sufficient to cover it. 
+
+## G Analysis and Discussion 
+
+Different heads prefer different memory branches. Our three branches encode complementary aspects of the past KV cache, where compression provides a global summary, selection retrieves fine-grained long-range details, and the sliding window captures recent context. As illustrated in Fig. G1, different attention heads exhibit clearly distinct gating preferences. While some heads maintain a relatively balanced allocation across the three branches, others assign dominant weight to the SWA branch. This indicates that the fusion gates enable head-level specialization, adaptively routing each head toward its preferred type of historical information. 
+
+Explicit retrieval design exhibits promising potential for zero-shot generalization. As Omn-iMem selects the important information explicitly, each head keeps the selection rule unchanged and simply ranks among a larger pool of chunks as the video length grows. As the video grows longer, the role of each head is preserved, with heads either biased toward recent frames or tracking the anchor tokens. Therefore, OmniMem extrapolates to longer videos without any long video finetuning. We demonstrate in Fig. G2 that OmniMem maintains the consistency of long videos in this setting. 
+
+## H Benchmark for Triton Utilization Different Pooling Size 
+
+Our selection attention is implemented with Triton block-sparse kernels, which require block sizes to be powers of 2 for optimal GPU utilization. We ablate block size choices in Tab. H1. While smaller blocks ( e.g ., 12) provide finer-grained selection, they suffer from low utilization. The larger blocks (e.g ., 60, 120) reduce sequence length more aggressively but may lose temporal/spatial granularity. 
+
+## I Explicit Retrieval in Chunk-Based Video Generation 
+
+We highlight that our OmniMem is specifically designed for chunk-based AR video generation, which significantly differs from sparse retrieval of full-resolution KV blocks [ 23 ] in LLMs. Specifically, in 18 Figure G2: Long-video generation by OmniMem without long-video finetuning. A 20-second video generated by OmniMem, which is trained only on 5-second clips. Table H1: Best pooling block shapes for the Wan-2.1-1.3B[ 38 ] 480P configuration with latent shape h = 30 , w = 52 . The padded block size is rounded to the next power of two to match efficient kernel tiles. Among all candidate shapes, we only use the best tile-fit group, which achieves 93.8% utilization with low padding overhead. tile fit h w block size padded util. blocks best 15 2 30 32 93.8% 52 15 4 60 64 93.8% 26 good 2 13 26 32 81.3% 60 2 26 52 64 81.3% 30 2 52 104 128 81.3% 15 ok 3 4 12 16 75.0% 130 6 2 12 16 75.0% 130 6 4 24 32 75.0% 65 poor 5 2 10 16 62.5% 156 5 4 20 32 62.5% 78 10 2 20 32 62.5% 78 3 13 39 64 60.9% 40 10 4 40 64 62.5% 39 6 13 78 128 60.9% 20 terrible 3 2 6 16 37.5% 260 5 13 65 128 50.8% 24 10 13 130 256 50.8% 12 standard LLM decoding, each step involves a single query token, and modern architectures frequently employ Grouped Query Attention (GQA), wherein multiple query heads share a single KV head and can therefore share retrieval decisions with negligible overhead. By contrast, each AR step in video generation processes thousands of query tokens simultaneously, and prevalent video DiTs adopt Multi-Head Attention (MHA), where each query head maintains a dedicated KV head. These architectural differences fundamentally shift the computational bottleneck of sparse retrieval. Therefore, in token-wise decoding, sparse retrieval primarily reduces the number of historical tokens attended to at each step. By contrast, in our chunk-based video generation, sparse retrieval must additionally govern the union of selected blocks across all query tokens and attention heads, which is substantially more complex with unique challenges including local bias and union explosion. OmniMem addresses these challenges to make explicit memory retrieval practical at both the al-gorithmic and system levels. Specifically, Adaptive Window Exclusion refines block selection by discounting recency bias in top-K scoring; query sharing mitigates cross-query selection diversity by aggregating query tokens into representative proxies before retrieval; and Per-Head Scattered KV Access circumvents the need to expand head-specific selections into a large, head-aligned KV buffer, substantially reducing memory overhead. 
+
+## J Permutation Equivariance of Reorder with RoPE 
+
+We justify the token reordering step in our compression pipeline. Our compression operates on 2D spatial neighborhoods : tokens that are spatially adjacent in the original frame layout are pooled 19 together so that each compressed block summarizes a semantically coherent region. However, when video tokens are flattened into a 1D sequence following the standard f × h × w raster order, the tokens belonging to the same 2D spatial block are not contiguous in memory, making block-wise pooling difficult to express as an efficient operation. To address this, we introduce a one-time token reorder π that places all tokens of each 2D spatial block into a contiguous range, so that compression becomes a simple contiguous reshape and mean reduction. The natural concern is whether this reorder with the corresponding RoPE positions changes the atten-tion output. We show below that reordering tokens and their RoPE positions [ 43 ] jointly leaves the attention output unchanged up to the same reordering, so the entire reorder–compress–attend–restore pipeline is mathematically equivalent to the unreordered computation. 
+
+Setup. Let X ∈ RN ×d be a token sequence and Θ = ( θ1, . . . , θ N ) the corresponding RoPE positional indices, where each θi encodes the spatiotemporal position (fi, h i, w i). RoPE-augmented attention is 
+
+Attn( X, Θ) = softmax 
+
+ Q′(K′)⊤
+
+> √d
+
+
+
+V, (J1) where the per-token queries, keys, and values are 
+
+Q′ 
+
+> i
+
+= R(θi) WQXi, K′ 
+
+> j
+
+= R(θj ) WK Xj , Vj = WV Xj , (J2) and R(θ) is the RoPE rotation associated with position θ. Let π ∈ SN be a permutation, and 
+
+Pπ ∈ { 0, 1}N ×N its permutation matrix, satisfying (Pπ X)i = Xπ(i) and (Pπ Θ) i = θπ(i).
+
+Proposition 1 (Joint reorder equivariance) . For any permutation π ∈ SN ,
+
+Attn( Pπ X, P π Θ) = Pπ · Attn( X, Θ) . (J3) 
+
+Proof. The reordered query satisfies 
+
+Q′(π) 
+
+> i
+
+= R (Pπ Θ) i
+
+ WQ (Pπ X)i = R(θπ(i)) WQ Xπ(i) = Q′
+
+> π(i)
+
+, (J4) so Q′(π) = Pπ Q′. The same holds for K′ and V , giving K′(π) = Pπ K′ and V (π) = Pπ V . Using 
+
+(Pπ K′)⊤ = ( K′)⊤P ⊤ 
+
+> π
+
+, the score matrix becomes 
+
+Q′(π) K′(π)⊤ = Pπ Q′(K′)⊤ P ⊤ 
+
+> π
+
+. (J5) Since row-wise softmax commutes with row permutation, 
+
+softmax  Pπ M P ⊤
+
+> π
+
+ = Pπ softmax( M ) P ⊤ 
+
+> π
+
+(J6) for any matrix M . Combining this with V (π) = Pπ V and P ⊤ 
+
+> π
+
+Pπ = I,
+
+Attn( Pπ X, P π Θ) = softmax 
+
+ Pπ Q′(K′)⊤P ⊤
+
+> π√d
+
+
+
+Pπ V (J7) 
+
+= Pπ softmax 
+
+ Q′(K′)⊤
+
+> √d
+
+
+
+P ⊤ 
+
+> π
+
+Pπ V (J8) 
+
+= Pπ Attn( X, Θ) .
+
+Corollary 1 (Reorder–compress equivalence) . Let the reorder π be chosen such that, for every 2D spatial compression block b, the indices {i : ( hi, w i) ∈ b} form a contiguous range under π.Then mean-pooling every |b| consecutive tokens of Pπ K′ and Pπ V yields the same compressed key/value sequence as applying 2D spatial block-pooling to the original K′ and V . Combined with Proposition 1, the entire (reorder → contiguous compress → attention → inverse reorder) pipeline is equivalent to (2D-block compress → attention) on the unreordered sequence. 
+
+Remark 1. The corollary justifies our implementation: we apply token_reorder once at the input and token_restore once at the output. All transformer blocks (compression / selection / sliding-window attention) operate on reordered tokens internally, yielding strictly equivalent computation while reducing the spatial compression to a contiguous reshape +mean operation on GPU memory. 
+
+## K More Qualitative Results 
+
+Long Video Generation. Fig. K1 shows 60-second single-prompt results. SWA suffers from gradual subject drift as the kitten’s appearance changes across frames, since distant context is discarded. LongLive [ 18 ] preserves identity via attention sinks but produces repetitive frames (red boxes). OmniMem maintains both subject consistency and natural scene evolution. 20 Figure K1: Qualitative comparison on 60-second long video generation. SWA denotes the sliding-window-only baseline. Red boxes highlight visible artifacts. 
+
+Figure K2: Qualitative comparison on multi-prompt 60-second video generation. Red boxes mark repetitive frames in LongLive [18] and MemFlow [20]. 
+
+Multi-Prompt Long Video Generation. Figs. K2 and K3 show multi-prompt 60-second results. LongLive [ 18 ] and MemFlow [ 20 ] both exhibit repetition (red boxes) for the same underlying reason: neither can attach to the full-resolution historical context. LongLive uses fixed sink tokens, while MemFlow maintains a fixed memory bank, both losing the fully fine-grained details needed to follow prompt transitions. OmniMem retrieves full-resolution historical context on demand, faithfully following prompt transitions while preserving consistency. 21 Figure K3: Qualitative comparison on multi-prompt 60-second video generation. Red boxes mark repetitive frames in LongLive [18] and MemFlow [20]. 22

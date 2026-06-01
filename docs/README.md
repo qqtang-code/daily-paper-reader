@@ -6,79 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-31
-- 运行时间：2026-05-31 20:30:19 UTC
+- 最新运行日期：2026-06-01
+- 运行时间：2026-06-01 22:41:27 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日精选19篇多模态推荐论文，重点精读7篇，其中《UniNote》（9.0分）提出统一嵌入排序模型，《AOEPT》（8.0分）突破模态缺失提示瓶颈。  
-最值得关注多模态表示与排序、缺失模态鲁棒性两个方向，可优先精读这两篇。  
-下步建议：若你研究多模态大模型，可复现UniNote的排序机制，并尝试将AOEPT的模态缺失处理融入现有视觉语言模型。
-- 详情：[/202605/31/README](/202605/31/README)
+今日多模态与记忆前沿报告：聚焦空间推理、长视频生成及对抗推理新突破。  
+最值得精读《How and What to Imagine》与《OmniMem》，分别解决跨视图想象机制与长视频记忆检索瓶颈。  
+建议关注多模态模型的“想象+记忆”协同能力，后续可留意融合物理智能的创意推理方向。
+- 详情：[/202606/01/README](/202606/01/README)
 
 ### 精读区论文标签
-1. [UniNote: A Unified Embedding Model for Multimodal Representation and Ranking](/202605/31/2605.29287v1-uninote-a-unified-embedding-model-for-multimodal-representation-and-ranking)  
+1. [How and What to Imagine? Visual Thinking in Unified Multimodal Models for Cross-View Spatial Reasoning](/202606/01/2605.27310v1-how-and-what-to-imagine-visual-thinking-in-unified-multimodal-models-for-cross-view-spatial-reasoning)  
    标签：评分：9.0/10、query:multimodal
-   evidence：提出统一嵌入模型用于多模态Item-to-Item检索
-2. [AOEPT: Breaking the Implicit Modality-Reduction Bottleneck in Modality-Missing Prompt Tuning](/202605/31/2605.24816v1-aoept-breaking-the-implicit-modality-reduction-bottleneck-in-modality-missing-prompt-tuning)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：针对多模态变换器缺失模态场景的新型提示调优方法，增强多模态理解的鲁棒性
-3. [H$^{2}$MT: Semantic Hierarchy-Aware Hierarchical Memory Transformer](/202605/31/2605.24930v1-h2mt-semantic-hierarchy-aware-hierarchical-memory-transformer)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：层次记忆Transformer处理长上下文，解决内存压缩和高效注意力
-4. [Your Embedding Model is SMARTer Than You Think](/202605/31/2605.24938v1-your-embedding-model-is-smarter-than-you-think)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：解锁单向量模型的多向量能力用于多模态检索
-5. [Towards Reliable Fetal Ultrasound Interpretation with Multi-Agent Collaboration](/202605/31/2605.25357v1-towards-reliable-fetal-ultrasound-interpretation-with-multi-agent-collaboration)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：面向胎儿超声分析的多智能体系统，应对MLLM幻觉和可靠性问题
-6. [Can MLLMs Reason Beyond Language? VisReason: A Comprehensive Benchmark for Vision-Centric Reasoning](/202605/31/2605.25364v1-can-mllms-reason-beyond-language-visreason-a-comprehensive-benchmark-for-vision-centric-reasoning)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：面向MLLMs的视觉中心推理基准
-7. [AnE: Pushing the Reasoning Frontier of Multimodal LLMs via Anchor Evolution](/202605/31/2605.25571v1-ane-pushing-the-reasoning-frontier-of-multimodal-llms-via-anchor-evolution)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：通过锚点演化提升MLLM推理
+   evidence：跨视图空间推理的多模态推理
+2. [OmniMem: Scalable and Adaptive Memory Retrieval for Long Video Generation](/202606/01/2605.30519v1-omnimem-scalable-and-adaptive-memory-retrieval-for-long-video-generation)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：面向长视频生成的稀疏键值缓存检索
+3. [What Makes LVLMs Hallucinate Less? Unveiling the Architectural Factors Behind Hallucination Robustness](/202606/01/2605.30911v1-what-makes-lvlms-hallucinate-less-unveiling-the-architectural-factors-behind-hallucination-robustness)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：从架构层面分析语言基础、视觉表示和语义对齐对幻觉的影响
+4. [Attend to Evidence: Evidence-Anchored Spatial Attention Supervision for Multimodal RLVR](/202606/01/2605.30912v1-attend-to-evidence-evidence-anchored-spatial-attention-supervision-for-multimodal-rlvr)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：通过锚定证据的空间注意力缓解多模态幻觉
+5. [LVSA: Training-Free Sparse Attention for Long Video Diffusion](/202606/01/2605.31057v1-lvsa-training-free-sparse-attention-for-long-video-diffusion)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：训练无关的块稀疏注意力用于长视频扩散
+6. [GRKV: Global Regression for Training-Free KV Cache Compression in Long-Context LLMs](/202606/01/2605.31105v1-grkv-global-regression-for-training-free-kv-cache-compression-in-long-context-llms)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：提出GRKV，使用全局回归的无训练KV缓存压缩
+7. [YARD: Y-Architecture Register Decoding for Efficient Hallucination Mitigation in Large Vision-Language Models](/202606/01/2605.31429v1-yard-y-architecture-register-decoding-for-efficient-hallucination-mitigation-in-large-vision-language-models)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：通过Y架构寄存器解码减轻LVLM幻觉
 
 ### 速读区论文标签
-1. [MAIL++: Multi-Modal Bi-directional Agent Layer for Vision-Language Models](/202605/31/2605.25479v1-mail-multi-modal-bi-directional-agent-layer-for-vision-language-models)  
+1. [DUEL: Adversarial Self-Play for Multimodal Reasoning](/202606/01/2605.24794v1-duel-adversarial-self-play-for-multimodal-reasoning)  
    标签：评分：8.0/10、query:multimodal
-   evidence：提出跨模态交互代理层用于视觉语言模型
-2. [MAGIC: Multimodal Alignment & Grounding-aware Instruction Coreset for Vision-Language Models](/202605/31/2605.26004v1-magic-multimodal-alignment--grounding-aware-instruction-coreset-for-vision-language-models)  
+   evidence：提出DUEL，无需人类标注的多模态推理对抗自对弈框架
+2. [H$^{2}$MT: Semantic Hierarchy-Aware Hierarchical Memory Transformer](/202606/01/2605.24930v1-h2mt-semantic-hierarchy-aware-hierarchical-memory-transformer)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：语义层次感知的分层记忆用于长上下文注意力
+3. [Advancing Creative Physical Intelligence in Large Multimodal Models](/202606/01/2605.26396v1-advancing-creative-physical-intelligence-in-large-multimodal-models)  
    标签：评分：8.0/10、query:multimodal
-   evidence：提出面向视觉语言模型指令微调的核心集选择方法，通过关注视觉依赖样本减少幻觉
-3. [Squeezing Capacity from Multimodal Large Language Models for Subject-driven Generation](/202605/31/2605.26111v1-squeezing-capacity-from-multimodal-large-language-models-for-subject-driven-generation)  
+   evidence：评估大语言模型在物理智能中创造性工具使用的基准
+4. [OmniRetriever: Any-to-Any Audio-Video-Text Retrieval via Fusion-as-Teacher Distillation](/202606/01/2605.26641v1-omniretriever-any-to-any-audio-video-text-retrieval-via-fusion-as-teacher-distillation)  
    标签：评分：8.0/10、query:multimodal
-   evidence：利用多模态大语言模型作为条件进行主题驱动生成
-4. [Not All Modalities Are Equal: Instruction-Aware Gating for Multimodal Videos](/202605/31/2605.26232v1-not-all-modalities-are-equal-instruction-aware-gating-for-multimodal-videos)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：面向视频理解的指令感知多模态融合
-5. [OmniEgo-R$^2$: A Routed Reasoning Framework for the 1st Cross-Domain EgoCross Challenge at CVPR 2026](/202605/31/2605.24481v2-omniego-r2-a-routed-reasoning-framework-for-the-1st-cross-domain-egocross-challenge-at-cvpr-2026)  
+   evidence：多模态检索中的融合教师蒸馏
+5. [DRScaffold: Boosting Dense-Scene Reasoning in Lightweight Vision Language Models](/202606/01/2605.26038v1-drscaffold-boosting-dense-scene-reasoning-in-lightweight-vision-language-models)  
    标签：评分：7.0/10、query:multimodal
-   evidence：路由推理框架用于跨域第一人称视频推理
-6. [Vision-Language Binding in In-Context Image Generation](/202605/31/2605.24624v1-vision-language-binding-in-in-context-image-generation)  
+   evidence：关注轻量级VLM在密集场景中的推理，提出基准和方法
+6. [Personalizing Embodied Multimodal Large Language Model Agents over Long-term User Interactions](/202606/01/2605.26256v1-personalizing-embodied-multimodal-large-language-model-agents-over-long-term-user-interactions)  
    标签：评分：7.0/10、query:multimodal
-   evidence：跨模态注意力绑定在图像生成中的机制
-7. [VaaWIT: Visual-Aware Adaptation of Large Language Models for Multilingual Web Image Translation](/202605/31/2605.24675v1-vaawit-visual-aware-adaptation-of-large-language-models-for-multilingual-web-image-translation)  
+   evidence：提出多模态记忆增强框架用于个性化具身智能体
+7. [FAST-GOAL: Fast and Efficient Global-local Object Alignment Learning](/202606/01/2605.26615v1-fast-goal-fast-and-efficient-global-local-object-alignment-learning)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多模态理解框架用于多语言网页图像翻译
-8. [Interpretability Transfer from Language to Vision via Sparse Autoencoders](/202605/31/2605.24946v1-interpretability-transfer-from-language-to-vision-via-sparse-autoencoders)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：利用稀疏自编码器将语言可解释性迁移到视觉语言模型中
-9. [The 2nd EReL@MIR Workshop on Efficient Representation Learning for Multimodal Information Retrieval](/202605/31/2605.26941v1-the-2nd-erelmir-workshop-on-efficient-representation-learning-for-multimodal-information-retrieval)  
+   evidence：改进CLIP对齐用于检索任务
+8. [Latent Recurrent Transformer: Architecture Exploration, Training Strategies, and Scaling Behavior](/202606/01/2605.26797v1-latent-recurrent-transformer-architecture-exploration-training-strategies-and-scaling-behavior)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：探索潜在递归Transformer，跨层递归，保留KV缓存接口
+9. [Learning Context-Conditioned Predicate Semantics via Prototype Feedback](/202606/01/2605.29610v1-learning-context-conditioned-predicate-semantics-via-prototype-feedback)  
    标签：评分：6.0/10、query:multimodal
-   evidence：关于高效多模态表示学习用于信息检索的研讨会
-10. [Bounded-Compute Multimodal Regression for Product-Rating Prediction](/202605/31/2605.27737v1-bounded-compute-multimodal-regression-for-product-rating-prediction)  
+   evidence：面向多模态理解的场景图生成，通过上下文条件谓词语义建模
+10. [MMTM: Tri-Modal Topic Modeling for Long-Form Video via Similarity-Gated Fusion](/202606/01/2605.29765v1-mmtm-tri-modal-topic-modeling-for-long-form-video-via-similarity-gated-fusion)  
    标签：评分：6.0/10、query:multimodal
-   evidence：面向产品评分预测的多模态回归
-11. [Personal Visual Memory from Explicit and Implicit Evidence](/202605/31/2605.28806v1-personal-visual-memory-from-explicit-and-implicit-evidence)  
+   evidence：使用语音、音频和视觉进行长视频的三模态主题建模
+11. [No More K-means:Single-Stage Sparse Coding for Efficient Multi-Vector Retrieval](/202606/01/2605.30120v1-no-more-k-meanssingle-stage-sparse-coding-for-efficient-multi-vector-retrieval)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：单阶段稀疏编码实现高效token级检索
+12. [Detect in Any Scene: An Agentic Framework for Object Detection with Experience-Aware Reasoning](/202606/01/2605.31174v1-detect-in-any-scene-an-agentic-framework-for-object-detection-with-experience-aware-reasoning)  
    标签：评分：6.0/10、query:multimodal
-   evidence：面向个人视觉信息的多模态记忆
-12. [Orthogonal Negative Guidance in Attention Feature Space for Text-to-Image Generation](/202605/31/2605.29390v1-orthogonal-negative-guidance-in-attention-feature-space-for-text-to-image-generation)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：在MM-DiT多模态变换器的注意力特征空间中处理文本到图像生成
+   evidence：基于多模态大语言模型的目标检测智能体框架
 
 
 <div class="dpr-home-promo-card">
