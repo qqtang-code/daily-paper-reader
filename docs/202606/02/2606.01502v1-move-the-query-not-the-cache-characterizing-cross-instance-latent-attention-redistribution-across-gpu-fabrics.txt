@@ -1,0 +1,765 @@
+Title: Move the Query, Not the Cache: Characterizing Cross-Instance Latent Attention Redistribution Across GPU Fabrics
+
+URL Source: https://arxiv.org/pdf/2606.01502v1
+
+Published Time: Tue, 02 Jun 2026 01:50:23 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Move the Query, Not the Cache: Characterizing Cross-Instance Latent and Sparse Attention Redistribution Across GPU Fabrics 
+
+## BOLE MA, Erlangen National High Performance Computing Center (NHR@FAU), Germany 
+
+## JAN EITZINGER, Erlangen National High Performance Computing Center (NHR@FAU), Germany 
+
+## HARALD KÖSTLER, Erlangen National High Performance Computing Center (NHR@FAU), Germany 
+
+## GERHARD WELLEIN, Erlangen National High Performance Computing Center (NHR@FAU), Germany 
+
+Frontier LLMs increasingly decide what a query attends to with a sparse-attention indexer that picks a few KV-cache blocks per query: attention’s unit is now a small, reusable chunk. Agentic workloads hammer it: many sub-agents query one large codebase, reusing the same blocks. When that corpus outgrows one GPU it is partitioned across instances, so a query and the blocks it selects often sit on 
+
+different GPUs: answering it means attention across instances. The reflex of prior cross-instance KV systems is to move the cache : pull the selected blocks to the requester. Multi-head Latent Attention (MLA) inverts the arithmetic, compressing each token’s key and value into one narrow vector, so a routed query row is only ≈1 KB, smaller than the chunk it attends; routing the query is then often cheaper than moving the cache. Which primitive wins, over which fabric and request shape, is uncharted, least of all on device-initiated RDMA (IBGDA) that makes per-request cross-node transfers cheap. We characterize cross-instance MLA attention on a real multi-node H100 cluster, distilling two reusable artifacts: a topology-aware cost model (probe / transfer / compute / return / merge) and a closed-form route /fetch /local predicate, whose constants we measure on real IBGDA, where the model tracks batched round-trips to within ∼7%. At decode it routes the query, trading the cost of moving the cache (a ≈3 ms re-adaptation splice for a contiguous chunk, or a scattered gather under selection) for a tens-of-microsecond round trip, and picks the fabric by probe latency, not peak bandwidth. We instantiate the cost model and predicate for MLA, but neither is MLA-specific: they apply wherever compression or sparse selection shrinks attention to small chunks (DeepSeek-V3.2, V4, and GLM-5.1 today). Extending them to a new architecture requires measuring just two coefficients: the routed payload and fetch ’s move-the-cache cost. CCS Concepts: • Networks → Network performance modeling ; Data center networks ; • Computer systems organization →
+
+Distributed architectures ; • Computing methodologies → Machine learning. Additional Key Words and Phrases: Multi-head latent attention, KV cache, cross-instance serving, device-initiated RDMA, IBGDA, performance modeling, GPU interconnect 
+
+ACM Reference Format: 
+
+Bole Ma, Jan Eitzinger, Harald Köstler, and Gerhard Wellein. 2026. Move the Query, Not the Cache: Characterizing Cross-Instance Latent and Sparse Attention Redistribution Across GPU Fabrics. ACM Trans. Arch. Code Optim. 1, 1 (June 2026), 23 pages. https: //doi.org/10.1145/nnnnnnn.nnnnnnn 
+
+Authors’ Contact Information: Bole Ma, Erlangen National High Performance Computing Center (NHR@FAU), Erlangen, Germany, bole.ma@fau.de; Jan Eitzinger, Erlangen National High Performance Computing Center (NHR@FAU), Erlangen, Germany, jan.eitzinger@fau.de; Harald Köstler, Erlangen National High Performance Computing Center (NHR@FAU), Erlangen, Germany, harald.koestler@fau.de; Gerhard Wellein, Erlangen National High Performance Computing Center (NHR@FAU), Erlangen, Germany, gerhard.wellein@fau.de. Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org. 
+
+© 2026 Copyright held by the owner/author(s). Publication rights licensed to ACM. Manuscript submitted to ACM Manuscript submitted to ACM 1
+
+> arXiv:2606.01502v1 [cs.DC] 31 May 2026
+
+2 Ma et al. 
+
+1 Introduction 
+
+Modern LLM serving organizes KV state around prefix reuse : a tenant’s conversation builds a prefix tree, KV is cached per token, and reuse happens within one instance, one tenant, one conversation [ 19 , 42 ]. A different reuse pattern is emerging one level up, at the provider-curated canonical content layer. A provider that pre-prefills a canonical corpus (a body of case law, public companies’ annual and quarterly reports, the trending code repositories, or a frozen documentation snapshot) into Multi-head Latent Attention (MLA) compressed-cache ( 𝑐 KV ) form can serve any tenant whose prompt touches that content from the precomputed cache rather than re-prefilling it. The unit of reuse is no longer one conversation’s prefix but a canonical chunk shared across tenants and requests. Local prefix caching cannot capture this reuse: each request precedes the shared chunk with different content, so a contiguous prefix match breaks before reaching it, and the chunk is reusable only through cross-instance discovery by canonical id, not by extending a local cache. This regime breaks a sizing assumption. A few thousand canonical chunks fit in one accelerator’s HBM, but the hot tail grows (the actively-served slice of these corpora runs to hundreds of gigabytes of 𝑐 KV , the full corpora orders of magnitude more) and the chunks are read by tenants spread across many serving instances. Once the canonical store exceeds a single instance’s HBM it must be partitioned across instances, and answering a request then routinely requires attending over 𝑐 KV that lives on another instance. The same partitioning arises one scope down: a single tenant’s private corpus (an enterprise knowledge base, a large codebase, or an M&A due-diligence data room) can outgrow one instance too, reused across that tenant’s requests rather than across tenants. The agentic workload sharpens this to a single artifact: one large private document (a codebase, a contract set, a long report) pinned once as an immutable prefix and queried by many concurrent sub-agents, each forking it copy-on-write and appending only its own short suffix. The shared 𝑐 KV then dwarfs any one agent’s appended tokens and is attended by all of them at once: the byte asymmetry above, here also a fan-in. Cross-instance attention becomes a steady-state operation, not an exception. How should it be done? The reflex (taken by essentially every cross-instance KV system to date [ 27 ]) is to move the cache : pull the remote chunk’s 𝑐 KV over the network, splice it into the local cache, and attend locally. This reflex carries a habit over from dense attention: bring the cache to wherever the model is already running, which pays off when the moved cache is reused by a long local decode. MLA quietly changes the arithmetic for per-request cross-instance attention. Its defining feature is a narrow latent: each token’s key and value collapse into one compressed vector (the same 𝑑 𝑞𝑘 =576 in DeepSeek-V2-Lite and the frontier V3/R1), so a single query row is only ≈1 KB on the wire while the chunk it attends to holds thousands of equally-wide cache vectors, three orders of magnitude more data. MLA is, moreover, a frontier default rather than a niche choice: DeepSeek (V2 through the sparse-attention V3.2) [ 6, 7], Kimi K2.6 [ 18 , 26 ], and the GLM family (from GLM-4.7-Flash onward, with GLM-5.1 pairing MLA with sparse attention) [ 10 , 38 ] all build on MLA or a close latent-attention variant, so the byte asymmetry we exploit is broadly shared. Because our cost model depends on the model only through the wire payload 𝑞 +𝑝 (a function of 𝑑 𝑞𝑘 
+
+and 𝑑 𝑣 ), it instantiates to any of them from published dimensions, with DeepSeek-V2-Lite as our measured instance. When the query is the small object, the textbook move inverts: it is cheaper to route the query to the instance holding the 𝑐 KV , compute partial attention there, and merge the small partial back. The routing primitive itself is not new; it was introduced for sharded KV and since extended to MLA and to single-job context parallelism [ 2 , 23 , 32 ] (§9), but its 
+
+economic case under MLA, across serving instances, on commodity datacenter fabric has not been established. That case is not obvious, for two reasons. First, routing a query batch is only cheap if a per-request, cross-node transfer is itself cheap, which points to device-initiated RDMA (NVSHMEM IBGDA), where the GPU issues the transfer 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 3directly with no host round trip. Yet recent transport work finds NVSHMEM IBGDA can be slower than a host-mediated path for the tiny messages of MoE all-to-all — behind a CPU proxy in NCCL GIN’s measurements, with portable engines falling back to a host proxy where the NIC lacks IBGDA [ 12 , 22 ] (quantified in §2.3) — but that work targets MoE dispatch, not attention. Second, picking wrong is expensive in both directions: move the cache and you can pay more than re-prefilling from scratch (§2); route the query at the wrong batch size and a fixed per-request overhead erases the wire-byte win (§5). Whether device-initiated RDMA pays off for cross-instance attention, at what request shape, over which fabric, and with what cost structure, is uncharted. This paper characterizes cross-instance MLA attention redistribution on real hardware (a multi-node H100 cluster over NDR-200 G IBGDA, spanning same-leaf and spine-traversing node pairs) and turns the characterization into a decision rule a serving system can apply per request. We scope deliberately to the transport question (which primitive, which fabric, at which shape); the serving system that consumes the rule is a separate concern. Although we measure MLA, the model’s structure and predicate are not MLA-specific: compression (MLA’s head-axis latent, or DeepSeek-V4’s token-axis CSA compressor) and selection (sparse-attention indexers) are independent levers that shrink the routable unit, and the predicate is driven by the resulting byte budget, not the attention variant (§5.4); under selection, routing the query is the distributed form of the indexer’s own choice. Our central result is deliberately a crossover rather than a universal winner: routing the query moves ≥76% fewer wire bytes at decode-typical batches ( 𝑀 𝑞 ≤256 ) and avoids the move-the-cache splice outright, yet below a measurable query-batch size a splice-free bytes-back fetch still wins end-to-end — not on wire bytes, but because a fixed per-request host overhead in our prototype dominates there, a gap three named transport reductions close (§5.3). Reporting precisely where each primitive wins is the contribution. 
+
+Contributions. 
+
+• A topology-aware redistribution cost model (probe / transfer / compute / return / merge) for cross-instance attention, fit to real H100 NDR-200 G IBGDA on the MLA payload at ≈7% MAPE for batched dispatch ( 𝑀 𝑞 ≥ 512 )(§4). 
+
+• The device-initiated-RDMA (IBGDA) regime for cross-instance attention (as opposed to the MoE-dispatch traffic prior IBGDA work covers) has not, to our knowledge, been characterised; we do so on H100 SXM5 + NDR-200 G: the IBGDA-vs-proxy crossover (proxy +40% per-fetch p50 at attention’s ∼2 KB payload), the holder-side 𝐾 -stream staging elbow ( 𝐾 =8), and the route-holder’s matching compute -capacity elbow ( 𝑁 ≈8 requesters, measured with DeepSeek’s production MLA kernel) (§6). 
+
+• A closed-form, topology-aware route /fetch /local primitive-selection predicate with measured coefficients, and the finding that the selection flips with request shape and host-overhead regime: although routing wins the wire-byte comparison outright, at our prototype’s host overhead a splice-free bytes-back transfer still wins below an 𝑀 𝑞 threshold until three named transport reductions close the gap (§5). 
+
+• The byte-asymmetry framing (that MLA’s narrow latent makes query-routing fine-grained-viable , not merely bandwidth-favorable), which we argue is the property that motivates device-initiated RDMA for attention (§2). 
+
+• The selection regime as distributed attention : where a sparse-attention indexer shrinks each query to a few scattered KV blocks (DeepSeek-V3.2/V4, GLM-5.1), route is that selection made distributed (attended in place, no cache re-rotation), verified exact to bf16 noise on the production sparse kernel, its holder cost set by the selection budget not the store’s size (§3.3, §6.3, §5.4). 
+
+• A cross-fabric measurement: the identical routed dispatch on five fabrics (PCIe Gen4/Gen5, NVLink 3.0 and 4.0, cross-node IBGDA) costs ≈31–48 𝜇 s at the decode point. The five single-bottleneck fabrics cluster within 1.5×
+
+> Manuscript submitted to ACM
+
+4 Ma et al. (Figure 6) because route-RT tracks single-block dispatch , not link peak: a 900 GB/s NVLink 4.0 exercises only 
+
+≈21 GB/s of it, no faster than a PCIe link, so at decode it barely leads the cross-node IBGDA path. In the multi-holder gather of a scattered selection, each cross-socket-PCIe holder costs fetch ≈36% more (a UPI wire penalty the non-blocking fabrics avoid) while route ships one query regardless, so routing’s edge widens where the fabric is weakest (Figure 4(a)). 
+
+2 Background and Motivation 2.1 Cross-instance attention: route, fetch, or recompute 
+
+When a decoding query must attend to a context chunk residing on another instance—because prefill and decode are disaggregated, because a hot prefix is shared across sessions, or because the cache is pooled across the cluster—the system faces a per-chunk transport choice. It can fetch the chunk to the querying instance and attend there; route 
+
+the query to the chunk’s host, compute partial attention there, and return a small partial; or local , recomputing the chunk from a cheaper form. The three differ only in what crosses the fabric: the whole chunk, a query row plus its partial, or nothing. Prior cross-instance work resolves this in setting-specific ways, none of which carries over to compressed or selective attention at decode. Prefill/decode disaggregation moves the cache, but as a one-time handoff : the decode worker takes ownership of the sequence, so the transfer amortises over the whole generation and overlaps with compute on fast links—cheap by amortisation, not by per-step byte economy [ 27 , 43 ]. Where contexts are long and links slow, Infinite-LLM’s DistAttention instead routes the query for dense, contiguous attention, shipping a query row plus online-softmax statistics rather than the cache, and reporting far lower per-step communication than transferring the cache each step on standard, non-MLA models [ 23 ]. A third, very recent line targets selective attention but stays within a node :because top-𝑘 selection leaves the KV working set fragmented and hard to prefetch [ 20 ], systems such as Fluxion and FlexiCache coordinate the scattered gather between GPU and CPU-resident cache over PCIe [ 28 , 33 ], the latter leaving the distributed case to future work. Our work turns on a structural point: compression and selection both shrink attention to small chunks , which asymmetrically favours route . The routed payload is small and fixed —a query row plus a width-𝑑 𝑣 partial—independent of chunk size, selection budget 𝑘 , and scatter pattern. The fetch payload is the opposite: it scales with the chunk and, under selection, becomes a gather of 𝑘 non-contiguous entries that must cross the fabric with poor locality and per-entry metadata. route keeps that irregular gather local to the chunk’s host and sends only the regular query/partial across the fabric, turning a bandwidth- and locality-bound transfer into a latency-bound round trip—so the choice tracks 
+
+probe latency, not peak bandwidth , per chunk rather than by fixed policy. MLA is the cleanest instantiation: a routed query row and a cached 𝑐 KV are the same 𝑑 𝑞𝑘 -wide object, making the routed payload minimal and precision-invariant, and 𝑐 KV position-invariance is what lets a chunk be reused across sessions at all. But the choice is not MLA-specific—it recurs wherever an architecture compresses or selects attention into small chunks (MLA, DSA, and the CSA/HCA hybrids of DeepSeek-V3.2/V4 and GLM-5.1 [ 5, 7, 38 ]), which is why we cast the contribution as an architecture-general cost model and route /fetch /local predicate (§4). 
+
+2.2 Three redistribution primitives and their cost shapes 
+
+§2.1 named the three primitives by what crosses the fabric; they differ just as much in the shape of that cost, which is what makes the choice hard. fetch (the pull reflex) does more than transfer 𝐴 ’s 𝑐 KV : it re-rotates the cached positional 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 510 3 10 4 10 5 10 6 10 7 10 8             
+
+> bytes on the wire (log scale)
+> routed query+partial
+> q+p= 2184 B
+> cKV chunk, 1 layer
+> (ct= 2048 )
+> cKV chunk, all 27 layers
+> (fetch payload)
+> ≈2.1 KB
+> ≈2.3 MB
+> ≈61 MB
+> ×1,080
+> a query row is ∼1000 ×smaller than its chunk
+> (a) wire payload: a routed query row vs. its 𝑐 KV chunk
+
+26 27 28 29 210 211 212 
+
+chunk tokens ct
+
+10 1
+
+10 2
+
+10 3
+
+10 4
+
+10 5      
+
+> redistribution cost ( μs)
+> ≈3 ms splice +pull
+> fetch =local
+> ≈75-220 tok
+
+cost shape vs chunk size     
+
+> local (re-prefill)
+> fetch (splice +pull)
+> route ( Mq= 256 )(b) cost shape of the three primitives vs. chunk size
+
+Fig. 1. (a) Payload asymmetry, shown for MLA: because a routed query row and a cached token are the same narrow object, a routed query +partial ( 𝑞 +𝑝 =2184 B) is ∼1000 × smaller than the one-layer 𝑐 KV chunk a fetch would pull — the cleanest instance of the fixed routed payload versus chunk-scaling fetch that favours route . (b) The load-bearing argument is the cost shape , not the byte count: cost of the three primitives versus chunk size (DeepSeek-V2-Lite, H100, 𝐵𝑊 =70 GB/s, 𝑀 𝑞 =256 ). fetch (red, measured 
+
+splice + all-layer pull) carries a flat ≈3 ms position-adaptation splice plus a gentler chunk-scaling pull; local (purple, re-prefill, band over 𝑐 ∈ [ 0.5, 1.5] 𝜇 s/token ·layer) scales with the chunk and overtakes fetch only above ≈75–220 tokens; route (green) pays neither and stays about two orders of magnitude below. The cost-shape asymmetry, not wire bytes alone, is the structural case for routing. 
+
+encoding to 𝐵 ’s offset (when re-homing the chunk to a new contiguous offset) and splices it into 𝐵 ’s paged cache before attending. route returns a partial that 𝐵 merges via online softmax [ 4, 25 ], the cross-instance form of the routing primitive of DistAttention and Helix [ 2, 23 ]; local is a fresh re-prefill. Beyond the wire transfer (pulling a chunk’s 𝑐 KV 
+
+is ≈2.5 ms, all 𝐿 =27 layers bulk-coalesced into one transfer over the cross-node NDR-200 link at ≈25 GB/s), fetch pays a splice on top: re-rotating the cached 𝑐 KV to the requester’s position and scattering it into the local paged pool. We measure this splice at ≈2.8–3.1 ms per chunk on DeepSeek-V2-Lite (H100), and find it essentially independent of chunk size : it grows only ∼10% from 55 to 4096 tokens because it is dominated ( ≈80%) by the per-layer 𝛿 -rotation kernel, not by token count. local (re-prefill) has the opposite shape: its cost scales with the chunk, into the tens of milliseconds for a 2 k-token chunk. So fetch carries a flat ≈3 ms position-adaptation tax and local a size-scaling recompute , while 
+
+route pays neither : the holder’s 𝑐 KV is already resident at its canonical position, so there is no splice and no re-prefill. That cost-shape asymmetry, not the wire bytes alone, is the structural case for routing (Figure 1). The adaptation tax is not an MLA quirk: position-independent caching on standard GQA/MHA models pays the analogous cost as a small 
+
+carved -prefix recompute per chunk [ 14 , 30 , 34 ]; on MLA it takes the form of a purely positional 𝑐 KV 𝛿 -rotation. Both this 𝛿 -rotation and EPIC’s sink-repair carve are costs of contiguous reuse: under sparse selection (NSA, DSA) [ 7, 36 ]the chosen entries are attended at their canonical positions, so neither applies and fetch ’s only residual cost is the scattered gather (§3.3, §5.4). 
+
+2.3 Device-initiated RDMA: the uncharted regime 
+
+Systems analyses of post-MLA inference now point to the interconnect , not attention compute, as the emerging bottleneck: MLA’s arithmetic intensity runs about two orders of magnitude above MHA, pushing on-device attention into a compute-bound regime and relocating pressure onto the fabric and MoE expert balancing [ 37 ]. That analysis targets MoE all-to-all dispatch; cross-instance attention redistribution is a second fabric-bound workload it leaves open, and route bets on exactly this fabric. route issues many small, per-request transfers, so its viability hinges 
+
+> Manuscript submitted to ACM
+
+6 Ma et al. on how cheaply a cross-node transfer can be launched. Two substrates exist. A CPU-proxy path has a host thread fill the NIC’s work-queue entries on the GPU’s behalf; device-initiated RDMA (NVSHMEM IBGDA) lets a GPU thread post the transfer itself, taking the GPU →host →NIC handoff off the critical path. Intuitively IBGDA should win for latency-sensitive per-request traffic, and for attention it essentially must, since a host round trip per query batch would dominate the few-microsecond wire time. The literature complicates this. For the tiny messages of MoE all-to-all dispatch, NVSHMEM IBGDA is reported 
+
+slower than host-mediated paths: NCCL GIN measures a 24 .3 𝜇 s IBGDA round trip against 18 .0 𝜇 s for a CPU proxy and 
+
+16 .7 𝜇 s for its own device-initiated GDAKI backend [ 12 ], and portable engines fall back to a host proxy where IBGDA is unavailable on the NIC [ 22 ]. Two caveats reopen the question for attention. First, those results are for MoE dispatch, where messages are tens to hundreds of bytes; an MLA query batch is several kilobytes, where the fixed per-message issue cost amortizes differently. Second, the slow path is NVSHMEM IBGDA specifically : GDAKI, also device-initiated, is competitive, so the outcome is empirical, not settled by first principles. Whether IBGDA’s per-request model pays off for attention-shaped payloads on commodity NDR-200 G fabric, and how it composes with holder-side staging, has not been measured. §6 closes this gap and §4 models the cost so the route /fetch /local decision can be made in closed form. 
+
+3 Experimental Setup 3.1 Platform and microbenchmark harness 
+
+Our primary platform is a production cluster of 4 ×H100 SXM5 nodes, with direct all-to-all NVLink 4.0 intra-node (six bonded links per GPU pair, NV6 ; the 4-GPU HGX board carries no NVSwitch) and InfiniBand (NDR-200) cross-node, running NVSHMEM 26.3 with IBGDA enabled. A cross-instance run is a 2-node × 4-PE NVSHMEM job (PE 0 and PE 4 the cross-node pair); because the cluster is a multi-leaf fat-tree we place this pair both within a leaf switch and 
+
+across the spine and measure the route probe and round trip identical either way (§8), so the slice stands in for any cross-NVL link in the fabric rather than a two-adjacent-node special case. The device-initiated primitive is block-scope 
+
+nvshmemx_putmem_signal_nbi_block , a one-way write with a piggy-backed signal; every latency is per-iteration wall clock from CUDA events over 200 timed iterations after 50 warm-up. The cost model, splice, congestion, topology, and staging results are all on H100; for the fabric-robustness study (Figure 6) we run the identical primitive on three further GPU types in a separate single-node testbed (A40, PCIe Gen4 cross-socket; A100, NVLink/NVSwitch; RTX Pro 6000, PCIe Gen5) as intra-node P2P bandwidth anchors, the H100 cluster supplying the cross-node IBGDA point. (Those partitions are single-node, so cross-node IBGDA stays the H100 measurement.) 
+
+Configuration caveat. By site policy this cluster runs the legacy (closed) NVIDIA kernel driver: the open GPU kernel module ( kmod-nvidia-open-dkms ) destabilised the nodes, and the GPUDirect Storage kernel module ( nvidia-fs-dkms )depends on it, so both were reverted. Consequently (i) GPUDirect Storage is unavailable system-wide, and (ii) IBGDA runs over the legacy GPUDirect-RDMA path. Our absolute latencies and bandwidth are therefore a configuration-specific, likely-conservative operating point, not the fabric’s ceiling. This shapes what we claim: the results our conclusions rest on are the cost model (§4) and the relative route /fetch /local decision (§5), both invariant to the absolute fabric constants; absolute numbers are reported as a calibrated instance and contextualised against published same-class measurements. A faster driver would lower 𝑇 probe and raise 𝐵𝑊 — shrinking route ’s cost and strengthening , not weakening, the case for routing. 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 7
+
+3.2 Wire format and what we measure 
+
+Under Q-routing the requester ships, per attended chunk, a batch of 𝑀 𝑞 absorbed-MLA query rows — each 𝑑 𝑞𝑘 -wide (𝑑 𝑞𝑘 =576 ) in bf16 (2 B), so 𝑞 =576 ×2=1152 B/row — and receives a partial : the holder’s attention over its resident subset as one 𝑑 𝑣 -wide ( 𝑑 𝑣 =512 ) bf16 output row 𝑜 , plus the running max-logit 𝑚 and softmax denominator ℓ (fp32, 4 B) that let the requester merge it exactly, 𝑝 =512 ×2+2×4=1032 B/row. The triple (𝑜, 𝑚, ℓ ) is the sufficient statistic FlashAttention carries between tiles [ 4, 25 ], here carried between instances. We time two quantities: sig_rt , a one-byte put-plus-signal round trip (the protocol probe ); and full_rt , the full 𝑀 𝑞 ·𝑞 send + 𝑀 𝑞 ·𝑝 return with both signals. The 𝛿 -rotation that aligns each query to the holder’s offset is applied requester-side before enqueue, so the holder is position-oblivious (§2.2). The query-batch sweep covers 𝑀 𝑞 ∈ { 1, 4, . . . , 4096 }; a payload sweep additionally varies (𝑞, 𝑝 ) over a 10 × span (900 –8736 B/row) to probe the payload-dependence of bandwidth (§4). 
+
+3.3 Correctness of the routed primitive 
+
+Before characterising cost we confirm the routed primitive is numerically faithful, so the characterisation describes a correct mechanism rather than a degenerate one. On real cross-node IBGDA, a requester query routed to a holder, attended against the holder’s local 𝑐 KV , returned, and merged via online softmax against the requester’s own partial reproduces single-instance MLA attention over the concatenated cache to max-absolute 0.0014 , inside the 0.05 bf16-wire noise floor by a 36 × margin. The merge is bit-identical across the two implementations it must agree on (serving stack and transport), verified in unit tests for commutativity and the zero-weight identity. The same faithfulness holds in the distributed-selection regime of §5.4, where it matters most. Routing a query to 𝑀 
+
+holders that each own a disjoint, scattered subset of a selected set (every entry left at its canonical decoupled-RoPE position) and merging the 𝑀 partials reproduces single-instance MLA attention over the whole set to fp32 round-off (≤ 4 × 10 −7 max-absolute, invariant to 𝑀 up to 8 and to how the set is partitioned across holders), and to the same bf16 floor on the wire (a scattered two-instance route–merge lands at max-absolute 0.0012 ). No position adaptation is applied, and none is admissible: re-homing the scattered selection to contiguous offsets (the 𝛿 -rotation a contiguous-reuse 
+
+fetch applies) instead diverges from the reference by 25 –56% , confirming that splice is a property of contiguous reuse, not of selection. These checks use our reference attention; replaying the same 𝑀 -way merge on production kernels — DeepSeek’s FlashMLA dense-decode kernel [ 17 ], FlashInfer’s paged MLA [ 35 ], and, most directly, FlashMLA’s bf16 
+
+sparse kernel [ 17 ] (the selection path DSA [ 7] deploys, where each holder runs it over a disjoint subset of the query’s top-𝑘 selected indices) — reproduces each kernel’s single full-set call to max-absolute 0.002 across 𝑀 ≤8 and selected sets of 512 –2048 (all return the log-sum-exp the merge consumes). The exactness is thus a property of the online-softmax algebra, not of our reference, and it holds on the very kernel a sparse-attention server runs. 
+
+4 A Topology-Aware Redistribution Cost Model 4.1 Cost decomposition 
+
+We model any cross-instance redistribution as additive terms, 
+
+𝑇 redist (𝐹, 𝑠, 𝐵 ) = 𝑇 probe (𝐹 ) + 𝑇 transfer (𝐹, 𝑠, 𝐵 ) + 𝑇 compute + 𝑇 return (𝐹, 𝑠, 𝐵 ′) + 𝑇 merge ,
+
+where 𝐹 is the fabric (intra-NVL NVLink, cross-NVL IBGDA, intra-node PCIe), 𝑠 the device-initiated scope (thread / warp / block), 𝐵 the transfer-unit size and 𝐵 ′ the return size, 𝑇 compute the holder’s partial-attention over its resident subset, and 𝑇 merge the requester’s online-softmax recombination. The decomposition, not its absolute calibration, is the 
+
+> Manuscript submitted to ACM
+
+8 Ma et al.                              
+
+> Table 1. IBGDA Q-dispatch across a 10 ×payload span (real MLA payload bold; other rows vary the payload size on the same transport — synthetic marks the sub-MLA stand-in). The probe ( sig_rt , the payload-free signal round trip) and effective bandwidth (effBW =𝑀 𝑞 (𝑞 +𝑝 )/( full_rt −probe ), bytes moved per unit transfer time) are payload-independent, the empirical basis for the linear-in-bytes cost term.
+> 𝑞 +𝑝 (B/row) sig_rt (𝜇 s) full_rt @1024 ( 𝜇 s) eff. 𝐵𝑊 (GB/s) 900 (synthetic) 16.2 62.8 24.6
+> 2184 (real) 15.9 115.8 24.7
+> 4368 ( 2×)16.6 207.7 24.7 8736 ( 4×)16.1 389.1 24.7
+
+contribution: it localises where a redistribution’s cost lives, and hence which primitive and fabric win in each regime, in a form robust to the absolute constants of any one configuration (§3). 
+
+4.2 Per-primitive instantiation 
+
+For Q-routing the instantiation is 
+
+𝑇 route (𝐹, 𝑀 𝑞 ) = 𝑇 probe (𝐹 ) + 𝑀 𝑞 (𝑞 + 𝑝 )/ 𝐵𝑊 (𝐹 ) + 𝑇 compute + 𝑇 merge ,
+
+with 𝑞, 𝑝 the query and partial row sizes (§3) and 𝐵𝑊 (𝐹 ) the fabric’s effective bidirectional throughput; the first two terms are the transport round trip, 𝑇 compute the holder’s partial attention ( 15 –37 𝜇 s at decode, §6.3) and 𝑇 merge the online-softmax merge ( ≤ 25 𝜇 s). Our fit below calibrates the transport terms, which carry the 𝑀 𝑞 - and fabric-scaling and hence the route/fetch decision; 𝑇 compute and 𝑇 merge are bounded, payload-light constants measured separately (§6), so the 𝑇 route we report as a ≈116 𝜇 s round trip (at 𝑀 𝑞 =1024 ) is the transport term: including them adds a bounded tens of microseconds (at decode, comparable to the transport round trip itself) yet keeps route more than an order of magnitude below fetch ’s ≈3 ms splice. fetch instead pays 𝑇 fetch = 𝑇 pull + 𝑇 splice , where 𝑇 pull = 𝑐 𝑡 𝑏 KV /𝐵𝑊 (𝐹 ) moves the whole 𝑐 𝑡 -token chunk ( 𝑏 KV its per-token 𝑐 KV size) and 𝑇 splice is the position-adaptation cost (§2.2); under sparse selection 𝑇 splice vanishes and 𝑇 pull becomes a scattered, multi-holder gather (§5.4). local is a fresh prefill 𝑇 prefill (𝑐 𝑡 ). The serving layer applies the predicate of §5, arg min over the three, per request. 
+
+4.3 Fit and validation on real IBGDA 
+
+We calibrate the model on real H100 IBGDA. The probe 𝑇 probe is the measured sig_rt : ≈ 16 𝜇 s, and it is payload-independent (16 .2/15 .9/16 .6/16 .1 𝜇 s across the four payloads of Table 1), as a one-way put-plus-signal must be. The bandwidth 𝐵𝑊 is read from the large-𝑀 𝑞 slope: ≈ 25 GB/s effective (the NDR-200 link rate), and it too is payload-independent across a 10 × span of (𝑞 +𝑝 ). This payload-independence is the empirical content of the linear-in-bytes term: 
+
+𝑇 route − 𝑇 probe grows with 𝑀 𝑞 (𝑞 +𝑝 ) at a constant slope, so the model measures its own structure rather than assuming it. At the real MLA payload ( 𝑞 =1152 , 𝑝 =1032 ), 𝑇 route at 𝑀 𝑞 =1024 is ≈ 116 𝜇 s measured; the model  16 + 𝑀 𝑞 (𝑞 +𝑝 )/ 𝐵𝑊 ,with its measured constants and no refit, reproduces the amortised regime ( 𝑀 𝑞 ≥ 512 ) to ≈ 7% MAPE (≈3% for 𝑀 𝑞 ≥ 2048 ), the residual a fixed ∼9 𝜇 s kernel turnaround beyond the probe that the linear term omits, which grows the small-𝑀 𝑞 
+
+error (Figure 2). Against the position-adaptation cost of the equivalent fetch (the ≈3 ms splice of §2.2), routing is ≈ 26 ×
+
+cheaper per requester at 𝑀 𝑞 =1024 , rising to ∼ 125 × at 𝑀 𝑞 =1, the single-token decode step that dominates generation. The practical import of the few-percent fit is that the selection predicate of §5 can be evaluated , not profiled: a scheduler 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 9Node 0 Node 1 
+
+H100 
+
+#0 
+
+H100 
+
+#1 
+
+H100 
+
+#2 
+
+H100 
+
+#3 
+
+H100 
+
+#4 
+
+H100 
+
+#5 
+
+H100 
+
+#6 
+
+H100 
+
+#7         
+
+> direct all-to-all NVLink 4.0 ·probe ≈1.2 μs direct all-to-all NVLink 4.0 ·probe ≈1.2 μs
+> IB switch
+> NDR-200
+> InfiniBand NDR-200 · IBGDA · probe ≈16 μs
+> 25 GB/s/NIC
+> holds
+> corpus
+> requester:
+> query q
+> route q (≈1 KB)
+> ≈31-48 μs at decode
+> NVLink InfiniBand NDR-200 route q path CX-7 NIC
+
+(a) 2-node × 4-H100 testbed: direct-NVLink islands, cross-node IBGDA, the routed query path 22 25 28 211 
+
+query rows Mq
+
+10 1
+
+10 2     
+
+> route round-trip ( μs)
+> MAPE ≈7.0%
+> (Mq≥512 )
+> launch-bound
+> (small Mq)
+
+cost-model fit (real MLA payload)   
+
+> model 16+ Mq(q+p)/BW
+> measured IBGDA
+
+(b) measured route round trip vs. the cost model 
+
+Fig. 2. (a) The 2-node × 4-H100 SXM5 testbed: each node is a direct all-to-all NVLink island ( NV6 per GPU pair, no NVSwitch) with one ConnectX-7 NIC per GPU; cross-node traffic is device-initiated IBGDA over an InfiniBand NDR-200 switch, and the dashed path traces a routed query from a requester GPU to the corpus holder. The pair is drawn here same-leaf; we measure it both same-leaf and spine-traversing (cross-leaf) and find the route cost identical (§8), so this slice characterises any cross-NVL link in the fabric. 
+
+(b) Cost-model validation: measured route round trip on real H100 IBGDA versus 𝑇 route =𝑇 probe +𝑀 𝑞 (𝑞 +𝑝 )/ 𝐵𝑊 with its measured 
+
+constants ( 𝑇 probe ≈16 𝜇 s, 𝐵𝑊 ≈25 GB/s; real MLA payload 𝑞 +𝑝 =2184 B), tracking the amortised regime ( 𝑀 𝑞 ≥ 512 , shaded) to ≈7% MAPE; the small-𝑀 𝑞 gap is a fixed ∼9 𝜇 s kernel turnaround, not a model defect. 
+
+plugs a fabric’s two measured constants into the closed form and obtains a per-request route /fetch /local cost arithmetically, with no online calibration. 
+
+On the absolute level. These constants are specific to the legacy-driver configuration of §3; published IBGDA characterisations on other H100 +InfiniBand systems report small-message round trips ranging from single to tens of microseconds depending on NIC and driver [ 12 ], so our figures sit within the expected band while plausibly leaving headroom under the open driver. The route -vs-fetch decision, however, turns on the ratio 𝑇 route /𝑇 fetch , not on either absolute, and that ratio stays overwhelmingly in routing’s favour on every fabric we measure: a decode-sized route costs ≈31–48 𝜇 s across the five (§8, Fig. 6(b)): a fabric-specific probe of 1–16 𝜇 s plus a dispatch-bound transfer, still more than an order of magnitude below fetch ’s ≈3 ms splice on each. Our numbers are thus a conservative anchor for the predicate of §5. 
+
+One model, many fabrics. The affine form is not specific to IBGDA: re-fitting only its two constants reproduces the four other sweeps to comparable accuracy (Table 2): ≈2% MAPE on RTX Pro 6000 PCIe Gen5, ≈3% on H100 NVLink 4.0, and ≈4% on A100 NVLink 3.0, bracketing IBGDA’s 7% . The model is thus fabric-general in structure , its two per-fabric constants (Table 2) splitting along orthogonal axes: 𝑇 probe tracks fabric latency , while 𝐵𝑊 is the single-block dispatch 
+
+rate, far below the link peak on the fast ones because one put +signal block cannot saturate a wide wire. The one departure is the A40 PCIe Gen4 large-𝑀 𝑞 tail: its same-socket fit goes super-linear past 𝑀 𝑞 =2048 , and an isolated cross-socket flow is slow but non-reproducible, an idle-path warm-up artifact that vanishes under load (§8), not a steady bandwidth limit. 
+
+Manuscript submitted to ACM 10 Ma et al.                                                      
+
+> Table 2. The affine cost model 𝑇 route =𝑇 probe +𝑀 𝑞 (𝑞 +𝑝 )/ 𝐵𝑊 re-fits all five measured fabrics with its own two constants, to ≈2–7% MAPE in the amortised regime. The two constants split cleanly: 𝑇 probe is fabric-specific (NVLink ∼1𝜇 s, PCIe a few, cross-node IBGDA
+> 16 𝜇 s), while 𝐵𝑊 is the single-block dispatch rate ( ∼18–25 GB/s on every fabric we tested), far below the link peak on the fast ones. The A40 PCIe Gen4 path is the edge case: same-socket it is wire-bound and fits to ≈3% through 𝑀 𝑞 =2048 before a super-linear tail at 4096
+> (a second queueing bottleneck) lifts the amortised MAPE to 13% . (An isolated cross-socket A40 flow is slower and non-reproducible, but equals the same-socket cost under any load: an idle-path warm-up artifact, not a steady limit (§8).)
+> fabric 𝑇 probe 𝐵𝑊 MAPE MAPE (𝜇 s) (GB/s) (𝑀 𝑞 ≥512 )(full) H100 IBGDA (cross-node) 16 25 7% 16% H100 NVLink 4.0 (intra-node, NV6 direct) 1.2 21 3% 18% A100 NVLink 3.0 (NVSwitch) 1.6 18 4% 22% RTX Pro 6000 PCIe Gen5 4.8 22 2% 7% A40 PCIe Gen4 (same-socket) 8.7 19 13% 16%
+
+5 Primitive Selection: route vs fetch vs local 
+
+5.1 The closed-form predicate 
+
+The serving layer chooses per (chunk, request) by evaluating the three costs of §4 and taking the minimum. With the constants we measure — 𝑇 probe ≈16 𝜇 s and 𝐵𝑊 ≈25 GB/s for route ; a flat ≈3 ms splice plus a ≈2.5 ms all-layer pull for 
+
+fetch (§2.2), or a scattered gather under selection (§5.4); and a re-prefill of ≈ 𝑐 𝑡 𝐿 𝑐 for local (𝐿 =27 layers, 𝑐 ≈ 0.5–1.5 𝜇 sper token ·layer) — the predicate takes a simple shape. fetch overtakes local only above a small chunk ( 𝑐 𝑡 ≳ 75 –220 
+
+tokens, where the flat 3 ms splice undercuts re-prefill), but route undercuts both across the whole range: at a 2 k-token chunk its ≈116 𝜇 s wire cost ( 𝑀 𝑞 =1024 ) is more than an order of magnitude below fetch ’s ≈3 ms and over two orders below local ’s tens of milliseconds. route cedes only in the corner where it would ship more than the chunk itself: a query batch larger than the chunk it attends ( 𝑀 𝑞 ≳ 𝑐 𝑡 , §2.1), where local or fetch wins. The predicate is closed-form and evaluated in microseconds; the rest of the paper characterises its inputs. 
+
+5.2 The 𝑀 𝑞 × chunk-tokens crossover map 
+
+The byte-level view sharpens where route and fetch cross. route moves 𝑀 𝑞 (𝑞 +𝑝 ) bytes while pulling the chunk moves 𝑐 𝑡 𝑏 KV (§2.1), so on wire bytes the winner flips at 𝑀 𝑞 = 𝑐 𝑡 𝑏 KV /( 𝑞 +𝑝 ) (Figure 3). At 𝑐 𝑡 =2048 , routing moves 
+
+≥76% fewer wire bytes for 𝑀 𝑞 ≤ 256 (76% at 𝑀 𝑞 =256 , rising toward ∼100% for smaller batches), and breaks even near 
+
+𝑀 𝑞 ≈ 10 3. A serving layer attending a hot 2 k-token chunk with the 𝑀 𝑞 ≤ 256 of a decode step (every token a requester generates against that cached chunk is one such step) therefore sits deep in route ’s region on wire bytes — and, once §5’s splice and re-prefill are added, by a wider margin still on total cost. 
+
+5.3 When host overhead, not wire bytes, decides 
+
+Wire bytes are not end-to-end latency. Measured through our (Python) client on real IBGDA, route ’s time-to-first-token scales as ≈ 3.5 ms + 12 .5 𝜇 s · 𝑀 𝑞 : a fixed host overhead dwarfs the microsecond-scale wire cost. Against the transport-level 
+
+fetch primitive (a plain bytes-back transfer with a single response), route ’s three-put response (𝑜, 𝑚, ℓ ) plus holder-side attention (a bounded 15 –37 𝜇 s at decode scale, §6.3) add enough fixed overhead that fetch wins end-to-end below 𝑀 𝑞 of a few hundred, despite route ’s wire-byte advantage. The wire-byte asymmetry of §5 is necessary but not sufficient at the current host overhead; three implementation reductions — a collapsed-response put, holder-compute amortisation, and cross-request dispatcher batching — are what convert it into an end-to-end win, and are engineering, not a change to 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 11 Holder 
+
+> H100 HBM
+
+KV cache 
+
+> one immutable
+> codebase
+> computes
+> partial here
+
+Requester 
+
+> H100 HBM
+
+q 
+
+> query row ~1 KB
+> ("where is auth
+> checked?")
+> 'partial' =
+> holder's attention
+> result for q,
+> merged here
+
+ROUTE (chosen)   
+
+> query q ~1 KB
+> partial ~1 KB
+> tens of μs
+> move KV cache
+> (tens of MB + 3 ms splice)
+
+FETCH (avoided) 
+
+> (a) route the query, not the cache
+
+27 29 211 213 
+
+chunk tokens ct
+
+20
+
+23
+
+26
+
+29
+
+212 
+
+> query rows  Mq
+> 76% fewer
+
+ROUTE vs FETCH: wire-byte savings 
+
+> break-even
+
+−100 
+
+−50 
+
+0
+
+50 
+
+100    
+
+> route wire-byte saving (%) (b) wire-byte winner over (𝑀 𝑞 , 𝑐 𝑡 )
+
+Fig. 3. (a) The choice, with both operands resident in H100 HBM: a holder owns a large 𝑐 KV corpus, a requester has a ≈1 KB query row; route moves the query and merges a small partial back (chosen), while fetch would move the whole multi-megabyte cache (avoided). (b) route vs fetch on wire bytes over the (𝑀 𝑞 , 𝑐 𝑡 ) grid (DeepSeek-V2-Lite, bf16): green where routing moves fewer bytes, red where pulling the chunk does. The dashed break-even line is 𝑀 𝑞 = 𝑐 𝑡 𝑏 KV /( 𝑞 +𝑝 ); a decode step attending a hot 2 k-token chunk (𝑀 𝑞 =256 ) sits at 76% fewer routed bytes. 
+
+the model or the decision. This crossover must not be confused with the splice tax of §2.2: that tax burdens the semantic 
+
+fetch (move-the-cache-and-adapt), which route avoids regardless of host overhead. The host-overhead crossover is a property of our prototype’s transport; the splice tax, of the operation itself. The predicate weighs both. 
+
+5.4 Beyond MLA: compression and selection as one knob 
+
+The predicate above consumes byte sizes, not an attention variant, so it applies wherever cross-instance attention reduces to a set of small chunks. Three independent levers produce that regime. Head-axis compression (MLA’s low-rank latent, the case we measure) shrinks every token’s cache entry. Token-axis compression (the learned 𝑚 -token-to-one compressor in DeepSeek-V4’s CSA [ 5 ]) instead shrinks the number of entries; V4 compresses the cache further still, interleaving 4:1 and 128:1 reduction across its layers, which makes a fetched chunk smaller and a routed query relatively heavier, shifting the crossover (§5) without changing the decision. Selection (the top-𝑘 Lightning Indexer of DeepSeek Sparse Attention [ 7] and the block selection of NSA [ 36 ]) attends to only a few disjoint chunks per query, shrinking the attended set on the entry count alone — independent of how wide each entry is — so each query already faces the 
+
+route /fetch /local choice over a small, scattered set. Concretely, these selection budgets are small and now fixed in the released model configs: DeepSeek-V3.2’s DSA indexer selects the top-2048 tokens per query (its index_topk ) [ 7], GLM-5.1’s DSA indexer the same 2048 [ 38 ], DeepSeek-V4 the top-1024 (V4-Pro) or top-512 (V4-Flash) of its compressed entries [ 5], and NSA ≈16 blocks of 64 ( ≈1024 tokens) plus a 512-token window [ 36 ]. All sit at 512 –2048 attended entries, so our 𝑐 𝑡 =2048 operating point is exactly the V3.2/GLM-5.1 selection budget rather than an arbitrary chunk size, and the (𝑀 𝑞 , 𝑐 𝑡 ) crossover of §5 reads as a per-
+
+selected-set decision: that same break-even, evaluated at these counts, spans ≈270 query rows (V4-Flash’s top-512 ) to 
+
+≈1080 (top-2048 ). Even the tightest, V4-Flash, stays above a decode batch ( 𝑀 𝑞 ≤256 ), so route wins at decode across the whole family. Selection sharpens this beyond the byte count in two ways: the selected set is scattered (disjoint entries, so fetch 
+
+becomes a gather over non-contiguous, possibly multi-holder cache, while a routed query stays one small message), 
+
+> Manuscript submitted to ACM
+
+12 Ma et al. 1 2 3 4 5 6 7
+
+## holders the selection spans, M
+
+10 2
+
+10 3  
+
+> round-trip ( μs, per layer)
+> +cross-
+> node
+> gather is per layer ( ×L= 27 for full pull)
+
+# scatter cost: route vs gather          
+
+> gather, top-2048
+> gather, top-1024
+> gather, top-512
+> route fan-out
+> (a) scatter transport: gather grows with 𝑀 , route fan-out flat 124816 32 64 128 256
+
+## routed consumers per holder N
+
+10 2
+
+10 3   
+
+> holder partial-attn ( μs)  fetch splice ≈3 ms
+> flat: holder
+> underutilized
+> compute-bound
+> (linear in N)
+
+# holder-side compute capacity       
+
+> DSv2-Lite ( hq= 16 )
+> frontier ( hq= 128 )(b) holder compute: flat to 𝑁 ≈8routed requesters
+
+Fig. 4. Under selection, route’s cost stays flat where the alternatives grow (cross-node H100, IBGDA). (a) Scatter transport. Gathering a 𝐾 -entry selected set spread across 𝑀 holders ( fetch , red, per layer) grows with 𝑀 — scattering defeats bulk coalescing, so each holder is a separate transfer — and is fabric-invariant (no kink as holders cross the node boundary at 𝑀 ≥4, shaded); the full pull scales this by 𝐿 =27 layers. The route fan-out (green: single-hop route-RT plus the 𝑀 -way merge) stays flat at tens of microseconds, shipping the query once. (b) Holder compute, the route twin of the 𝐾 -stream copy elbow (§6). Measured with FlashMLA’s absorbed-MLA decode kernel on one H100 ( 𝑐 𝑡 =2048 , bf16): a holder serving 𝑁 routed requesters runs a batched partial of size 𝑁 , flat to 𝑁 ≈8
+
+(GPU underutilised, requesters nearly free) then linear; at decode ( 𝑁 ≤16 ) it is 15 –37 𝜇 s and even saturated ( 𝑁 =256 ) stays ≤ 0.4 ms, far below fetch ’s ≈3 ms splice (dashed). 
+
+and it is re-chosen every decode step (so a fetched set cannot be amortised the way the static prefix of §5.5 can). We measure the scatter penalty directly on the 2-node testbed (Fig. 4(a)): gathering a 2048 -entry selected set spread across 
+
+𝑀 holders grows from ≈ 1.3 to ≈ 3.9 ms per layer as 𝑀 goes 1→7 (scattering defeats bulk coalescing, so each holder becomes a separate transfer), whereas the route fan-out stays flat, the 𝑀 query sends being probe-bound and the 𝑀 -way online-softmax merge costing ≤ 25 𝜇 s. fetch is itself fabric-invariant here, as route is (§8: same-node and cross-node gathers track within a few percent), so what fetch pays is the moved bytes and the per-holder handshakes, not the link. The asymmetry behind this is structural and layer-independent for route : the requester ships its query once and the holder runs the 𝐿 -layer partial in place (§6.3), while fetch must pull the selected 𝑐 KV across all layers ( ≈64 MB at top-2048 , 𝐿 =27 , versus a ∼2 KB query). The absolute per-byte gather rate here is host-copy-bound (§5.3), which inflates the raw ratio; but the query-versus-cache asymmetry and route ’s layer-independence are what keep route cheapest at decode, and they hold at full wire bandwidth. The benign-scatter result is not specific to our IB fabric: the knee-free, linear-in-𝑀 gather reproduces on NVSwitch (A100) and on cross-socket PCIe (A40, RTX Pro 6000) alike. The 𝑀 -sweep gather is in fact fabric-insensitive in shape :it is serial (the requester pulls holders one at a time) and, in our prototype, host-copy-bound, so no fabric shows a super-linear knee as holders cross the socket boundary. The fabric surfaces instead in a controlled per-holder probe: on cross-socket PCIe Gen4 a fixed-size per-holder gather runs ≈36% slower across the socket boundary than within it, the penalty growing with payload, a genuine UPI/CPU-root wire effect that the non-blocking fabrics do not pay, and that concurrent route flows on the same path also incur (§8). Either way the per-byte and per-flow cross-socket penalties fall on fetch ’s multi-holder gather, not on route ’s single query, so route ’s advantage over fetch only widens where the fabric is weakest. 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 13 Seen this way, route is the selection step made distributed: the indexer picks which entries a query attends, and 
+
+route attends them where they already reside, shipping the query and merging the partials (§3.3). Native sparse attention attends a disjoint selected set at the entries’ own positions [ 7 , 36 ], so those entries need no re-rotation: the position-adaptation splice (§2.2) is a property of contiguous reuse (a chunk re-inserted at a new offset), not of selection, and here route wins on the byte asymmetry, scatter, and re-selection alone. DeepSeek’s own trajectory tracks this: it moved from MLA (head-axis compression) in V2/V3, to selection layered on MLA in V3.2, to token-axis compression plus selection in V4, progressively loosening the tie between the “small routable chunk” and MLA’s specific latent. We therefore frame the contribution around the chunk byte budget and measure the MLA corner, the most widely deployed today; the model’s inputs change for each lever, its structure does not. 
+
+5.5 Serving rules of thumb 
+
+The predicate reduces to a few decisions a scheduler can make per (chunk, request) from quantities it already tracks: the routed-query batch 𝑀 𝑞 , the chunk size 𝑐 𝑡 , and the fabric’s (𝑇 probe , 𝐵𝑊 ).
+
+• Default to route at decode. For per-step decode redistribution ( 𝑀 𝑞 ≲ 10 3), route costs tens of microseconds (≈31–48 𝜇 s at 𝑀 𝑞 =256 across the fabrics we measured, 60 –100 × below fetch ’s ≈3 ms splice). (That is the move-the-cache fetch , which always pays the splice; only a splice-free bytes-back transfer competes with route at decode, and only until the host-overhead reductions of §5.3 land.) The route /fetch ranking inverts only near 
+
+𝑀 𝑞 ≳ 10 5, far above any decode batch; when in doubt at decode, route. 
+
+• fetch only to amortise. Moving the cache pays a flat ≈3 ms position-adaptation splice up front, so it wins only when the pulled 𝑐 KV will be attended by many subsequent local steps on the same instance, not for a one-shot cross-instance attention. 
+
+• local (re-prefill) only for small chunks. Re-prefill scales with chunk size ( 𝑐 𝑡 ·𝐿 ·𝑐 ), so it undercuts the flat splice only below ≈75–220 tokens (Figure 3); above that, prefer route , falling back to fetch only when no route to the holder exists (the disaggregated-prefill regime). 
+
+• Contention does not reprice the decision. route latency is flat until a link is fully subscribed; even then (𝐾 =3) it stays more than an order of magnitude below the splice (§8), so a scheduler need only cap concurrent flows per link rather than re-rank primitives under load. 
+
+• Choose the fabric by probe, not peak bandwidth. At decode the routed payload is too small to exercise peak 
+
+𝐵𝑊 , so the operative cost is the ∼1–5 𝜇 s probe; an idle PCIe link serves a routed query about as well as a busy NVLink one. 
+
+• Under sparse selection, route the indexer’s choice. When an indexer picks a few scattered KV blocks (DeepSeek-V3.2/V4, GLM-5.1), route is that selection made distributed: the holder attends them in place (sparse kernel, tens of 𝜇 s, set by the selection budget not the partitioned store’s size), while moving the cache must 
+
+gather the scattered set: a cost that grows with the holders it spans ( ≈3× from one to seven) and compounds across a socket boundary, exactly where route stays flat. These follow directly from the measured constants and hold for the regime we characterise ( 𝑀 𝑞 from single digits to thousands, kilo-token chunks, 25 –300 GB/s fabrics); outside it, re-evaluate the predicate directly. 
+
+> Manuscript submitted to ACM
+
+14 Ma et al. trace call path      
+
+> find callers
+> read API docs
+> explain module
+> locate config
+> check errors
+> summarize tests
+> map data flow
+> N concurrent requesters
+> Holder
+> resident KV cache
+> (prefilled codebase)
+> selected
+> KV blocks
+> (top-k)
+> batched partial
+> of size N
+> q (query)
+> (a) 𝑁 routed requesters fan in to one corpus holder 14816
+
+holder streams K 
+
+> 5000
+> 5500
+> 6000
+> fetch round-trip ( μs)
+> elbow ( K= 8 )
+
+holder-side staging pool    
+
+> p50 fetch RT calm floor (b) measured holder-side staging elbow at 𝐾 =8
+
+Fig. 5. (a) 𝑁 routed requesters fan in to one corpus holder, which batches their partials over its resident 𝑐 KV (the highlighted slab is the selected top-𝑘 block); the copy and compute elbows both sit near 𝑁 ≈8. (b) Holder-side staging: p50 fetch round trip and steady-state floor vs. the number of CUDA streams 𝐾 in the holder pool (chunk-prefetch workload, 2-node × 4 H100). 𝐾 =8 is the elbow; 𝐾 =1 (a single async stream) does not help and 𝐾 =16 oversubscribes. 
+
+6 Characterizing the Device-Initiated RDMA Regime 6.1 IBGDA versus CPU-proxy at attention’s payload 
+
+We toggle NVSHMEM’s transport between device-initiated IBGDA and a CPU-proxy path on the chunk-prefetch pipeline (the 𝐾 =8 staging path of §6), holding the workload fixed. The latencies here are end-to-end per-fetch p50 — dominated by the host prefetch pipeline (worker dispatch, bf16 staging, landing), hence millisecond-scale and distinct from the microsecond wire round trip of §4; toggling only the transport isolates its contribution. IBGDA wins decisively: per-fetch p50 6.0 ms vs 8.4 ms ( +40% for proxy) and a steady-state floor +53% higher, while wall-clock throughput ties within run-to-run variance. This is the regime recent transport work did not cover: the proxy-beats-IBGDA result holds for the sub-128 B messages of MoE dispatch [ 12 , 22 ], but at attention’s kilobyte-scale per-request payload ( 𝑞 +𝑝 ≈2 KB) the GPU thread fills the work queue fast enough that removing the host hand-off dominates. The guideline is a payload-size threshold: above ∼1 KB, device-initiated RDMA is the right substrate for per-request attention traffic; below it, a proxy. The throughput tie also localises the binding constraint at this workload to the host pipeline, not the wire (§5.3). 
+
+6.2 Holder-side staging: the 𝐾 -stream pool elbow 
+
+The holder stages each incoming request’s 𝑐 KV into the symmetric heap via device-to-device copies before the NIC reads them; serialised, these copies bound throughput, so this staging is where a single holder’s capacity to serve concurrent routed requesters is set. A pool of 𝐾 CUDA streams pipelines the copies. We sweep 𝐾 ∈ { 1, 4, 8, 16 } (Figure 5): 𝐾 =8 is the elbow (tail p50 drops 7% and the steady-state floor 9% against the serialised baseline), while 𝐾 =1 (async issue on a single stream) does not help, showing the win is HBM-parallel copy engines rather than mere asynchrony, and 𝐾 =16 
+
+regresses from scheduler oversubscription. The serving implication: the elbow is the per-holder fan-out to target. For a hot canonical chunk (a popular case-law passage or a trending repository served to many tenants at once), it is the ≈8requester instances one holder backs before copy-engine contention (rather than the wire) caps its throughput. This holder-side stream-pool elbow for inter-node RDMA staging on H100 SXM5 is a concrete deployment knob (set the holder pool to 8 streams) and one of the implementation reductions §5 calls for. 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 15 
+
+6.3 Holder-side partial-attention compute: the route-holder’s capacity 
+
+Routing moves the attention compute to the holder, so a holder serving 𝑁 concurrent routed requesters runs a batched absorbed-MLA partial of size 𝑁 against its resident 𝑐 KV and returns each requester’s (𝑜, 𝑚, ℓ ) for the merge. We measure this directly with DeepSeek’s production absorbed-MLA decode kernel (FlashMLA [17]) — the holder runs no decode pass, but its partial (a small batch of 𝑁 query rows over many resident keys) has exactly that kernel’s shape , so it is the faithful instrument — on one H100, at both the measured DeepSeek-V2-Lite geometry ( ℎ𝑞 =16 ) and frontier-MLA scale ( ℎ𝑞 =128 ), 𝑐 𝑡 =2048 (Figure 4(b)). The holder’s partial-attention latency is flat up to 𝑁 ≈8 requesters (the kernel underutilises the GPU, so extra requesters are nearly free), then turns linear once the GPU saturates ( 𝑁 ≳ 16 ). This is the 
+
+compute -capacity twin of the fetch-holder’s copy -capacity elbow (§6): the same “cap concurrent flows per holder” rule, set now by compute rather than copy engines, at a similar fan-out. Holder compute never approaches the cost it replaces: at the decode operating point ( 𝑁 ≤ 16 ) the partial is 15 –37 𝜇 s (comparable to routing’s own transport and ∼100 × below 
+
+fetch ’s ≈3 ms splice), and even fully saturated at 𝑁 =256 it is ≤ 0.4 ms, still ∼8× below the splice. Placing attention compute on the holder, the choice routing makes, is therefore cheap and bounded; it is what lets a model-serving holder absorb fan-in without the move-the-cache tax, and it delimits where route applies (a model-agnostic byte store cannot run the partial and must fetch , §5). A selection-regime holder runs the sparse decode kernel (the indexer’s top-𝑘 path) rather than the dense one, and two measured properties carry this capacity argument into that regime. First, its cost tracks the selection budget , not the store behind it: attending a top-𝑘 set costs essentially the same whether the canonical 𝑐 KV it draws from is 2K or 32 Ktokens (within ∼15% across a 16 × corpus-size range, ℎ𝑞 =128 ), because the indexed gather touches 𝑘 entries wherever they reside. A holder’s per-query compute therefore stays flat as the partitioned canonical store scales : the store can grow without inflating the routed query’s holder cost, exactly the property a large partitioned corpus needs. Second, the indexed gather is a small, bounded premium over the dense-decode kernel at matched 𝑘 : 1.1× at 𝑘 =512 , widening to 
+
+2–3× at 𝑘 =2048 as the gather lengthens, but still 17 –60 𝜇 s, below fetch ’s splice by ∼50 × even at the largest budget, so 
+
+route stays the cheaper primitive under selection by the same margin. (Measured on FlashMLA’s bf16 sparse kernel; the production FP8 sparse-decode kernel would only narrow the premium.) This elbow has a direct reading for the agentic workload of §1: 𝑁 ≈8 is the number of concurrent sub-agents one immutable-prefix holder serves almost for free before added agents cost linearly and a second replica (a fetch ) is warranted. That replication boundary, not the splice, governs the pure-prefix case. When a chunk is served at the position it was cached (a true prefix, shared by every agent at offset 0), fetch ’s 𝛿 -rotation is the identity and elides, so 
+
+fetch is at its cheapest and the move-the-cache splice no longer separates the primitives. route still wins per agent there, but on the decode byte-asymmetry (a kilobyte-scale query versus the whole document’s 𝑐 KV ) and on sparing a full document pull each time a sub-agent lands on a fresh instance, not on the splice; fetch overtakes only once enough agents co-locate on one replica to amortise that pull (§5.5). The prefix case is thus where the full predicate, not the splice alone, earns its keep. 
+
+7 Sensitivity: Payload Geometry 
+
+Two payload-geometry sensitivities bound the predicate’s inputs, and they have opposite shapes. Route is linear in the query batch: 𝑇 route holds near its ≈16 𝜇 s probe floor for 𝑀 𝑞 ≤ 128 (fixed cost dominates), then rises through the per-byte regime ( ≈116 𝜇 s at 𝑀 𝑞 =1024 , ≈388 𝜇 s at 𝑀 𝑞 =4096 for the real MLA payload) at the payload-independent ≈25 GB/s slope of Table 1. Splice , the fetch -side cost, has the complementary geometry: it is flat in chunk size, measured at 
+
+> Manuscript submitted to ACM
+
+16 Ma et al. 
+
+2.77 /2.78 /2.91 /3.06 ms for 𝑐 𝑡 =55 /1024 /2048 /4096 : only ∼10% growth over a 74 × token range, because the per-layer 
+
+𝛿 -rotation that dominates it ( ≈80%) is launch-bound, not token-bound (the gather stays flat at ≈320 𝜇 s; only the scatter begins to scale past 𝑐 𝑡 =1024 ). The consequence is a clean division of labour for the predicate: route ’s cost is set by how many queries attend a chunk, fetch ’s by almost nothing (a fixed ≈3 ms), and local ’s by how many tokens the chunk holds. 
+
+8 Sensitivity: Scaling and Topology 
+
+Fabric and scope. The probe term 𝑇 probe (𝐹, 𝑠 ) is fabric- and scope-specific. Our device-side sweep measures intra-NVL (NVLink) block-scope at ≈1 𝜇 s and cross-NVL IBGDA block-scope at ≈16 𝜇 s (the put-plus-signal primitive of §3; the older GET-based round trip was 26 𝜇 s), with warp- and thread-scope progressively slower. The model carries these as distinct 𝑇 probe values, which is why it places the route/fetch/local boundary differently per fabric: inside an NVLink island a ∼1 𝜇 s probe (measured 1.2–1.6 𝜇 s for P2P over NVLink, a higher ≈5–9 𝜇 s over intra-node PCIe) makes even fine-grained redistribution viable, whereas across islands the ≈16 𝜇 s IBGDA probe sets the 𝑀 𝑞 at which routing’s per-byte term starts to matter. This cross-NVL cost is, moreover, flat across the fat-tree : a spine-traversing cross-leaf node pair measures nearly the same probe ( 15 .9 vs 14 .6 𝜇 s) and round trip ( 119 .9 vs 114 .6 𝜇 s at 𝑀 𝑞 =1024 , ≈25 GB/s either way) as a same-leaf pair, so routing’s cost turns on the intra- versus cross-NVL boundary, not on which leaf holds the 𝑐 KV .
+
+Fabric bandwidth. The probe varies with fabric, and so does the per-byte term through 𝐵𝑊 (𝐹 ); but at fabric bandwidth 
+
+fetch ’s cost is splice-dominated (its all-layer pull is a smaller, 𝐵𝑊 -scaling term) and local ’s is compute-bound, so 
+
+route ’s transport scales with 𝐵𝑊 the most and stays cheapest; the winner , not merely the latency, is fabric-robust. Figure 6(a) sweeps the model from 0.2 to 10 3 GB/s at the decode point ( 𝑀 𝑞 =256 , 𝑐 𝑡 =2048 ): route stays one-to-three orders of magnitude below fetch and local across SSD, RoCE, PCIe, and NVLink alike, fetch flooring at its ≈3 ms splice above SSD-tier bandwidth. Figure 6(b) confirms this on hardware: the measured route round trip on five fabrics spanning PCIe Gen4, NVLink 3.0 and 4.0, PCIe Gen5, and cross-node IBGDA — a >10 × span of nominal bandwidth across two transports (intra-node P2P and cross-node RDMA). At the decode batch the five single-bottleneck fabrics cluster within 1.5× (≈31–48 𝜇 s at 𝑀 𝑞 =256 ), all over 60 × below fetch ’s ≈3 ms splice. A decode-sized routed dispatch carries so little that a single thread block issues the whole transfer, and one block can only push puts into the link at ≈18–25 GB/s — well under most of these fabrics’ peaks. That issue rate, not the wire, is the bottleneck, so the dispatch is dispatch-bound, not bandwidth-bound : the transfer term is nearly the same on every fabric, and the only fabric-specific cost left is the small probe. Peak bandwidth then does not even order the fabrics at decode. The A100 on NVLink 3.0 ( 39 𝜇 s at 𝑀 𝑞 =256 ) is slower than the RTX Pro 6000 on the nominally ∼6× lower-peak PCIe Gen5 ( 32 𝜇 s): at one block neither approaches its ceiling, so the faster wire wins nothing. Most pointedly, the 
+
+same H100 routes over its own NVLink 4.0 (a 900 GB/s per-GPU mesh, aggregated over all 18 links) at only ≈21 GB/s for a single block, a hair below its cross-node IBGDA ( ≈25 GB/s): to a one-block dispatch a local NVLink mesh and a cross-node RDMA NIC look alike. NVLink 4.0 leads only out to 𝑀 𝑞 ≈1000 , on its ≈1 𝜇 s probe, before the InfiniBand path (whose RDMA engine issues a touch faster) takes over. A dedicated multi-block put-bandwidth benchmark settles that the wire is not the limit: driven by many blocks it recovers each link’s true peak, and those peaks span more than 10 ×. Yet a single-block route saturates the wire on only the slowest fabric, and leaves a wider and wider margin unused as the wire speeds up: on the A40’s PCIe Gen4 its 
+
+18 .7 GB/s already ≈ the 19 GB/s peak (wire-bound); on the RTX’s PCIe Gen5 it draws about half ( 22 of 41 GB/s); on 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 17 the H100’s own NVLink 4.0 under a fifth ( 21 of ≈125 GB/s, six direct links and no switch); on the A100’s even-wider NVLink 3.0 under a tenth ( 18 of 235 GB/s, fanned through an NVSwitch). The ladder is the intuition: a single block is wire-bound only where the wire itself is ≈20 GB/s, and dispatch-bound on everything faster. The measured ≈18–25 GB/s rates are dispatch ceilings, not link ceilings, so routing never reaches for NVLink’s headroom; peak re-asserts only in the large-batch tail (the A40 same-socket super-linear regime past 𝑀 𝑞 =2048 ). An isolated A40 cross-socket flow can read far slower ( 0.7–1.1 ms at 𝑀 𝑞 =1024 ), but that number is non-reproducible and vanishes under load : with any concurrent cross-socket traffic it settles to ≈131 𝜇 s (its same-socket cost), so we attribute it to an idle-link warm-up effect on an otherwise-quiescent path (mechanism not isolated) and report the warm value, not a steady worst case. A block-count sweep shows this single-block rate is issue -bound, not a hardware ceiling: on intra-node NVLink it scales ≈6× (≈21 to ≈125 GB/s) with more blocks, matching NVIDIA’s NVSHMEM put-bandwidth benchmark and the 
+
+6-link ( NV6 ) GPU-pair ceiling. So multi-block dispatch would shrink the transfer term (including at decode, where it dominates), but two things make that headroom moot for the deployed route. First, redistribution is point-to-point : it rides one GPU pair’s link and never the ≈900 GB/s per-GPU aggregate (which fans across all 18 NVLinks to all peers), so the real headroom is the ≈6×, not ≈40 ×. Second, at decode the single-block route already sits >60 × below fetch , so the extra bandwidth buys latency the route-vs-fetch decision does not need, and each added block costs an SM the co-located holder spends on its attention compute (§6.3). Single-block dispatch is thus the natural minimal-footprint operating point, and multi-block parallelism would matter only in the large-𝑀 𝑞 transfer tail, the regime where fetch 
+
+already wins. The route /fetch crossover is set by fetch ’s compute splice and the host overhead of §5.3, not by route ’s byte term, so the block count does not move it. 
+
+fetch is the mirror image: its bulk 𝑐 KV pull is bandwidth-bound (we model it as a coalesced bulk transfer, not a single block), yet fetch is splice-compute -dominated, so even an instantaneous pull would leave it at its ≈3 ms splice floor. The route-vs-fetch verdict is therefore invariant to how many blocks either primitive issues: latency binds the one we deploy, compute the other. 
+
+Congestion. Our latencies are measured on an otherwise-idle fabric; a production network is contended. Two of congestion’s effects are already on axes we characterise. (i) It lowers effective bandwidth: Figure 6(a) shows route 
+
+stays cheapest as 𝐵𝑊 falls to 0.2 GB/s; equivalently, route loses to fetch only once effective bandwidth drops below 
+
+𝑀 𝑞 (𝑞 +𝑝 )/ 𝑇 splice ≈ 0.2 GB/s at 𝑀 𝑞 =256 (a ∼125 × degradation from 25 GB/s), because fetch ’s ≈3 ms splice and local ’s re-prefill are congestion-immune compute . (ii) It adds queueing to the probe, an additive term: even a 10 × probe inflation leaves route an order of magnitude below fetch . The route-vs-fetch ranking is thus robust to congestion by cost structure; only route ’s absolute latency rises. We confirm this empirically (two same-leaf H100 nodes, 𝐾 concurrent route flows sharing one NDR-200 link, the requester’s NIC uplink; Figure 7): the measured route round trip is flat through 𝐾 =0–2 (probe 14 .5 𝜇 s, 𝑀 𝑞 =256 at 45 .6 𝜇 s, unchanged), and rises only once the link is fully subscribed at 𝐾 =3, then across the board, the queueing landing on the probe as much as the transfer (probe 14 .5→39 .5 𝜇 s; 𝑀 𝑞 =256 45 .6→95 ; 𝑀 𝑞 =1024 114 →250 𝜇 s). Even fully congested, that 𝑀 𝑞 =1024 round trip stays ∼12 × below fetch ’s splice, so the route-vs-fetch ranking never inverts. This congestion law is not InfiniBand-specific: it reproduces on cross-socket PCIe ( 𝐾 concurrent route flows sharing an A40 node’s PCIe/UPI path), where 𝐾 ≤ 2 stays flat and the fully subscribed 𝐾 =3 flow rises +36% (131 →178 𝜇 s at 
+
+𝑀 𝑞 =1024 , against the warm baseline), the same flat-until-saturation shape as IB; a PCIe Gen5 node (RTX Pro 6000) shows the same onset more gently ( +9% ), its higher per-flow bandwidth softening the saturation, while an A40 same -socket 
+
+> Manuscript submitted to ACM
+
+18 Ma et al. 10 0 10 1 10 2 10 3
+
+effective per-GPU-pair bandwidth (GB/s) 
+
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> cost @  Mq = 256 , c t = 2048  (μs)
+> SSD
+> RoCE PCIe5
+> NVLink-4
+> NVLink-3
+> PCIe4,
+> NDR-200
+> (wire-bound)
+> route single-block
+> effBW (18-25)
+
+(a) cost vs effective bandwidth (model)       
+
+> local
+> fetch
+> route
+> 2022242628210 212
+
+query rows Mq   
+
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> route round-trip ( μs)
+> fetch splice ≈3 ms
+> local re-prefill
+> decode
+> Mq= 256
+
+(b) measured route-RT across fabrics 
+
+> H100 IBGDA, x-node
+> H100 NVLink 4.0, intra
+> RTX Pro 6k, PCIe5
+> A100, NVLink 3.0
+> A40, PCIe4 same-socket
+
+Fig. 6. Fabric robustness of redistribution at the decode operating point ( 𝑀 𝑞 =256 , 𝑐 𝑡 =2048 , DeepSeek-V2-Lite). (a) Model: route 
+
+(green) scales as ∼1/ 𝐵𝑊 and stays cheapest across four orders of magnitude; fetch (red) floors at its ≈3 ms splice above SSD-tier 𝐵𝑊 
+
+(its all-layer pull dominates only below that) and local (purple) is re-prefill-compute-bound. The shaded green band is the measured 
+
+single-block route effBW across all five fabrics ( 18 –25 GB/s, what route sees); the dashed ticks are the measured per-GPU-pair link rates (what fetch ’s bulk pull sees) — PCIe Gen4 19 GB/s and NDR-200 25 GB/s fall in-band (wire-bound), while PCIe Gen5 41 GB/s, the H100 NVLink 4.0 (NV6 direct) ≈125 GB/s, and the A100 NVLink 3.0 (NVSwitch) 235 GB/s sit to its right, the dispatch headroom routing never uses. (b) Measurement: route round trip versus 𝑀 𝑞 on five real fabrics: A40 PCIe Gen4 (same-socket), A100 NVLink 3.0, intra-node H100 NVLink 4.0, RTX Pro 6000 PCIe Gen5, and cross-node H100 IBGDA. At decode ( 𝑀 𝑞 =256 ) the five cluster at ≈31–48 𝜇 sand stay over 60 × below fetch ’s splice: the single-block dispatch is capped at ≈20 GB/s, so route-RT tracks single-block dispatch 
+
+throughput, not fabric peak — the same H100’s 900 GB/s NVLink 4.0 sustains only ≈21 GB/s for one block, a hair below its own cross-node IBGDA ( ≈25 GB/s) — so at decode it is effectively fabric-invariant across the five single-bottleneck fabrics. Bandwidth separates the fabrics only in the large-batch tail. 
+
+control stays flat across 𝐾 (the PCIe switch isolates same-socket P2P), placing the effect on the shared cross-socket path, not the GPUs (Figure 7b). And of the two network primitives route loads the fabric least (fewest bytes per redistribution, §2.1), so it is the congestion-friendly choice ( local touches no network at all, but pays the full re-prefill). What remains is many concurrent redistributions contending for one holder or link: the holder-side 𝐾 -stream staging of §6 bounds the former, and scheduling the latter across tenants is the serving layer’s task, which our predicate feeds. 
+
+Tensor parallelism. Under TPLA [ 29 ] at degree 𝑁 the latent is column-partitioned across ranks. Cross-instance routing then pairs ranks: 𝐴. rank 𝑟 ships its 𝑀 𝑞 × 𝑑 𝑞𝑘 /𝑁 query slice to 𝐵. rank 𝑟 , and the cross-rank all-reduce stays inside each instance over NVLink. Per-rank inter-node bytes fall by 1/𝑁 (50% at 𝑁 =2, measured); the aggregate is unchanged but 𝑁 rank-pairs proceed in parallel, so routing scales with tensor parallelism rather than against it. This cross-instance 
+
+rank-pairing (across two independent instances, unlike Helix’s rank-paired merge within one deployment [ 2]) has not, to our knowledge, been characterised. 
+
+9 Related Work 
+
+Routing the query. Shipping queries to the instance that holds the keys/values, computing partial attention remotely, and merging via online softmax was introduced by DistAttention [ 23 ] for sharded KV within a single cluster and extended to MLA within one tensor-parallel deployment by Helix [ 2]; Meta’s context-parallel pass-Q [32 ] applies it within one long-context job, and Adrenaline [ 21 ] makes the same query →KV choice to offload decode attention onto prefill instances. We adopt the merge unchanged [ 4, 25 ] and claim no novelty for routing itself. Our setting differs 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 19 0 1 2 3
+
+concurrent route flows sharing one link, K      
+
+> 10 1
+> 10 2
+> 10 3
+> route round-trip ( μs)
+> fetch splice ≈3 ms (compute; congestion-immune)
+> decode ( Mq= 256 ): flat to K= 2
+> link saturated
+> (K= 3 )
+
+(a) route-RT under self-congestion (IBGDA)          
+
+> route Mq= 256
+> route Mq= 1024
+> route Mq= 4096
+> 0123
+
+concurrent flows K
+
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> route-RT / uncongested ( K = 0 ) link
+> saturated +119%
+> +9%
+
+(b) congestion shape: IBGDA vs PCIe Gen5 
+
+> IBGDA (H100, NDR-200)
+> PCIe Gen5 x-sock (RTX Pro 6000)
+
+Fig. 7. route round trip under self-congestion. (a) 𝐾 concurrent route flows share one NDR-200 link (two same-leaf H100 nodes); latency is flat through 𝐾 =2 at every batch and rises only once the link is fully subscribed ( 𝐾 =3; 𝑀 𝑞 =1024 : 114 →250 𝜇 s, +119% ), every case far below fetch ’s ≈3 ms splice (dashed); the route-vs-fetch ranking never inverts. (b) The same flat-until-saturation shape reproduces on an unrelated fabric: route-RT at 𝑀 𝑞 =1024 normalized to 𝐾 =0, on IBGDA (H100, NDR-200) versus cross-socket PCIe Gen5 (RTX Pro 6000). The bandwidth-tight NDR-200 link congests hardest ( +119% ), the higher-headroom PCIe Gen5 barely (+9% ); a cross-socket A40 PCIe Gen4 flow shows the same 𝐾 =3 onset ( +36% vs its warm baseline) and an A40 same -socket control stays flat, so the rise tracks shared-link subscription, not the GPU. 
+
+on three axes none of these address: a cross-instance, partitioned canonical store (not a single cluster, a single job, or role-specialised prefill/decode), the MLA economic regime that makes routing fine-grained-viable, and a device-initiated 
+
+RDMA substrate. 
+
+Cross-instance KV migration. Mooncake [ 27 ], DistServe [ 43 ], and LMCache [ 3] disaggregate prefill from decode and migrate 𝑐 KV across nodes over RDMA; BanaServe [ 13 ] adds attention-level 𝑐 KV migration and a shared global KV store to rebalance disaggregated load. Their regime is role-specialised (the decode worker has no route to the prefill state except to receive it), so the cache must move. ServerlessLLM [ 8 ] migrates a running request by shipping its tokens and recomputing KV at the destination rather than transferring the cache — our local , chosen there because full KV is too large to move; MLA’s compressed latent revives fetch , and route has no analogue in that design. ContextPilot [ 16 ]instead raises the hit rate of KV that is already local by reordering requests onto a shared prefix, sidestepping relocation entirely. Ours is cross-peer content distribution with canonical overlap, where we quantify when moving the cache (fetch ) loses to routing the query. 
+
+Position-independent caching and the cost of adaptation. Reusing a cached chunk at a position other than where it was computed requires adapting it. PromptCache [ 9] precomputes chunks against a dummy prefix; CacheBlend [ 34 ] blends multiple reused chunks by selectively recomputing 5–18% of tokens; and EPIC [ 14 ] makes caching position-independent on standard (GQA/MHA) models, recomputing only a small carved prefix per chunk to repair the attention sink at chunk boundaries, MEPIC [ 30 ] reducing it to a chunk’s first block. This adaptation is precisely the fetch -side cost our predicate weighs: on MLA it is a 𝛿 -rotation that re-aligns a chunk’s decoupled-RoPE band to the target offset (§2.2). We propose no new caching scheme; we characterise when the adaptation cost (EPIC’s carve on GQA, the 𝛿 -rotation splice on MLA) makes route the better primitive, tying this work to the architecture-agnostic view of §5.4. 
+
+> Manuscript submitted to ACM
+
+20 Ma et al. 
+
+Device-initiated RDMA.. DeepEP [ 41 ] uses NVSHMEM IBGDA for MoE all-to-all; TransferEngine [ 22 ] adds a host-proxy fallback where IBGDA is unavailable; and NCCL GIN [ 12 ] and the portable expert-parallel engines UCCL-EP and NCCL EP [ 11 , 24 ] report IBGDA/proxy/GDAKI small-message latencies. All target MoE or collective traffic with sub-kilobyte messages; we characterise the attention regime (kilobyte-scale query batches on NDR-200 G) and the holder-side staging it requires (§6), which that literature does not. 
+
+MLA, its variants, and sparse selection. MLA [ 6] and its tensor-parallel form TPLA [ 29 ] (on which our rank-paired routing builds, §8) define the head-axis compression case we measure; DeepSeek Sparse Attention [ 7 ], DeepSeek-V4’s token-axis CSA [ 5], and NSA [ 36 ] add selection and token-axis compression, and IndexCache [ 1] reuses an indexer’s selected blocks across layers to amortise selection within an instance. These set the byte budgets our predicate consumes (top-2048 selected entries for V3.2 and GLM-5.1, 512 –1024 for DeepSeek-V4; §5.4); none addresses how the selected chunks move between instances. A systems analysis of MLA/MoE inference [37] likewise pins the interconnect as the post-MLA bottleneck, but for MoE all-to-all, not the inter-instance KV redistribution we model. 
+
+Topology-aware characterisation. The roofline model [ 31 ] relates compute to bandwidth on a single device; the closest published characterisation in spirit is that of multi-chip GPU data sharing [ 39 ], whose findings on inter-chip bandwidth non-uniformity seeded a sharing-aware cache design [ 40 ]. MoE-CAP [ 15 ] benchmarks sparse-MoE serving (S-MBU/S-MFU utilisation) but holds the attention/KV term fixed: the very term we characterise, treating the larger expert all-to-all as orthogonal. Cross-instance attention redistribution has not, to our knowledge, been modeled; our probe/transfer/compute/return/merge decomposition (§4) is that model. 
+
+10 Conclusion 
+
+We set out to answer a transport question (for cross-instance MLA attention, move the query or move the cache?) and to answer it with a model, not one system’s numbers. The answer is a cost-shape argument: fetch pays either a flat ≈3 ms splice (contiguous reuse) or an ms-scale scattered gather (sparse selection), and local a size-scaling re-prefill, while route pays none of these: on real H100 IBGDA a routed round trip is ≈116 𝜇 s at 𝑀 𝑞 =1024 , one-to-two orders of magnitude below those alternatives. MLA’s narrow latent makes the routed query small enough that at the small batches typical of decode it also moves the fewer wire bytes ( ≥76% fewer at 𝑀 𝑞 =256 ). We package this as a topology-aware cost model (probe ≈16 𝜇 s, payload-independent ≈25 GB/s, fit to ≈7% in the amortised regime) and a closed-form route /fetch /local predicate whose inputs we characterise across payload, fabric, and tensor-parallel degree. Its structure is unchanged in the regime already deployed: where a sparse-attention indexer (DeepSeek-V3.2, V4, GLM-5.1) shrinks each query’s attention to a few scattered KV blocks, route is that selection made distributed: the query attends the chosen entries where they already reside, with no cache re-rotation, a merge we verify exact to bf16 noise on the production sparse-attention kernel itself (§3.3, §5.4). The model and predicate are the reusable artefact: together they make a partitioned canonical 𝑐 KV store (or a single large immutable document fanned out to many concurrent agents) schedulable .For a practitioner the guidance collapses to a handful of rules over quantities a scheduler already tracks: default to 
+
+route at decode (tens of microseconds, ∼60–100 × below the move-the-cache splice); fetch only to amortise a chunk over many subsequent local steps; cap concurrent flows per holder near the ≈8 where both its copy- and compute-elbows sit; and choose the fabric by probe latency, since a decode-sized query cannot exercise peak bandwidth, counting on 
+
+route ’s margin being largest where the fabric is weakest: a scattered selection makes fetch gather a full chunk from 
+
+> Manuscript submitted to ACM
+
+Move the Query, Not the Cache 21 every holder, paying a per-holder cross-socket penalty on PCIe that non-blocking fabrics (IB, NVSwitch) avoid, while 
+
+route ships only a small query per holder. The remaining gap is end-to-end: at our prototype’s host overhead the routing transport needs the three implementation reductions of §5 before its wire-byte win becomes a wall-clock win, and closing it inside a live serving stack is the natural next step, in the same characterise-then-build spirit that carried multi-chip data-sharing characterisation [39] into a sharing-aware cache design [40]. 
+
+Acknowledgments 
+
+This work has been funded by the Free State of Bavaria in the DSgenAI project (Grant Nr.: RMF-SG20-3410-2-18-4). The authors gratefully acknowledge the scientific support and HPC resources provided by the Erlangen National High Performance Computing Center (NHR@FAU) of the Friedrich-Alexander-Universität Erlangen-Nürnberg (FAU). The hardware is funded by the German Research Foundation (DFG). 
+
+References 
+
+[1] Yushi Bai, Qian Dong, Ting Jiang, Xin Lv, Zhengxiao Du, Aohan Zeng, Jie Tang, and Juanzi Li. 2026. IndexCache: Accelerating Sparse Attention via Cross-Layer Index Reuse. arXiv:2603.12201 [cs.CL] https://arxiv.org/abs/2603.12201 [2] Nidhi Bhatia, Ankit More, Ritika Borkar, Tiyasa Mitra, Ramon Matas, Ritchie Zhao, Maximilian Golub, Dheevatsa Mudigere, Brian Phar-ris, and Bita Darvish Rouhani. 2025. Helix Parallelism: Rethinking Sharding Strategies for Interactive Multi-Million-Token LLM Decoding. arXiv:2507.07120 [cs.DC] https://arxiv.org/abs/2507.07120 [3] Yihua Cheng, Yuhan Liu, Jiayi Yao, Yuwei An, Xiaokun Chen, Shaoting Feng, Yuyang Huang, Samuel Shen, Kuntai Du, and Junchen Jiang. 2025. LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference. arXiv preprint arXiv:2510.09665 (2025). [4] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. 2022. FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. In Advances in Neural Information Processing Systems (NeurIPS) .[5] DeepSeek-AI. 2026. DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence. https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/DeepSeek_V4.pdf Technical report. [6] DeepSeek-AI et al . 2024. DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. arXiv:2405.04434 [cs.CL] https://arxiv.org/abs/2405.04434 [7] DeepSeek-AI et al . 2025. DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models. arXiv:2512.02556 [cs.CL] https://arxiv.org/abs/2512. 02556 [8] Yao Fu, Leyang Xue, Yeqi Huang, Andrei-Octavian Brabete, Dmitrii Ustiugov, Yuvraj Patel, and Luo Mai. 2024. ServerlessLLM: Low-Latency Serverless Inference for Large Language Models. In OSDI’24 .[9] In Gim, Guojun Chen, Seung seob Lee, Nikhil Sarda, Anurag Khandelwal, and Lin Zhong. 2024. Prompt Cache: Modular Attention Reuse for Low-Latency Inference. arXiv:2311.04934 [cs.CL] https://arxiv.org/abs/2311.04934 [10] GLM-5-Team et al. 2026. GLM-5: from Vibe Coding to Agentic Engineering. arXiv:2602.15763 [cs.LG] https://arxiv.org/abs/2602.15763 [11] Amos Goldman, Nimrod Boker, Maayan Sheraizin, Nimrod Admoni, Artem Polyakov, Subhadeep Bhattacharya, Fan Yu, Kai Sun, Georgios Theodorakis, Hsin-Chun Yin, Peter-Jan Gootzen, Aamir Shafi, Assaf Ravid, Salvatore Di Girolamo, James Dinan, Xiaofan Li, Manjunath Gorentla Venkata, and Gil Bloch. 2026. NCCL EP: Towards a Unified Expert Parallel Communication API for NCCL. arXiv:2603.13606 [cs.DC] https://arxiv.org/abs/2603.13606 [12] Khaled Hamidouche, John Bachan, Pak Markthub, Peter-Jan Gootzen, Elena Agostini, Sylvain Jeaugey, Aamir Shafi, Georgios Theodorakis, and Manjunath Gorentla Venkata. 2025. GPU-Initiated Networking for NCCL. arXiv:2511.15076 [cs.DC] https://arxiv.org/abs/2511.15076 [13] Yiyuan He, Minxian Xu, Jingfeng Wu, Jianmin Hu, Chong Ma, Min Shen, Le Chen, Chengzhong Xu, Lin Qu, and Kejiang Ye. 2026. BanaServe: Unified KV Cache and Dynamic Module Migration for Balancing Disaggregated LLM Serving in AI Infrastructure. Software: Practice and Experience 
+
+56, 4 (2026), 424–444. arXiv:https://onlinelibrary.wiley.com/doi/pdf/10.1002/spe.70054 doi:10.1002/spe.70054 [14] Junhao Hu, Wenrui Huang, Weidong Wang, Haoyi Wang, Tiancheng Hu, Qin Zhang, Hao Feng, Xusheng Chen, Yizhou Shan, and Tao Xie. 2025. EPIC: efficient position-independent caching for serving large language models. In Proceedings of the 42nd International Conference on Machine Learning (Vancouver, Canada) (ICML’25) . JMLR.org, Article 956, 12 pages. [15] Yinsicheng Jiang, Yao Fu, Yeqi Huang, Ping Nie, Zhan Lu, Leyang Xue, Congjie He, Man-Kit Sit, Jilong Xue, Li Dong, Ziming Miao, DaYou Du, Tairan Xu, Kai Zou, Edoardo Ponti, and Luo Mai. 2026. MoE-CAP: Benchmarking Cost, Accuracy and Performance of Sparse Mixture-of-Experts Systems. In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track . https: //openreview.net/forum?id=k2fWVhG0u5 [16] Yinsicheng Jiang, Yeqi Huang, Liang Cheng, Cheng Deng, Xuan Sun, and Luo Mai. 2026. ContextPilot: Fast Long-Context Inference via Context Reuse. In Proceedings of the 9th Conference on Machine Learning and Systems (MLSys 2026) . https://arxiv.org/abs/2511.03475 [17] Shengyu Liu Jiashi Li. 2025. FlashMLA: Efficient Multi-head Latent Attention Kernels. https://github.com/deepseek-ai/FlashMLA. Manuscript submitted to ACM 22 Ma et al. 
+
+[18] Kimi Team et al. 2026. Kimi K2: Open Agentic Intelligence. arXiv:2507.20534 [cs.LG] https://arxiv.org/abs/2507.20534 [19] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient Memory Management for Large Language Model Serving with PagedAttention. In Proceedings of the 29th Symposium on Operating Systems Principles 
+
+(Koblenz, Germany) (SOSP ’23) . Association for Computing Machinery, New York, NY, USA, 611–626. doi:10.1145/3600006.3613165 [20] Noam Levy. 2026. Dynamic Sparse Attention: Access Patterns and Architecture. arXiv:2603.13430 [cs.AR] https://arxiv.org/abs/2603.13430 [21] Yunkai Liang, Zhangyu Chen, Pengfei Zuo, Zhi Zhou, Xu Chen, and Zhou Yu. 2025. Injecting Adrenaline into LLM Serving: Boosting Resource Utilization and Throughput via Attention Disaggregation. arXiv:2503.20552 [cs.DC] https://arxiv.org/abs/2503.20552 [22] Nandor Licker, Kevin Hu, Vladimir Zaytsev, and Lequn Chen. 2026. fabric-lib: RDMA Point-to-Point Communication for LLM Systems. arXiv:2510.27656 [cs.DC] https://arxiv.org/abs/2510.27656 [23] Bin Lin, Chen Zhang, Tao Peng, Hanyu Zhao, Wencong Xiao, Minmin Sun, Anmin Liu, Zhipeng Zhang, Lanbo Li, Xiafei Qiu, Shen Li, Zhigang Ji, Tao Xie, Yong Li, and Wei Lin. 2024. Infinite-LLM: Efficient LLM Service for Long Context with DistAttention and Distributed KVCache. arXiv:2401.02669 [cs.DC] https://arxiv.org/abs/2401.02669 [24] Ziming Mao, Yihan Zhang, Chihan Cui, Zhen Huang, Kaichao You, Zhongjie Chen, Zhiying Xu, Zhenyu Gu, Scott Shenker, Costin Raiciu, Yang Zhou, and Ion Stoica. 2025. UCCL-EP: Portable Expert-Parallel Communication. arXiv:2512.19849 [cs.DC] https://arxiv.org/abs/2512.19849 [25] Maxim Milakov and Natalia Gimelshein. 2018. Online normalizer calculation for softmax. CoRR abs/1805.02867 (2018). arXiv:1805.02867 http://arxiv.org/abs/1805.02867 [26] Moonshot AI. 2026. Kimi K2.6. Hugging Face model card. https://huggingface.co/moonshotai/Kimi-K2.6 [27] Ruoyu Qin, Zheming Li, Weiran He, Jialei Cui, Heyi Tang, Feng Ren, Teng Ma, Shangming Cai, Yineng Zhang, Mingxing Zhang, Yongwei Wu, Weimin Zheng, and Xinran Xu. 2025. Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving. ACM Trans. Storage (Nov. 2025). doi:10.1145/3773772 Just Accepted. [28] Nazmul Takbir, Hamidreza Alikhani, Nikil Dutt, and Sangeetha Abdu Jyothi. 2025. FlexiCache: Leveraging Temporal Stability of Attention Heads for Efficient KV Cache Management. arXiv:2511.00868 [cs.LG] https://arxiv.org/abs/2511.00868 [29] Xiaojuan Tang, Fanxu Meng, Pingzhi Tang, Yuxuan Wang, Di Yin, Xing Sun, and Muhan Zhang. 2026. TPLA: Tensor Parallel Latent Attention for Efficient Disaggregated Prefill & Decode Inference. In Proceedings of the 31st ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 (USA) (ASPLOS ’26) . Association for Computing Machinery, New York, NY, USA, 2048–2062. doi:10.1145/3779212.3790237 [30] Qian Wang, Zahra Yousefijamarani, Morgan Lindsay Heisler, Rongzhi Gu, Bai Xiaolong, Shan Yizhou, Wei Zhang, Wang Lan, Ying Xiong, Yong Zhang, and Zhenan Fan. 2025. MEPIC: Memory Efficient Position Independent Caching for LLM Serving. arXiv:2512.16822 [cs.LG] https://arxiv.org/abs/2512.16822 [31] Samuel Williams, Andrew Waterman, and David Patterson. 2009. Roofline: an insightful visual performance model for multicore architectures. 
+
+Commun. ACM 52, 4 (April 2009), 65–76. doi:10.1145/1498765.1498785 [32] Amy Yang, Jingyi Yang, Aya Ibrahim, Xinfeng Xie, Bangsheng Tang, Grigory Sizov, Jeremy Reizenstein, Jongsoo Park, and Jianyu Huang. 2025. Context Parallelism for Scalable Million-Token Inference. arXiv:2411.01783 [cs.DC] https://arxiv.org/abs/2411.01783 [33] Feiyu Yao, Zhixiong Niu, Xiaqing Li, Yongqiang Xiong, Juan Fang, and Qian Wang. 2026. An Efficient Hybrid Sparse Attention with CPU-GPU Parallelism for Long-Context Inference. arXiv:2605.07719 [cs.LG] https://arxiv.org/abs/2605.07719 [34] Jiayi Yao, Hanchen Li, Yuhan Liu, Siddhant Ray, Yihua Cheng, Qizheng Zhang, Kuntai Du, Shan Lu, and Junchen Jiang. 2025. CacheBlend: Fast Large Language Model Serving for RAG with Cached Knowledge Fusion. In Proceedings of the Twentieth European Conference on Computer Systems .94–109. doi:10.1145/3689031.3696098 [35] Zihao Ye, Lequn Chen, Ruihang Lai, Wuwei Lin, Yineng Zhang, Stephanie Wang, Tianqi Chen, Baris Kasikci, Vinod Grover, Arvind Krishnamurthy, and Luis Ceze. 2025. FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving. arXiv preprint arXiv:2501.01005 (2025). https://arxiv.org/abs/2501.01005 [36] Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Yuxing Wei, Lean Wang, Zhiping Xiao, Yuqing Wang, Chong Ruan, Ming Zhang, Wenfeng Liang, and Wangding Zeng. 2025. Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (Eds.). Association for Computational Linguistics, Vienna, Austria, 23078–23097. doi:10.18653/v1/2025.acl-long.1126 [37] Sungmin Yun, Seonyong Park, Hwayong Nam, Younjoo Lee, Gunjun Lee, Kwanhee Kyung, Sangpyo Kim, Nam Sung Kim, Jongmin Kim, Hyungyo Kim, Juhwan Cho, Seungmin Baek, and Jung Ho Ahn. 2026. Rethinking LLM Inference Bottlenecks: Insights from Latent Attention and Mixture-of-Experts. arXiv:2507.15465 [cs.AR] https://arxiv.org/abs/2507.15465 [38] Z.ai. 2026. GLM-5.1. Hugging Face model card. https://huggingface.co/zai-org/GLM-5.1 [39] Shiqing Zhang, Mahmood Naderan-Tahan, Magnus Jahre, and Lieven Eeckhout. 2023. Characterizing Multi-Chip GPU Data Sharing. ACM Trans. Archit. Code Optim. 20, 4, Article 56 (Dec. 2023), 24 pages. doi:10.1145/3629521 [40] Shiqing Zhang, Mahmood Naderan-Tahan, Magnus Jahre, and Lieven Eeckhout. 2023. SAC: Sharing-Aware Caching in Multi-Chip GPUs. In 
+
+Proceedings of the 50th Annual International Symposium on Computer Architecture (Orlando, FL, USA) (ISCA ’23) . Association for Computing Machinery, New York, NY, USA, Article 43, 13 pages. doi:10.1145/3579371.3589078 Manuscript submitted to ACM Move the Query, Not the Cache 23 
+
+[41] Chenggang Zhao, Shangyan Zhou, Liyue Zhang, Chengqi Deng, Zhean Xu, Yuxuan Liu, Kuai Yu, Jiashi Li, and Liang Zhao. 2025. DeepEP: an efficient expert-parallel communication library. https://github.com/deepseek-ai/DeepEP. [42] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E. Gonzalez, Clark Barrett, and Ying Sheng. 2024. SGLang: efficient execution of structured language model programs. In Proceedings of the 38th International Conference on Neural Information Processing Systems (Vancouver, BC, Canada) (NIPS ’24) . Curran Associates Inc., Red Hook, NY, USA, Article 2000, 27 pages. [43] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xuanzhe Liu, Xin Jin, and Hao Zhang. 2024. DistServe: disaggregating prefill and decoding for goodput-optimized large language model serving. In Proceedings of the 18th USENIX Conference on Operating Systems Design and Implementation (Santa Clara, CA, USA) (OSDI’24) . USENIX Association, USA, Article 11, 18 pages. Manuscript submitted to ACM

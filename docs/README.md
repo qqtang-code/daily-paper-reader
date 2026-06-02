@@ -6,79 +6,83 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-01
-- 运行时间：2026-06-01 22:41:27 UTC
+- 最新运行日期：2026-06-02
+- 运行时间：2026-06-02 22:20:56 UTC
 - 运行状态：成功
-- 本次总论文数：19
-- 精读区：7
+- 本次总论文数：21
+- 精读区：9
 - 速读区：12
 
 ### 今日简报（AI）
-今日多模态与记忆前沿报告：聚焦空间推理、长视频生成及对抗推理新突破。  
-最值得精读《How and What to Imagine》与《OmniMem》，分别解决跨视图想象机制与长视频记忆检索瓶颈。  
-建议关注多模态模型的“想象+记忆”协同能力，后续可留意融合物理智能的创意推理方向。
-- 详情：[/202606/01/README](/202606/01/README)
+今日共梳理21篇论文，精读9篇，聚焦细粒度视觉理解与多模态检索增强生成两大方向。最值得关注的是《DV-SFT》在直接视觉监督上的突破，以及《Uncertainty Quantification》对多模态生成不确定性的系统分析。建议优先精读这两篇，并速读PARE等视频生成优化论文以拓展视野。
+- 详情：[/202606/02/README](/202606/02/README)
 
 ### 精读区论文标签
-1. [How and What to Imagine? Visual Thinking in Unified Multimodal Models for Cross-View Spatial Reasoning](/202606/01/2605.27310v1-how-and-what-to-imagine-visual-thinking-in-unified-multimodal-models-for-cross-view-spatial-reasoning)  
+1. [DV-SFT: Direct Vision Supervision for Fine-Grained Visual Understanding](/202606/02/2605.26656v1-dv-sft-direct-vision-supervision-for-fine-grained-visual-understanding)  
    标签：评分：9.0/10、query:multimodal
-   evidence：跨视图空间推理的多模态推理
-2. [OmniMem: Scalable and Adaptive Memory Retrieval for Long Video Generation](/202606/01/2605.30519v1-omnimem-scalable-and-adaptive-memory-retrieval-for-long-video-generation)  
+   evidence：视觉直接监督提升多模态理解
+2. [Uncertainty Quantification for Multimodal Retrieval Augmented Generation](/202606/02/2605.29956v1-uncertainty-quantification-for-multimodal-retrieval-augmented-generation)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：多模态RAG的不确定性量化用于幻觉检测
+3. [VisionPulse: Dynamic Visual Sparsity for Efficient Multimodal Reasoning](/202606/02/2605.31457v1-visionpulse-dynamic-visual-sparsity-for-efficient-multimodal-reasoning)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：高效多模态推理的动态视觉稀疏性
+4. [ETC: Extreme Token Compression via Task-aware Visual Information Distillation in VLMs](/202606/02/2606.00543v1-etc-extreme-token-compression-via-task-aware-visual-information-distillation-in-vlms)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：面向长视频生成的稀疏键值缓存检索
-3. [What Makes LVLMs Hallucinate Less? Unveiling the Architectural Factors Behind Hallucination Robustness](/202606/01/2605.30911v1-what-makes-lvlms-hallucinate-less-unveiling-the-architectural-factors-behind-hallucination-robustness)  
+   evidence：通过极端令牌压缩减少VLM中的KV缓存开销
+5. [MM-Snowball: Evaluating and Mitigating Hallucination Snowballing in Multimodal Multi-Turn Dialogue](/202606/02/2606.00622v1-mm-snowball-evaluating-and-mitigating-hallucination-snowballing-in-multimodal-multi-turn-dialogue)  
    标签：评分：9.0/10、query:multimodal
-   evidence：从架构层面分析语言基础、视觉表示和语义对齐对幻觉的影响
-4. [Attend to Evidence: Evidence-Anchored Spatial Attention Supervision for Multimodal RLVR](/202606/01/2605.30912v1-attend-to-evidence-evidence-anchored-spatial-attention-supervision-for-multimodal-rlvr)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：通过锚定证据的空间注意力缓解多模态幻觉
-5. [LVSA: Training-Free Sparse Attention for Long Video Diffusion](/202606/01/2605.31057v1-lvsa-training-free-sparse-attention-for-long-video-diffusion)  
+   evidence：多模态幻觉检测与缓解基准
+6. [WaveFilter: Enhancing the Long-Context Capability of Diffusion LLMs via Wavelet-Guided KV Cache Filtering](/202606/02/2606.00724v1-wavefilter-enhancing-the-long-context-capability-of-diffusion-llms-via-wavelet-guided-kv-cache-filtering)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：训练无关的块稀疏注意力用于长视频扩散
-6. [GRKV: Global Regression for Training-Free KV Cache Compression in Long-Context LLMs](/202606/01/2605.31105v1-grkv-global-regression-for-training-free-kv-cache-compression-in-long-context-llms)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：提出GRKV，使用全局回归的无训练KV缓存压缩
-7. [YARD: Y-Architecture Register Decoding for Efficient Hallucination Mitigation in Large Vision-Language Models](/202606/01/2605.31429v1-yard-y-architecture-register-decoding-for-efficient-hallucination-mitigation-in-large-vision-language-models)  
+   evidence：扩散LLM的小波引导KV缓存过滤
+7. [Reason, Retrieve, Re-rank: A Zero-Shot Reasoning-Aware Framework for Composed Video Retrieval](/202606/02/2606.00910v1-reason-retrieve-re-rank-a-zero-shot-reasoning-aware-framework-for-composed-video-retrieval)  
    标签：评分：9.0/10、query:multimodal
-   evidence：通过Y架构寄存器解码减轻LVLM幻觉
+   evidence：零样本推理感知组合视频检索
+8. [Move the Query, Not the Cache: Characterizing Cross-Instance Latent Attention Redistribution Across GPU Fabrics](/202606/02/2606.01502v1-move-the-query-not-the-cache-characterizing-cross-instance-latent-attention-redistribution-across-gpu-fabrics)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：使用稀疏注意力索引器为每个查询选择KV缓存块，实现跨实例高效注意力
+9. [MomentKV: Closing the Directional Gap in KV Cache Eviction for Long-Context Inference](/202606/02/2606.01563v1-momentkv-closing-the-directional-gap-in-kv-cache-eviction-for-long-context-inference)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：面向长上下文的KV缓存驱逐技术
 
 ### 速读区论文标签
-1. [DUEL: Adversarial Self-Play for Multimodal Reasoning](/202606/01/2605.24794v1-duel-adversarial-self-play-for-multimodal-reasoning)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：提出DUEL，无需人类标注的多模态推理对抗自对弈框架
-2. [H$^{2}$MT: Semantic Hierarchy-Aware Hierarchical Memory Transformer](/202606/01/2605.24930v1-h2mt-semantic-hierarchy-aware-hierarchical-memory-transformer)  
+1. [PARE: Pruning and Adaptive Routing for Efficient Video Generation](/202606/02/2605.27336v1-pare-pruning-and-adaptive-routing-for-efficient-video-generation)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：语义层次感知的分层记忆用于长上下文注意力
-3. [Advancing Creative Physical Intelligence in Large Multimodal Models](/202606/01/2605.26396v1-advancing-creative-physical-intelligence-in-large-multimodal-models)  
+   evidence：视频扩散中的剪枝和自适应路由实现高效注意力
+2. [RE-TRIANGLE: Does TRIANGLE Enable Multimodal Alignment Beyond Cosine Similarity in Retrieval?](/202606/02/2605.27436v1-re-triangle-does-triangle-enable-multimodal-alignment-beyond-cosine-similarity-in-retrieval)  
    标签：评分：8.0/10、query:multimodal
-   evidence：评估大语言模型在物理智能中创造性工具使用的基准
-4. [OmniRetriever: Any-to-Any Audio-Video-Text Retrieval via Fusion-as-Teacher Distillation](/202606/01/2605.26641v1-omniretriever-any-to-any-audio-video-text-retrieval-via-fusion-as-teacher-distillation)  
+   evidence：超越余弦相似度的多模态对齐用于检索
+3. [Checking Fact with Better Retrieval: Dynamic Contrastive Learning for Evidence Retrieval](/202606/02/2605.27449v1-checking-fact-with-better-retrieval-dynamic-contrastive-learning-for-evidence-retrieval)  
    标签：评分：8.0/10、query:multimodal
-   evidence：多模态检索中的融合教师蒸馏
-5. [DRScaffold: Boosting Dense-Scene Reasoning in Lightweight Vision Language Models](/202606/01/2605.26038v1-drscaffold-boosting-dense-scene-reasoning-in-lightweight-vision-language-models)  
+   evidence：多模态检索方法用于事实验证
+4. [Can Segmentation Models Understand the World? Towards Proactive Affordance Reasoning via Visual Chain-of-Thought](/202606/02/2605.27764v1-can-segmentation-models-understand-the-world-towards-proactive-affordance-reasoning-via-visual-chain-of-thought)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：通过视觉链式思维进行多模态推理，实现分割中的可供性推理
+5. [Real Images, Worse Judgments: Evaluating Vision-Language Models on Concreteness and Imagery](/202606/02/2605.27315v1-real-images-worse-judgments-evaluating-vision-language-models-on-concreteness-and-imagery)  
    标签：评分：7.0/10、query:multimodal
-   evidence：关注轻量级VLM在密集场景中的推理，提出基准和方法
-6. [Personalizing Embodied Multimodal Large Language Model Agents over Long-term User Interactions](/202606/01/2605.26256v1-personalizing-embodied-multimodal-large-language-model-agents-over-long-term-user-interactions)  
+   evidence：研究显示真实图像损害VLM判断，揭示幻觉原因
+6. [Toward Semantic-Agnostic and Shape-Aware Vision-Language Segmentation Models](/202606/02/2605.28348v1-toward-semantic-agnostic-and-shape-aware-vision-language-segmentation-models)  
    标签：评分：7.0/10、query:multimodal
-   evidence：提出多模态记忆增强框架用于个性化具身智能体
-7. [FAST-GOAL: Fast and Efficient Global-local Object Alignment Learning](/202606/01/2605.26615v1-fast-goal-fast-and-efficient-global-local-object-alignment-learning)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：改进CLIP对齐用于检索任务
-8. [Latent Recurrent Transformer: Architecture Exploration, Training Strategies, and Scaling Behavior](/202606/01/2605.26797v1-latent-recurrent-transformer-architecture-exploration-training-strategies-and-scaling-behavior)  
+   evidence：语义无关且形状感知的视觉语言分割
+7. [SAFE-Pruner: Semantic Attention-Guided Future-Aware Token Pruning for Efficient Vision-Language-Action Manipulation](/202606/02/2605.29662v1-safe-pruner-semantic-attention-guided-future-aware-token-pruning-for-efficient-vision-language-action-manipulation)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：探索潜在递归Transformer，跨层递归，保留KV缓存接口
-9. [Learning Context-Conditioned Predicate Semantics via Prototype Feedback](/202606/01/2605.29610v1-learning-context-conditioned-predicate-semantics-via-prototype-feedback)  
+   evidence：通过令牌剪枝减少视觉-语言-动作模型中的KV缓存
+8. [Fewer Steps, Better Performance: Efficient Cross-Modal Clip Trimming for Video Moment Retrieval Using Language](/202606/02/2605.29793v1-fewer-steps-better-performance-efficient-cross-modal-clip-trimming-for-video-moment-retrieval-using-language)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：高效跨模态剪辑修剪用于视频时刻检索
+9. [Closed-Loop Bidirectional Prompting for Adversarial Robustness of Vision Language Models](/202606/02/2605.25922v1-closed-loop-bidirectional-prompting-for-adversarial-robustness-of-vision-language-models)  
    标签：评分：6.0/10、query:multimodal
-   evidence：面向多模态理解的场景图生成，通过上下文条件谓词语义建模
-10. [MMTM: Tri-Modal Topic Modeling for Long-Form Video via Similarity-Gated Fusion](/202606/01/2605.29765v1-mmtm-tri-modal-topic-modeling-for-long-form-video-via-similarity-gated-fusion)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：使用语音、音频和视觉进行长视频的三模态主题建模
-11. [No More K-means:Single-Stage Sparse Coding for Efficient Multi-Vector Retrieval](/202606/01/2605.30120v1-no-more-k-meanssingle-stage-sparse-coding-for-efficient-multi-vector-retrieval)  
+   evidence：闭环双向提示增强视觉语言模型鲁棒性
+10. [Latent Recurrent Transformer: Architecture Exploration, Training Strategies, and Scaling Behavior](/202606/02/2605.26797v1-latent-recurrent-transformer-architecture-exploration-training-strategies-and-scaling-behavior)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：单阶段稀疏编码实现高效token级检索
-12. [Detect in Any Scene: An Agentic Framework for Object Detection with Experience-Aware Reasoning](/202606/01/2605.31174v1-detect-in-any-scene-an-agentic-framework-for-object-detection-with-experience-aware-reasoning)  
+   evidence：在保留KV缓存接口的同时添加循环记忆，提升解码效率
+11. [Functional Attention: From Pairwise Affinities to Functional Correspondences](/202606/02/2605.31559v1-functional-attention-from-pairwise-affinities-to-functional-correspondences)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：函数注意力作为高效注意力机制替代方案
+12. [Hyperbolic and Evidence-Prioritized Experts for Large Vision-Language Models](/202606/02/2606.00275v1-hyperbolic-and-evidence-prioritized-experts-for-large-vision-language-models)  
    标签：评分：6.0/10、query:multimodal
-   evidence：基于多模态大语言模型的目标检测智能体框架
+   evidence：大视觉语言模型的双曲与证据优先混合专家
 
 
 <div class="dpr-home-promo-card">
