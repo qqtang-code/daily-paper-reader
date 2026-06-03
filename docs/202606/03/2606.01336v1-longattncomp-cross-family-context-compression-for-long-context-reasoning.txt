@@ -1,0 +1,487 @@
+Title: LongAttnComp: Cross-Family Context Compression for Long-Context Reasoning
+
+URL Source: https://arxiv.org/pdf/2606.01336v1
+
+Published Time: Tue, 02 Jun 2026 01:39:10 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# LongAttnComp: Cross-Family Context Compression for Long-Context Reasoning 
+
+Mengmeng Ji Ravi Shanker Raju Jonathan Lingjie Li Chen Wu 
+
+SambaNova Systems, Inc. San Jose, CA, USA    
+
+> {mengmeng.ji, ravi.raju, jonathan.li, chen.wu}@sambanovasystems.com
+
+Abstract 
+
+As real-world applications increasingly require processing inputs of 100k+ tokens, the gap be-tween context length and inference efficiency has become a critical bottleneck. Context com-pression offers a way to reduce prefill costs while preserving task accuracy. However, exist-ing training-free attention-based methods leave substantial gaps in demanding long-context tasks such as code reasoning. We present LongAttnComp, a long-context adaptation of AttnComp that fine-tunes a lightweight cross-attention scoring layer and introduces token-level chunking, a token-budget top-p algo-rithm, positional reordering, and a format-agnostic query parser. We further design a two-stage fine-tuning recipe for the compressor: Stage 1 builds a general retrieval foundation from NIAH-style data, and Stage 2 extends it with multi-hop and reasoning data for broader long-context task coverage. On InfiniteBench Code-Debug, LongAttnComp matches or ex-ceeds full-context accuracy, substantially out-performs training-free baselines, and transfers across four target models from three families. On LongBench v2, the two-stage recipe largely closes the Stage 1 gap on multi-document rea-soning while preserving Code-Debug perfor-mance. 
+
+1 Introduction 
+
+Long-context inference with large language models (LLMs) imposes significant memory and compute costs. As real-world applications increasingly re-quire processing tens of thousands of tokens — re-trieved documents, long conversations, or extended codebases — the gap between context length and inference efficiency has become a critical bottle-neck. Context compression addresses this concern by filtering or condensing the input context before it reaches the target model (Jiang et al., 2023; Xu et al., 2023), trading a small upfront cost for sub-stantial savings in the target model’s prefill stage. 
+
+> Long-context QA performance
+> Retrieval
+> locate query-relevant evidence in long input
+
++ Reasoning 
+
+> infer answer from retrieved evidence
+
+Figure 1: Long-context task performance decomposes into retrieval and reasoning (Yang et al., 2018); we focus on the retrieval bottleneck (Liu et al., 2024), framing compression as a retrieval problem. 
+
+Performance on long-context tasks depends on two factors: reliably retrieving the query-relevant content, and reasoning correctly over it. This de-composition is illustrated in Figure 1. We focus on the retrieval step as the primary bottleneck — effective context compression is fundamentally a retrieval problem, requiring the compressor to identify which tokens and segments carry query-relevant information. Among context compression solutions, Specula-tive Prefill (Liu et al., 2025) establishes an attention-based, training-free, draft-model-driven compres-sion framework with strong performance across tasks and target model families (Upasani et al., 2026), yet shows a substantial performance gap on long-context code reasoning. AttnComp (Luo et al., 2025) takes a fine-tuning approach: a frozen LLM backbone with a trainable cross-attention layer scores each document for query relevance. While AttnComp’s mechanism shows promise, its evalu-ation and training are narrowly scoped—retrieval-augmented QA at ∼12k-token inputs, training from a single source (HotpotQA), and document-level scoring—leaving its potential as a general-purpose long-context compressor untested. We propose LongAttnComp , a robust, mod-ular long-context compressor that adapts At-tnComp’s (Luo et al., 2025) fine-tuned compres-1
+
+> arXiv:2606.01336v1 [cs.CL] 31 May 2026
+
+sion mechanism for the draft-model-driven frame-work of Speculative Prefill (Liu et al., 2025), deliv-ering strong target-model generalization on long-context retrieval and reasoning tasks. We retain AttnComp’s core mechanism and extend it through four architectural adaptations and a two-stage train-ing recipe. 
+
+Architectural adaptations. First, we use token-level chunking rather than document-level scor-ing, enabling flexible operation on real-world long-context inputs that often lack natural document boundaries. Second, we modify AttnComp’s score-threshold top-p algorithm with a token-budget variant that supports both cumulative-score and budget-only selection modes, giving predictable control over compression length. Third, we apply 
+
+positional reordering to restore selected chunks to their original order before passing them to the tar-get model. Fourth, we introduce a format-agnostic query parser for inputs without fixed query tem-plates. 
+
+Two-stage finetuning recipe. We propose a two-stage fine-tuning recipe that extends LongAt-tnComp’s effectiveness across diverse long-context tasks. Stage 1 establishes general query-aligned retrieval capability on broad NIAH-style data con-structed from SQuAD (Rajpurkar et al., 2016) and HotpotQA (Yang et al., 2018). Stage 2 continues training from the Stage 1 checkpoint on a multi-hop retrieval and reasoning dataset (MuSiQue (Trivedi et al., 2022), 2WikiMultiHopQA (Ho et al., 2020)) interleaved with replay from Stage 1 sources. We further compare two MuSiQue query-construction variants—with and without dataset-provided sub-question decomposition embedded in the query—to characterize how training-time query representa-tion affects downstream task behavior. On Code-Debug from InfiniteBench (Zhang et al., 2024), LongAttnComp matches or exceeds full-context performance, outperforms the training-free Speculative Prefill baseline, and transfers across four target models from three families with-out retraining. On LongBench v2 (Bai et al., 2024), Stage 2 training improves on multi-document rea-soning over Stage 1. Our contributions are: • LongAttnComp , a trainable draft-model com-pression framework adapted from AttnComp for long-context inference. Adaptations in-clude token-level chunking, a token-budget top-p algorithm with cumulative-score and budget-only selection modes, positional re-ordering, and a format-agnostic query parser (Figure 2, §3). • A two-stage fine-tuning recipe that broadens a LongAttnComp compressor’s task coverage and strengthens its multi-hop reasoning ability, with subq/nosubq query-construction variants explored as a design lever (§3.4, §4). • Empirical findings : LongAttnComp (i) matches or exceeds full-context accuracy on InfiniteBench Code-Debug and substantially outperforms training-free baselines, (ii) gen-eralizes across four target models from three families without retraining, and (iii) the two-stage recipe substantially closes the Stage 1 gap on LongBench v2 while largely pre-serving LongAttnComp’s long-context code reasoning strength, demonstrating that task-sensitivity reflects training-data composition rather than an architectural limit (§6, §7). We plan to release our code and data to facilitate further research on long-context compression. 
+
+2 Related Work 
+
+Context compression. Context compression meth-ods fall into two broad categories. Abstractive ap-proaches train auxiliary models to produce con-densed representations of the input (Xu et al., 2023; Yoon et al., 2024); extractive approaches retain a subset of original tokens or segments us-ing token-level perplexity (Jiang et al., 2023, 2024) or embedding-based semantic similarity (Xu et al., 2023). A shared limitation across both categories is reliance on a predetermined compression bud-get that does not adapt to the variable density of relevant content. Recent adaptive methods ad-dress this via per-sentence relevance classification or threshold-based scoring (Hwang et al., 2024; Chirkova et al., 2025). Our work shares this adap-tive philosophy but operates on fixed-size token chunks , using fine-tuned cross-attention weights as the relevance signal, enabling end-to-end training within the speculative prefill framework. 
+
+Attention-based retrieval and speculative in-ference. Speculative Prefill (Liu et al., 2025) demonstrated that attention weights from alightweight draft model serve as effective token-importance signals for training-free compression, with subsequent work showing transfer across 21⃝ SCORING 2⃝ SELECTION 3⃝ GENERATION 
+
+Input 
+
+> instruction
+> ctx chunk 1
+> ctx chunk 2
+
+...  
+
+> ctx chunk k
+> query
+> ⋆fixed-size token-level chunking
+
+Compressor    
+
+> Frozen backbone Llama-3.1-8B (1–13)
+> Cross-attention query ×context trainable
+> ⋆per-chunk scores
+
+Top-p selection                 
+
+> chunk 5 s= 0 .42
+> chunk 4 s= 0 .28
+> chunk 1 s= 0 .19
+> chunk 7 s= 0 .06 ×
+> ⋆stop when Ps≥p
+> or tokens ≥B
+
+Compressed prompt  
+
+> via Llama-3.1 tokenizer
+> instruction
+> chunk 1
+> chunk 4
+> chunk 5
+> query
+> ⋆original order preserved
+
+Target model  
+
+> DeepSeek-R1 / V3.1 MiniMax / GPT-OSS
+> API call
+> Response
+> ⋆modification to original AttnComp
+
+Figure 2: End-to-end workflow of the LongAttnComp compressor. (1) Scoring : a frozen Llama-3.1-8B backbone with a trainable cross-attention layer produces a relevance score per context chunk. (2) Selection : chunks are ranked by score and retained until cumulative top-p mass or token budget B is reached; selected token chunks are decoded into a natural-language compressed prompt by Llama3.1’s tokenizer, with original positional order preserved. (3) Inference : the compressed prompt is sent to the target model via API. 
+
+model families (Upasani et al., 2026). At-tnComp (Luo et al., 2025) introduced an inde-pendent attention-based approach: a fine-tuned cross-attention scoring layer for document-level compression with adaptive top-p selection, eval-uated on short-context retrieval-augmented QA. Drawing on both lines, LongAttnComp parallels the draft-model paradigm of speculative decod-ing (Leviathan et al., 2023), fitting within the broader theme of resource-adaptive inference. 
+
+3 Method 
+
+We adapt AttnComp (Luo et al., 2025) for long-context inference. AttnComp augments the first L
+
+layers of a frozen draft LLM with a trainable cross-attention layer that produces relevance scores from query–context attention; only ∼0.5% of parame-ters are updated. We retain this architecture and loss formulation (Appendix A), extending it in two ways: architectural adaptations for long-context in-puts (§3.1–§3.3) and a two-stage fine-tuning recipe (§3.4). Figure 2 shows the full workflow. 
+
+3.1 Token-level Chunking 
+
+Whereas the original AttnComp paper uses doc-uments as the unit for scoring and selection, we operate at token-level chunk granularity: the in-put is partitioned into fixed-size token chunks, and the cross-attention layer scores each chunk indepen-dently. This design is more amenable for real-world long-context inputs, where the input is often a sin-gle long document or stream that cannot be cleanly partitioned into independent documents. Fixed-size token-level chunking also turns chunk size into a tunable hyperparameter. Different tasks may bene-fit from different chunk sizes, and sweeping chunk sizes across tasks lets us identify the best size for each task. This, in turn, gives us a clearer under-standing of how chunk granularity affects retrieval and reasoning in different long-context settings. 
+
+3.2 Modified Top-p Selection 
+
+We adapt AttnComp’s top-p algorithm to operate on chunk-level scores. The original algorithm stops document selection when either the cumulative score exceeds p or a document’s score falls below a minimum threshold ϵ. In practice, on long-context tasks, the minimum-score condition triggers first, causing overly aggressive compression and a sig-nificant performance drop. We replace the minimum-score threshold with a content token budget B: selection now stops when either the cumulative score exceeds p or the retained tokens reach B (see Algorithm 1 in Ap-pendix B). This gives direct, predictable control over compressed context length: with B = 16 k, compressed prompts consistently approach the bud-get (15k+ tokens in practice), avoiding the degener-ate under-retention caused by the score threshold. 
+
+Positional Reordering. After selection, retained token chunks are restored to their original posi-tional order. The original AttnComp paper returns the selected documents as an unordered set; we preserve positional order to maintain discourse co-herence. 
+
+Budget-only selection mode. The cumulative-
+
+p threshold yields adaptive compression: when a small subset of chunks captures sufficient query 3relevance, selection terminates early and the com-pressed prompt falls well below the budget B. This works well on tasks where relevant evidence is concentrated: on RULER’s niah_s_1 , for exam-ple, the compressor reaches 100% accuracy with prompts averaging ∼2k tokens against a 16k bud-get, combining aggressive compression with strong downstream performance. On tasks where evi-dence is distributed across many chunks, however, the same early termination can drop supporting ev-idence and reduce accuracy (we characterize this on LongBench v2 in Appendix G.4). We therefore additionally support a budget-only mode, which disables the cumulative-score termination and se-lects chunks in score order until the budget B is exhausted. The choice between cumulative and budget-only selection mode is task-specific, as dis-cussed in §7. 
+
+3.3 Query Parsing 
+
+AttnComp requires identifying the query span within the concatenated input to form Xq, but the original paper does not discuss query parsing ex-plicitly. It is understandable given that its stan-dard QA evaluation uses fixed templates with well-defined query boundaries. For long-context benchmarks such as In-finiteBench Code-Debug, the prompt structure is more complex. We evaluate two parsing strategies. 
+
+Accurate parsing precisely extracts the query and instruction spans specific to the Code-Debug for-mat, providing the compressor with clean, task-specific query representations. Arbitrary parsing 
+
+allocates the last 128 tokens of the input as the query, with the instruction set identically. Notably, arbitrary parsing incurs only minor performance degradation relative to accurate parsing, suggest-ing LongAttnComp is robust to approximate query identification. For detailed experimental results, see Appendix G.2. 
+
+3.4 Two-Stage Fine-Tuning Recipe 
+
+We design the two-stage fine-tuning recipe with two goals: (i) establish a strong general-purpose retrieval foundation, and (ii) extend that foundation to harder retrieval patterns without compromising it. 
+
+Stage 1: foundation. Stage 1 expands At-tnComp’s training scope in two ways: by com-bining single-fact and basic multi-hop retrieval sources to broaden pattern coverage beyond At-tnComp’s single-source training, and by substan-tially increasing dataset size. Training hyperparam-eters follow AttnComp where applicable, with long-context modifications (cosine LR, dropout, epochs) selected by ablation (Appendix G). Evaluating the resulting checkpoint reveals strong performance on long-context code reasoning and on single- and basic multi-needle retrieval, but weak performance on LongBench v2’s natural multi-document reason-ing. We hypothesize that the synthetic, structurally simple nature of NIAH-style training data limits the compressor’s exposure to retrieval patterns re-quired for multi-document reasoning. 
+
+Stage 2: extension. To test this hypothesis, Stage 2 continues training from the Stage 1 check-point on a dataset targeting harder retrieval pat-terns: newly curated multi-hop and naturalistic data interleaved with replay from Stage 1 sources. Continuing from the Stage 1 checkpoint avoids re-establishing low-level retrieval capability from scratch; replay mitigates catastrophic forgetting of Stage 1 strengths. 
+
+Sub-question variants. Within Stage 2, we ad-ditionally probe whether explicit decomposition of multi-hop questions into their single-hop con-stituents during training improves the compressor’s behavior on multi-hop tasks. MuSiQue’s dataset construction (Trivedi et al., 2022) composes each multi-hop question from a chain of single-hop sub-questions and ships these decompositions alongside the main question. We construct two parallel vari-ants: nosubq uses the original multi-hop question as the query verbatim, while subq additionally con-catenates the dataset-provided sub-questions into the query, exposing the compressor to an explicit reasoning chain. We train and evaluate both vari-ants (§6), treating training-time query construction as a deliberate design lever. Together, the two-stage recipe and its query-construction variants demonstrate that continued training of a single cross-attention layer can broaden the compressor’s task coverage while retaining—and in some cases improving—its exist-ing strengths. 
+
+4 Data 
+
+We build training datasets for both stages using a modified RULER pipeline (Hsieh et al., 2024): each sample contains 100 candidate documents, a query, and binary relevance labels, with 25% all-negative samples. Relevance labels come from dataset-provided structural annotations (SQuAD 4passage IDs, HotpotQA supporting_facts ,MuSiQue and 2WikiMultiHopQA supporting-paragraph annotations), removing the need for any LLM-based labeling. 
+
+Stage 1. The Stage 1 training data contains 32,000 examples (16,000 SQuAD (Rajpurkar et al., 2016), 0–1 relevant documents per sample; 16,000 HotpotQA (Yang et al., 2018), 0–2 relevant doc-uments per sample), with sequences spanning 8k– 48k tokens (data-scale ablation in Appendix G). 
+
+Stage 2. The Stage 2 training data contains 20,000 samples: 8,000 MuSiQue (Trivedi et al., 2022), 4,000 2WikiMultiHopQA (Ho et al., 2020), and 4,000 each from SQuAD and HotpotQA replay. MuSiQue is constructed in two variants (subq, no-subq) per §3.4, yielding two Stage 2 checkpoints. Needle positions across all subsets are uniformly distributed ( ≈33% front/middle/end); length and position distributions appear in Appendix C. 
+
+5 Experimental Setup 
+
+5.1 Models Compressor. The compressor uses the first L=13 
+
+layers of Llama-3.1-8B-Instruct (Dubey et al., 2024) as a frozen backbone, with a trainable query-relevant cross-attention layer appended on top. 
+
+Target Models. We evaluate compressed prompts on three unrelated target models ac-cessed via SambaNova Cloud API: DeepSeek-R1-0528 (DeepSeek-AI, 2025a), MiniMax-M2.5 (Min-iMax, 2026), and GPT-OSS-120B (OpenAI, 2025). This selection tests both whether compression re-tains sufficient information for downstream answer-ing and whether the compressor generalizes beyond the Llama-3.1-8B-Instruct family it was trained on. We additionally include DeepSeek-V3.1 (DeepSeek-AI, 2025b) as a within-family DeepSeek control on Code-Debug and as the devel-opment target for LongBench v2 hyperparameter selection (Appendix G.4). 
+
+5.2 Compressor Training Details 
+
+We hold out 5% of training data as a validation split and select the best checkpoint by validation loss. Both stages use the AdamW optimizer (weight de-cay 0.01 ), batch size 8, gradient accumulation 1, dropout 0.1, gradient clipping at 1.0, and 15 epochs on 8 ×H200 GPUs, with a cosine decay schedule and linear warmup. Stage 1 trains with a learning rate of 2 × 10 −4. Stage 2 uses a lower learning rate of 5 × 10 −5 with warmup over the first ∼5% of steps. 
+
+5.3 Evaluation Benchmarks 
+
+We center our evaluation of LongAttnComp on 
+
+Code Debug from InfiniteBench (Zhang et al., 2024), a multiple-choice bug-identification bench-mark over long code inputs averaging ∼115k to-kens with some samples exceeding 200k. We fo-cus on this task for two reasons. First, the orig-inal AttnComp work was evaluated exclusively on Wikipedia-based QA (Luo et al., 2025), leav-ing open whether attention-guided compression remains effective in substantially longer contexts and in domains beyond natural language; Code De-bug provides a direct stress test along both axes. Second, the task couples retrieval (locating the rel-evant buggy region within a long codebase) with 
+
+reasoning (interpreting code semantics to identify the correct option), probing what information a compressor must preserve to support downstream long-context inference. To assess generalization beyond code, we ad-ditionally evaluate on LongBench v2 (Bai et al., 2024), a suite of long-document tasks requiring multi-hop inference and fine-grained comprehen-sion across diverse domains, and RULER (Hsieh et al., 2024), a synthetic suite measuring long-context utilization across single- and multi-needle retrieval and question answering. 
+
+5.4 Baselines and Inference Protocol 
+
+We compare LongAttnComp against two baselines: 
+
+Full context , the uncompressed prompt sent di-rectly to the target, and Speculative Prefill (Liu et al., 2025), a training-free attention-based com-pressor that uses the same Llama-3.1-8B-Instruct draft model and chunk size 128. The original At-tnComp (Luo et al., 2025) is not included as a separate baseline since its compressor checkpoint was not publicly released. For LongAttnComp, we evaluate three checkpoints: Stage 1 , the founda-tion compressor trained on 32k SQuAD+HotpotQA dataset, and the two Stage 2 variants ( subq , nosubq )that extend Stage 1 with multi-hop reasoning data. Across all benchmarks, LongAttnComp uses top-
+
+p=0.95 and a 16k output token budget. Full-context baselines middle-truncate inputs to fit each target’s effective input window (reserved for response), and 
+
+</think> reasoning tags are stripped before an-swer extraction. Per-benchmark compressor set-tings differ: chunk size 1024 with query length 5DeepSeek-R1-0528 Method Accuracy Full context (120k) 74.37 Speculative Prefill 62.44 LongAttnComp (Stage 1) 75.38 LongAttnComp (Stage 2, subq) 76.90 
+
+LongAttnComp (Stage 2, nosubq) 74.11 
+
+Table 1: DeepSeek-R1-0528 Accuracy (%) on Code-Debug of InfiniteBench. 
+
+128 for Code-Debug, chunk size 256 with query length 256 for RULER, and chunk size 32 with query length 1024 for LongBench v2. 
+
+6 Results 
+
+We organize our evaluation along two axes. Hold-ing the task fixed at long-context code reasoning, we ask: (i) does LongAttnComp match or exceed full-context performance on InfiniteBench Code-Debug (§6.1); and (ii) does the same compres-sor, trained with a Llama-3.1-8B-Instruct 
+
+draft model, generalize to unrelated target model families (§6.2). Holding the compressor fixed and varying tasks, we further ask: (iii) how does Lon-gAttnComp’s effectiveness change across the re-trieval and reasoning demands of LongBench v2 and RULER beyond code understanding, and what does this reveal about the compressor’s task-type sensitivity (§6.3). 
+
+6.1 Long-Context Code Reasoning 
+
+We evaluate LongAttnComp on InfiniteBench Code-Debug with DeepSeek-R1-0528 as the target model. Table 1 reports accuracy on the full test set. Results show that the Stage 1 compressor already exceeds the full-context baseline and outperforms Speculative Prefill by 12.9 points. Stage 2 with the 
+
+subq variant pushes accuracy further to 76.90—the highest in the table—indicating that adding multi-hop reasoning data in Stage 2 not only preserves Stage 1’s long-context code-reasoning gains but improves on them. We adopt arbitrary last-N token query parsing throughout, removing the deployment dependency on task-specific query extraction. A direct com-parison on the Stage 1 checkpoint (Appendix G.2) shows this swap costs at most 1 point on Code-Debug; all main-text LongAttnComp results, in-cluding the Stage 2 numbers in Tables 2–3, use the arbitrary-query setting. Target model Method Ctx. budget Accuracy DeepSeek-R1-0528 Full context 120k 74.37 Spec Prefill 16k 62.44 LongAttnComp (Stage 1) 16k 75.38 LongAttnComp (Stage 2, subq) 16k 76.90                                 
+
+> LongAttnComp (Stage 2, nosubq) 16k 74.11 DeepSeek-V3.1 Full context 128k 67.51 Spec Prefill 16k 59.14 LongAttnComp (Stage 1) 16k 65.73 LongAttnComp (Stage 2, subq) 16k 65.48 LongAttnComp (Stage 2, nosubq) 16k 65.99
+> MiniMax-M2.5 Full context 152k 83.76 Spec Prefill 16k 57.10 LongAttnComp (Stage 1) 16k 81.22 LongAttnComp (Stage 2, subq) 16k 82.23
+> LongAttnComp (Stage 2, nosubq) 16k 81.72 GPT-OSS-120B Full context 120k 86.00 Spec Prefill 16k 52.28 LongAttnComp (Stage 1) 16k 82.99
+> LongAttnComp (Stage 2, subq) 16k 80.20 LongAttnComp (Stage 2, nosubq) 16k 81.73
+
+Table 2: Target-model generalization on Code-Debug. 
+
+6.2 Cross-Family Generalization 
+
+Table 2 reports cross-family Code-Debug results. LongAttnComp Stage 1 matches or closely tracks each target’s full-context accuracy—exceeding DeepSeek-R1-0528 by 1.0 points and trailing DeepSeek-V3.1, MiniMax-M2.5, and GPT-OSS-120B by under 3 points each—while outperforming Speculative Prefill by 7–31 points across all four targets. Stage 2 either improves over or matches Stage 1 on three of four targets (R1, V3.1, Mini-Max), with a small 1–3 point regression on GPT-OSS. Because the same Llama-3.1-trained com-pressor produces all four blocks without any target-specific fine-tuning or hyperparameter adjustment, these results support two conclusions: (i) Lon-gAttnComp transfers cross-family for long-context code reasoning, and (ii) Stage 2 training is gener-ally additive on this task, consistent with its goal of broadening task coverage without compromising Stage 1’s code-reasoning gains. 
+
+6.3 Beyond Code Reasoning: LongBench v2 and RULER 
+
+We evaluate LongAttnComp on LongBench v2 to assess performance on multi-document reasoning. Table 3 reports accuracy with DeepSeek-R1-0528, broken down by difficulty and input length. On LongBench v2, both Speculative Prefill and Stage 1 LongAttnComp underperform the full-context baseline by substantial margins. We hypothesize that Stage 1’s training set (SQuAD and HotpotQA, NIAH-style) does not cover the evidence-aggregating reasoning patterns Long-Bench v2 emphasizes, which is precisely the gap Stage 2 is designed to close. 6DeepSeek-R1-0528 Method Overall Easy Hard Short Medium Long Full context 56.7 59.4 55.0 66.7 50.9 51.4 Full context (100k) 51.1 58.9 46.3 54.4 44.2 59.3 Speculative Prefill 46.3 49 44.7 56.7 40.5 40.7 LongAttnComp (Stage 1) 41.7 47.9 37.9 46.7 37.7 41.7 LongAttnComp (Stage 2, subq) 48.9 56.2 44.4 53.9 42.3 53.7       
+
+> LongAttnComp (Stage 2, nosubq) 49.7 44.2 46.3 49.4 49.8 50.0
+> Table 3: LongBench v2 accuracy (%), broken down by difficulty (easy/hard) and input length (short/medium/long). Full context (100k) reflects a LongBench v2-specific deployment cap of 100k input tokens; the untruncated full-context row is reproduced from the LongBench v2 leaderboard (LongBench v2, 2026) for reference.
+
+We separate hyperparameter selection from final evaluation by using DeepSeek-V3.1 as a develop-ment target and reporting all main-text numbers on R1 as the held-out target. V3.1 sits within the same DeepSeek family, making transfer of inference-time settings plausible, and its non-thinking mode keeps sweeps tractable. The V3.1 ablation (Ap-pendix G.4) identifies two impactful changes from the Code-Debug defaults: token-budget-only selec-tion (disabling top-p pruning) and a longer parsed query window ( N =512 ); both transfer cleanly to R1. With Stage 2, LongAttnComp recovers 7–12 points over Stage 1 across every breakdown, sur-passing Speculative Prefill by 2.6 points (subq) and 3.4 points (nosubq) on Overall accuracy. The subq 
+
+variant gains the most on Long inputs (41.7 →
+
+53.7); the nosubq variant achieves the highest Over-all accuracy (49.7), reaching within 1.4 points of the 100k-truncated full-context baseline. While Stage 2 does not yet match the untruncated full-context baseline, the consistent improvement over both Stage 1 and Speculative Prefill validates that broadening the training set with multi-hop reason-ing data transfers to naturalistic multi-document reasoning. 
+
+Per-subtask diagnostic on RULER. We ad-ditionally evaluate on RULER as a complemen-tary per-subtask probe. LongAttnComp substan-tially recovers accuracy on subtasks where the trun-cated baseline loses to lost-in-middle effects (e.g., 
+
+niah_s_3 : 57 .4 → 99 .2) and underperforms on multi-value and multi-query subtasks where evi-dence is distributed across many positions, consis-tent with the LongBench v2 pattern above. Stage 2’s RULER improvements over Stage 1 are small. Per-subtask numbers and full analysis are in Ap-pendix F. 
+
+7 Discussion 
+
+Task coverage reflects training data, not archi-tecture. The two-stage training and evaluation results show that data source and distribution have a direct impact on LongAttnComp’s retrieval and reasoning ability. With Stage 1 training, LongAt-tnComp performs well on tasks where evidence is clearly query-aligned and bounded, such as Code-Debug and RULER’s single-needle, multi-key, and QA subtasks. It underperforms when evi-dence is indirectly query-aligned or spread across many locations, such as RULER’s multi-value and multi-query NIAH and LongBench v2’s naturalis-tic multi-document reasoning. This pattern closely matches Stage 1’s training data: synthetic NIAH-style samples drawn from SQuAD and HotpotQA. We therefore hypothesize that per-task variation reflects training-data composition, not a fundamen-tal limit of the method. Stage 2 confirms this. By combining replay of Stage 1 data with newly cu-rated multi-hop and naturalistic samples (MuSiQue, 2WikiMultiHopQA) that target where Stage 1 is weak, Stage 2 recovers 7 to 12 points across all LongBench v2 breakdowns while largely preserv-ing Code-Debug performance. Stage 2’s improve-ment shows that per-task strengths can be extended by fine-tuning on the right data, without changing the architecture. 
+
+subq vs. nosubq training: mixed evidence. 
+
+Stage 2 is trained in two query-construction variants: subq (multi-hop question plus dataset-provided sub-question decomposition) and nosubq 
+
+(multi-hop question only). This tests whether ex-posing the compressor to an explicit reasoning chain during training changes its downstream be-havior. The results are mixed. On Code-Debug, subq wins on two of four targets (R1, MiniMax) and nosubq wins on the other two (V3.1, GPT-OSS), with per-target differences under 3 points 7and no clear pattern across model families. On LongBench v2, DeepSeek-V3.1 favors subq across every subtask (Appendix G.4); R1 prefers subq on the length-bin extremes (Easy, Short, Long) and no-subq on the mid-range bins (Hard, Medium, Over-all). The V3.1 LongBench v2 result is the most con-sistent signal in favor of subq and suggests that explicit sub-question decomposition during train-ing may help the compressor learn multi-hop re-trieval patterns. Sub-question decomposition is well-studied as an inference-time strategy for multi-hop reasoning; applying it as a training-time signal for the compressor itself is a less-explored variant. Since the clean win comes from one target on one benchmark, we treat this as an exploratory observa-tion rather than a firm conclusion, and leave fuller characterization to future work. 
+
+Inference-time hyperparameters are task-dependent. Two LongAttnComp inference set-tings interact with the task. The first is the choice of 
+
+selection mode . Our modified top-p algorithm has two termination conditions, cumulative score and token budget, and adapts the compression length to the task. On RULER’s niah_s_1 , the top-p
+
+threshold is satisfied early and selection stops at 
+
+∼2k tokens against a 16k budget, yielding 100% accuracy with aggressive compression. On Code-Debug, selection runs close to the budget ( ∼15k tokens) because the relevant code region is larger, again preserving accuracy. On LongBench v2’s nat-uralistic multi-document reasoning, however, selec-tion terminates at 6–9k tokens, which is not enough to retain distributed supporting evidence; switch-ing to budget-only selection, which disables the top-p termination and fills the full budget, recovers performance across breakdowns (Appendix G.4). The second knob is chunk size : 1024 tokens work best for Code-Debug, where evidence spans full functions; 256 for RULER, where each needle is short; and 32 for LongBench v2, where supporting evidence sits in many short spans across documents. Together these patterns suggest the right inference setting depends on the task’s retrieval and reason-ing demands; an adaptive selection mechanism is a natural direction for deploying the compressor when task type is unknown. 
+
+Efficiency. Once properly trained, LongAt-tnComp has a smaller compute and memory foot-print than previous draft-model-based methods such as Speculative Prefill, which uses the full draft model rather than the first L=13 layers. For refer-ence, Speculative Prefill reports a TTFT reduction from 46s to 2.5s when compressing 128k tokens to 16k with a Llama-3.1-8B draft model (Upasani et al., 2026); since LongAttnComp’s compressor uses only the first 13 of 32 layers of the same back-bone, compression overhead should be roughly one-third of Speculative Prefill’s, at comparable or better accuracy (Table 1). 
+
+8 Conclusion 
+
+We presented LongAttnComp, an effective fine-tuning-based long-context compression method. The trained compressor acts as a modular, target-agnostic preprocessing step that transfers across unrelated target model families without retraining. Our two-stage training recipe and the resulting eval-uation pattern suggest that with more diverse train-ing data, the same architecture can extend to more complex long-context reasoning tasks. Several future directions follow from this work. First, expanding the training data beyond Stage 2’s MuSiQue and 2WikiMultiHopQA mix, particularly toward more naturalistic and reasoning-heavy long-context tasks, would further close the LongBench v2 gap that Stage 2 has partially addressed. Sec-ond, an adaptive mechanism for selecting inference settings (chunk size and selection mode) would simplify deployment to inputs whose task type is unknown in advance. Third, a robust task-agnostic query parser would complete the deployment story by removing both the task-dependent query-length choice and the small accuracy cost of arbitrary last-N parsing ( ∼1 point on Code-Debug). As a longer-term direction, fine-tuning the draft model itself to better align with target model behavior is a natural avenue we considered but did not pur-sue here: high-quality long-context training data remains scarce and generation pipelines for such data are not openly available. 
+
+Ethics Statement 
+
+All models, datasets, and benchmarks used in this work are publicly available research artifacts under standard research-use licenses; our usage is consis-tent with their intended research use. The training data is derived from public QA datasets and is in-tended for research use only. We did not collect new data; the source datasets have been vetted by their original curators and the research community, and we did not identify personally identifying in-formation or offensive content in our use. 8Limitations 
+
+We summarize the principal limitations of this work, all of which are surfaced by the experiments reported in the main text. 
+
+Training-data scope. Both stages train the com-pressor on synthetically constructed NIAH-style data: Stage 1 from SQuAD and HotpotQA, Stage 2 adding MuSiQue and 2WikiMultiHopQA. Despite this broadening, all training samples are produced by the same synthetic pipeline that places query-relevant content into otherwise-irrelevant context. Naturalistic long-context tasks such as LongBench v2 include reasoning patterns that this synthetic distribution does not fully capture, which leaves a residual gap to the untruncated full-context base-line even after Stage 2. Mixing naturally curated long-context data with the synthetic pipeline is a necessary next step. 
+
+Task-dependent hyperparameters. LongAt-tnComp’s optimal inference settings vary by task across three knobs: chunk size, parsed query length, and the choice between cumulative top-p + bud-get and budget-only selection modes. Best chunk size and query length differ across Code-Debug, RULER, and LongBench v2, and the selection mode that maximizes accuracy depends on how relevant evidence is distributed in the input. In set-tings where the task type is not known in advance, deploying a single fixed configuration will leave performance on the table. 
+
+Query parsing assumption. LongAttnComp requires identifying a query span within the input. We use arbitrary last-N token parsing throughout, which costs only ∼1 point on Code-Debug. This heuristic introduces two limitations: the optimal 
+
+N varies by task (128 for Code-Debug, 256 for RULER, 512 for LongBench v2), and it is not guar-anteed to be sufficient for inputs whose query is structurally embedded elsewhere in the prompt. A learned task-agnostic parser would address both. 
+
+Empirical efficiency measurements. We report a rule-of-thumb estimate of compressor overhead based on the layer-count ratio against a draft-model baseline (§7). We do not provide end-to-end TTFT, throughput, or memory measurements under con-trolled hardware; empirical efficiency characteriza-tion is left to follow-up work. 
+
+Deployment-side constraints. All target-model evaluations use SambaNova cloud API. Avail-able context budgets, tokenization, and reasoning-output allocations are determined by the serving stack rather than the compressor; these constraints occasionally interact with our evaluation protocol (e.g., the middle-truncation baseline used in the RULER cross-tokenizer setting). 
+
+Single compressor backbone. All experiments use Llama-3.1-8B-Instruct as the compressor back-bone. Whether the same training recipe transfers to other backbone families or scales (smaller draft models for tighter deployment, larger models for higher headroom) is untested. 
+
+Acknowledgments 
+
+We thank Bo Li for his guidance and support throughout this project, and Taylor Lee for help setting up API endpoints used in our experiments. 
+
+References                  
+
+> Yushi Bai, Shangqing Tu, Jiajie Zhang, Hao Peng, Xi-aozhi Wang, Xin Lv, Shulin Cao, Jiazheng Xu, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. 2024. LongBench v2: Towards deeper understanding and reasoning on realistic long-context multitasks. arXiv preprint arXiv:2412.15204 .Nadezhda Chirkova, Andreas Rücklé, Iryna Gurevych, and Vassilina Nikoulina. 2025. Provence: Efficient and robust context pruning for retrieval-augmented generation. arXiv preprint arXiv:2501.16214 .DeepSeek-AI. 2025a. DeepSeek-R1: Incentivizing rea-soning capability in LLMs via reinforcement learning.
+> arXiv preprint arXiv:2501.12948 .DeepSeek-AI. 2025b. DeepSeek-V3.1. https: //huggingface.co/deepseek-ai/ DeepSeek-V3.1 .Hugging Face model re-lease. Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, and 1 others. 2024. The Llama 3 herd of models.
+> arXiv preprint arXiv:2407.21783 .Xanh Ho, Anh-Khoa Duong Nguyen, Saku Sugawara, and Akiko Aizawa. 2020. Constructing a multi-hop QA dataset for comprehensive evaluation of reason-ing steps. In Proceedings of the 28th International Conference on Computational Linguistics (COLING) ,pages 6609–6625. Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shan-tanu Agrawal, Dima Rekesh, Jiaqi Fu, Yang Zhang, and Boris Ginsburg. 2024. RULER: What’s the real context size of your long-context language models?
+> arXiv preprint arXiv:2404.06654 .Taeho Hwang, Sukmin Jeong, Jeonghwan Lim, Soyeong Song, and Jinwoo Park. 2024. EXIT: Context-aware extractive compression for enhanc-ing retrieval-augmented generation. arXiv preprint arXiv:2412.12559 .
+
+9Huiqiang Jiang, Qianhui Wu, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. 2023. LLMLingua: Compressing prompts for accelerated inference of large language models. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,pages 13358–13376. Huiqiang Jiang, Qianhui Wu, Xufang Luo, Dong-sheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. 2024. LongLLMLingua: Accelerating and enhanc-ing LLMs in long context scenarios via prompt com-pression. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics .Yaniv Leviathan, Matan Kalman, and Yossi Matias. 2023. Fast inference from transformers via spec-ulative decoding. In Proceedings of the 40th Inter-national Conference on Machine Learning , pages 19274–19286. Jingyu Liu, Beidi Chen, and Ce Zhang. 2025. Specu-lative prefill: Turbocharging TTFT with lightweight and training-free token importance estimation. In 
+
+Proceedings of the 42nd International Conference on Machine Learning , volume 267 of Proceedings of Machine Learning Research .Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paran-jape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the middle: How language mod-els use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173. LongBench v2. 2026. Longbench v2 leaderboard. 
+
+https://longbench2.github.io/ . Ac-cessed May 2026. Lvzhou Luo, Yixuan Cao, and Ping Luo. 2025. At-tnComp: Attention-guided adaptive context com-pression for retrieval-augmented generation. arXiv preprint arXiv:2509.17486 .MiniMax. 2026. MiniMax M2.5: Built for real-world productivity. https://www.minimax. io/news/minimax-m25 .OpenAI. 2025. gpt-oss-120b & gpt-oss-20b model card. 
+
+arXiv preprint arXiv:2508.10925 .Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev, and Percy Liang. 2016. SQuAD: 100,000+ questions for machine comprehension of text. In Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing , pages 2383–2392. Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. 2022. Musique: Multi-hop questions via single-hop question composition. 
+
+Transactions of the Association for Computational Linguistics , 10:539–554. Shubhangi Upasani, Ravi Shanker Raju, Bo Li, Meng-meng Ji, John Long, Chen Wu, Urmish Thakker, and Guangtao Wang. 2026. Cross-family speculative prefill: Training-free long-context compression with small draft models. In International Conference on Learning Representations . ArXiv:2603.02631. Fangyuan Xu, Weijia Shi, and Eunsol Choi. 2023. RE-COMP: Improving retrieval-augmented LMs with compression and selective augmentation. arXiv preprint arXiv:2310.04408 .Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Ben-gio, William W Cohen, Ruslan Salakhutdinov, and Christopher D Manning. 2018. HotpotQA: A dataset for diverse, explainable multi-hop question answer-ing. In Proceedings of the 2018 Conference on Em-pirical Methods in Natural Language Processing ,pages 2369–2380. Chanwoong Yoon, Taewhoo Kim, Hyeon Hwang, Min-byul Jeong, and Jaewoo Kang. 2024. CompAct: Compressing retrieved documents actively for ques-tion answering. arXiv preprint arXiv:2407.09014 .Xinrong Zhang, Yingfa Chen, Shengding Hu, Zi-hang Xu, Junhao Chen, Moo Khai Hao, Xu Han, Zhen Leng Thai, Shuo Wang, Zhiyuan Liu, and Maosong Sun. 2024. ∞Bench: Extending long con-text evaluation beyond 100k tokens. arXiv preprint arXiv:2402.13718 .
+
+A Background: AttnComp Review 
+
+We review the AttnComp framework (Luo et al., 2025) that our method builds upon, covering its architecture, training procedure, and compression algorithm. 
+
+Architecture. Given an instruction I, k re-trieved documents D = {d1, . . . , d k}, and a query q, the concatenated input [I; d1; . . . ; dk; q]
+
+is passed through the first L frozen layers of a draft LLM, yielding hidden states Xc ∈ Rn×dmodel 
+
+for the context (instruction and documents) and 
+
+Xq ∈ Rm×dmodel for the query. An additional cross-attention layer—initialized from layer L+1 of the LLM and the only trainable component—computes query-context attention weights A ∈ Rm×n:
+
+Qi = XqW Qi , Ki = XcW Ki ,A = 1
+
+H
+
+> H
+
+X
+
+> i=1
+
+softmax 
+
+ QiK⊤
+
+> i
+
+√da
+
+
+
+, (1) where H is the number of attention heads and 
+
+W Qi , W Ki ∈ Rdmodel ×da are per-head projection ma-trices. Freezing the first L layers and fine-tuning only the cross-attention layer updates ≈ 0.5% of total parameters. 
+
+Training. Each training sample contains a query, 100 retrieved documents, and binary relevance la-bels ri ∈ { 0, 1}. AttnComp trains with two com-plementary losses. Document-level supervision dis-criminates relevant from irrelevant documents via 10 binary cross-entropy: 
+
+Ldoc = −
+
+> k
+
+X
+
+> i=1
+
+ri log sdi + (1 − ri) log(1 − sdi ).
+
+(2) 
+
+Instruction-level supervision handles the all-irrelevant case by directing attention to the instruc-tion when no document is relevant: 
+
+Lins = −rins log sins + (1 − rins ) log(1 − sins ),
+
+(3) where rins ≜ I
+
+Pki=1 ri = 0 
+
+
+
+. The combined loss is L = Ldoc + λLins . AttnComp trains on 8k Hot-potQA samples (25% all-negative) using the Adam optimizer with lr = 2 ×10 −4, batch size 8, for 8 epochs with λ = 0 .8. Relevance labels are ob-tained via an automated annotation pipeline. 
+
+Top-p compression. Each document dj receives a scalar score sdj by aggregating rows of A over its token span; the instruction receives score sins 
+
+similarly. Documents are sorted descending and a cumulative sum is accumulated starting from sins ,retaining documents until the sum exceeds thresh-old p or a score falls below minimum ϵ, yielding 
+
+D∗ ⊆ D . AttnComp uses p = 0 .95 and ϵ = 10 −2.
+
+B Our Top-p Algorithm 
+
+Algorithm 1 presents our token-budget top-p selec-tion procedure, replacing AttnComp’s minimum-score threshold with a content token budget B that halts selection once the retained tokens reach B or the cumulative score exceeds p.
+
+Algorithm 1 Token-Budget Top-p Compression 
+
+Input: Instruction score sins , document scores 
+
+{sd1 , . . . , s dk }, top-p threshold p, token budget 
+
+B
+
+Output: Compressed document set D′
+
+{d(1) , . . . , d (k)} ← argsort( {sdi }ki=1 , desc. )
+
+Initialize sum ← sins , D′ ← ∅ , tokens ← 0
+
+for i = 1 to k do if sum ≥ p or tokens + |d(i)| > B then break end if 
+
+sum ← sum + sd(i)
+
+tokens ← tokens + |d(i)|D′ ← D ′ ∪ { d(i)}
+
+end for return D′
+
+C Two-Stage Training Data 
+
+For Stage 1 training data, Table 4 reports per-subset statistics; Figures 3 and 4 show needle positions and token length distributions for all four training subsets. All subsets exhibit uniform needle position coverage ( ≈33% each across front, middle, and end), confirming position-agnostic training.                   
+
+> Table 4: Summary of Stage 1 training dataset statistics.
+> Dataset Subsets Samples Needles Ctx. len 16k SQuAD 8,000 0 or 1 8k–48k HotpotQA 8,000 0 or 2 8k–16k 32k SQuAD 16,000 0 or 1 8k–48k HotpotQA 16,000 0 or 2 8k–48k
+
+For Stage 2 training data, the replay subsets (SQuAD and HotpotQA) preserve Stage 1’s needle position coverage and token-length range. The newly added MuSiQue and 2WikiMultiHopQA subsets differ structurally in both needle count and position protocol. While Stage 1 samples carry at most 2 relevant documents (SQuAD: 0–1; Hot-potQA: 0–2), Stage 2 samples require 2–4 sup-porting documents per multi-hop query (Table 5; MuSiQue mean 2.33, 2WikiMultiHopQA mean 2.39). Stage 2 subsets also retain each dataset’s natural needle position distribution rather than en-forcing uniform coverage. The higher needle count substantially raises retrieval complexity per sample, exposing the compressor to evidence-aggregation patterns absent from Stage 1. 
+
+D Two-Stage Finetuning Recipe 
+
+Figure 5 illustrates the two-stage training recipe described in §3.4 and §4. 
+
+E Evaluation Protocols 
+
+For both Stage 1 and Stage 2, evaluation follows a tune-then-evaluate procedure: we sweep training and inference hyperparameters on small held-out subsets to identify the best configuration, then ap-ply it to the full benchmarks. For Stage 1, training is tuned on RULER’s qa_1 and qa_2 subtasks (Appendix G) and inference settings on a held-out Code-Debug subset. For Stage 2, inference set-tings for LongBench v2 are re-tuned on DeepSeek-V3.1 as a development target before applying to DeepSeek-R1-0528 (Appendix G.4). Both stages are then evaluated on Code-Debug, LongBench v2, and RULER. 11 (a) 8k-SQuAD (b) 8k-HotpotQA (c) 16k-SQuAD (d) 16k-HotpotQA 
+
+Figure 3: Needle position distributions across all training subsets. 
+
+(a) 8k-SQuAD (b) 8k-HotpotQA (c) 16k-SQuAD (d) 16k-HotpotQA 
+
+Figure 4: Token length distributions across all training subsets. 
+
+Source Samples Needles per sample Tokens (mean) 2 3 4MuSiQue 8,000 73% 22% 6% 11,301 2WikiMultiHopQA 4,000 80% 0% 20% 10,598 
+
+Table 5: Stage 2 new-data structural statistics. Needle counts reflect the number of supporting documents required per sample; token counts are query+context length under the Llama-3.1-8B-Instruct tokenizer.                                                   
+
+> DeepSeek-R1-0528 Method niah_s_1 niah_s_2 niah_s_3 niah_multik_1 niah_multik_2 niah_multik_3 niah_multiv niah_multiq qa_1 qa_2 Full context 94.9 91.8 57.4 88.4 89.4 44.4 88.9 91.7 71.4 72.0 LongAttnComp (Stage 1) 100.0 99.4 98.2 92.8 73.6 80.0 64.0 81.5 89.0 83.4 LongAttnComp (Stage 2, subq) 100.0 99.2 98.6 93.6 75 79.2 61.9 84 88.8 82.8 LongAttnComp (Stage 2, nosubq) 100.0 99.4 99.2 92.4 73.8 80.4 61.8 84.4 89.0 82.4
+
+Table 6: Per-subtask diagnostic on RULER. Subtask abbreviations follow the RULER conventions (Hsieh et al., 2024). 
+
+F Additional Experiments 
+
+Table 6 reports per-subtask accuracy on RULER with DeepSeek-R1-0528 as the target. Three patterns emerge. First, LongAttnComp substan-tially recovers accuracy on subtasks where the truncated baseline loses to lost-in-middle effects (niah_s_3 : 57.4 to 99.2; niah_multik_3 :44.4 to 80.4), and matches or slightly beats the base-line on simpler single-needle and multi-key tasks. Second, the compressor underperforms the full-context baseline on multi-value and multi-query subtasks, where evidence is distributed across many positions; this spread-evidence weakness relative to full context mirrors the residual gap on LongBench v2 (§6.3). Third, Stage 2 produces small improve-ments over Stage 1 on the multi-needle subtasks targeted by its multi-hop training data ( multik_1 ,
+
+multik_2 , multiq : 0.8–2.9 points), with small regressions on multi-value and QA. The Stage 2 gains on RULER are modest, consistent with the Stage 2 training data being primarily aimed at LongBench v2-style naturalistic reasoning rather than RULER’s synthetic multi-needle patterns. 
+
+G Additional Ablations 
+
+G.1 Compressor Training Ablations 
+
+We conducted ablations throughout development to investigate the impact of training-data composition and hyperparameters on LongAttnComp. To select the final training configuration, we evaluated each candidate checkpoint on the qa_1 and qa_2 sub-tasks of RULER. These subtasks probe complemen-12 1⃝ STAGE 1: general retrieval 
+
+> Training data
+> SQuAD16k samples
+> HotpotQA16k samples
+> NIAH-style construction
+> Train cross-attention layer
+> Stage 1 checkpoint
+
+2⃝ STAGE 2: complex multi-hop  
+
+> New data
+> MuSiQue8k
+> 2WikiMultiHop4k
+> Stage 1 replay
+> SQuAD4k
+> HotpotQA4k
+> NIAH-style construction (MuSiQue: subq / nosubq)
+> Continue fine-tuning from Stage 1 checkpoint
+> Stage 2 (subq) Stage 2 (nosubq)
+> continued fine-tuning
+
+Figure 5: The two-stage fine-tuning recipe. Stage 1 trains the cross-attention scoring layer on broad NIAH-style data (SQuAD + HotpotQA) to establish general query-aligned retrieval. Stage 2 continues fine-tuning from the Stage 1 checkpoint on a multi-hop retrieval and reasoning dataset (MuSiQue, 2WikiMultiHopQA) interleaved with replay from Stage 1 sources. MuSiQue admits two variants—with and without sub-question decomposition embedded in the query—producing two Stage 2 checkpoints that we evaluate independently. 
+
+DeepSeek-V3.1 Method Overall Easy Hard Short Medium Long Compressed length Full context 50.7 56.8 46.9 55.0 46.0 52.8 125k Stage 2 (subq), top-p + budget 43.5 48.4 40.5 48.3 40.9 40.7 6–9k (adaptive) Stage 2 (subq), budget-only 45.9 51.6 42.4 48.9 43.7 45.4 16k Stage 2 (subq), budget-only, q=512 48.9 51.6 47.3 53.3 44.2 50.9 16k Stage 2 (nosubq), budget-only, q=512 46.7 51.0 44.1 50.0 43.3 48.1 16k 
+
+Table 7: LongBench v2 inference-setting ablation on DeepSeek-V3.1 (development target). Two design knobs are swept: selection mode (cumulative top-p with budget backup vs. budget-only) and parsed query length ( q=128 
+
+default vs. q=512 ). The chosen configuration (bolded; Stage 2 subq with budget-only selection and q=512 ) is applied to DeepSeek-R1-0528 as the held-out target in Table 3. 
+
+tary skills: qa_1 (SQuAD-derived) tests single-fact retrieval, while qa_2 (HotpotQA-derived) re-quires multi-hop retrieval and reasoning, together covering the retrieval and reasoning axes central to this work. This choice also matches the QA-centric evaluation methodology of the original AttnComp paper. 
+
+Training configuration qa_1 qa_2 Llama-3.1, no compression (baseline) 71.8 43.8 SQuAD only, const LR, 15 ep. 61.4 43.0 HotpotQA only, const LR, 15 ep. 26.6 51.8 Combined 16k, const LR, 15 ep. 53.8 53.4 Combined 16k, const LR, extended 59.4 51.8 Combined 32k, cos LR + dropout, 15 ep. 68.2 58.2 
+
+Combined 32k, cos LR + dropout, 18 ep. 65.8 57.1 
+
+Table 8: Training-data composition and schedule abla-tion on RULER QA subtasks ( qa_1 : SQuAD; qa_2 :HotpotQA; Llama-3.1-8B-Instruct as target model, no top-p tuning). 
+
+As shown in Table 8, single-source training produces strong specialization: SQuAD-only and HotpotQA-only checkpoints each preserve perfor-mance on their source task but suffer significant drops on the other, suggesting that retrieval-biased training data trades off against reasoning capabil-ity and vice versa. Combining the two sources balances this: even at 16k samples, performance is balanced across both subtasks, and qa_2 (the more reasoning-heavy subtask) exceeds the no-compression baseline. Doubling the dataset to 32k further improves both subtasks. While this is not a stress test of the cross-attention layer’s train-ing capacity, the fact that the layer absorbs four times the data used by the original AttnComp (Luo et al., 2025) without saturating suggests that the lightweight scoring layer can support substantially larger training sets—a useful design observation for further scaling. On the hyperparameter axis, we ob-tain the best results with cosine LR decay, dropout, and 15 training epochs; extending to 18 epochs pro-duces a small drop, suggesting mild overfitting at fixed dataset size. These ablations both selected the 13 configuration used throughout the main text and surfaced general training insights for single-cross-attention-layer compressors. 
+
+G.2 Stage 1 Training Sweep on Code-Debug                                          
+
+> Method Chunk Acc. query Arb. query Full context –74.37 –Speculative Prefill 128 62.44 –16k, const LR, 15ep 128 61.42 –256 68.02 –512 74.37 –1024 73.86 –16k, cos LR, 30ep 512 74.37 –1024 75.13 75.13 32k, cos LR, 15ep 128 56.85 –256 72.08 –512 72.08 –1024 76.40 75.38
+> Table 9: Accuracy (%) on InfiniteBench Code-Debug with DeepSeek-R1-0528. All LongAttnComp configura-tions use top-p= 0 .95 and a 16k token budget (compres-sion rate ≈83%). Accurate query uses task-specific query extraction; Arbitrary query takes the last 128 tokens as the query. Input budget: 120k tokens (8k reserved for output); over-budget inputs are middle-truncated. </think> tags are stripped before answer extraction.
+
+Table 9 shows the impact of training-data scale, learning-rate schedule, training-epoch count, and chunk size on Code-Debug accuracy with DeepSeek-R1-0528 as the target. Our best Stage 1 configuration (32k training set, cosine-decay learn-ing rate, 15 epochs, chunk size 1024, 16k token budget) reaches 76.40%, exceeding full context by 2.0 points and Speculative Prefill by 13.9 points while compressing the prompt by 83%. Two patterns emerge. First, chunk size has a large impact on accuracy: on the 32k checkpoint, accuracy increases from 56.85% at chunk 128 to 76.40% at chunk 1024. Second, training sched-ule and dataset size also contribute: cosine de-cay and the 32k training set each improve over their constant-LR and 16k counterparts, but the 16k cosine checkpoint at 30 epochs already reaches 75.13%, indicating that longer training partially compensates for smaller data. Together, these results indicate that LongAttnComp paired with larger chunk sizes is particularly effective at re-taining task-relevant information for long-context multiple-choice reasoning. 
+
+G.3 Top-p Ablation 
+
+Although the original AttnComp paper recom-mends p = 0 .95 (Luo et al., 2025), our modified top-p algorithm and long-context inference setting differ enough that we re-verified this choice. We sweep p on a small Code-Debug validation subset, using DeepSeek-R1-0528 as the target model and the 16k-trained compressor checkpoint. As shown in Table 10, the sweep is lightweight but suggestive: 
+
+p = 0 .95 remains the best choice in our setting, and we adopt it for all subsequent experiments.           
+
+> Top-pAccuracy 0.70 50 0.80 60 0.90 50
+> 0.95 90
+> Table 10: Top-pthreshold ablation. Accuracy (%) on a 10-sample Code-Debug validation subset under our modified token-budget top-palgorithm (16k input bud-get, chunk size 256, 16k training set). p= 0 .95 matches the original AttnComp default (Luo et al., 2025).
+
+G.4 LongBench v2 Inference-Setting Ablation (DeepSeek-V3.1) 
+
+We use DeepSeek-V3.1 as a development target to select inference settings for LongBench v2 be-fore transferring them to DeepSeek-R1-0528 (§6.3). On V3.1 itself, the chosen configuration reaches 48.9 Overall, within 2 points of the full-context baseline (50.7). Table 7 sweeps two settings: selec-tion mode (cumulative top-p + budget vs. budget-only) and parsed query length ( q=128 default vs. 
+
+q=512 ). Disabling top-p termination and using token-budget-only selection contributes +2.4 Over-all points and increasing query length adds another 
+
++3.0 points, for a total gain of 5.4 over the de-fault. The chosen configuration (Stage 2 subq with budget-only selection and q=512 ) is applied to R1 in the main text. 14
