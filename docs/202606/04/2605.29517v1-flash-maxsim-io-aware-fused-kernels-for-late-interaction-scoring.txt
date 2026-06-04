@@ -1,0 +1,445 @@
+Title: FLASH-MAXSIM: IO-Aware Fused Kernels for Late-Interaction Scoring
+
+URL Source: https://arxiv.org/pdf/2605.29517v1
+
+Published Time: Fri, 29 May 2026 00:47:48 GMT
+
+Number of Pages: 7
+
+Markdown Content:
+# FLASH -M AX SIM : IO-Aware Fused Kernels for Late-Interaction Scoring 
+
+Roi Pony * Adi Raz Goldfarb Idan Friedman Daniel Ezer Udi Barzelay 
+
+IBM Research Israel 
+
+Abstract 
+
+Late-interaction retrieval (ColBERT, ColPali) scores a query against a document with the MAX SIM operator: for every query token, the maximum similarity over the document tokens, summed over query tokens. The standard implementation materializes the full query-token × document-token similarity ten-sor in GPU memory, for visual ColPali at 
+
+10K documents this tensor alone is 21 GB in FP16, created only to be reduced to one score per document and discarded. It ex-hausts a 40 GB GPU and bounds the achiev-able batch size in both inference and training. We present F LASH -M AX SIM , an IO-aware fused GPU kernel that computes exactly the same scores without ever materializing the ten-sor, by streaming query and document tiles through on-chip SRAM and folding the row-maximum reduction into the same pass. We extend the IO-aware principle through the train-ing backward pass , an inverse-grid CSR con-struction that reuses the forward argmax for an atomic-free, destination-owned gradient re-duction, and through INT8 ×INT8 quantiza-tion and variable-length (padding-free) scoring. FLASH -M AX SIM is up to 3.9× faster on an A100 ( 4.7× on an H100) than naive PyTorch at matched precision, uses up to 16 × less infer-ence memory and ∼ 28 × less training memory, unlocks corpus and batch sizes that exhaust PyTorch entirely, preserves the exact ranking (100% top-20 agreement with an FP32 refer-ence), and is released open-source at https: //github.com/roipony/flash-maxsim .
+
+1 Introduction 
+
+Dense single-vector retrieval encodes each query and document as one vector and scores by a dot product. Late-interaction retrieval instead keeps a 
+
+set of token-level embeddings per item and scores  
+
+> *Corresponding author: roi.pony@ibm.com .
+
+with M AX SIM :
+
+score( Q, D ) = 
+
+> Lq
+
+X
+
+> i=1
+> Ld
+
+max  
+
+> j=1
+
+⟨Qi, D j ⟩, (1) with Q ∈ RLq ×d, D ∈ RLd×d. This finer-grained matching is what gives ColBERT (Khattab and Za-haria, 2020) and its document-image successor Col-Pali (Faysse et al., 2025) their quality advantage, and its cost. The natural PyTorch implementation forms the [Lq, L d] similarity matrix per (query, doc-ument) pair via an einsum , then reduces it ( max 
+
+over document tokens, sum over query tokens). At scale the dominant memory cost is therefore a 
+
+[B, L q, L d] tensor that exists only to be reduced away. For visual ColPali ( Lq = Ld = 1024 patch tokens, 
+
+d = 128 ) over a 10K -document candidate set, that tensor is 10 4 · 1024 2 · 2 ≈ 21 GB in FP16 ( 42 GB in FP32). It out-of-memories (OOMs) a 40 GB GPU and consumes a quarter to half of an 80 GB one, capping batch size for reranking, for in-batch-negatives contrastive training , and for distillation. 
+
+The matrix is the bottleneck, and it never needed to exist. 
+
+FlashAttention (Dao et al., 2022) showed that the analogous attention matrix can be avoided by IO-aware tiling. We make the same move for MAX SIM ; and because M AX SIM is an operator ,not just an inference pass, we carry the idea through training and quantization. Our contributions: 1. A fused forward kernel (§4.1) that computes exact M AX SIM with peak memory ≈ the doc-ument embeddings, the similarity tensor never forms. Up to 3.9× over naive PyTorch on dense scoring (A100; 4.7× on H100) and OOM-unlock at corpus scale (§5). 2. A fused backward kernel (§4.2): an inverse-grid CSR map, built at runtime from the saved forward argmax, that performs an atomic-free, 
+
+> arXiv:2605.29517v1 [cs.IR] 28 May 2026
+
+destination-owned gradient reduction, no re-materialized matrix, FP32-accurate gradients. It unlocks contrastive batches that OOM Py-Torch. 3. Quantized and variable-length variants 
+
+(§4.3): INT8 ×INT8 M AX SIM with Spearman 
+
+ρ = 0 .999 ranking fidelity, and padding-free 
+
+cu_seqlens scoring (up to 5×) that removes the padding tax. 4. An open-source release of all kernels and variants. 
+
+2 Related Work 
+
+FlashAttention (Dao et al., 2022) is the concep-tual parent, IO-aware tiling that avoids materi-alizing the attention matrix by streaming tiles through on-chip memory with an online softmax. FLASH -M AX SIM applies the same principle to the MAX SIM operator; the reduction is a plain running max (idempotent, no rescaling), and, unlike atten-tion kernels, we carry it through a hard-selection (argmax) backward for training. Flash-KMeans (Yang et al., 2026) is the closest analog in spirit: a materialization-free assignment via online argmin plus a sort-inverse, low-contention centroid update; we target a retrieval operator and add a quantization and variable-length story. ColBERT (Khattab and Zaharia, 2020) and ColPali (Faysse et al., 2025) define the late-interaction application this work ac-celerates. 
+
+3 Background and Motivation 
+
+3.1 MAX SIM and the Standard GPU Implementation 
+
+A late-interaction model encodes a query as Q ∈
+
+RLq ×d and a document as D ∈ RLd×d (token-level, 
+
+ℓ2-normalized, d=128 ). M AX SIM (Eq. 1) is com-puted at scale in two regimes: reranking (one query vs. B candidate documents, output [B]) and, during 
+
+training , in-batch-negatives scoring ( Nq queries vs. 
+
+B documents, an all-pairs [Nq, B ] score matrix). Written directly, 
+
+> S = einsum("bqd,bld->bql", Q, D) # [B, Lq, Ld]: materialized in HBM score = S.max(dim=2).values.sum(dim=1)
+
+the intermediate S of shape [B, L q, L d] is written to high-bandwidth memory (HBM), read back for the max reduction, and discarded. 
+
+Algorithm 1 Standard (materialized) M AX SIM :forward and training backward. The two HBM-bound steps are marked.                               
+
+> 1: S←QD ⊤▷[B, L q, L d]written to HBM
+> (materialization) 2: m←rowmax( S);score ←rowsum( m)▷ S re-read from HBM
+> // training backward
+> 3: ∇S←upstream grad routed to the argmax entries ▷
+> re-materialize [B, L q, L d]
+> 4: ∇Q, ∇D←atomicAdd over ∇S▷hot-token write contention
+
+3.2 Kernel-Level Bottleneck: the Materialized Tensor 
+
+The footprint of S is O(B · Lq · Ld), independent of d, and it is both the memory and the bandwidth bottleneck. The naive path moves Θ( BL qLd)
+
+bytes just for S (one write, at least one read), ver-sus Θ( BL dd) bytes for the inputs. For ColPali (Lq=Ld=1024 , d=128 ) the S traffic exceeds the input traffic by Lq/d ≈ 8×, and the materialized 
+
+S exceeds the inputs by Lq ≈ 1024 ×.
+
+Arithmetic intensity and the roofline. Scoring one pair costs 2LqLdd FLOPs. The naive path’s HBM traffic is dominated by the Lq × Ld sur-face of S (≈ 4LqLd bytes in FP16: one write, two reads), so its arithmetic intensity is AI naive ≈
+
+2LqLdd/ (4 LqLd) = d/ 2 ≈ 64 FLOPs/byte at 
+
+d=128 . An NVIDIA H100’s bf16 roofline ridge point is ≈ 295 FLOPs/byte, so the naive opera-tor sits four-to-five times into the memory-bound 
+
+regime, the tensor cores idle while HBM moves a tensor that is immediately discarded. FLASH -MAX SIM removes the S traffic entirely and crosses the ridge (§4.1). 
+
+3.3 System-Level Constraints in Real Deployments 
+
+The materialized tensor imposes hard system lim-its, not just slowdowns. At ColPali corpus scale the 21 GB FP16 S OOMs a 40 GB GPU and con-sumes half of an 80 GB one, so reranking a large candidate set is impossible without manual chunk-ing. In training , in-batch-negatives scoring forms an all-pairs [Nq, B, L q, L d] tensor whose size is 
+
+quadratic in the batch B; with autograd also retain-ing its gradient, the contrastive batch size is capped far below what the model and optimizer alone would allow, at ColPali shape, B=128 OOMs an 
+
+80 GB GPU (§5). These caps, on corpus size at inference and batch size at training, are the real-Figure 1: F LASH -M AX SIM streams Q and D tiles from HBM into SRAM, forms the sub-tile St and folds it into a running max on chip, and writes back only the scalar score. The [B, L q , L d] similarity tensor is never written to HBM. 
+
+Algorithm 2 FLASH -M AX SIM forward (one pro-gram per (query, document) pair)                                                   
+
+> 1: acc ←0▷FP32 register accumulator 2: for each query tile Qblk of Bqrows do
+> 3: load Qblk into SRAM 4: m← −∞ ▷running max per query token 5: for each document tile Dblk of Bdrows do
+> 6: load Dblk into SRAM 7: St←Qblk D⊤
+> blk ▷in SRAM, FP32 8: mask invalid doc positions to −∞
+> 9: m←max( m, rowmax( St))
+> 10: end for
+> 11: acc ←acc +Pm
+> 12: end for
+> 13: write acc (one scalar) to HBM
+
+deployment cost of materialization. 
+
+4 Methodology 
+
+4.1 Fused Forward: Materialization-Free Scoring via Online Max 
+
+The forward kernel computes Eq. 1 without ever writing S (Figure 1). It is structurally a FlashAttention-style tile-then-reduce, with three differences that make it cheaper: (i) the in-tile re-duction is a plain running maximum , not a softmax, no log-sum-exp and no rescaling, because max is idempotent; (ii) the output is a scalar per (query, document) pair, not a matrix; (iii) there is no value matrix V to re-read. The kernel launches NqB independent programs (thread blocks), one per (query, document) pair; each produces a single FP32 scalar. The simi-larity sub-tile St of shape [Bq, Bd] lives only in SRAM (the running max m and accumulator stay in fp32 registers) and is reduced to a Bq-vector be-fore the next document tile overwrites it. The full 
+
+[B, L q, L d] tensor is never written. Because the sum-of-maxima decomposes over query chunks , a long Lq is split into fixed chunks whose partial scores are summed, so a single compiled kernel serves all problem shapes at runtime. 
+
+Proposition 1 (Exactness) . Algorithm 2 returns exactly score( Q, D ) = PLq 
+
+> i=1
+
+max Ld
+
+> j=1
+
+⟨Qi, D j ⟩,identical to the dense computation up to floating-point reassociation, using Θ( BL q) auxiliary mem-ory in place of the Θ( BL qLd) tensor of Algo-rithm 1. 
+
+The running-max reduction is idempotent and asso-ciative, so partial tiles compose by a single elemen-twise max with no rescaling correction , unlike the online softmax of FlashAttention (detailed next). 
+
+4.1.1 Online-Max Recurrence 
+
+After consuming the k-th document tile, the running max obeys m(k) =max( m(k−1) , rowmax( S(k))) with m(0) = −∞ ;after all tiles, m is the exact per-row maximum over the full Ld axis. Unlike online softmax 
+
+(FlashAttention), there is no running normalizer and no rescaling factor exp( m(k−1) −m(k)):
+
+max is idempotent, so the update is a single elementwise max and the result is bitwise the offline computation. Masked document positions are set to −∞ before the row reduction (not post-multiplied by a 0/1 mask), so padding can never be selected even when valid scores are negative. 
+
+4.1.2 IO Complexity and Roofline Theorem 1 (IO complexity) . For Nq queries and B documents at lengths Lq, L d and di-mension d, naive MAX SIM (Algorithm 1) performs Θ( NqBL qLd) HBM accesses (one write and at least one read of S) and uses 
+
+Θ( NqBL qLd) memory. FLASH -M AX SIM (Al-gorithm 2) performs Θ( NqB(Lq+Ld)d) HBM accesses, reading each operand once and writ-ing Θ( NqB) scalars, with Θ( Lq) on-chip state per program. The materialized-tensor term 
+
+Θ( NqBL qLd) is eliminated; the HBM-traffic ratio is LqLd/ (Lq+Ld) d, i.e. Lq/2d when Lq=Ld.Proof sketch. Each program loads its Q and Db tiles once into SRAM, forms St on chip, and folds it into the running max; S is never written to or read from HBM, so operand traffic is Θ( NqB(Lq+Ld)d) and output traffic Θ( NqB). The naive path additionally writes and reads S, adding Θ( NqBL qLd), which dominates whenever LqLd ≫ (Lq+Ld)d. □
+
+With only the operand reads as HBM traf-fic, AI fused ≈ 2LqLdd/ (2( Lq+Ld)d) =
+
+LqLd/(Lq+Ld) ≈ 512 FLOPs/byte at ColPali shape, above the H100 ridge. The identical mat-mul thus moves from memory-bound to compute-bound: it is faster not because the arithmetic is cheaper, but because it no longer waits on memory. 
+
+4.1.3 Numerical Fidelity 
+
+The accumulator is FP32 throughout. The max-imum relative error against an FP32 reference is 
+
+2 × 10 −6, versus 4 × 10 −3 for an FP16 batched-matrix-multiply baseline, three orders of magnitude tighter, so ranking ties are resolved at true precision rather than by FP16 noise. 
+
+4.1.4 Kernel Family 
+
+A family of forward variants shares the running-max core: single-query rerank, batched multi-query, variable-length packed (§4.3), query-reuse, split-K, and a two-stage INT8 →FP16 top-
+
+K scan, selected by a runtime dispatcher on 
+
+(Nq, B, L q, L d, d, dtype) .
+
+4.2 Inverse-Grid Update: Low-Contention Gradient Aggregation 
+
+The forward kernel makes inference fit. Train-ing gains nothing if the backward re-materializes the [Nq, B, L q, L d] tensor and OOMs at the same batch the forward unlocked. The naive alternative, an atomicAdd of each gradient into its argmax-selected destination, serializes on hot document tokens (a frequent token can be the argmax for hun-dreds of queries) and doubles gradient bandwidth with FP32 atomics. 
+
+4.2.1 Closed-Form Gradients 
+
+With upstream gradient gij = ∂L/∂ score( i, j )
+
+and the forward winner t⋆(i, j, s ) =arg max t⟨Qi,s , D j,t ⟩, resolving the max (a constant index, post-forward) and applying the chain rule gives 
+
+∇Qi,s = P 
+
+> j
+
+gij Dj, t ⋆(i,j,s ), (2) 
+
+∇Dj,t = P  
+
+> (i,s ): t⋆(i,j,s )= t
+
+gij Qi,s . (3) Eq. 2 is a gather : each query token reads exactly one D row per document, no collisions, so ∇Q is embarrassingly parallel (one program per (i, s )). Eq. 3 is a scatter : many query positions may select the same document token t (data-dependent con-tention), which is why ∇D is the hard side and the inverse-grid CSR exists. 
+
+Algorithm 3 FLASH -M AX SIM backward (inverse-grid CSR), atomic-free                                                                    
+
+> Require: forward argmax A; upstream grad ∇s;Q,D
+> // 1. invert the argmax map (once, inside autograd)
+> 1: dst ←flatten each selected (b, token )as b L d+A
+> 2: row _ptr ←cumsum(bincount(dst))
+> 3: col _idx ←argsort(dst) ▷sources bucketed per dest
+> // 2. ∇D: one program owns one doc-token row
+> 4: for each destination row rin parallel do
+> 5: g←0▷FP32 register 6: for source (q, i )∈col _idx[row _ptr[ r]:row _ptr[ r+1]] do
+> 7: g+ = ∇s[q]·Q[q, i, :]
+> 8: end for
+> 9: ∇D[r]←g▷single write, no atomics
+> 10: end for
+> // 3. ∇Q: one program per query token, loop small B
+> 11: for each (q, i )in parallel do
+> 12: ∇Q[q, i, :] ←P
+> b∇s[q, b ]D[b, A [q, b, i ],:]
+> 13: end for
+
+4.2.2 Runtime Inverse-Grid Construction 
+
+The forward already saves argmax ∈
+
+[0 , L d)[Nq ·B, L q ], one index per query token. That is a source →destination map; the backward needs the inverse : for each destination document token (b, k ), which query positions selected it? We invert this at runtime, inside autograd , with three primitives, bincount →cumsum for a CSR row pointer, and a stable argsort of flattened destinations for the column indices. The CSR map costs O(NqBL q) for the indices plus O(BL d) for the row pointer, far below the similarity tensor it replaces. 
+
+4.2.3 Destination-Owned Reduction 
+
+Given the CSR map, the ∇D kernel assigns one program per output row (b, tok) ; it walks that row’s source list, accumulates in an FP32 SRAM regis-ter, and writes the row once , coalesced. No two programs touch the same row, so there are no atom-ics . The companion ∇Q kernel exploits the dual asymmetry ( Q is shared across all B documents, so each ∇Q[i] is written once after looping the small 
+
+B axis, no CSR needed). Each ingredient is text-book; the contribution is their combination, built at runtime from a saved argmax, inside autograd, ap-plied to a hard-selection backward, with a dispatch heuristic that falls back to atomic scatter in the low-contention regime. Benefit. Neither the CSR build nor the two row-owned kernels (Algorithm 3) ever allocate the [Nq, B, L q, L d] similarity tensor or its gradient; peak training memory is essentially the embeddings plus the int32 argmax buffer. This is what yields the 28 × memory reduction and the 
+
+B=128 batch unlock of Table 5, while keeping gradients bit-faithful to the FP32 reference. 
+
+4.2.4 Generalization to Chamfer Distance 
+
+The construction applies to any forward that emits, per source, an integer index into a des-tination set: argmax, argmin, top-1 attention, mixture-of-experts routing, spatial argmax (Max-Pool/RoIAlign), k-NN. We instantiate it for the 
+
+Chamfer distance between two point sets P ∈
+
+RN ×3 and Q ∈ RM ×3,
+
+CD( P, Q ) = 1
+
+> N
+
+X
+
+> p
+
+min  
+
+> q
+
+∥p−q∥2+ 1
+
+> M
+
+X
+
+> q
+
+min  
+
+> p
+
+∥q−p∥2,
+
+the standard 3D point-cloud / shape-matching loss. It has the same structure as M AX SIM with two swaps: a min -reduction over the other set (still idempotent, still rescaler-free) in place of the row-max, and squared Euclidean distance in place of the inner product. The naive form materializes the identical [N, M ] pairwise matrix; the fused kernel streams tiles with an online min, and the backward reuses the saved argmin (nearest-neighbour index) through the same inverse-grid CSR. Measured: gra-dient cosine 1.00000 vs. the naive autograd, 77 to 
+
+152 × speedup, and 100K -point clouds that OOM the naive form run comfortably. This is direct ev-idence that F LASH -M AX SIM is a reusable hard-selection-operator pattern, not a MaxSim-specific kernel. 
+
+4.3 Quantized and Variable-Length Variants 4.3.1 INT8 ×INT8 Quantization 
+
+Per-token symmetric quantization of both Q and 
+
+D, with dequantization fused into the kernel. This halves index storage and is 4.7× faster than a naive dequantize-then-score path at the tested shapes (not yet a net win at full ColPali scale on A100), with near-FP32 ranking fidelity (Spearman ρ = 0 .999 
+
+against the FP32 reference, 100% top-20 overlap on tested workloads). 
+
+4.3.2 Padding-Free Variable-Length 
+
+Real corpora have ragged document lengths; batch-ing them into a dense tensor forces padding to a common Lmax  
+
+> d
+
+, and the naive path computes (and the mask discards) all padded positions. F LASH -MAX SIM ’s cu_seqlens variant processes only real tokens ( P Ld work instead of BL max  
+
+> d
+
+), giving up to 5× on highly ragged corpora and 1.6 to 3.0×
+
+at a realistic (HotpotQA-like) length distribution. 
+
+Table 1: Forward latency, F LASH -M AX SIM vs. naive PyTorch at matched precision (FP16 inputs, FP32 accu-mulation; PyTorch default TF32 matmul), B=1 K, cast hoisted out of the timed region. The naive and F LASH -MAX SIM columns are A100 latency in ms; the last two columns are the speedup on A100 and H100. F LASH -MAX SIM is also more numerically accurate than this baseline (§4.1).                              
+
+> Shape ( Lq, L d)naive FLASH -M AX SIM A100 ×H100 ×
+> textual ( 32 ,300 )0.26 0.19 1.4×1.2×
+> long-doc ( 32 ,1024 )0.59 0.30 2.0×1.8×
+> medium ( 128 ,1024 )1.09 0.36 3.0×3.3×
+> visual ( 512 ,1024 )3.31 0.94 3.5×4.2×
+> ColPali ( 1024 2)6.58 1.70 3.9×4.7×
+
+Table 2: HBM traffic at B=1 K: bytes the algorithm reads and writes. FLASH -M AX SIM moves a con-stant 0.26 GB regardless of shape, eliminating the materialized-S term and validating Theorem 1.                       
+
+> Shape ( Lq, L d)naive HBM FLASH -M AX SIM HBM ratio medium ( 128 ,1024 )1.31 GB 0.26 GB 5×
+> visual ( 512 ,1024 )4.46 GB 0.26 GB 17 ×
+> ColPali ( 1024 2)8.65 GB 0.26 GB 33 ×
+
+5 Experiments 
+
+5.1 Experimental Setup 
+
+NVIDIA A100-SXM4-80GB (and an H100 80GB for the forward sweep); PyTorch 2.8, FP32 matmul precision high. CUDA-event timing with warmup, median of repeated runs; per-run peak memory. The baseline is naive PyTorch (einsum + max +
+
+sum ) at matched precision (FP16 inputs, FP32 ac-cumulation). The corpus-scaling stress test (Fig. 2) is additionally run on an A100-40GB, where the OOM cliffs fall at smaller, more accessible corpus sizes. 
+
+5.2 Forward Latency and Memory 
+
+Table 1 reports forward latency: F LASH -M AX SIM 
+
+is faster on every shape, up to 3.9× on A100 and 
+
+4.7× on H100 at ColPali scale, with the gap widen-ing as the discarded tensor grows. 
+
+HBM traffic validates the IO bound. Table 2 reports the HBM traffic behind Theorem 1. The naive path moves 5 to 33 × more bytes than FLASH -M AX SIM (the materialized S), saturat-ing ≈ 1.3 TB/s of A100 bandwidth, i.e. it is memory-bound. F LASH -M AX SIM moves a con-stant 0.26 GB (inputs only) and runs near the matmul arithmetic floor (ColPali: 1.70 ms vs. a 
+
+1.72 ms floor, Table 1), confirming it has crossed from memory-bound to compute-bound. Figure 2: ColPali corpus scaling on A100-40GB ( Lq =Ld=1024 ). Naive einsum in pure FP16 and in matched FP32 (FP32 accumulation) both hit OOM cliffs as the corpus grows (matched FP32 at B ≈ 7K, FP16 at B ≈ 20 K); FLASH -M AX SIM keeps scaling to B ≈ 175 K because its peak memory tracks only the document embeddings, so the Lq × Ld similarity matrix never exists. Left: latency. Right: peak memory. Table 3: ColPali corpus scaling ( Lq =Ld=1024 ): peak memory. Naive shown on A100-40GB (FP16 inter-mediate) and A100-80GB (matched FP32); F LASH -MAX SIM peak tracks the document embeddings. Both naive paths OOM by B=20 K (latency in Fig. 2).                      
+
+> Bnaive 40GB (FP16) naive 80GB (FP32) FLASH -M AX SIM
+> 10 K23 .9GB 47 .2GB 2.9GB
+> 20 KOOM OOM 5.2GB
+> 50 KOOM OOM 13 .1GB
+> 100 KOOM OOM 26 .2GB
+
+Tile-size robustness. Sweeping the query-chunk size (the kernel’s main tile knob) at ColPali shape, latency is flat within 3% across 64 to 512 (1.68 
+
+to 1.74 ms) and rises to 2.86 ms only when chunk-ing is disabled ( Lq=1024 in a single block), con-firming both the value of the query-chunk decom-position (§4.1) and that the kernel needs no fine per-shape tile tuning. 
+
+Memory and the OOM unlock. Figure 2 traces corpus scaling on A100-40GB for both naive pre-cisions; Table 3 reports peak memory at ColPali shape on A100-40GB (FP16 intermediate) and A100-80GB (matched FP32, the protocol baseline). FLASH -M AX SIM peak memory grows linearly, tracking the document embeddings. The naive path grows as BL qLd and OOMs by B=20 K on either GPU. At B=10 K F LASH -M AX SIM uses 8.2× less memory than the FP16 naive path and 16 × less than the matched-FP32 baseline; beyond B=20 Konly F LASH -M AX SIM runs. 
+
+Table 4: Out-of-core scoring (ColPali Lq =Ld=1024 ,A100-80GB): one query vs. a host-resident corpus streamed to the GPU in 20K -document blocks. GPU peak is flat regardless of corpus size; the last two cor-pora exceed the 85 GB VRAM.                         
+
+> corpus Bembeddings exceeds VRAM GPU peak
+> 100 K26 GB no 5.5GB
+> 250 K66 GB no 5.2GB
+> 500 K131 GB yes 5.2GB
+> 750 K197 GB yes 5.2GB
+
+5.3 Out-of-Core Corpus Scaling 
+
+Because F LASH -M AX SIM peak memory is set by a single streamed document block, a corpus that exceeds GPU memory can be scored by holding it in host RAM and streaming blocks to the GPU. Ta-ble 4 scores one ColPali query against corpora up to 750K documents ( 197 GB of embeddings, 2.3×
+
+the 85 GB VRAM) in 20K -document blocks: GPU peak stays flat at ≈ 5.2 GB regardless of corpus size, and steady-state throughput holds at ≈ 52K 
+
+documents/s, while the naive materialized path can-not fit even B=20K on the GPU. 
+
+5.4 Training Step 
+
+For in-batch-negatives contrastive training at Col-Pali shape (Table 5), the naive backward materi-alizes the [B, B, L q, L d] tensor and its gradient (quadratic in B); F LASH -M AX SIM ’s inverse-grid CSR backward removes both. Gradients are bit-faithful: training through F LASH -M AX SIM repro-Table 5: Contrastive training step (fwd+bwd), ColPali 
+
+Lq =Ld=1024 , A100-80GB.                  
+
+> Bnaive peak FLASH -M AX SIM peak ratio
+> 64 16 .2GB 0.58 GB 28 ×
+> 128 OOM (64 GB) 1.71 GB unlocked
+> At B=128 the naive path OOMs at step 1; F LASH -M AX SIM
+> trains.
+
+Table 6: Variable-length scoring: FLASH -M AX SIM 
+
+(cu_seqlens ) vs. naive padded, by document-length distribution ( Lmax  
+
+> d
+
+=512 ). The win tracks the fill ra-tio ρ = P 
+
+> b
+
+L(b) 
+
+> d
+
+/(BL max  
+
+> d
+
+), less padding to skip, less speedup. 
+
+Length distribution fill ratio ρ speedup uniform [256 , 512] ≈ 0.75 1.3 to 1.6×
+
+HotpotQA-like ≈ 0.30 1.6 to 3.0×
+
+highly ragged ≈ 0.16 up to 5×
+
+duces the naive loss trajectory to within 0.001% 
+
+relative drift, with ∇Q/ ∇D cosine 1.0000 against an FP32 reference. 
+
+5.5 Variable-Length Scoring 
+
+On ragged corpora, where documents are padded to a common Lmax  
+
+> d
+
+to batch them, FLASH -MAX SIM ’s cu_seqlens variant scores only real tokens. Against the naive padded path the speedup tracks the fill ratio ρ = P 
+
+> b
+
+L(b) 
+
+> d
+
+/(B L max  
+
+> d
+
+) (Ta-ble 6): 1.6 to 3.0× at a realistic (HotpotQA-like) distribution and up to 5× on highly ragged cor-pora. The result is exact (identical scores) and compounds with the dense-forward and memory gains above. 
+
+5.6 Numerical Correctness 
+
+FP32 accumulation gives max relative error 2 ×
+
+10 −6 vs. an FP32 reference; top-20 ranking overlap is 100% across tested shapes, confirming Proposi-tion 1. Because the exact kernel is numerically equivalent to dense M AX SIM , end-to-end retrieval quality is unchanged by construction; only the INT8 ×INT8 path trades a controlled ranking fi-delity (Spearman ρ=0 .999 ) for speed. 
+
+6 Conclusion 
+
+FLASH -M AX SIM removes the similarity tensor that bottlenecks late-interaction M AX SIM , in in-ference and in training, exactly and in one fused pass. It is faster, uses far less memory, unlocks corpus and batch sizes PyTorch cannot reach, pre-serves rankings exactly, and ships open-source. 
+
+Limitations. At very small shapes the kernel-launch overhead makes F LASH -M AX SIM at-parity rather than faster (the launch-bound regime). The single-step training speedup is modest at matched precision; the dominant training win is mem-ory and the batch-size unlock, not step latency. INT8 ×INT8 ranking is validated on text distribu-tions; vision (ViDoRe) end-to-end nDCG parity is not yet reported and is the primary open evaluation gap. 
+
+References 
+
+Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. 2022. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Processing Sys-tems (NeurIPS) .Manuel Faysse, Hugues Sibille, Tony Wu, Bilel Omrani, Gautier Viaud, Céline Hudelot, and Pierre Colombo. 2025. ColPali: Efficient document retrieval with vision language models. In International Conference on Learning Representations (ICLR) .Omar Khattab and Matei Zaharia. 2020. ColBERT: Effi-cient and effective passage search via contextualized late interaction over BERT. In SIGIR .Shuo Yang, Haocheng Xi, Yilong Zhao, Muyang Li, Xiaoze Fan, Jintao Zhang, Han Cai, Yujun Lin, Xi-uyu Li, Kurt Keutzer, and 1 others. 2026. Flash-kmeans: Fast and memory-efficient exact k-means. 
+
+arXiv preprint arXiv:2603.09229 .
