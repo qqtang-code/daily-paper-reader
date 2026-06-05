@@ -6,83 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-04
-- 运行时间：2026-06-04 21:18:17 UTC
+- 最新运行日期：2026-06-05
+- 运行时间：2026-06-05 22:02:46 UTC
 - 运行状态：成功
-- 本次总论文数：21
-- 精读区：9
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日精读两篇满分论文聚焦长上下文推理的稀疏解耦注意力与大规模文档集合的模块化KV缓存。推荐关注SparDA与Cartridges at Scale技术方向，它们为高效处理超长文本提供了关键突破。普通读者可优先学习基于解耦注意力降低推理成本的方法，以应对未来长文档应用场景。
-- 详情：[/202606/04/README](/202606/04/README)
+今日精读19篇，聚焦长上下文融合与KV缓存压缩，其中《Soft-NBCE》和《Rethinking LoRA Memory》双双获评9.0分。最值得关注的两个方向：基于熵权重的分块融合方法有效提升长文本理解，以及从KV缓存压缩视角重新审视LoRA内存效率。建议普通读者优先阅读这两篇精读论文，并留意多模态视频检索的推理重排序进展。
+- 详情：[/202606/05/README](/202606/05/README)
 
 ### 精读区论文标签
-1. [SparDA: Sparse Decoupled Attention for Efficient Long-Context LLM Inference](/202606/04/2606.04511v1-sparda-sparse-decoupled-attention-for-efficient-long-context-llm-inference)  
-   标签：评分：10.0/10、query:sparse-attn
-   evidence：稀疏解耦注意力与预测投影
-2. [Cartridges at Scale: Training Modular KV Caches over Large Document Collections](/202606/04/2606.04557v1-cartridges-at-scale-training-modular-kv-caches-over-large-document-collections)  
-   标签：评分：10.0/10、query:sparse-attn
-   evidence：大型文档集合的可重用KV缓存
-3. [Representation Forcing for Bottleneck-Free Unified Multimodal Models](/202606/04/2605.31604v2-representation-forcing-for-bottleneck-free-unified-multimodal-models)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：无瓶颈的统一多模态模型与表示强制
-4. [Forget Attention: Importance-Aware Attention Is All You Need](/202606/04/2606.02332v1-forget-attention-importance-aware-attention-is-all-you-need)  
+1. [Soft-NBCE: Entropy-Weighted Chunk Fusion for Long-Context](/202606/05/2606.01101v1-soft-nbce-entropy-weighted-chunk-fusion-for-long-context)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：SSM引导的注意力用于高效混合语言建模
-5. [Forget Attention: Importance-Aware Attention Is All You Need](/202606/04/2606.02332v2-forget-attention-importance-aware-attention-is-all-you-need)  
+   evidence：软熵加权块融合用于长上下文注意力
+2. [Rethinking LoRA Memory Through the Lens of KV Cache Compression](/202606/05/2606.05698v1-rethinking-lora-memory-through-the-lens-of-kv-cache-compression)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：提出SISA，将SSM重要性信号融入注意力分数，实现高效长上下文注意力。
-6. [Multi-Segment Attention: Enabling Efficient KV-Cache Management for Faster Large Language Model Serving](/202606/04/2606.02964v1-multi-segment-attention-enabling-efficient-kv-cache-management-for-faster-large-language-model-serving)  
+   evidence：研究LoRA与KV缓存压缩在文档问答中的交互
+3. [QCFuse: Query-Aware Cache Fusion via Compressed View for Efficient RAG Serving](/202606/05/2606.05875v1-qcfuse-query-aware-cache-fusion-via-compressed-view-for-efficient-rag-serving)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：KV缓存管理，无损压缩
-7. [TGV-KV: Text-Grounded KV Eviction for Vision-Language Models](/202606/04/2606.03075v1-tgv-kv-text-grounded-kv-eviction-for-vision-language-models)  
+   evidence：查询感知的KV缓存融合用于高效RAG服务
+4. [You Only Index Once: Cross-Layer Sparse Attention with Shared Routing](/202606/05/2606.06467v1-you-only-index-once-cross-layer-sparse-attention-with-shared-routing)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：面向视觉语言模型的文本引导KV驱逐
-8. [LazyAttention: Efficient Retrieval-Augmented Generation with Deferred Positional Encoding](/202606/04/2606.04302v1-lazyattention-efficient-retrieval-augmented-generation-with-deferred-positional-encoding)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：通过延迟位置编码实现零拷贝位置无关KV复用
-9. [COMBINER: Composed Image Retrieval Guided by Attribute-based Neighbor Relations](/202606/04/2606.04604v1-combiner-composed-image-retrieval-guided-by-attribute-based-neighbor-relations)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：基于属性原型的组合图像检索
+   evidence：跨层稀疏注意力与共享路由及KV缓存共享
+5. [MLLM-Microscope: Unlocking Hidden Structure Within Multimodal Large Language Models](/202606/05/2606.00909v1-mllm-microscope-unlocking-hidden-structure-within-multimodal-large-language-models)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多模态大语言模型理解
+6. [Don't Read Everything: A Curvature-Conditioned Query for Linear Attention](/202606/05/2606.01294v1-dont-read-everything-a-curvature-conditioned-query-for-linear-attention)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：基于曲率条件的查询改进线性注意力，提升检索和长上下文任务
+7. [Benchmarking Visual State Tracking in Multimodal Video Understanding](/202606/05/2606.03920v1-benchmarking-visual-state-tracking-in-multimodal-video-understanding)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多模态视频理解基准
 
 ### 速读区论文标签
-1. [FLASH-MAXSIM: IO-Aware Fused Kernels for Late-Interaction Scoring](/202606/04/2605.29517v1-flash-maxsim-io-aware-fused-kernels-for-late-interaction-scoring)  
+1. [R^3: Composed Video Retrieval via Reasoning-Guided Recalling and Re-ranking](/202606/05/2606.01113v1-r3-composed-video-retrieval-via-reasoning-guided-recalling-and-re-ranking)  
    标签：评分：8.0/10、query:multimodal
-   evidence：面向后期交互检索评分的IO感知融合内核
-2. [Inference-Free Multimodal Learned Sparse Retrieval for Production-Scale Visual Document Search](/202606/04/2605.30917v1-inference-free-multimodal-learned-sparse-retrieval-for-production-scale-visual-document-search)  
+   evidence：零样本组合视频检索，结合推理引导的召回与重排序
+2. [R^3: Composed Video Retrieval via Reasoning-Guided Recalling and Re-ranking](/202606/05/2606.01113v2-r3-composed-video-retrieval-via-reasoning-guided-recalling-and-re-ranking)  
    标签：评分：8.0/10、query:multimodal
-   evidence：多模态学习稀疏检索用于视觉文档搜索
-3. [Memory by Design: Probabilistic Sequence Layers](/202606/04/2605.31163v1-memory-by-design-probabilistic-sequence-layers)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：统一线性注意力和Mamba的高效循环序列映射
-4. [Scaling Parallel Sequence Models to Foundation-Scale Vision Encoders](/202606/04/2606.00746v1-scaling-parallel-sequence-models-to-foundation-scale-vision-encoders)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：高效次二次视觉编码器替代自注意力
-5. [LASER: Loss-Aware Singular-value Decomposition and Rank Allocation for Efficient Low-Precision Vision-Language Models](/202606/04/2606.00573v1-laser-loss-aware-singular-value-decomposition-and-rank-allocation-for-efficient-low-precision-vision-language-models)  
+   evidence：零样本组合视频检索，结合推理引导的召回与重排序
+3. [CL-DMDF:Dynamic Multimodal Data Fusion Model Based on Contrastive Learning](/202606/05/2606.02659v1-cl-dmdfdynamic-multimodal-data-fusion-model-based-on-contrastive-learning)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：基于对比学习的动态多模态数据融合模型
+4. [VistaHop: Benchmarking Multi-hop Visual Reasoning for Visual DeepSearch](/202606/05/2606.03273v1-vistahop-benchmarking-multi-hop-visual-reasoning-for-visual-deepsearch)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多跳视觉推理基准
+5. [Feature Alignment Determines Fusion Strategy: A Comparative Study of Cross-Attention and Concatenation in Multimodal Learning](/202606/05/2606.01207v1-feature-alignment-determines-fusion-strategy-a-comparative-study-of-cross-attention-and-concatenation-in-multimodal-learning)  
    标签：评分：7.0/10、query:multimodal
-   evidence：用于高效VLM推理的低秩压缩框架
-6. [CASTLE2026 Team WDL Technical Report](/202606/04/2606.00712v1-castle2026-team-wdl-technical-report)  
+   evidence：多模态融合策略的比较研究
+6. [HOLA: Holistic Multi-Modal Alignment for Open-Set 3D Recognition](/202606/05/2606.01334v1-hola-holistic-multi-modal-alignment-for-open-set-3d-recognition)  
    标签：评分：7.0/10、query:multimodal
-   evidence：面向长形式自我中心视频问答的多模态推理管道
-7. [Towards Understanding Modality Interaction in Multimodal Language Models via Partial Information Decomposition](/202606/04/2606.00959v1-towards-understanding-modality-interaction-in-multimodal-language-models-via-partial-information-decomposition)  
+   evidence：面向开放集3D识别的整体多模态对齐方法
+7. [Improving Visual Token Reduction via Rectifying Distortions for Efficient Multimodal LLM Inference](/202606/05/2606.01711v1-improving-visual-token-reduction-via-rectifying-distortions-for-efficient-multimodal-llm-inference)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多模态大语言模型中的模态交互理解
-8. [CoSTL: Comprehensive Spatial-Temporal Representation Learning for Moment Retrieval and Highlight Detection](/202606/04/2606.01149v1-costl-comprehensive-spatial-temporal-representation-learning-for-moment-retrieval-and-highlight-detection)  
+   evidence：面向高效多模态大模型推理的视觉token减少
+8. [Spectral-Progressive Thought Flow for Lightweight Multimodal Reasoning](/202606/05/2606.02842v1-spectral-progressive-thought-flow-for-lightweight-multimodal-reasoning)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多模态检索用于时刻检索和精彩片段检测
-9. [Towards Localized and Disentangled Knowledge Editing for Multimodal Large Language Models](/202606/04/2605.29826v1-towards-localized-and-disentangled-knowledge-editing-for-multimodal-large-language-models)  
+   evidence：基于频谱渐进思维流的轻量级多模态推理
+9. [SOCO: Benchmarking Semantic Object Correspondence in Vision Foundation Models](/202606/05/2605.31597v1-soco-benchmarking-semantic-object-correspondence-in-vision-foundation-models)  
    标签：评分：6.0/10、query:multimodal
-   evidence：多模态大模型知识编辑，解决幻觉与纠缠
-10. [SOCO: Benchmarking Semantic Object Correspondence in Vision Foundation Models](/202606/04/2605.31597v2-soco-benchmarking-semantic-object-correspondence-in-vision-foundation-models)  
+   evidence：视觉基础模型中语义对象对应的基准
+10. [Dynamic Short Convolutions Improve Transformers](/202606/05/2606.03825v1-dynamic-short-convolutions-improve-transformers)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：动态卷积改进Transformer注意力与效率
+11. [Do Transformers Need Three Projections? Systematic Study of QKV Variants](/202606/05/2606.04032v1-do-transformers-need-three-projections-systematic-study-of-qkv-variants)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：QKV投影的系统研究以优化注意力效率
+12. [FindIt: A Format-Informed Visual Detection Benchmark for Generalist Multimodal LLMs](/202606/05/2606.04282v1-findit-a-format-informed-visual-detection-benchmark-for-generalist-multimodal-llms)  
    标签：评分：6.0/10、query:multimodal
-   evidence：视觉基础模型中语义对象对应基准
-11. [SuperMemory-VQA: An Egocentric Visual Question-Answering Benchmark for Long-Horizon Memory](/202606/04/2606.00825v1-supermemory-vqa-an-egocentric-visual-question-answering-benchmark-for-long-horizon-memory)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：面向长时记忆的自我中心VQA基准
-12. [Density-Aware Translation of Spurious Correlations in Zero-Shot VLMs](/202606/04/2606.01710v1-density-aware-translation-of-spurious-correlations-in-zero-shot-vlms)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：多模态模型中的虚假相关性与幻觉缓解
+   evidence：评估多模态大语言模型在结构化定位任务上的基准
 
 
 <div class="dpr-home-promo-card">
