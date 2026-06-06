@@ -6,77 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-05
-- 运行时间：2026-06-05 22:02:46 UTC
+- 最新运行日期：2026-06-06
+- 运行时间：2026-06-06 21:32:44 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日精读19篇，聚焦长上下文融合与KV缓存压缩，其中《Soft-NBCE》和《Rethinking LoRA Memory》双双获评9.0分。最值得关注的两个方向：基于熵权重的分块融合方法有效提升长文本理解，以及从KV缓存压缩视角重新审视LoRA内存效率。建议普通读者优先阅读这两篇精读论文，并留意多模态视频检索的推理重排序进展。
-- 详情：[/202606/05/README](/202606/05/README)
+今日精选19篇论文，重点精读7篇，其中多模态大模型稀疏性与3D问答研究获高分推荐。最值得关注《Mechanistic Insights into Functional Sparsity in Multimodal LLMs via CoRe Heads》，揭示多模态大模型功能稀疏性的核心机制；同时《Zero-Shot 3D Question Answering via Hierarchical View-to-Token Transportation》在零样本3D问答上取得突破。建议普通读者优先精读这两篇，深入理解多模态推理的稀疏性原理与跨视角对齐方法。
+- 详情：[/202606/06/README](/202606/06/README)
 
 ### 精读区论文标签
-1. [Soft-NBCE: Entropy-Weighted Chunk Fusion for Long-Context](/202606/05/2606.01101v1-soft-nbce-entropy-weighted-chunk-fusion-for-long-context)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：软熵加权块融合用于长上下文注意力
-2. [Rethinking LoRA Memory Through the Lens of KV Cache Compression](/202606/05/2606.05698v1-rethinking-lora-memory-through-the-lens-of-kv-cache-compression)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：研究LoRA与KV缓存压缩在文档问答中的交互
-3. [QCFuse: Query-Aware Cache Fusion via Compressed View for Efficient RAG Serving](/202606/05/2606.05875v1-qcfuse-query-aware-cache-fusion-via-compressed-view-for-efficient-rag-serving)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：查询感知的KV缓存融合用于高效RAG服务
-4. [You Only Index Once: Cross-Layer Sparse Attention with Shared Routing](/202606/05/2606.06467v1-you-only-index-once-cross-layer-sparse-attention-with-shared-routing)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：跨层稀疏注意力与共享路由及KV缓存共享
-5. [MLLM-Microscope: Unlocking Hidden Structure Within Multimodal Large Language Models](/202606/05/2606.00909v1-mllm-microscope-unlocking-hidden-structure-within-multimodal-large-language-models)  
+1. [Mechanistic Insights into Functional Sparsity in Multimodal LLMs via CoRe Heads](/202606/06/2606.05843v1-mechanistic-insights-into-functional-sparsity-in-multimodal-llms-via-core-heads)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：多模态大模型中的功能稀疏性与跨模态检索
+2. [Zero-Shot 3D Question Answering via Hierarchical View-to-Token Transportation](/202606/06/2606.03100v1-zero-shot-3d-question-answering-via-hierarchical-view-to-token-transportation)  
    标签：评分：8.0/10、query:multimodal
-   evidence：多模态大语言模型理解
-6. [Don't Read Everything: A Curvature-Conditioned Query for Linear Attention](/202606/05/2606.01294v1-dont-read-everything-a-curvature-conditioned-query-for-linear-attention)  
+   evidence：利用VLM进行零样本3D问答，采用层次化视图到令牌传输
+3. [Visual Instruction Tuning Aligns Modalities through Abstraction](/202606/06/2606.03871v1-visual-instruction-tuning-aligns-modalities-through-abstraction)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：视觉指令微调将视觉特征嵌入LLM中间层，对齐模态
+4. [Imaginative Perception Tokens Enhance Spatial Reasoning in Multimodal Language Models](/202606/06/2606.03988v1-imaginative-perception-tokens-enhance-spatial-reasoning-in-multimodal-language-models)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：VLM中使用想象感知标记进行空间推理
+5. [MM-BizRAG: Rethinking Multimodal Retrieval-Augmented Generation for General Purpose Enterprise Q&A](/202606/06/2606.04231v1-mm-bizrag-rethinking-multimodal-retrieval-augmented-generation-for-general-purpose-enterprise-qa)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：面向企业问答的多模态检索增强生成
+6. [Echo-Infinity: Learning Evolving Memory for Real-Time Infinite Video Generation](/202606/06/2606.04527v1-echo-infinity-learning-evolving-memory-for-real-time-infinite-video-generation)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：基于曲率条件的查询改进线性注意力，提升检索和长上下文任务
-7. [Benchmarking Visual State Tracking in Multimodal Video Understanding](/202606/05/2606.03920v1-benchmarking-visual-state-tracking-in-multimodal-video-understanding)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：多模态视频理解基准
+   evidence：可学习演化记忆用于视频生成，压缩KV缓存和历史
+7. [Depth-Attention: Cross-Layer Value Mixing for Language Models](/202606/06/2606.05014v1-depth-attention-cross-layer-value-mixing-for-language-models)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：自注意力内部跨层值混合以提升信息流动效率
 
 ### 速读区论文标签
-1. [R^3: Composed Video Retrieval via Reasoning-Guided Recalling and Re-ranking](/202606/05/2606.01113v1-r3-composed-video-retrieval-via-reasoning-guided-recalling-and-re-ranking)  
+1. [LongSpace: Exploring Long-Horizon Spatial Memory from Perception to Recall in Video](/202606/06/2606.05677v1-longspace-exploring-long-horizon-spatial-memory-from-perception-to-recall-in-video)  
    标签：评分：8.0/10、query:multimodal
-   evidence：零样本组合视频检索，结合推理引导的召回与重排序
-2. [R^3: Composed Video Retrieval via Reasoning-Guided Recalling and Re-ranking](/202606/05/2606.01113v2-r3-composed-video-retrieval-via-reasoning-guided-recalling-and-re-ranking)  
+   evidence：多模态大模型用于视频长时间空间记忆
+2. [MARDoc: A Memory-Aware Refinement Agent Framework for Multimodal Long Document QA](/202606/06/2606.05749v1-mardoc-a-memory-aware-refinement-agent-framework-for-multimodal-long-document-qa)  
    标签：评分：8.0/10、query:multimodal
-   evidence：零样本组合视频检索，结合推理引导的召回与重排序
-3. [CL-DMDF:Dynamic Multimodal Data Fusion Model Based on Contrastive Learning](/202606/05/2606.02659v1-cl-dmdfdynamic-multimodal-data-fusion-model-based-on-contrastive-learning)  
+   evidence：记忆感知改进代理框架，用于多模态长文档问答中的检索和推理
+3. [To Be Multimodal or Not to Be: Query-Adaptive Audio-Visual Person Retrieval via Active Modality Detection](/202606/06/2606.05931v1-to-be-multimodal-or-not-to-be-query-adaptive-audio-visual-person-retrieval-via-active-modality-detection)  
    标签：评分：8.0/10、query:multimodal
-   evidence：基于对比学习的动态多模态数据融合模型
-4. [VistaHop: Benchmarking Multi-hop Visual Reasoning for Visual DeepSearch](/202606/05/2606.03273v1-vistahop-benchmarking-multi-hop-visual-reasoning-for-visual-deepsearch)  
+   evidence：提出查询自适应多模态检索框架，通过跨模态分数一致性检测活跃模态
+4. [GRAMformer: Any-Order Modality Interactions via Volumetric Multimodal Cross-Attention](/202606/06/2606.06249v1-gramformer-any-order-modality-interactions-via-volumetric-multimodal-cross-attention)  
    标签：评分：8.0/10、query:multimodal
-   evidence：多跳视觉推理基准
-5. [Feature Alignment Determines Fusion Strategy: A Comparative Study of Cross-Attention and Concatenation in Multimodal Learning](/202606/05/2606.01207v1-feature-alignment-determines-fusion-strategy-a-comparative-study-of-cross-attention-and-concatenation-in-multimodal-learning)  
+   evidence：新颖的体积多模态交叉注意力，支持任意顺序模态交互
+5. [PAR3D: A Unified 3D-MLLM with Part-Aware Representation for Scene Understanding](/202606/06/2606.06485v1-par3d-a-unified-3d-mllm-with-part-aware-representation-for-scene-understanding)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：统一的3D多模态大语言模型用于场景理解，包括视觉问答、描述和分割
+6. [Detect in Any Scene: An Agentic Framework for Object Detection with Experience-Aware Reasoning](/202606/06/2605.31174v1-detect-in-any-scene-an-agentic-framework-for-object-detection-with-experience-aware-reasoning)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多模态融合策略的比较研究
-6. [HOLA: Holistic Multi-Modal Alignment for Open-Set 3D Recognition](/202606/05/2606.01334v1-hola-holistic-multi-modal-alignment-for-open-set-3d-recognition)  
+   evidence：多模态大模型作为代理进行目标检测推理
+7. [DREAM-S: Speculative Decoding with Searchable Drafting and Target-Aware Refinement for Multimodal Generation](/202606/06/2606.00535v1-dream-s-speculative-decoding-with-searchable-drafting-and-target-aware-refinement-for-multimodal-generation)  
    标签：评分：7.0/10、query:multimodal
-   evidence：面向开放集3D识别的整体多模态对齐方法
-7. [Improving Visual Token Reduction via Rectifying Distortions for Efficient Multimodal LLM Inference](/202606/05/2606.01711v1-improving-visual-token-reduction-via-rectifying-distortions-for-efficient-multimodal-llm-inference)  
+   evidence：视觉语言模型的推测解码加速
+8. [SWARD: Stochastic Window-Attention-Based Relational Distillation for Cross-Architectural Semantic Segmentation](/202606/06/2606.00999v1-sward-stochastic-window-attention-based-relational-distillation-for-cross-architectural-semantic-segmentation)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：随机窗口注意力用于跨架构蒸馏
+9. [Self-Improving Small Object Grounding in LVLMs](/202606/06/2606.01612v1-self-improving-small-object-grounding-in-lvlms)  
    标签：评分：7.0/10、query:multimodal
-   evidence：面向高效多模态大模型推理的视觉token减少
-8. [Spectral-Progressive Thought Flow for Lightweight Multimodal Reasoning](/202606/05/2606.02842v1-spectral-progressive-thought-flow-for-lightweight-multimodal-reasoning)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：基于频谱渐进思维流的轻量级多模态推理
-9. [SOCO: Benchmarking Semantic Object Correspondence in Vision Foundation Models](/202606/05/2605.31597v1-soco-benchmarking-semantic-object-correspondence-in-vision-foundation-models)  
+   evidence：利用大型视觉语言模型中的注意力模式实现小目标定位，无需微调
+10. [PRISM: Progressive Reasoning through Iterative Slot Memory for Vision](/202606/06/2605.30942v1-prism-progressive-reasoning-through-iterative-slot-memory-for-vision)  
    标签：评分：6.0/10、query:multimodal
-   evidence：视觉基础模型中语义对象对应的基准
-10. [Dynamic Short Convolutions Improve Transformers](/202606/05/2606.03825v1-dynamic-short-convolutions-improve-transformers)  
+   evidence：通过槽记忆迭代视觉推理实现渐进式细化
+11. [Do Value Vectors in Deep Layers Need Context from the Residual Stream?](/202606/06/2606.02780v1-do-value-vectors-in-deep-layers-need-context-from-the-residual-stream)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：动态卷积改进Transformer注意力与效率
-11. [Do Transformers Need Three Projections? Systematic Study of QKV Variants](/202606/05/2606.04032v1-do-transformers-need-three-projections-systematic-study-of-qkv-variants)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：QKV投影的系统研究以优化注意力效率
-12. [FindIt: A Format-Informed Visual Detection Benchmark for Generalist Multimodal LLMs](/202606/05/2606.04282v1-findit-a-format-informed-visual-detection-benchmark-for-generalist-multimodal-llms)  
+   evidence：发现无上下文值向量，支持稀疏存储以提升注意力效率
+12. [MUSE: A Unified Agentic Harness for MLLMs](/202606/06/2606.03005v1-muse-a-unified-agentic-harness-for-mllms)  
    标签：评分：6.0/10、query:multimodal
-   evidence：评估多模态大语言模型在结构化定位任务上的基准
+   evidence：为多模态大模型提供统一代理框架，无需重新训练即可增强理解
 
 
 <div class="dpr-home-promo-card">

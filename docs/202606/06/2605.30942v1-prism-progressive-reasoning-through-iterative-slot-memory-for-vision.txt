@@ -1,0 +1,391 @@
+Title: PRISM: Progressive Reasoning through Iterative Slot Memory for Vision
+
+URL Source: https://arxiv.org/pdf/2605.30942v1
+
+Published Time: Mon, 01 Jun 2026 01:11:45 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# PRISM: Progressive Reasoning through Iterative Slot Memory for Vision 
+
+Ziyu Wang Shuangpeng Han Mengmi Zhang 
+
+Deep NeuroCognition Lab, Nanyang Technological University, Singapore Address correspondence to mengmi.zhang@ntu.edu.sg 
+
+## Abstract 
+
+Modern vision models process images in a single feed-forward pass, which limits their ability to recover missing evidence or refine uncertain representations under incomplete observations. Inspired by the iterative nature of human perception, we introduce PRISM ( Progressive Reasoning through I terative S lot Memory), a pyramid vision architecture that reasons over images through iterative refinement. At a high level, PRISM groups visual features into object-centric representations, retrieves relevant patterns from a learned memory, and iteratively refines the representation to resolve ambiguity and recover missing information. This organize–recall–refine process operates recurrently across multiple scales, enabling progressive improvement of visual representations. Across standard vision tasks, including image classification, object detection, and semantic segmentation, PRISM achieves competitive performance while demonstrating improved robustness under incomplete observations such as occlusion. These results suggest that iterative reasoning with structured representations and memory is a promising direction for building more resilient and adaptive vision models. Source code and models will be released. 
+
+## 1 Introduction 
+
+Visual recognition systems [ 34 , 26 , 35 , 36 , 28 , 17 , 30 , 5] are expected to operate reliably in real-world environments, where observations are often incomplete due to occlusion or missing visual evidence. Although modern deep networks achieve impressive performance on clean benchmarks, their representations can become fragile when important visual cues are unavailable [ 23 , 37 , 44 , 3 , 24 ]. A key limitation is their predominantly feed-forward nature: visual features are computed in a single pass and propagated through layers without revisiting or refining intermediate representations. As a result, incomplete information is compounded in deeper layers, leading to degraded recognition rather than progressive inference. A long-standing goal in representation learning is to model scenes in terms of object-centric entities [ 27 , 40 , 38 , 15 ], such as objects and parts, rather than undifferentiated pixel collections or dense feature tokens arranged on rigid grids in transformer-based feature maps. Object-centric representations improve robustness by aggregating information across regions belonging to the same entity, allowing partial observations to remain interpretable through structured object-level evidence and enabling inference of occluded regions from visible parts. However, object-centric grouping alone is not sufficient. Methods such as slot attention [ 37 , 38 , 15 ]organize features into coherent entities, but remain fundamentally bottom-up: the resulting slots reflect only the available evidence and become incomplete or ambiguous under occlusion. Without access to prior knowledge, a partial slot with degraded visual information due to occlusion cannot reliably infer the full structure of an object or disambiguate between competing interpretations. 
+
+> Preprint. Under review.
+> arXiv:2605.30942v1 [cs.CV] 29 May 2026
+
+Figure 1: Schematic of Progressive Reasoning through Iterative Slot Memory (PRISM). During inference, the right half of the cat is occluded by a tree. PRISM performs progressive reasoning as follows: (1) visual tokens with similar semantics and structure are grouped into an object-centric “cat” slot; (2) the partial slot, degraded by occlusion, is matched to the nearest prototype in a learned memory during training, retrieving a complete cat pattern; (3) the retrieved prototype is projected back to the feature space to update tokens associated with the cat; and (4) this process is iterated for a dynamically determined number of steps until the representation becomes complete and coherent. This organize–recall–refine cycle is applied recurrently to progressively improve the representation. Conversely, relying on a prototype memory alone (e.g., VQ-VAE[ 33 ]) is also insufficient. When applied directly to dense feature tokens, the inputs are entangled mixtures of multiple objects and background, leading to ambiguous or noisy prototype matching. As a result, the learned codebook tends to capture blurred or mixed patterns rather than clean object-level structures, making retrieval unreliable for completion. This motivates combining both components. A vector-quantized memory provides global priors in the form of prototypical patterns, enabling restoration of missing features via top-down modulation, while slot attention supplies the necessary structure by grouping tokens into object-centric representations that are suitable for prototype matching. Together, they play complementary roles: slot attention organizes visual evidence, and the memory module enables completion by grounding these representations in learned prototypes. This synergy allows the model to both organize and recover visual information, overcoming the limitations of feed-forward architectures that lack mechanisms to organize, recall, and refine representations under incomplete observations. In parallel, biological vision exhibits recurrent dynamics across the cortical hierarchy (e.g., V1–V2–V4), with extensive behavioral and neurophysiological evidence showing that perception is iteratively refined through feedback and lateral interactions [ 44 , 31 , 19 , 21 , 18 ] Loosely inspired by neuroscientific and behavioral evidence from biological vision systems, we propose PRISM, a pyramid vision architecture that introduces progressive reasoning through iterative slot memory. As illustrated in Figure. 1 , PRISM first groups visual tokens into object-centric representations that capture the underlying visual structure. These slots are then mapped into a vector-quantized memory space, where a learned codebook stores prototypical slot patterns acquired during training. When observations are incomplete, the corresponding slot representations may also be degraded. PRISM retrieves nearby prototypes from memory to restore these slots and projects the restored information back to their spatial locations to update token features. This organize–recall–refine process is applied recurrently within each stage, enabling progressive refinement of representations over multiple iterations. Moreover, these recurrent updates are adaptive within each stage: PRISM dynamically determines the number of refinement iterations, allowing more challenging inputs to receive additional reasoning steps while keeping simpler cases efficient. Together, these properties enable PRISM to treat visual inference not as a single feed-forward transformation, but as a recurrent process of progressively organizing visual evidence, recalling learned prototypes, and refining internal representations. We evaluate PRISM on standard computer vision tasks, including image classification, object detection, and semantic segmentation. Across these settings, PRISM achieves competitive performance while demonstrating improved robustness under partial observations and missing visual evidence. These results highlight iterative slot memory as a general architectural principle for 2strengthening visual recognition beyond task-specific designs. The contributions of this paper are as follows: 
+
+1. We introduce a recoverable representation paradigm, where visual features are organized into object-centric abstractions and grounded in a learned prototype space, enabling reconstruction of coherent representations from incomplete observations. 
+
+2. We propose a recurrent, stage-wise adaptive refinement mechanism, where visual representations are iteratively updated through organize–recall–refine cycles, with the number of iterations dynamically determined and all tokens jointly updated at each step. 
+
+3. We show that prototype-based restoration combined with dynamic recurrent refinement provides a strong inductive bias for artificial vision systems, where representations are progressively refined rather than produced in a single feed-forward pass, yielding high efficiency and improved robustness under occlusion. 
+
+## 2 Related Works 
+
+Slot-Based and Object-Centric Representations. Prior work models scenes via object-centric representations by decomposing inputs into latent entities. Slot Attention and its variants group features into slots through iterative competition [ 27 , 38 , 37 , 15 ], and have been widely used in unsupervised object discovery and scene decomposition (e.g., MONet [ 4], IODINE [ 14 ]). Extensions to video further introduce temporal consistency in object-centric representations (e.g., SAVi [ 20 ], SlotFormer [ 40 ], VideoSAUR [ 43 ]). However, these methods are typically standalone or auxiliary modules and are rarely integrated into high-performance multi-stage backbones for visual recognition trained on large-scale datasets, such as ImageNet [ 8]. Moreover, continuous slots remain sensitive to incomplete observations, leading to inconsistent representations. In contrast, PRISM embeds slot-based grouping within a pyramidal architecture and augments it with a discrete prototype memory, enabling stable and recoverable representations. It performs on par with competitive baselines on large-scale ImageNet recognition benchmarks and achieves superior performance on occluded ImageNet images without any prior exposure to occluded samples during training. 
+
+Discrete Representation Learning. Vector quantization maps continuous features to a finite set of learned prototypes. VQ-VAE [ 33 ] and VQGAN [ 11 ] demonstrate their effectiveness for image generative modeling, with subsequent works introducing improvements such as residual quantization [22], hierarchical quantization [29], and lookup-free quantization [42]. These methods show that discrete codebooks provide compact and reusable visual representations. However, prior work has primarily used vector quantization for generative modeling or tokenization, rather than for restoration within discriminative visual recognition models. Moreover, applying VQ to dense token grids can entangle multiple objects, resulting in ambiguous prototype assignments. In contrast, PRISM performs quantization at the slot level, enabling prototype-based restoration of object-centric representations. 
+
+Slot-Based Vision Models with Vector Quantization. Recent works integrate slot-based representations with discrete learning, including VQ-VFM-OCL [ 45 ], Semantic VQ [ 39 ], and Slot-MLLM [ 6]. While effective for object-centric learning, world modeling, and multimodal tokenization, these approaches are not designed for general visual recognition tasks. In contrast, PRISM leverages vector-quantized slots to recover degraded intermediate features within a general-purpose vision backbone, and applies this mechanism across multiple stages to enable progressive refinement. 
+
+Recurrent and Adaptive Computation. Recurrent and adaptive computation methods enable models to dynamically adjust their computational depth, including ACT [ 13 ], Universal Transformers [ 7], and PonderNet [ 2]. In vision, approaches such as A-ViT [ 41 ] and depth-adaptive transformers [ 10 ,25 ] adjust inference depth based on input complexity. These methods primarily treat recurrence as variable-depth computation over dense feature representations. In contrast, PRISM grounds recurrence in prototype-based representation restoration, where each iteration explicitly refines features via vector-quantized memory, enabling structured and progressive recovery under incomplete observations. The superior performance of PRISM empirically supports this design. 3Stage 1     
+
+> Stage 2
+> Stage 3
+> Stage 4
+> Image
+> Feature
+> Pyramids
+> Q
+> K,V Q
+> K,V
+> Slot
+> Queries 𝒍 𝒔
+> 𝒕
+> Feature
+> Patches
+> 𝒙 𝒔
+> 𝒕
+> SA CA
+> FFN  FFN
+> Position
+> Encoding
+> Self
+> Reconstruction
+> Recurrence
+> Recurrence
+> Recurrence
+> Recurrence
+> Cls 𝚽 𝒔
+> 𝒍 𝒔
+> 𝒕 #𝟏
+> 𝒙 𝒔
+> 𝒕 #𝟏
+> VQ
+> ACT
+
+Figure 2: PRISM Architecture. PRISM consists of four stages in a feature pyramid, where each stage recurrently refines token features at different resolutions before passing them to the next stage, and the final representation is used for classification (Cls). Within each stage, feature tokens are first grouped into object-centric slots via Slot Attention (SA), which performs competitive grouping into a fixed number of slots to produce structured representations capturing distinct entities. These slot representations are grounded in a vector-quantized (VQ) memory trained with a self-reconstruction objective, where continuous features are mapped to a finite set of learned prototypes, yielding compact and reusable representations. The resulting prototypical slot features are then redistributed to their corresponding spatial locations through cross-attention (CA), where positional embeddings serve as queries (Q), enabling spatial information flow back to the feature map. The resulting feature maps are further processed by feed-forward networks (FFNs) with residual connections. We encapsulate these core operations within the s-th stage as a recurrent function denoted by Φs (the big dashed box). Each stage is executed recurrently via Φs to enable iterative refinement, with adaptive halting determining the number of recurrent steps through an Adaptive Computation Time (ACT) module based on input complexity. 
+
+## 3 PRISM 
+
+PRISM is a four-stage vision pyramid architecture ( Figure. 2 ), where each stage begins with a 2D convolutional layer that converts the input image (at the first stage) or the incoming feature map (at subsequent stages) into a sequence of visual tokens. Across stages, the spatial resolution is progressively reduced by a factor of two, forming a standard feature pyramid with resolutions of 14 , 18 , 
+
+> 116
+
+, and 132 of the input image, while the channel dimension increases accordingly, enabling PRISM to learn visual features at different levels of granularity. Unlike conventional pyramid backbones such as PVT [ 35 ], PVTv2 [ 36 ], and Swin Transformer [ 26 ], which stack multiple feed-forward blocks within each stage, PRISM employs a single block per stage and applies it recurrently. As shown in Figure. 2 , at the recurrent step t of each stage s, PRISM takes feature tokens xts ∈
+
+RNs×Ds , slot queries lts ∈ RKs×Ds , and positional embeddings ps ∈ RNs×Ds as input, and builds on three core operations: slot attention (SA), vector quantization (VQ), and cross-attention (CA) to refine token representations. We denote these operations as SA( ·; ·; ·), VQ( ·; ·; ·), and CA( ·; ·; ·),respectively, and use them as fundamental building blocks throughout each stage of PRISM. Detailed mathematical formulations are provided in Appendix Section. A1 . We use Φs to denote the recurrent function that encapsulates all these core operations within the s-th stage. Each stage is executed recurrently via Φs to enable iterative token refinement, with adaptive halting determining the number of recurrent steps through an Adaptive Computation Time (ACT) module based on input complexity. See the mathematical formulation of ACT( ·; ·) in Appendix Section. A1 . Next, we introduce the three core modules, SA, VQ, and CA, within Φs, as well as the ACT mechanism in detail. 
+
+3.1 Grouping Semantically and Structurally Similar Tokens into Slot Entities 
+
+PRISM performs competitive grouping over patch features into a fixed number of slots to obtain structured representations capturing distinct entities. Slot features lts serve as queries, while 4position-aware patch features ( xts + ps) and the original patch features xts serve as keys and values: 
+
+vts, grp = SA  Wq,s lts, W k,s (xts + ps), W v,s xts
+
+ . (1) 
+
+Wq,s , W k,s and Wv,s are learnable linear projection matrices. Unlike classical Slot Attention [ 27 ], we incorporate positional modulation in the keys, encouraging slot features to capture not only semantic content but also spatial structure of object entities. Therefore, in addition to the grouped values vts, grp ,we also compute grouped keys kts, grp , which are used in the subsequent redistribution step to place object-centric representations back at correct spatial locations. Let Wts, grp denote the attention weights measuring similarity between slot queries and position-aware keys produced by SA (see also the formulation of Wij in Appendix Equation. 11 ). The grouped keys are obtained by weighting the position-aware keys with these attention weights: 
+
+kts, grp = Wts, grp Wk,s (xts + ps). (2) 
+
+3.2 Vector-Quantized Memory for Storing Learned Prototypes 
+
+During training, PRISM learns a fixed set of compact prototypes representing object-centric features from clean images with complete visual information, and stores them in a vector-quantized memory. During inference, these prototypical slot features are used to correct partial slot representations arising from incomplete observations. We adopt the standard VQ-VAE formulation [ 33 ], and define a stage-wise codebook as Es.Instead of quantizing kts, grp and vts, grp separately, we first concatenate them and map the result into a compact latent space with the encoder Enc s, which is then quantized using VQ and decoded back to the grouped representations with the decoder Dec s:
+
+[ˆkts, grp , ˆvts, grp ] = Dec s
+
+ VQ  Enc s
+
+ [kts, grp , vts, grp ] ; Es
+
+ . (3) This module serves as a prototype memory over grouped slot representations. During training, it is supervised by two objectives: (1) a reconstruction loss that maps slot representations into the codebook space and reconstructs them via the decoder, and (2) a commitment loss that encourages encoder outputs to remain close to their assigned codebook vectors, stabilizing training and preventing drift in the continuous feature space: 
+
+Ls, vq =
+
+> T
+
+X
+
+> t=1
+
+
+
+[kts, grp , vts, grp ] − [ˆkts, grp , ˆvts, grp ] 22
+
++ β zts − sg[ zts, vq ] 22
+
+
+
+, (4) where sg[ ·] denotes the stop-gradient operator, zts is the encoded feature vector, and zts, vq is its quantized representation in the codebook (see Appendix Section. A1.2 for formulation). During inference, grouped representations are passed through the same memory to retrieve nearest prototypes, improving robustness and coherence under incomplete or corrupted observations. The reconstructed grouped key ˆkts, grp and value ˆvts, grp are then used in the subsequent redistribution step. 
+
+3.3 Redistributing Restored Slot Features back to Their Original Spatial Locations 
+
+Next, ˆkts, grp and ˆvts, grp are redistributed to their original spatial locations. We use a cross-attention mechanism CA , where position embeddings for each spatial location on the feature map serve as queries, while the restored grouped slot keys and values serve as the key–value pairs: 
+
+xts, back = CA 
+
+
+
+Wq,s ps, ˆkts, grp , ˆvts, grp 
+
+
+
+. (5) In this way, ˆkts, grp encodes spatially aware information containing “what-to-where”, aligning with positional embeddings to guide the redistribution of ˆvts, grp back to the correct spatial locations. Finally, ˆkts, grp and xts, back are passed through two independent FFNs with residual connections and MLP updates to produce the slot queries lt+1  
+
+> s
+
+and input tokens xt+1  
+
+> s
+
+for the next recurrent step t + 1 .53.4 Within-Stage Dynamic Halting for Recurrence Control 
+
+The Adaptive Computation Time (ACT) mechanism dynamically controls when to stop recurrent refinement within each stage by predicting a global halting probability over the patch features. If the accumulated probability exceeds 1, the recurrence stops; otherwise, the process continues until this condition is satisfied. ACT allows simpler inputs to terminate early while allocating more computation to harder or more ambiguous cases. This leads to improved computational efficiency and also acts as an implicit regularizer by preventing unnecessary iterative refinement, which helps reduce overfitting. Formally, each stage is governed by the recurrent refinement function Φs, which jointly processes patch features xts and slot queries lts, producing updated representations xt+1  
+
+> s
+
+and lt+1  
+
+> s
+
+at each step t.Since the halting decision depends only on the patch features, we omit slot queries in the notation for simplicity and write the stage output as: 
+
+ˆxs = ACT( xs; Φ s), (6) We use the standard ponder loss for training the ACT module. This loss encourages PRISM to assign higher probability to earlier halting steps, thereby favoring shorter computation when possible. We set the maximum number of recurrent steps to Tmax = 5 for each stage. 
+
+Lponder ,s =
+
+> Tmax
+
+X
+
+> t=1
+
+t ˆpts. (7) 
+
+3.5 Training and Implementation Details 
+
+The overall training objective for PRISM is: 
+
+L = Lcls + λponder 4X
+
+> s=1
+
+Lponder ,s + λvq 4X
+
+> s=1
+
+Lvq ,s , (8) where λponder = 0 .005 and λvq = 0 .01 are the corresponding loss weights, and Lcls denotes the cross-entropy classification loss. We train PRISM from scratch for 300 epochs on 4 NVIDIA RTX A6000 GPUs with a total batch size of 1024. Following common ImageNet training practices [ 36 , 32 ], we apply standard data augmentation techniques during training. Optimization is performed using AdamW with an initial learning rate of 1 × 10 −3, β1 = 0 .9, and β2 = 0 .999 , together with a cosine learning-rate schedule. Images are resized and cropped to 224 × 224 during training, and center cropping is used during validation. 
+
+## 4 Experiments 
+
+We evaluate PRISM on image classification, object detection, and semantic segmentation under clean and occluded settings. To benchmark performance, we compare PRISM against strong vision backbones, including PVTv2, BiXT, BiFormer, and DeBiFormer across all tasks. All models are trained without occluded images and evaluated on them only at test time to assess out-of-distribution (OOD) robustness. For downstream detection and segmentation tasks, we initialize the backbone with PRISM weights pretrained on ImageNet-1K [ 8] and follow standard fine-tuning protocols [ 36 ]. 
+
+4.1 Image Classification Dataset. We evaluate image classification on ImageNet-1K [ 8] using the standard training and validation splits. Image Occlusion. To assess robustness under incomplete observations, we introduce five occlusion settings on ImageNet-1K images of size 224 × 224 : random patch masking with ratios of 0.6 and 0.8 (PatchMask 0.6 and PatchMask 0.8), block occlusion with a region of size 112 × 112 
+
+(BlockMask 112 ), and single-visible-patch evaluation retaining only one 112 × 112 or 56 × 56 region (OnlyOne 112 and OnlyOne 56 ). These settings simulate varying levels and spatial patterns of missing information. Metrics. We report model complexity and performance using number of parameters, FLOPs, and Top-1 accuracy. 6Table 1: ImageNet-1K classification under clean and occlusion settings. We report parameters, FLOPs, and Top-1 accuracy on clean images and five occlusion settings. All experiments have three runs. Standard deviations in Top-1 accuracy for PRISM are reported in brackets (last row). See 
+
+Section. 4.1 for experimental details. Best results are bolded.                                                 
+
+> Model Params FLOPs Clean Patch Mask 0.6 Patch Mask 0.8 Block Mask 112 Only One 112 Only One 56
+> PVTv2-B1[36] 13M 2.1G 78.7 53.8 39.6 74.6 62.8 27.8 XCiT-T24[1] 12M 2.3G 79.4 53.1 41.2 76.5 61.5 25.6 BiXT-Ti/16[16] 15M 1.7G 80.1 55.6 40.5 77.2 64.2 28.5 BiFormer-T[46] 13M 2.2G 81.4 60.4 42.1 77.2 66.4 30.4 PRISM 11M 2.2G 80.3 69.1 44.6 78.9 69.2 33.8
+> ±0.12 ±0.18 ±0.21 ±0.10 ±0.16 ±0.25
+
+Results. We report image classification results in Table. 1 . All models have comparable computational complexity with similar FLOPs. PRISM achieves competitive performance on clean images and substantially stronger robustness under all occlusion settings. On clean images, PRISM achieves a Top-1 accuracy of 80 .3% , outperforming PVTv2-B1 [ 36 ]by 1.6% while using fewer parameters (11M vs. 13M). All models experience performance degradation under occlusion, highlighting the difficulty of recognition under incomplete visual evidence. Nevertheless, PRISM consistently surpasses all competitive baselines, with the advantage becoming more pronounced as occlusion severity increases. For example, under PatchMask 0.6,PRISM achieves 69 .1% , outperforming BiFormer-T by 8.7% and PVTv2-B1 by 15 .3% . Under the more challenging PatchMask 0.8 setting, PRISM reaches 44 .6% , compared to 42 .1% for BiFormer-T and 39 .6% for PVTv2-B1. Similar trends are observed under structured occlusion. For instance, under OnlyOne 112 , PRISM achieves 69 .2% , exceeding BiFormer-T by 2.8% and PVTv2-B1 by 6.4% .These results suggest that PRISM not only improves clean-image recognition, but also maintains more reliable representations when large portions of the image are missing, demonstrating the effectiveness of iterative slot memory for robust visual recognition under incomplete observations. 
+
+4.2 Object Detection and Instance Segmentation Dataset. We evaluate object detection and instance segmentation on the MSCOCO dataset. 
+
+Implementation Details. Following standard transfer learning protocols, PRISM is initialized with weights pretrained on ImageNet-1K and fine-tuned on COCO for detection and instance segmentation. We integrate PRISM into Mask R-CNN and RetinaNet frameworks with a 1× schedule. All models are fine-tuned on 4 NVIDIA RTX A6000 GPUs with a total batch size of 8. We train and evaluate PRISM and all baselines under the same detection framework for fair comparison. Image Occlusion. 
+
+To evaluate robustness under incomplete object observations, we construct occluded COCO validation images by randomly selecting two object instances per image and applying a block mask to each instance. The mask removes either 30% or 50% of the instance area, resulting in two settings (M30 and M50) with different levels of missing visual evidence. This protocol tests whether models can recognize and localize objects when instance-level information is partially occluded. Metrics. For RetinaNet, we report bounding-box mAP . For Mask R-CNN, we report mAP b for bounding-box detection and mAP m for instance segmentation. 
+
+Results. We report object detection and instance segmentation results under both clean and occluded settings in Table. 2(a) . PRISM achieves competitive clean-image performance while substantially outperforming all baselines under occlusion, despite using significantly fewer parameters. For RetinaNet, PRISM achieves 43 .6 mAP on clean images, outperforming PVTv2-B1 [ 36 ] by 2.4
+
+points and PaCa-Ti [ 12 ] by 1.6 points, while remaining competitive with DaViT-T [ 9] using roughly half the number of parameters. Under occlusion, the advantage of PRISM becomes more pronounced. PRISM achieves 38 .8 mAP under M30 and 34 .2 mAP under M50, surpassing DaViT-T by 1.9 and 
+
+2.7 points, respectively, indicating stronger robustness when object regions are partially missing. For Mask R-CNN, PRISM also achieves strong detection and instance segmentation performance despite having the fewest parameters among all models. On clean images, PRISM achieves 44 .5mAP b and 41 .1 mAP m, matching DaViT-T in mask accuracy while using approximately 40% 
+
+7Table 2: Downstream task performance under clean and occlusion settings. (a) MSCOCO object detection and instance segmentation. Parameter count is reported in Column 2. In Row 2, C denotes the clean setting, and M30/M50 denote occlusion settings. Superscripts b and m indicate the metric type: for Mask R-CNN, bounding box detection ( mAP b) and mask segmentation ( mAP m)are reported, while no superscript denotes mAP with RetinaNet. See Section. 4.2 for experimental details. (b) ADE20K semantic segmentation. Parameter count (Params.) and FLOPs are reported in Columns 2 and 3. C and Occ. denote the clean and occlusion settings. Model performance is reported in mIoU. See Section. 4.3 for experimental details. Best are bolded. (‘–‘) indicates that the model checkpoint is not officially provided and their result is therefore unavailable.                                                                              
+
+> (a) MSCOCO detection and instance segmentation (b) ADE20K semantic segmentation Model RetinaNet Mask R-CNN Param CM30 M50 Param CbCmM30 bM30 mM50 bM50 m
+> PVTv2-B1[36] 23.8M 41.2 32.8 27.6 33.7M 41.8 38.8 34.1 31.1 28.7 25.9 PaCa-Ti[12] ––––32.0M 43.3 39.6 37.5 34.7 31.8 28.7 DaViT-T[9] 38.5M 44.0 36.9 31.5 47.8M 45.0 41.1 38.6 35.3 33.0 29.8 PRISM 20.5M 43.6 38.8 34.2 31.4M 44.5 40.8 40.6 36.9 37.2 33.7 Model Param. FLOPs mIoU COcc.
+> XCiT-T12[1] 8M -39.9 32.2 PVTv2-B1[36] 17.8M 34.2G 42.5 34.8 BiXT-Ti/16[16] 19M 31.8G 39.2 30.5 PRISM 15.5M 35.6G 44.8 39.7
+
+Table 3: Ablation studies of PRISM on ImageNet-1K classification. We report Top-1 accuracy on clean images and three occlusion conditions. Our default PRISM uses a maximum of 5 halting steps in (a), includes full VQ memory in (b), and employs dynamic halting (Dyn) in (c). Best are bolded.                                                        
+
+> (a) Max halting steps during training (b) Remove VQ during inference (c) Fixed recurrent steps during inference Model Variants 456w/o VQ Full 12345Dyn Clean 80.0 80.3 80.4 80.2 80.3 78.0 79.2 80.2 80.3 80.3 80.3
+> PatchMask0.8 43.7 44.6 44.8 37.8 44.6 31.4 38.9 43.1 44.0 44.2 44.6
+> BlockMask112 78.4 78.9 79.0 75.6 78.9 73.5 76.8 78.5 78.8 78.8 78.9
+> OnlyOne112 68.1 69.2 69.4 62.7 69.2 58.3 64.1 68.0 68.8 69.0 69.2
+
+fewer parameters. Under occlusion, the gains become larger. For example, under M30, PRISM reaches 40 .6 mAP b and 36 .9 mAP m, improving over DaViT-T by 2.0 and 1.6 points, respectively. Under the more challenging M50 setting, PRISM further achieves 37 .2 mAP b and 33 .7 mAP m,outperforming DaViT-T by 4.2 and 3.9 points. These results suggest that PRISM improves not only classification robustness, but also object localization and instance-level segmentation under incomplete observations. 
+
+4.3 Semantic Segmentation Dataset. We evaluate semantic segmentation on ADE20K. Implementation Details. Following standard transfer learning protocols, PRISM is initialized with weights pretrained on ImageNet-1K and fine-tuned on ADE20K. We select a standard semantic segmentation framework and fine-tune all models with the same framework for fair comparison. Image Occlusion. To evaluate robustness under incomplete observations, we construct occluded ADE20K validation images by randomly masking 30% of image patches. This setting removes scattered spatial evidence and tests whether models can maintain dense semantic predictions when parts of the scene are missing. Metrics. We report mean Intersection-over-Union (mIoU), which measures the average overlap between predicted and ground-truth semantic regions across all object classes. 
+
+Results. Results for PRISM and baseline models under clean and occluded settings are reported in Table. 2(b) . PRISM achieves the best semantic segmentation performance under both clean and occluded settings. On clean images, PRISM achieves an mIoU of 44 .8, outperforming PVTv2-B1 [ 36 ] by 2.3 points and BiXT-Ti/16 [ 16 ] by 5.6 points, despite using slightly fewer parameters. More importantly, PRISM maintains the best performance under occlusion with 39 .7
+
+mIoU, while PVTv2-B1 and BiXT-Ti/16 drop to 34 .8 and 30 .5, respectively. This corresponds to a gain of 4.9 points over PVTv2-B1 under random patch masking. The strong performance on dense prediction tasks suggests that PRISM preserves spatially coherent object-centric representations, enabling more reliable semantic grounding even when parts of the scene are missing. 8A B       
+
+> Stage 1 Stage 2 Stage 3 Stage 4 BlockMask112 PatchMask0.8 OnlyOne112
+> Clean BlockMask56 BlockMask112
+
+Figure 3: Analysis of the halting dynamics of PRISM in image classification. A. Average halting steps at each stage under clean and two occlusion settings. Colors denote different stages. B. Feature similarity between clean and occluded inputs, comparing PVTv2-B1 (x-axis) and PRISM (y-axis) across stages and occlusion settings. The dashed line denotes the diagonal. Each point corresponds to one stage (color) and one occlusion setting (marker). See Section. 4.1 for details on occlusion settings. 
+
+4.4 Ablation Studies on PRISM 
+
+We conduct ablation studies of PRISM on ImageNet-1K classification under clean images and a subset of occlusion conditions described in Section. 4.1 . Results in Top-1 accuracy are reported in 
+
+Table. 3 . Effect of maximum halting steps. Varying the maximum number of halting steps has limited impact on clean accuracy but significantly affects robustness under occlusion. Reducing the maximum steps from 5 to 4 slightly decreases clean accuracy ( 80 .3 → 80 .0), but leads to larger drops under occlusion (e.g., 69 .2 → 68 .1 on OnlyOne112). Increasing the limit from 5 to 6 yields only marginal gains (e.g., 44 .6 → 44 .8 on PatchMask0.8 and 69 .2 → 69 .4 on OnlyOne112), suggesting that 5 steps are sufficient for most inputs. Effect of VQ memory. Removing VQ memory at inference has negligible effect on clean accuracy ( 80 .3 → 80 .2), but causes substantial degradation under occlusion, e.g., 44 .6 → 37 .8 on PatchMask0.8 and 69 .2 → 62 .7 on OnlyOne112. This highlights the importance of prototype-based restoration when visual evidence is incomplete. Effect of dynamic halting. Increasing the number of fixed recurrent steps improves performance (e.g., 31 .4 → 43 .1 on PatchMask0.8 and 58 .3 → 68 .0 on OnlyOne112 from T =1 to T =3 ), but saturates after 4–5 steps. Dynamic halting achieves 44 .6 on PatchMask0.8 and 69 .2 on OnlyOne112, outperforming fixed-step inference ( T =5 ), demonstrating its ability to adapt computation to input difficulty for improved robustness and efficiency. 
+
+4.5 Model Analysis 
+
+To probe the halting dynamics of PRISM, we analyze inference-time halting frequency across four stages of the visual hierarchy ( Figure. 3A ), as well as feature similarity between clean and occluded inputs ( Figure. 3B ). Also see an analysis of training-time halting frequencies in 
+
+Appendix Section. A2 . Inference-time halting frequency under occlusion in Figure. 3A shows that PRISM allocates more refinement steps as occlusion severity increases. For example, in Stage 3, the average halting steps increase from 3.73 (clean) to 4.18 (BlockMask56) and 4.92 (BlockMask112), indicating that more computation is required under harder conditions. Across the four stages of the visual hierarchy, Stage 3 consistently requires the most refinement, while Stage 4 remains lower, suggesting that intermediate stages are most responsible for feature restoration. Representation consistency results in Figure. 3B show that PRISM preserves higher feature similarity than PVTv2-B1 across all stages and occlusion settings. For instance, under PatchMask0.8, Stage 3 similarity increases from 0.53 (PVTv2-B1) to 0.71 (PRISM). This suggests that adaptive recurrence and the prototypical representations in VQ memory help keep occluded features closer to their clean counterparts, improving model robustness and classification accuracy. 
+
+## 5 Discussion 
+
+We present PRISM, a pyramid vision architecture that reasons over images through iterative slot memory. Instead of a single feed-forward pass, PRISM iteratively organizes patch features into 9slot-level entities, restores them via a vector-quantized prototype memory, and adapts the number of recurrent steps to input complexity via dynamic halting. Across image classification, object detection, and semantic segmentation, PRISM achieves competitive performance on standard benchmarks while showing stronger robustness under occlusion, suggesting that compositional abstraction, memory-based restoration, and adaptive recurrence are effective for robust visual recognition. Despite these benefits, the inference cost of PRISM may increase for challenging inputs requiring more refinement steps. Moreover, our evaluation primarily focuses on synthetic occlusions, and further validation under real-world occlusion scenarios remains important. 
+
+## References 
+
+[1] A. Ali, H. Touvron, M. Caron, P. Bojanowski, M. Douze, A. Joulin, I. Laptev, N. Neverova, G. Synnaeve, J. Verbeek, et al. Xcit: Cross-covariance image transformers. Advances in neural information processing systems , 34:20014–20027, 2021. [2] A. Banino, J. Balaguer, and C. Blundell. Pondernet: Learning to ponder. In Advances in Neural Information Processing Systems , 2021. [3] P. Bomatter, M. Zhang, D. Karev, S. Madan, C. Tseng, and G. Kreiman. When pigs fly: Contextual reasoning in synthetic and natural scenes. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 255–264, 2021. [4] C. P. Burgess, L. Matthey, N. Watters, R. Kabra, I. Higgins, M. Botvinick, and A. Lerchner. Monet: Unsupervised scene decomposition and representation. In International Conference on Learning Representations , 2019. [5] Y. Cai, B. S. Nunna, Q. Lin, and M. Zhang. Learning to see through a baby’s eyes: Early visual diets enable robust visual intelligence in humans and machines. arXiv preprint arXiv:2511.14440 , 2025. [6] D. Chi, H. Kim, Y. Oh, Y. Kim, D. Lee, D. Jo, J. Kim, J. Baek, S. Ahn, and S. Kim. Slot-mllm: Object-centric visual tokenization for multimodal llm. arXiv preprint arXiv:2505.17726 , 2025. [7] M. Dehghani, S. Gouws, O. Vinyals, J. Uszkoreit, and Ł. Kaiser. Universal transformers. In 
+
+International Conference on Learning Representations , 2019. [8] J. Deng, W. Dong, R. Socher, L.-J. Li, K. Li, and L. Fei-Fei. Imagenet: A large-scale hierarchical image database. In 2009 IEEE conference on computer vision and pattern recognition , pages 248–255. Ieee, 2009. [9] M. Ding, B. Xiao, N. Codella, P. Luo, J. Wang, and L. Yuan. Davit: Dual attention vision transformers. In European conference on computer vision , pages 74–92. Springer, 2022. [10] M. Elbayad, J. Gu, E. Grave, and M. Auli. Depth-adaptive transformer. In International Conference on Learning Representations , 2020. [11] P. Esser, R. Rombach, and B. Ommer. Taming transformers for high-resolution image synthesis. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 12873–12883, 2021. [12] R. Grainger, T. Paniagua, X. Song, N. Cuntoor, M. W. Lee, and T. Wu. Paca-vit: learning patch-to-cluster attention in vision transformers. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 18568–18578, 2023. [13] A. Graves. Adaptive computation time for recurrent neural networks. arXiv preprint arXiv:1603.08983 , 2016. [14] K. Greff, R. L. Kaufman, R. Kabra, N. Watters, C. Burgess, D. Zoran, L. Matthey, M. Botvinick, and A. Lerchner. Multi-object representation learning with iterative variational inference. In 
+
+Proceedings of the 36th International Conference on Machine Learning , pages 2424–2433, 2019. 10 [15] S. Han, Z. Wang, and M. Zhang. Flow snapshot neurons in action: Deep neural networks generalize to biological motion perception. Advances in Neural Information Processing Systems ,37:53732–53763, 2024. [16] M. Hiller, K. A. Ehinger, and T. Drummond. Perceiving longer sequences with bi-directional cross-attention transformers. Advances in Neural Information Processing Systems ,37:94097–94129, 2024. [17] Y. Jia, J. Xie, S. Jivaganesh, H. Li, X. Wu, and M. Zhang. Seeing sound, hearing sight: Uncovering modality bias and conflict of ai models in sound localization. arXiv preprint arXiv:2505.11217 , 2025. [18] K. Kar and J. J. DiCarlo. Fast recurrent processing via ventrolateral prefrontal cortex is needed by the primate ventral stream for robust core visual object recognition. Neuron , 109(1):164–176, 2021. [19] T. C. Kietzmann, C. J. Spoerer, L. K. Sörensen, R. M. Cichy, O. Hauk, and N. Kriegeskorte. Recurrence is required to capture the representational dynamics of the human visual system. 
+
+Proceedings of the National Academy of Sciences , 116(43):21854–21863, 2019. [20] T. Kipf, G. F. Elsayed, A. Mahendran, A. Stone, S. Sabour, G. Heigold, R. Jonschkowski, A. Dosovitskiy, and K. Greff. Conditional object-centric learning from video. In International Conference on Learning Representations , 2022. [21] J. Kubilius, M. Schrimpf, K. Kar, R. Rajalingham, H. Hong, N. Majaj, E. Issa, P. Bashivan, J. Prescott-Roy, K. Schmidt, et al. Brain-like object recognition with high-performing shallow recurrent anns. Advances in neural information processing systems , 32, 2019. [22] D. Lee, C. Kim, S. Kim, M. Cho, and W.-S. Han. Autoregressive image generation using residual quantization. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 11523–11532, 2022. [23] Q. Lin, J. Zhang, Y.-S. Ong, and M. Zhang. Make me happier: Evoking emotions through image diffusion models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 16367–16376, 2025. [24] X. Liu, A. Sikarwar, G. Kreiman, Z. Shi, and M. Zhang. Reason from context with self-supervised learning. arXiv preprint arXiv:2211.12817 , 2022. [25] Y. Liu, F. Meng, J. Zhou, Y. Chen, and J. Xu. Faster depth-adaptive transformers. In Proceedings of the AAAI Conference on Artificial Intelligence , 2021. [26] Z. Liu, Y. Lin, Y. Cao, H. Hu, Y. Wei, Z. Zhang, S. Lin, and B. Guo. Swin transformer: Hierarchical vision transformer using shifted windows. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 10012–10022, 2021. [27] F. Locatello, D. Weissenborn, T. Unterthiner, A. Mahendran, G. Heigold, J. Uszkoreit, A. Dosovitskiy, and T. Kipf. Object-centric learning with slot attention. In Advances in Neural Information Processing Systems , volume 33, pages 11525–11538, 2020. [28] Z. Shi, J. Jie, Y. Sun, J. H. Lim, and M. Zhang. Unveiling the tapestry: the interplay of generalization and forgetting in continual learning, 2024. URL https://arxiv. org/abs/2211.11174 .[29] Y. Takida, W.-H. Liao, C. Takahashi, T. Shibuya, and Y. Mitsufuji. Hq-vae: Hierarchical discrete representation learning with variational bayes. Transactions on Machine Learning Research ,2024. [30] M. B. Talbot, R. Zawar, R. Badkundri, M. Zhang, and G. Kreiman. Tuned compositional feature replays for efficient stream learning. IEEE Transactions on Neural Networks and Learning Systems , 36(2):3300–3314, 2023. [31] H. Tang, M. Schrimpf, W. Lotter, C. Moerman, A. Paredes, J. Ortega Caro, W. Hardesty, D. Cox, and G. Kreiman. Recurrent computations for visual pattern completion. Proceedings of the National Academy of Sciences , 115(35):8835–8840, 2018. 11 [32] H. Touvron, M. Cord, M. Douze, F. Massa, A. Sablayrolles, and H. Jégou. Training data-efficient image transformers & distillation through attention. In International conference on machine learning , pages 10347–10357. PMLR, 2021. [33] A. van den Oord, O. Vinyals, and K. Kavukcuoglu. Neural discrete representation learning. In 
+
+Advances in Neural Information Processing Systems , volume 30, 2017. [34] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin. Attention is all you need. Advances in neural information processing systems ,30, 2017. [35] W. Wang, E. Xie, X. Li, D.-P. Fan, K. Song, D. Liang, T. Lu, P. Luo, and L. Shao. Pyramid vision transformer: A versatile backbone for dense prediction without convolutions. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 568–578, 2021. [36] W. Wang, E. Xie, X. Li, D.-P. Fan, K. Song, D. Liang, T. Lu, P. Luo, and L. Shao. Pvt v2: Improved baselines with pyramid vision transformer. Computational Visual Media ,8(3):415–424, 2022. [37] Z. Wang, S. Han, and M. Zhang. Pose prior learner: Unsupervised categorical prior learning for pose estimation. arXiv preprint arXiv:2410.03858 , 2024. [38] Z. Wang, M. Z. Shou, and M. Zhang. Object-centric learning with cyclic walks between parts and whole. Advances in Neural Information Processing Systems , 36:9388–9408, 2023. [39] Y.-F. Wu, M. Lee, and S. Ahn. Structured world modeling via semantic vector quantization. 
+
+arXiv preprint arXiv:2402.01203 , 2024. [40] Z. Wu, N. Dvornik, K. Greff, T. Kipf, and A. Garg. Slotformer: Unsupervised visual dynamics simulation with object-centric models. In International Conference on Learning Representations ,2023. [41] H. Yin, A. Vahdat, J. M. Alvarez, A. Mallya, J. Kautz, and P. Molchanov. A-vit: Adaptive tokens for efficient vision transformer. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2022. [42] L. Yu, J. Lezama, N. B. Gundavarapu, L. Versari, K. Sohn, D. Minnen, Y. Cheng, A. Gupta, X. Gu, A. G. Hauptmann, B. Gong, M.-H. Yang, I. Essa, D. A. Ross, and L. Jiang. Language model beats diffusion – tokenizer is key to visual generation. In International Conference on Learning Representations , 2024. [43] A. Zadaianchuk, M. Kleindessner, Y. Zhu, F. Locatello, T. Brox, and G. Martius. Object-centric learning for real-world videos by predicting temporal feature similarities. In Advances in Neural Information Processing Systems , volume 36, pages 12710–12730, 2023. [44] M. Zhang, C. Tseng, and G. Kreiman. Putting visual object recognition in context. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 12985–12994, 2020. [45] R. Zhao, V. Wang, J. Kannala, and J. Pajarinen. Vector-quantized vision foundation models for object-centric learning. In Proceedings of the ACM International Conference on Multimedia ,2025. [46] L. Zhu, X. Wang, Z. Ke, W. Zhang, and R. W. Lau. Biformer: Vision transformer with bi-level routing attention. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10323–10333, 2023. 12 A1 Preliminaries 
+
+We introduce the basic operators used in our model, including attention-based feature aggregation, vector quantization, and adaptive computation. 
+
+A1.1 Cross-Attention (CA) and Slot-Attention (SA) 
+
+Given query, key, and value matrices Q ∈ RNq ×D , K ∈ RNk ×D , and V ∈ RNk ×D , the dot product 
+
+A between Q and K is: 
+
+A = QK ⊤
+
+√D ∈ RNq ×Nk (9) The output of a cross-attention operation, denoted by CA( Q, K, V), is defined as: 
+
+attn i,j = exp Ai,j 
+
+P 
+
+> Nk
+
+exp Ai,j , CA( Q, K, V) = attn × V (10) For Slot Attention[ 27 ], we similarly write the grouping operation as SA( Q, K, V). Its output is defined as: 
+
+attn i,j = exp Ai,j 
+
+P 
+
+> Nq
+
+exp Ai,j , Wi,j = attn i,j 
+
+P 
+
+> Nk
+
+attn i,j 
+
+, SA( Q, K, V) = W × V (11) Here, attn i,j normalizes over the slot dimension so that slots compete for each token, while Wi,j 
+
+further normalizes over the token dimension before aggregation. 
+
+A1.2 Vector Quantization (VQ) 
+
+Given an input feature matrix Z ∈ RN ×D and a codebook E = {em}Mm=1 with em ∈ RD , vector quantization maps each feature zi to its nearest code: 
+
+mi = arg min  
+
+> m
+
+∥zi − em∥22, zq,i = emi . (12) The quantized output is denoted by Zq = VQ( Z; E). We adopt the EMA-style codebook update in VQ-VAE [ 33 ], where each code is updated by the moving average of the features assigned to it. In this way, the codebook tracks the centers of the assigned features during training. 
+
+A1.3 Adaptive Computation Time (ACT) 
+
+Given token features X, we define the dynamic halting process as ˆX = ACT( X; Φ) , where Xt ∈
+
+RN ×D denotes the token features at iteration t, and ˆX ∈ RN ×D denotes the final aggregated output. The features are updated recurrently by an updating function Φ:
+
+Xt+1 = Φ( Xt). (13) Instead of predicting halting probabilities for individual tokens, an improved version of predicting single global halting probability for the whole token set at each iteration is introduced. Specifically, a global feature is first computed: 
+
+¯xt = 1
+
+N
+
+> N
+
+X
+
+> n=1
+
+xtn, (14) and then predict the halting variables by 
+
+pt = σ(FC(¯ xt)) , T = min 
+
+(
+
+t :
+
+> t
+
+X
+
+> t′=1
+
+pt′
+
+≥ 1 − ϵ
+
+)
+
+, R = 1 − 
+
+> T−1
+
+X
+
+> t=1
+
+pt, (15) where pt ∈ (0 , 1) is the global halting probability at iteration t, T is the halting step, and R is the remainder at the halting step. We set the hyperparmaeter ϵ = 0 .01 to improve numerical stability and enable smooth halting behavior by introducing a slightly relaxed stopping threshold, which helps stabilize the learning of the halting mechanism. The final output is computed as a weighted 13 Figure A1: Halting dynamics of PRISM. Average halting numbers as a function of training epochs, showing how the model adaptively allocates recurrent refinement steps during training. aggregation over recurrent states, where intermediate steps use their halting probabilities as weights, the final halting step uses the remainder, and steps after T receive zero weight. The aggregation over time steps is defined as 
+
+ˆpt =
+
+( pt, t < T, R, t = T, 
+
+0, t > T, 
+
+ˆX =
+
+> Tmax
+
+X
+
+> t=1
+
+ˆptXt, (16) where Tmax is the maximum number of iterations. 
+
+## A2 Stage-wise Halting Dynamics during Training 
+
+As shown in Figure. A1 , the halting numbers of all four stages increase rapidly in the early phase of training and become nearly stable after roughly the first one-third of optimization. This suggests that the adaptive computation policy is learned relatively early, after which the model mainly focuses on improving the quality of its representations rather than substantially changing how much computation is allocated. In other words, the network first discovers how much iterative refinement each stage should perform, and then uses the remaining training process to improve what is computed within this recurrent budget. A second important observation is that the learned halting numbers are strongly stage-dependent in the visual hierarchy of PRISM. Stage 3 converges to the largest halting number, followed by Stage 2, while Stage 1 and Stage 4 remain lower. This pattern is meaningful rather than incidental. The early stage mainly operates on relatively local patterns, where recurrent refinement is useful but still limited by the low-level nature of the features. The deepest stage (Stage 4), in contrast, already works on highly abstract representations, so fewer additional refinement steps are needed once the semantics have largely stabilized. The middle stages (Stages 2 and 3) therefore become the main locus of recurrent computation, where local evidence and global structure must be integrated into coherent object-level representations. This stage-wise allocation indicates that the halting mechanism does not collapse to a trivial constant-depth solution, but instead learns a structured computation pattern aligned with the semantic roles of the pyramid stages. 14
