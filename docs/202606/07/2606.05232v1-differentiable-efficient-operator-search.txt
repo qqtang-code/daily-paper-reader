@@ -1,0 +1,1129 @@
+Title: Differentiable Efficient Operator Search
+
+URL Source: https://arxiv.org/pdf/2606.05232v1
+
+Published Time: Fri, 05 Jun 2026 00:05:12 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Differentiable Efficient Operator Search 
+
+Xiaohuan Pei 1 Jiyuan Zhang 2 Yuanfan Guo 2 Weiguo Feng 2
+
+Tao Huang 3 Cho-Jui Hsieh 4 Chang Xu 11The University of Sydney 2ByteDance 
+
+> 3
+
+Shanghai Jiao Tong University 4University of California, Los Angeles 
+
+xiaohuan.pei@sydney.edu.au 
+
+Abstract 
+
+Efficient models have largely relied on human-designed reduction operators, such as pruning, merging, pooling, and adaptive reweighting, which could happen at any time and anywhere. We show that these seemingly different methods can be unified as different operating regimes of a single shared operator space. Based on this observation, we introduce Efficient Operator Search , a unified framework in which continuous parameters control whether token information is removed, sharply merged, uniformly pooled, or softly redistributed. Instead of hand-crafting operator compositions, we define a efficient search space : a differentiable parameterization of layer activation, retention budget, and operator regime, and a efficient search policy : minimizing the expectation of the task loss under one-sided budget and cost constraints. The pipeline leads to a broader shift from an efficient design problem to an operator search problem , suggesting a new paradigm for future efficient modeling. Interestingly, we find that most prior mainstream baselines can be treated as special cases of this shared operator space, and further reveal consistent operator patterns across different benchmarks. Even as an early exploration of this new paradigm, our proposed method achieves competitive results on various benchmarks. We believe that it provides a unified view of prior methods, a principled lens for understanding current differences, and a general foundation for future efficient modeling. Webpage: EOS .
+
+1 Introduction 
+
+Scaling multi-modal foundation models has led to substantial performance gains across visual reasoning, multi-modal understanding, instruction following, and long-context multimodal reason-ing [ 12 , 10 , 26 , 27 , 6, 28 , 9 ]. However, these gains often come with substantial inference cost, as dense visual tokens are repeatedly processed by large language backbones, especially in high-resolution, multi-image, and long-context scenarios [ 31 , 13 , 23 , 24 , 30 , 22 , 20 ]. Existing work improves the efficiency of foundation models through human-designed token reduction operators, in-cluding pruning, merging, pooling, and adaptive reweighting. For example, SparseVLM [ 32 ] removes visually unimportant tokens according to attention scores, while ToMe [ 1 ] merges redundant tokens to shorten the input sequence while preserving information. Although these methods demonstrate promising accuracy-efficiency trade-offs, they are usually developed as separate compression recipes with manually chosen layers, budgets, and operator forms, leaving the shared structure behind these corner operators largely underexplored. Despite their different implementations, existing reduction behaviors can be interpreted as different ways of discarding, transferring, or redistributing token information. This interpretation motivates a shared formulation in which representative efficient operators are controlled by continuous parameters. Specifically, an information-transfer gate γ determines whether discarded token information is removed or preserved, while an assignment temperature τ controls whether the preserved information  
+
+> Preprint.
+> arXiv:2606.05232v1 [cs.LG] 3 Jun 2026 (a) Manual design vs. automatic search. (b) Unified operator space and performance.
+
+Figure 1: Overview of Efficient Operator Search. (a) EOS replaces manually designed reduction recipes with automatic operator search. (b) The searched hybrid operator lies inside the unified operator space and improves performance under the same token budget. is sharply merged, uniformly pooled, or softly redistributed. Under this view, pure pruning, hard merging, average pooling, and adaptive reweighting naturally emerge as different operating regimes of the same operator space (Figure 1). Based on this observation, we propose Efficient Operator Search , a unified framework that reframes efficient models from an operator design problem into an 
+
+operator search problem . Instead of manually crafting another fixed compression rule, our method searches over where to compress, how many tokens to retain, and which reduction behavior to apply. This enables flexible combinations of multiple compression primitives under different accuracy-efficiency constraints. We conduct extensive experiments on representative multi-modal benchmarks. The results show that our framework can recover strong hand-designed baselines and further discover better operator configurations, achieving improved performance-efficiency trade-offs. Our contributions can be summarized from three aspects. (1) We introduce a unified operator space that reinterprets existing token reduction methods as different regimes of one shared formulation. (2) We propose Efficient Operator Search, which jointly searches layer selection, token budgets, and continuous operator parameters instead of relying on manually designed recipes. (3) We demonstrate the proposed framework can recover existing baselines and discover stronger hybrid configurations for efficient multimodal foundation models. 
+
+2 Method 
+
+We aim to transform efficient foundation models from manually designed compression recipes into a searchable operator space. Given a frozen multimodal foundation model with L decoder layers, existing token-reduction methods typically hand-specify where to reduce visual tokens, how many tokens to retain, and which operator to apply. In contrast, our Efficient Operator Search 
+
+(EOS) parameterizes these choices as learnable search variables and jointly optimizes them with differentiable relaxations under task and efficiency constraints. As shown in Figure 2, EOS selects important visual-token anchors at each active reduction layer, then applies a unified operator to decide whether the remaining token information is discarded, transferred, pooled, or reweighted. 
+
+2.1 Preliminary 
+
+Let X(l) ∈ RNl×d denote the visual hidden states at decoder layer l, where Nl is the number of visual tokens and d is the hidden dimension. A token-reduction operation partitions X(l) into a retained anchor set and a reduction-candidate set: 
+
+X(l) = A(l) ∪ D(l), A(l) ∈ RKl×d, D(l) ∈ RMl×d, (1) where Kl is the number of retained anchors, Ml = Nl − Kl is the number of reduction candidates, and A(l) ∩ D(l) = ∅. The anchors are selected according to an importance score q(l) ∈ RNl , which can be instantiated by attention-based or similarity-based token importance following prior efficient inference methods. The remaining question is how to process D(l) after anchor selection. Pure pruning directly removes D(l), token merging transfers each discarded token to a similar anchor, pooling distributes discarded information uniformly, and adaptive reweighting rescales anchors according to discarded-token importance. EOS treats these behaviors as different operating regimes of one shared operator family. 2Figure 2: Overview of Efficient Operator Search. Given a frozen multimodal foundation model, EOS parameterizes token reduction at each decoder layer by three coupled components: layer activation gl, retention budget cl, and operator regime Ωl = ( γl, τ l, θ l, ρ l, ν l). At each active layer, important visual tokens are retained as anchors, while the remaining candidates are processed by a unified reduction operator. Depending on the learned operator parameters, discarded information can be removed, sharply merged, uniformly pooled, or softly redistributed to the anchors. 
+
+2.2 Unified Reduction Operator 
+
+For simplicity, we omit the layer index l when the context is clear. Given anchors A ∈ RK×d and reduction candidates D ∈ RM ×d, we first compute the normalized similarity matrix: 
+
+S = ¯D ¯A⊤ ∈ RM ×K , ¯xi = xi
+
+∥xi∥2 + ϵ , (2) where xi denotes a row token feature from either A or D, the normalization is applied token-wise, and ϵ > 0 is a small constant used for numerical stability. Each entry Sij measures the cosine similarity between reduction candidate di and anchor token aj . The assignment from reduction candidates to anchors is given by 
+
+W = softmax anchor 
+
+ S
+
+τl
+
+
+
+∈ RM ×K , (3) where softmax anchor (·) normalizes each row over the anchor dimension, and τl > 0 is an assignment temperature. A smaller τl induces sharper nearest-anchor assignment, while a larger τl yields smoother assignment across anchors. We further define a per-token transfer gate: 
+
+mi = σ
+
+
+
+β(max  
+
+> j
+
+Sij − θl)
+
+
+
+, m = [ m1, . . . , m M ]⊤, (4) where θl is a similarity threshold and β controls the gate sharpness. The unified information-transfer operation is then given by ˜A = A + γl W⊤(D ⊙ m), (5) where m is broadcast along the feature dimension, and γl ∈ [0 , 1] is an information-transfer gate. When γl = 0 , the reduction candidates have no explicit feature transfer and are effectively pruned. When γl > 0, their information is transferred to the retained anchors according to the assignment matrix W.To include adaptive reweighting and stabilize the output scale, we further apply 
+
+ˆA = ˜A ⊙ (1 + ρl simp ) , ˆA ← (1 − νl) ˆA + νl
+
+∥A∥F
+
+∥ ˆA∥F + ϵ
+
+ˆA, (6) 3where ρl denotes the anchor-reweighting strength, νl denotes the norm-preservation coefficient, and 
+
+simp ∈ RK denotes the anchor-level importance induced by reduction candidates. Here, γl controls explicit feature transfer, while ρl controls indirect anchor rescaling. In practice, simp is given by 
+
+simp = softmax anchor (S)⊤softmax candidate (qD ), (7) where qD denotes the importance scores of the reduction candidates, and softmax candidate (·) nor-malizes over the reduction-candidate dimension. 
+
+Definition 2.1 (Unified efficient operator) . At layer l, an efficient reduction operator is defined by the parameter tuple 
+
+Ωl = ( γl, τ l, θ l, ρ l, ν l) , (8) 
+
+and maps the visual hidden states from X(l) ∈ RNl×d to a reduced representation ˆA(l) ∈ RKl×d
+
+through Eqs. 2–6. The parameters γl and τl determine the dominant reduction regime, while θl, ρl,and νl provide token-level gating, anchor reweighting, and scale preservation. 
+
+The parameter tuple Ωl defines the reduction behavior at a single layer. EOS further couples this operator regime with layer activation and token budget, yielding a searchable space over where to compress, how much to compress, and how to process the reduced tokens. 
+
+2.3 Efficient Search Space 
+
+EOS searches over three coupled dimensions: layer activation, token budget, and operator regime. For all decoder layers, the complete search space is given by 
+
+Θ =
+
+n
+
+gl
+
+|{z} 
+
+> which layers
+
+, cl
+
+|{z} 
+
+> how much
+
+, γ l, τ l, θ l, ρ l, ν l
+
+| {z }
+
+> which operator
+
+oL−1
+
+> l=0
+
+(9) where gl determines whether layer l applies token reduction, cl controls the fraction of visual tokens to discard, and (γl, τ l, θ l, ρ l, ν l) specify the operator regime. All variables are represented by uncon-strained learnable parameters and mapped to valid ranges through differentiable transformations: 
+
+gl = σ(wgl · Tg ), cl = σ(wcl · Tc), γl = σ(wγl ),τl = softplus( wτl ) + ϵ, θl = 2 σ(wθl ) − 1, ρl = σ(wρl ), νl = σ(wνl ), (10) where Tg and Tc are optional scaling temperatures used to sharpen the structural gates, and the same numerical constant ϵ > 0 ensures a strictly positive assignment temperature. The effective number of retained visual tokens at layer l is given by 
+
+Kl = max  Kmin ,   1 − glcl
+
+Nl
+
+ . (11) When gl is close to zero, the layer is effectively inactive and the visual sequence is passed to the next layer unchanged. When gl is active, cl determines the compression strength, and the operator tuple Ωl
+
+determines how reduction candidates influence retained anchors. Although Eq. 11 defines the discrete forward retain number, EOS optimizes its underlying variables through the relaxation introduced in Sec. 2.4. The structural variables (gl, c l) answer where and how much to compress, while the operator variables (γl, τ l, θ l, ρ l, ν l) answer which reduction behavior to apply. Such factorization enables EOS to recover existing hand-designed methods by fixing part of Θ, while also allowing new hybrid configurations to be discovered through continuous optimization. 
+
+2.4 Differentiable Token Selection 
+
+Since top-Kl anchor selection is discrete, we use a straight-through soft boundary relaxation to preserve the forward behavior while allowing gradients to update the retention budget. Let q(Kl)
+
+denote the detached Kl-th largest importance score, and define 
+
+pkeep  
+
+> i
+
+= σ  α(qi − q(Kl)) · 1 − glcl
+
+1 − sg( glcl) , (12) where α controls the boundary sharpness and sg( ·) denotes the stop-gradient operation. The first term approximates whether token i lies above the selection threshold, while the second term provides a straight-through gradient path from gl and cl without changing the forward value. The relaxed keep probabilities estimate the differentiable token count, while inference still uses hard top-K anchors and reduction candidates in Eq. 5. 42.5 Differentiable Search Policy 
+
+The backbone multimodal foundation model is kept frozen, and only the search parameters Θ are optimized. Given an input-output pair (x, y), EOS minimizes the task loss under one-sided efficiency constraints: 
+
+min  
+
+> Θ
+
+Ltask (Θ)
+
+| {z }
+
+> task loss
+
++ λb
+
+ Nfinal (Θ)
+
+B − 1
+
+2+
+
+| {z } 
+
+> token budget: Nfinal ≤B
+
++ λc
+
+"L−1X
+
+> l=0
+
+gl − C
+
+#2+
+
+| {z }
+
+> inference cost: active layers ≤C
+
+(13) where [·]+ = max(0 , ·), B is the target final token budget, and C is the target maximum number of active reduction layers. Here, Nfinal (Θ) is estimated by ¯N0 = N0, ¯Nl+1 = (1 − glcl) ¯Nl, and 
+
+Nfinal (Θ) = ¯NL. At deployment, it is replaced by the corresponding discrete retain count after top-K selection. The first regularizer penalizes configurations that exceed the token budget, while the second penalizes configurations that activate too many reduction layers. Both constraints are one-sided: no penalty is applied once the configuration satisfies the desired budget. This design allows the search to prioritize task performance within a feasible efficiency region, rather than forcing unnecessary compression when the budget has already been met. The task loss is given by 
+
+Ltask (Θ) = LCE (y, f MFM (x; Θ)) 
+
+| {z }
+
+> text prediction
+
++λa
+
+1
+
+|A| 
+
+X
+
+> l∈A
+
+Hred  
+
+> l
+
+[text] − sg  Hfull  
+
+> l
+
+[text]  22
+
+| {z } 
+
+> Lalign :hidden-state alignment
+
+(14) where LCE is the standard language-modeling loss, Hred  
+
+> l
+
+denotes the hidden states produced by the reduced forward pass, and Hfull  
+
+> l
+
+is obtained from a reference forward pass without token re-duction. The operator sg( ·) blocks gradients through the full-model reference states, so the align-ment term only updates the search parameters through the reduced forward pass. The set A con-tains selected decoder layers for measuring the deviation between reduced and full computation. Table 1: One-sided constraints.               
+
+> Constraint Active Inactive
+> Token budget Nfinal > B Nfinal ≤B
+> Active layers P
+> lgl> C P
+> lgl≤C
+
+The hidden-state alignment term is important because cross-entropy mainly evaluates the final textual predic-tion and may be insensitive to whether discarded visual information is removed, transferred, or softly redistributed. The constraints in Eq. 13 are one-sided: they penalize only budget violations and vanish once the target efficiency region is reached, allowing the search to focus on preserving task accuracy. 
+
+2.6 Optimization and Deployment 
+
+We initialize the search from a known efficient configuration by activating a small number of reduction layers and setting γl close to zero, corresponding to a pruning-like regime. This warm start provides a stable accuracy-efficiency point, after which gradient descent adjusts layer gates, token budgets, and operator parameters under Eq. 13. After optimization, the learned variables are converted into a deterministic inference configuration: layers with large gl become active reduction layers, cl determines the retain schedule, and the operator parameters define the final reduction behavior. The resulting configuration Θ⋆ is fixed during evaluation. For different retain budgets, we keep the learned active layers and operator regime fixed, and only rescale the final retain schedule. Thus, EOS does not require retraining a separate reducer for every budget, but learns a general operator configuration deployable under multiple efficiency settings. 
+
+2.7 Corner Operators as Special Cases 
+
+After defining the search space and optimization policy, we now discuss its relation to existing hand-designed reduction operators. The key property of EOS is that its operator regime Ωl admits several standard operators as limiting cases. This establishes that pruning, merging, pooling, and adaptive reweighting are not independent mechanisms, but different operating regimes of the same parameterized operator family. 5Table 2: Prior methods as fixed points in the EOS search space. EOS optimizes these dimensions jointly, allowing both corner operators and interior hybrid operators to be discovered.                                                                     
+
+> Method Structure Operator Regime Searchable
+> Layers RBudget clGate glγτθρν
+> FastV [2] fixed fixed fixed 0––0–✗
+> ToMe [1] fixed/all uniform fixed 1→0→ − 100✗
+> SparseVLM [32] fixed schedule fixed 0––0–✗
+> VisionZip [30] fixed fixed fixed 0––0–✗
+> PruMerge+ [22] fixed fixed fixed mixed manual –0–✗
+> EOS learned learned learned learned learned learned learned learned ✓
+
+Definition 2.2 (Pure pruning) . Pure pruning is recovered by setting 
+
+γl = 0 , ρl = 0 . (15) 
+
+In this case, Eq. 5 reduces to 
+
+˜A = A + 0 · W⊤(D ⊙ m) = A. (16) 
+
+Thus, the reduction candidates do not contribute to the retained representation and are directly removed from subsequent computation. 
+
+Definition 2.3 (Hard token merging) . Hard token merging is recovered by setting 
+
+γl = 1 , τl → 0+, θl → − 1, ρl = 0 , νl = 0 . (17) 
+
+The setting θl → − 1 makes mi → 1, disabling the transfer gate. Since W = softmax anchor (S/τ l),the limiting case τl → 0+ yields 
+
+Wij → 1
+
+
+
+j = arg max  
+
+> k
+
+Sik 
+
+
+
+, ˆaj = aj + X  
+
+> i:j=arg max kSik
+
+di. (18) 
+
+Therefore, each reduction candidate is transferred to its nearest anchor, which corresponds to a hard nearest-neighbor additive merge. 
+
+Definition 2.4 (Uniform pooling) . Uniform pooling is recovered by setting 
+
+γl = 1 , τl → ∞ , θl → − 1, ρl = 0 , νl = 0 . (19) 
+
+The setting θl → − 1 makes mi → 1, disabling the transfer gate. In this limiting case, the assignment distribution becomes uniform: 
+
+Wij = exp( Sij /τ l)
+
+PKk=1 exp( Sik /τ l) → 1
+
+K , ˆaj = aj + 1
+
+K
+
+> M
+
+X
+
+> i=1
+
+di. (20) 
+
+Therefore, every anchor receives the same averaged contribution from the reduction candidates, corresponding to uniformly pooling discarded information into the retained anchors. 
+
+Definition 2.5 (Adaptive reweighting) . Adaptive reweighting is recovered by setting 
+
+γl = 0 , ρl > 0, νl = 0 . (21) 
+
+Since γl = 0 , no reduction candidate is explicitly transferred to the anchors through Eq. 5. The output is instead given by the reweighting term in Eq. 6: 
+
+ˆaj = (1 + ρl simp ,j ) aj . (22) 
+
+Thus, reduction candidates affect the retained representation only through anchor-level importance rescaling, without explicit token transfer. 
+
+Property 2.1 (Operator unification) . The unified operator in Definition 2.1 admits pure pruning, hard merging, uniform pooling, and adaptive reweighting as special cases under different parameter settings of Ωl.
+
+The four corner operators arise from different regimes of Ωl, and Table 2 places representative baselines into the proposed search space. Existing methods can be interpreted as manually specified points in Θ, since they typically fix the active layers, token budgets, or operator regimes by design. EOS instead makes these dimensions searchable, thereby generalizing representative reduction behaviors and enabling intermediate hybrid operators beyond the manually selected corners. 6Table 3: Empirical verification. Our unified operator reproduces existing token-reduction methods under the same setting, and further improves performance after search.                                                                                       
+
+> Method Search-space setting POPE SQA MME GQA TextVQA Match?
+> Original code implementations:
+> SparseVLM+ (original code) —85.79 64.80 1869 60.95 45.25 —SparseVLM v1 (original code) —85.22 64.15 1825 59.45 44.17 —
+> Special cases of our unified operator:
+> Ours ≡SparseVLM+ γ=0 ,R={2,6,15 }, c l=V2 sched. 85.96 65.20 1853 60.13 43.86 ≈✓
+> Ours ≡SparseVLM v1 γ=0 ,R={2,6,15 }, c l=V1 sched. 85.22 64.15 1825 59.45 44.17 Exact ✓
+> Searched operators in our unified space:
+> Ours (searched, layers fixed) γ6=0 .08 , τ 6=0 .22 ,rest γ=0 85.61 65.05 1867 60.81 44.87 ≈V2 Ours (searched) γ6=0 .08 , τ 6=0 .22 85.78 64.85 1876 60.92 45.29 Beats V2 ✓Unified Reference Unified Reference Unified Reference Unified Reference
+> Prune = 0
+> ||=0 e+ 00
+> Merge = 1, 0
+> ||=2 e08
+> Pool = 1,
+> ||=3 e10
+> Reweight = 0, = 1.5
+> ||=0 e+ 00
+
+Figure 3: Numerical verification of corner operators. Our unified operator reproduces P RUNE ,MERGE , P OOL , and R EWEIGHT under their corresponding settings in Ωl.
+
+3 Experiments 
+
+3.1 Experimental Setup Model and baselines. We evaluate EOS on frozen LLaVA [ 12 ] and compare it with representative corner operators, including pruning-based S PARSE VLM-V1/ V2 [ 32 ], merging-based T OME [ 1], and pooling-based P OOL . All methods use the same retained visual-token budgets for fair comparison. 
+
+Benchmarks. We evaluate on representative multimodal benchmarks. Following previous baselines, the prior benchmark group includes POPE [ 11 ], SQA [ 16 ], MME[ 4], GQA [ 5 ], TextVQA[ 25 ], and SEED[ 8 ]. To provide a broader evaluation, the extended benchmark group includes MMStar[ 3], RealWorldQA (RWQA), AI2D[7], OCRBench[15], ChartQA[17], and MMBench-en[14]. 
+
+Evaluation protocol. We report results across four retained-token budgets: r ∈ { 192 , 128 , 64 , 16 },corresponding to progressively stronger visual-token reduction. For T OME and P OOL , we use the same reducer-layer placement R = {2, 6, 15 } for controlled comparison with pruning-based baselines. EOS uses the searched operator configuration Θ⋆ and keeps it fixed during evaluation. 
+
+3.2 Main Results 
+
+Table 4 presents the main comparison across different retained-token budgets. EOS consistently achieves competitive or superior performance across both prior and extended benchmarks. The advantage becomes more pronounced under aggressive token reduction, indicating that the searched hybrid operator is more robust than manually selected corner operators when the visual-token budget becomes highly constrained. 
+
+Analysis. At the moderate retain budgets of r = 192 and r = 128 , EOS performs on par with or slightly better than strong pruning-based baselines, suggesting that the searched operator can recover competitive hand-designed configurations. The advantage becomes clearer as the budget decreases. At r = 64 , EOS improves the overall average from 48 .67 to 49 .23 over SparseVLM-v2, while also improving hallucination-sensitive and reasoning-oriented benchmarks such as POPE, MME, GQA, SEED, MMStar, RWQA, AI2D, and MMBench-en. Under the most aggressive setting of r = 16 ,EOS achieves the largest gain, improving the overall average from 39 .57 to 41 .17 and substantially increasing POPE from 67 .19 to 76 .86 . These results indicate that the searched hybrid operator is especially beneficial when the retained-token budget is extremely limited, where fixed pruning, merging, or pooling operators tend to lose critical visual information. 7Table 4: Main results across retained-token budgets. EOS is compared with pruning-, merging-, and pooling-based baselines under identical visual-token budgets. 
+
+Method Prior Benchmarks Extended Benchmarks Overall Avg. 
+
+POPE SQA MME GQA TextVQA SEED MMStar RWQA AI2D OCRBench ChartQA MMB-en 
+
+Retain = 192 visual tokens 
+
+SparseVLM-v1 85.22 64.15 1825 59.41 44.24 64.26 34.97 53.59 54.73 30.60 17.52 63.92 53.15 SparseVLM-v2 85.79 64.80 1869 60.95 45.25 65.59 33.98 54.77 55.38 30.40 18.12 63.75 53.79 ToMe R={2, 6, 15 } 85.09 64.45 1858 59.64 43.25 64.62 33.77 53.73 55.18 28.90 16.96 63.40 52.95 Pool R={2, 6, 15 } 52.38 60.54 1287 43.57 8.17 39.06 24.64 43.92 50.36 2.40 11.80 24.14 33.91 
+
+EOS 85.78 64.85 1876 60.92 45.29 65.71 34.27 55.03 55.67 30.60 18.40 63.83 53.95 
+
+Retain = 128 visual tokens 
+
+SparseVLM-v1 84.88 64.06 1806 58.38 42.55 63.60 34.77 52.16 54.44 27.80 16.08 63.66 52.24 SparseVLM-v2 85.70 64.85 1845 59.49 42.52 64.72 34.06 54.90 54.63 27.80 17.04 63.40 52.92 ToMe R={2, 6, 15 } 84.83 65.49 1830 57.43 36.51 62.80 34.02 52.16 54.73 24.40 15.08 62.46 51.27 Pool R={2, 6, 15 } 43.50 60.14 1150 39.23 7.85 36.16 23.57 43.01 50.23 2.50 11.88 21.22 31.70 
+
+EOS 85.89 64.85 1856 59.92 42.33 64.55 34.77 54.90 54.95 27.40 17.32 63.23 53.03 
+
+Retain = 64 visual tokens 
+
+SparseVLM-v1 82.58 64.80 1727 53.79 34.21 56.78 31.86 48.50 52.72 20.60 14.12 59.97 48.47 SparseVLM-v2 82.79 65.05 1755 54.05 32.49 57.50 31.53 50.98 53.08 18.70 14.80 60.40 48.67 ToMe R={2, 6, 15 } 76.77 65.59 1622 49.59 22.69 50.45 29.96 45.88 51.68 12.90 12.88 53.01 44.11 Pool R={2, 6, 15 } 42.11 60.44 1135 38.95 8.13 35.97 23.36 43.40 50.52 2.50 11.68 20.70 31.52 
+
+EOS 84.52 65.54 1781 54.91 31.11 59.14 32.79 51.37 53.59 18.50 14.56 61.08 49.23 
+
+Retain = 16 visual tokens 
+
+SparseVLM-v1 63.28 65.00 1472 44.20 18.36 47.00 28.12 42.61 51.46 6.00 12.80 41.84 39.44 SparseVLM-v2 67.19 65.64 1432 44.53 18.66 44.63 27.89 44.58 50.65 6.30 12.60 41.07 39.57 ToMe R={2, 6, 15 } 43.29 61.28 1150 39.38 8.73 37.15 24.02 43.40 50.29 2.80 11.76 23.63 32.23 Pool R={2, 6, 15 } 41.78 60.68 1142 38.86 8.18 35.95 22.98 43.27 50.26 2.20 11.64 20.62 31.43 
+
+EOS 76.86 64.85 1510 46.08 16.84 47.60 28.41 45.88 50.81 5.70 12.48 44.59 41.17 010 3 10 2 10 1    
+
+> a(alignment loss weight) =CE-off
+> 50
+> 60
+> 70
+> 80
+> POPE accuracy (%)
+> apeaks at 0.05; CE-off collapses
+> r=192
+> r=64
+> r=16
+> CE-off
+
+(a) POPE 010 3 10 2 10 1     
+
+> a(alignment loss weight) =CE-off
+> 1000
+> 1200
+> 1400
+> 1600
+> 1800
+> MME (Perc. + Cogn.)
+> MME follows the same ashape
+> r=192
+> r=64
+> r=16
+> CE-off
+
+(b) MME 010 3 10 2 10 1     
+
+> a(alignment loss weight) =CE-off
+> 20
+> 30
+> 40
+> 50
+> 60
+> MMBench-en (gpt\_eval\_score)
+> MMBench-en swings 12 pts across a
+> r=192
+> r=64
+> r=16
+> CE-off
+
+(c) MMBench-en 010 3 10 2 10 1   
+
+> a(alignment loss weight) =CE-off
+> 40
+> 50
+> 60
+> 70
+> Macro-avg over 3 benches  3-bench summary: both losses load-bearing
+> r=192
+> r=64
+> r=16
+> CE-off
+
+(d) Macro average 
+
+Figure 4: Effect of the alignment weight λa. Sweeping λa under fixed retained-token budgets shows that EOS is stable across λa ∈ [0 .01 , 0.5] . The CE-off variant removes the cross-entropy loss. 
+
+4 Ablation Studies 
+
+We analyze EOS from three complementary aspects: (i) the search policy , controlled by the hidden-state alignment weight λa in Eq. 14; (ii) the search space , including the active reducer layers R
+
+and the layer-wise operator regime Ωl = ( γl, τ l, θ l, ρ l, ν l); and (iii) the robustness of the searched configuration Θ⋆ across different retained-token budgets. All ablations use the same training data, seed, and LLaVA-1.5-7B backbone, and vary only the factor under study. 
+
+4.1 Effect of the Alignment Weight λa
+
+The alignment term in Eq. 14 regularizes the reduced forward pass against the unreduced reference model, with weight λa controlling the trade-off between text-prediction loss and hidden-state fidelity. We sweep λa ∈ { 0, 0.01 , 0.02 , 0.05 , 0.1, 0.2, 0.5} and include a CE-off variant that optimizes align-ment alone. Figure 4 shows that EOS is stable across a broad range of λa, while removing alignment leads to a clear drop. It reveals that the alignment objective provides a necessary optimization signal for discovering non-trivial operator regimes. 
+
+4.2 Effect of Active Reducer Layers R
+
+We next study the structural component of the search space, where token reduction is applied. Let 
+
+R⋆ = {l1, l 2, l 3} denote the active reducer layers extracted from the searched configuration Θ⋆.We sweep each layer index while keeping the other two fixed, and evaluate POPE under retained-token budgets r ∈ { 64 , 16 }. Figure 5 reports one-dimensional slices of the layer-placement space and a two-dimensional heatmap over (l1, l 3) with l2 fixed. The searched layer placement lies on a high-performing plateau, indicating that EOS does not rely on a cherry-picked layer configuration. 80 1 2 3 4 5
+
+l1 (first reducer layer) 
+
+> 55
+> 60
+> 65
+> 70
+> 75
+> 80
+> 85
+> POPE (%)
+
+l1: POPE stable across early layers   
+
+> r=64
+> r=16
+> EOS l1= 3
+
+(a) First reducer layer l14 5 6 7 8 9 10 
+
+l2 (middle reducer layer) 
+
+> 55
+> 60
+> 65
+> 70
+> 75
+> 80
+> 85
+> POPE (%)
+
+l2: middle-layer choice is robust    
+
+> r=64
+> r=16
+> EOS l2= 6
+
+(b) Middle reducer layer l212 14 16 18 20 
+
+l3 (final reducer layer) 
+
+> 78
+> 80
+> 82
+> 84
+> POPE (%)
+
+l3: late layers within 0.2 POPE of EOS    
+
+> r=64
+> r=16
+> EOS l3= 16
+
+(c) Final reducer layer l312 13 14 15 16 17 18 19 20             
+
+> l3(final reducer layer)
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> l1 (first reducer layer)
+> 79.8
+> 79.3
+> 83.0
+> 84.7 84.5 84.5 84.6 84.5 84.5 84.5 84.5 84.5
+> 84.7
+> 84.5
+> POPE @ r=64, sweep over ( l1,l3) with l2=6
+> 80
+> 81
+> 82
+> 83
+> 84
+> POPE (%)
+
+(d) (l1, l 3) sweep 
+
+Figure 5: Effect of active reducer layers R. Subfigures (a)–(c) sweep one reducer layer while fixing the others, and subfigure (d) jointly sweeps (l1, l 3).0       
+
+> 0.02
+> 0.04
+> 0.083*
+> 0.12
+> 0.16
+> 0.2
+> 6(0: Prune 1: Merge/Pool)
+> 78
+> 80
+> 82
+> 84
+> 86
+> Rate (%)
+> 6: Prune Merge gate
+> r=192 r=64 r=16 EOS (0.0834)
+
+(a) γ60.01          
+
+> 0.05
+> 0.1
+> 0.22*
+> 0.5
+> 1
+> 5
+> 1e+02
+> 6(0: Merge : Pool)
+> 77.5
+> 80.0
+> 82.5
+> 85.0
+> Rate (%)
+> 6: Merge Pool geometry
+> r=192 r=64 r=16 EOS (0.223)
+
+(b) τ60      
+
+> 0.25
+> 0.5
+> 0.73*
+> 0.9
+> 1
+> 6(per-token merge/prune cutoff)
+> 77.5
+> 80.0
+> 82.5
+> 85.0
+> Rate (%)
+> 6: per-token gate threshold
+> r=192 r=64 r=16 EOS (0.734)
+
+(c) θ60       
+
+> 0.0099*
+> 0.1
+> 0.3
+> 0.5
+> 0.8
+> 6(0: off 1: full Reweight)
+> 77.5
+> 80.0
+> 82.5
+> 85.0
+> Rate (%)
+> 6: anchor reweight strength
+> r=192 r=64 r=16 EOS (0.0099)
+
+(d) ρ60       
+
+> 0.01*
+> 0.1
+> 0.3
+> 0.5
+> 0.8
+> 6(norm preservation, 0 1)
+> 78
+> 80
+> 82
+> 84
+> 86
+> Rate (%)
+> 6: norm-preservation (free)
+> r=192 r=64 r=16 EOS (0.01)
+
+(e) ν6
+
+Figure 6: Effect of the operator search space Ω6 = ( γ6, τ 6, θ 6, ρ 6, ν 6). Each panel sweeps one parameter in the central reducer while fixing the remaining components at Θ⋆.192 128 96 64 32 16 
+
+> Retained visual tokens (r)
+> 60
+> 70
+> 80
+> POPE accuracy (%)
+
+Ours keeps POPE stable as r shrinks     
+
+> SparseVLM-v1 SparseVLM-v2 ToMe Pool Ours (EOS)
+
+(a) POPE 192 128 96 64 32 16 
+
+> Retained visual tokens (r)
+> 1400
+> 1600
+> 1800
+> MME (Perc. + Cogn.)
+
+MME margin widens at aggressive r     
+
+> SparseVLM-v1 SparseVLM-v2 ToMe Pool Ours (EOS)
+
+(b) MME 192 128 96 64 32 16 
+
+> Retained visual tokens (r)
+> 40
+> 45
+> 50
+> 55
+> 60
+> MMBench-en accuracy
+
+MMBench-en advantage grows as r shrinks   
+
+> SparseVLM-v2 Ours (EOS)
+
+(c) MMBench-en 192 128 96 64 32 16 
+
+Retained visual tokens (r)   
+
+> 0.5
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> Macro- over 12 benches (%)
+> +0.40 +0.31 +0.20
+> +0.72
+> -0.44
+> +1.75
+> POPE +9.67pp
+
+Macro- % vs retain budget (d) ∆ over 12 benchmarks 
+
+Figure 7: Robustness across retained-token budgets. EOS reuses the same searched configuration 
+
+Θ⋆ across different budgets. The margin over SparseVLM-v2 increases as r decreases, indicating that the searched operator regime is more robust than fixed corner operators under aggressive compression. 
+
+4.3 Effect of Operator Regime Ωl
+
+We study the operator component of the search space by sweeping γ6, τ6, θ6, ρ6, and ν6, correspond-ing to information transfer, assignment temperature, transfer threshold, anchor reweighting, and norm preservation. Figure 6 reports POPE under r ∈ { 192 , 64 , 16 }. The results show that τ6 and 
+
+γ6 are the most influential dimensions under aggressive compression, while θ6, ρ6, and ν6 mainly provide secondary adjustment. This supports the EOS design, where γl and τl determine the dominant operating regime and the remaining parameters refine token-level behavior. 
+
+4.4 Robustness across Retained-Token Budgets 
+
+Finally, we evaluate whether the searched configuration generalizes across budgets. Although Θ⋆ is optimized under limited retain budgets, we deploy it unchanged across r ∈ { 16 , 32 , 64 , 96 , 128 , 192 }.Figure 7 compares EOS with SparseVLM-v1, SparseVLM-v2, ToMe, and Pool on POPE, MME, and MMBench-en, and summarizes the margin over SparseVLM-v2 across all twelve benchmarks. The advantage of EOS increases as the retained-token budget becomes smaller, showing that the searched hybrid operator is beneficial when the visual-token budget is highly constrained. 
+
+5 Conclusion 
+
+We presented Efficient Operator Search (EOS), a differentiable framework that moves efficient multimodal inference beyond manually designed token-reduction operators. It jointly searches where to reduce tokens, how many to retain, and how discarded tokens should be processed. By unifying pruning, merging, pooling, and reweighting within one operator space, it recovers existing methods while discovering stronger hybrid operators. Results suggest that differentiable efficient operator search is a practical direction for improving the efficiency of multimodal foundation models. 9References 
+
+[1] Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your vit but faster. arXiv preprint arXiv:2210.09461 , 2022. [2] Liang Chen, Haozhe Zhao, Tianyu Liu, Shuai Bai, Junyang Lin, Chang Zhou, and Baobao Chang. An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models. In European Conference on Computer Vision , pages 19–35. Springer, 2024. [3] Lin Chen, Jinsong Li, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Zehui Chen, Haodong Duan, Jiaqi Wang, Yu Qiao, Dahua Lin, et al. Are we on the right way for evaluating large vision-language models? Advances in Neural Information Processing Systems , 37:27056–27087, 2024. [4] Chaoyou Fu, Peixian Chen, Yunhang Shen, Yulei Qin, Mengdan Zhang, Xu Lin, Jinrui Yang, Xiawu Zheng, Ke Li, Xing Sun, et al. Mme: A comprehensive evaluation benchmark for multimodal large language models. arXiv preprint arXiv:2306.13394 , 2023. [5] Drew A Hudson and Christopher D Manning. Gqa: A new dataset for real-world visual reasoning and compositional question answering. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 6700–6709, 2019. [6] Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al. Gpt-4o system card. arXiv preprint arXiv:2410.21276 , 2024. [7] Aniruddha Kembhavi, Mike Salvato, Eric Kolve, Minjoon Seo, Hannaneh Hajishirzi, and Ali Farhadi. A diagram is worth a dozen images. In European conference on computer vision ,pages 235–251. Springer, 2016. [8] Bohao Li, Rui Wang, Guangzhi Wang, Yuying Ge, Yixiao Ge, and Ying Shan. Seed-bench: Benchmarking multimodal llms with generative comprehension. arXiv preprint arXiv:2307.16125 , 2023. [9] Feng Li, Renrui Zhang, Hao Zhang, Yuanhan Zhang, Bo Li, Wei Li, Zejun Ma, and Chunyuan Li. Llava-next-interleave: Tackling multi-image, video, and 3d in large multimodal models. 
+
+arXiv preprint arXiv:2407.07895 , 2024. [10] Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi. Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models. In International conference on machine learning , pages 19730–19742. PMLR, 2023. [11] Yifan Li, Yifan Du, Kun Zhou, Jinpeng Wang, Xin Zhao, and Ji-Rong Wen. Evaluating object hallucination in large vision-language models. In Proceedings of the 2023 conference on empirical methods in natural language processing , pages 292–305, 2023. [12] Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. Visual instruction tuning. Advances in neural information processing systems , 36:34892–34916, 2023. [13] Xuyang Liu, Ziming Wang, Junjie Chen, Yuhang Han, Yingyao Wang, Jiale Yuan, Jun Song, Siteng Huang, and Honggang Chen. Global compression commander: Plug-and-play inference acceleration for high-resolution large vision-language models. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 7350–7358, 2026. [14] Yuan Liu, Haodong Duan, Yuanhan Zhang, Bo Li, Songyang Zhang, Wangbo Zhao, Yike Yuan, Jiaqi Wang, Conghui He, Ziwei Liu, et al. Mmbench: Is your multi-modal model an all-around player? In European conference on computer vision , pages 216–233. Springer, 2024. [15] Yuliang Liu, Zhang Li, Mingxin Huang, Biao Yang, Wenwen Yu, Chunyuan Li, Xu-Cheng Yin, Cheng-Lin Liu, Lianwen Jin, and Xiang Bai. Ocrbench: on the hidden mystery of ocr in large multimodal models. Science China Information Sciences , 67(12):220102, 2024. 10 [16] Pan Lu, Swaroop Mishra, Tanglin Xia, Liang Qiu, Kai-Wei Chang, Song-Chun Zhu, Oyvind Tafjord, Peter Clark, and Ashwin Kalyan. Learn to explain: Multimodal reasoning via thought chains for science question answering. Advances in neural information processing systems , 35: 2507–2521, 2022. [17] Ahmed Masry, Xuan Long Do, Jia Qing Tan, Shafiq Joty, and Enamul Hoque. Chartqa: A benchmark for question answering about charts with visual and logical reasoning. In Findings of the association for computational linguistics: ACL 2022 , pages 2263–2279, 2022. [18] Xiaohuan Pei, Yanxi Li, Minjing Dong, and Chang Xu. Neural architecture retrieval. arXiv preprint arXiv:2307.07919 , 2023. [19] Xiaohuan Pei, Tao Huang, and Chang Xu. Cross-self kv cache pruning for efficient vision-language inference. arXiv preprint arXiv:2412.04652 , 2024. [20] Xiaohuan Pei, Yuxing Chen, Siyu Xu, Yunke Wang, Yuheng Shi, and Chang Xu. Action-aware dynamic pruning for efficient vision-language-action manipulation. arXiv preprint arXiv:2509.22093 , 2025. [21] Xiaohuan Pei, Tao Huang, YanXiang Ma, and Chang Xu. Rethinking causal mask attention for vision-language inference. arXiv preprint arXiv:2505.18605 , 2025. [22] Yuzhang Shang, Mu Cai, Bingxin Xu, Yong Jae Lee, and Yan Yan. Llava-prumerge: Adaptive token reduction for efficient large multimodal models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22857–22867, 2025. [23] Yuheng Shi, Xiaohuan Pei, Minjing Dong, and Chang Xu. Catching the details: Self-distilled roi predictors for fine-grained mllm perception. arXiv preprint arXiv:2509.16944 , 2025. [24] Yuheng Shi, Xiaohuan Pei, Linfeng Wen, Minjing Dong, and Chang Xu. Q-zoom: Query-aware adaptive perception for efficient multimodal large language models. arXiv preprint arXiv:2604.06912 , 2026. [25] Amanpreet Singh, Vivek Natarajan, Meet Shah, Yu Jiang, Xinlei Chen, Dhruv Batra, Devi Parikh, and Marcus Rohrbach. Towards vqa models that can read. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 8317–8326, 2019. [26] Gemini Team, Rohan Anil, Sebastian Borgeaud, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth, Katie Millican, et al. Gemini: a family of highly capable multimodal models. arXiv preprint arXiv:2312.11805 , 2023. [27] Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell, Libin Bai, Anmol Gulati, Garrett Tanzer, Damien Vincent, Zhufeng Pan, Shibo Wang, et al. Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context. arXiv preprint arXiv:2403.05530 , 2024. [28] Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al. Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution. arXiv preprint arXiv:2409.12191 , 2024. [29] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. [30] Senqiao Yang, Yukang Chen, Zhuotao Tian, Chengyao Wang, Jingyao Li, Bei Yu, and Jiaya Jia. Visionzip: Longer is better but not necessary in vision language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 19792–19802, 2025. [31] Peiyuan Zhang, Kaichen Zhang, Bo Li, Guangtao Zeng, Jingkang Yang, Yuanhan Zhang, Ziyue Wang, Haoran Tan, Chunyuan Li, and Ziwei Liu. Long context transfer from language to vision. 
+
+arXiv preprint arXiv:2406.16852 , 2024. [32] Yuan Zhang, Chun-Kai Fan, Junpeng Ma, Wenzhao Zheng, Tao Huang, Kuan Cheng, Denis Gudovskiy, Tomoyuki Okuno, Yohei Nakata, Kurt Keutzer, et al. Sparsevlm: Visual token sparsification for efficient vision-language model inference. arXiv preprint arXiv:2410.04417 ,2024. 11 A Technical appendices and supplementary material 
+
+This appendix expands on four aspects that complement the main paper. App. A.1 reports the full training and evaluation recipe so that all reported numbers are reproducible from a frozen LL AVA-1.5-7B backbone. App. A.3 provides the formal reductions showing that each previously published operator is recovered exactly by the unified formula, together with empirical equivalence checks on real LLaVA hidden states. App. A.4 dissects the searched configuration Θ⋆, including its per-layer operator profile, the search trajectory in (γ, τ )-space, and patch-level visualizations of each operator regime. App. A.5 reports the per-benchmark scores omitted from the main paper, the cross-budget robustness data, the sensitivity of EOS to layer-placement perturbations, and a qualitative side-by-side operator comparison on real visual inputs. 
+
+A.1 Additional Implementation Details A.1.1 Training Setup and Hyperparameters 
+
+We instantiate EOS on top of LL AVA-1.5-7B [ 12 ] and search the operator parameters Θ = ( g, c, Ω)
+
+while keeping all backbone weights frozen. Search follows a single end-to-end gradient pass over the alignment-augmented loss combining next-token cross-entropy with a hidden-state alignment term against the unreduced reference forward. Table 5 summarizes the configuration; we use the same seed (42) for every run reported in the paper. Table 5: Hyperparameters used during EOS search. The same configuration is shared across all reported runs unless explicitly noted in an ablation. 
+
+Component Value Component Value 
+
+Backbone LLaVA-1.5-7B (frozen) Search optimizer AdamW LM hidden size d 4096 Learning rate 1×10 −3
+
+Decoder layers L 32 Weight decay 0
+
+Active reducer slots K 3 Gradient clipping 1.0
+
+Initial layer init {2, 6, 15 } (uniform) Train precision bf16 Initial γl 0.50 (uniform 4-op) Eval precision fp16 Initial τl 0.50 Search batch size 4
+
+Threshold θl 0.0 Search steps 4,000 
+
+Reweight ρl 0.0 Warmup ratio 0.05 
+
+Norm-pres. νl 0.0 Schedule cosine Alignment weight λa 0.10 Alignment layers A {4, 8, 12 , . . . , 28 }
+
+Search data. We use BALANCED _MIX , a 50K-sample mixture sampled from LLaVA-mix-665K covering POPE-style discrimination, ScienceQA, GQA, TextVQA, and visual conversation. Each sample is processed at the native LLaVA-1.5 resolution and pre-tokenized so that the visual-token count is exactly N0=576 for every example, ensuring that the retain budget r corresponds to a fixed compression ratio. 
+
+Environment. All experiments run on a single 8×A100-80GB node with transformers==4.37.2 ,
+
+torch==2.1.2+cu121 , and flash_attn==2.3.3 . We freeze the random seed for Python, NumPy, and PyTorch to 42 and disable non-deterministic CUDA kernels. Each search run completes in approximately three GPU-hours; full evaluation across the twelve-benchmark suite takes another two GPU-hours per checkpoint. 
+
+A.1.2 Loss and Objective Details 
+
+The full task loss combines the next-token cross-entropy on the language target with a hidden-state alignment term against the unreduced reference forward pass: 
+
+L(Θ) = LCE (Θ) + λa · 1
+
+|A| 
+
+X
+
+> l∈A
+
+h(l) 
+
+> red
+
+− h(l)
+
+> ref
+> 22
+
+, (23) where h(l) 
+
+> red
+
+and h(l) 
+
+> ref
+
+are the visual-token hidden states at alignment layer l ∈ A produced by the reduced and reference forward passes, respectively. Stop-gradient is applied to h(l) 
+
+> ref
+
+. The alignment 12 layers A = {4, 8, . . . , 28 } subsample every fourth decoder layer in LLaVA-1.5-7B, which is sufficient to anchor the visual representation throughout the LM stack while keeping the alignment computation lightweight. 
+
+A.1.3 Inference Cost 
+
+During inference EOS introduces no additional learnable parameters: Θ⋆ is folded into the operator forward pass. The only inference-time overhead beyond the unreduced backbone is one similarity matrix S ∈ RK×M per active reducer layer, contributing O(K · M · d) FLOPs — two orders of magnitude below a single self-attention layer in LLaVA-1.5-7B. Memory savings scale linearly with the retain budget r: at r=64 the visual key/value cache shrinks by 9× relative to the unreduced 576-token baseline, which is the dominant source of speedup for long-context decoding. 
+
+A.2 Related Work A.2.1 Efficient Multimodal Foundation Models. 
+
+Recent multimodal foundation models have achieved strong capabilities in visual reasoning, instruc-tion following, multi-image understanding, and embodied decision making, but their inference cost remains substantial due to dense visual tokens, high-resolution inputs, long-context sequences, and repeated decoding over large language backbones [ 12 , 9 , 30 ]. Existing studies improve efficiency from multiple perspectives, including lightweight visual encoders [ 28 ], dynamic or multi-resolution processing [ 29 ], efficient attention and KV-cache compression [ 19 ], and visual token reduction before or during language-model reasoning [ 32 , 21 , 18 ]. Among these directions, token reduction is particularly attractive because it can often be applied to frozen multimodal foundation models without expensive retraining or architectural modification. However, most existing methods rely on manually designed compression rules, leaving the underlying relationship among different efficient operators insufficiently explored. 
+
+A.2.2 Token Reduction Operators. 
+
+Existing token reduction methods typically instantiate one of several corner operators, including pruning, merging, pooling, and adaptive reweighting [ 32 , 1 , 2 , 22 , 30 ]. Pruning-based methods discard low-importance tokens according to attention scores, similarity statistics, task-conditioned relevance, or sparsity patterns [ 32 , 19 ], while merging-based methods preserve discarded information by aggregating redundant tokens into retained anchors or compact representations [ 22 ]. Pooling and reweighting methods further reduce visual computation by local aggregation, score redistribution, adaptive feature modulation, or compact token resampling [ 30 ]. Although these methods have achieved promising accuracy-efficiency trade-offs, they are usually developed as isolated compression recipes with manually specified layers, budgets, and operator forms. Different from them, our Efficient Operator Search method treats these reduction operators as different regimes of a unified operator space, and further optimizes where to compress, how many tokens to retain, and which operator behavior to apply. 
+
+A.3 Detailed Derivations of Corner Operators 
+
+This section verifies that the unified operator recovers each previously published corner operator 
+
+exactly when its parameters are set to the corresponding limit. 
+
+A.3.1 Pure Pruning ( γ = 0 )
+
+Setting γl=0 in hout  
+
+> i
+
+= ai + γl · P 
+
+> j
+
+Pij dj collapses the second term, leaving hout  
+
+> i
+
+= ai, i.e. the discarded tokens contribute nothing to any anchor. The retained token set becomes the top-Kl
+
+indices selected by the importance score, which is exactly the procedure used by S PARSE VLM-
+
+> V
+
+1/ V2. Crucially, this reduction is independent of τl, θl, ρl, νl, so any setting of the remaining four parameters yields the same prune behavior 13 A.3.2 Hard Merging ( γ = 1 , τ → 0)
+
+When γl=1 and τl → 0, the soft assignment Pij = softmax( S/τ l)ij degenerates into a one-hot map-ping that routes every discard dj to its single most-similar anchor i⋆(j) = arg max i Sij . The unified formula becomes hout  
+
+> i
+
+= ai + P  
+
+> j:i⋆(j)= i
+
+dj , which is the per-anchor sum used by T OME. Setting 
+
+νl=1 further normalizes the merged feature to unit norm, recovering ToMe’s optional renormalization variant. 
+
+A.3.3 Average Pooling ( γ = 1 , τ → ∞ )
+
+In the opposite limit τl → ∞ , the soft assignment becomes uniform, Pij = 1 /K l, and discards are spread evenly across all anchors: hout  
+
+> i
+
+= ai + 1
+
+> Kl
+
+P 
+
+> j
+
+dj . This is exactly the global average that POOL -style baselines apply when the discard pool is shared across anchors. The pool variant has the highest information-mixing rate of the four corners, but the resulting feature is also the least anchor-specific, which explains its weak performance on benchmarks that depend on local visual semantics. 
+
+A.3.4 Adaptive Reweighting ( γ = 0 , ρ > 0)
+
+Adaptive reweighting keeps the prune anchor set ( γl=0 ) but rescales each anchor by a similarity-aware factor: hout  
+
+> i
+
+= (1 + ρl wi)ai, where wi is normalized to [0 , 1] over i. This corner is recovered by the unified formula by activating the reweight branch with ρl>0 and leaves all other settings at the prune limit. 
+
+A.3.5 Empirical Equivalence 
+
+The four corners are mathematically exact recoveries, but downstream evaluation depends on numer-ical implementation details (kernel ordering, half-precision rounding). We re-evaluate the unified operator at each corner and confirm it matches the original code on real LLaVA-1.5 hidden states: across POPE, SQA, MME, GQA, and TextVQA the maximum elementwise mismatch in pre-softmax logits is below 1×10 −3, well within float16 noise, and all four corners are reproduced with |∆|<0.2
+
+accuracy points relative to the original implementations — confirming that our operator space is a true superset rather than an approximate one. 
+
+A.4 Additional Operator-Regime Analysis 
+
+We provide a deeper view of how the searched configuration Θ⋆ distributes operator behavior across decoder layers and how the search arrives at the interior HYBRID point reported in the main paper. 
+
+A.4.1 Per-Layer Operator Profile 
+
+Table 6 reports the searched per-layer operator regime Ω⋆lk at the three active reducer slots R⋆ =
+
+{l1, l 2, l 3}. Figure 8 additionally visualizes the layerwise γ profile. Two of the three reducers settle near the prune corner ( γ≈0), while only the central reducer adopts the interior HYBRID regime ( γ6=0 .083 , τ 6=0 .22 ). This pattern suggests that information transfer is most beneficial at intermediate depths, where token features have begun to specialize but still retain spatial alignment with the input grid. Table 6: Searched operator regime at each active reducer layer. The interior HYBRID regime emerges only at the central reducer; the surrounding layers stay close to pure pruning.                              
+
+> Slot Layer lkγlkτlkθlkρlkνlkRegime
+> l130.000 ——0.000 0.000 Prune corner
+> l260.083 0.220 0.10 0.000 0.000 Interior HYBRID
+> l316 0.000 ——0.000 0.000 Prune corner
+
+14 3 6 16 
+
+Reducer layer l
+
+> 0.025
+> 0.000
+> 0.025
+> 0.050
+> 0.075
+> 0.100
+> l (info-transfer gate)
+> =0.00
+> Prune
+> (default)
+> =0.08
+> HYBRID
+> (EOS-trained)
+> =0.00
+> Prune
+> (default)
+
+EOS finds HYBRID only at L6; L3, L16 stay Prune (a) Per-layer γl at R⋆={3, 6, 16 }.0 5000 10000 15000 
+
+Training step 
+
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> l (info-transfer gate)
+> Prune
+
+EOS search: init 0.5 discover HYBRID / Prune     
+
+> L2(EOS train)
+> L6(EOS train, deployed)
+> L15 (EOS train)
+
+(b) Search trajectory of γ6.
+
+Figure 8: Operator-regime profile across decoder layers. (a) The searched gate γl is close to zero at the outer reducers and rises only at the central reducer, locating the interior HYBRID at L6. (b) The trajectory of γ6 during search initializes uniformly at 0.5, briefly explores the merge corner, and converges to 0.08 — a regime that no hand-designed corner can reach. 
+
+A.5 Additional Result Analysis A.5.1 Per-Benchmark Margin under Aggressive Compression 
+
+Table 7 drills into the two most aggressive budgets and reports the per-benchmark ∆ over SPARSE VLM-V2. EOS dominates every standard and extended benchmark at r=16 , with the largest margin on POPE ( +9 .67 ) and MMBench-en ( +3 .52 ) — with POPE drawing the largest mar-gin. The advantage at r=32 is smaller but still consistently positive; the qualitative phase transition near r≤32 matches the per-layer operator analysis in App. A.4.1: information-transfer regimes pay growing dividends as the discard ratio grows. Table 7: Per-benchmark scores at aggressive retain budgets. EOS reuses the same searched configuration Θ⋆ across all budgets. Best per row group in bold ; deltas vs. S PARSE VLM-V2 shown next to the EOS row.                                                                                                                                                                            
+
+> Method POPE SQA MME GQA TextVQA SEED MMStar RWQA AI2D OCRBench ChartQA MMB-en Avg(12)
+> Retain = 32 visual tokens
+> SparseVLM-v1 76.04 62.32 1535 50.71 32.40 56.40 30.43 50.20 50.07 24.10 14.04 56.10 47.34 SparseVLM-v2 77.39 63.21 1574 51.65 33.71 57.71 31.05 51.76 51.39 24.90 14.87 57.14 48.39 ToMe 71.05 60.80 1409 47.44 28.57 53.62 27.87 47.21 47.34 21.10 13.05 53.40 44.66 Pool 41.20 56.10 942 33.21 6.04 31.71 22.30 38.50 43.05 2.10 9.40 17.05 27.95
+> EOS 81.83 63.83 1646 52.62 34.55 59.35 31.42 52.94 52.46 25.50 15.36 58.62 49.83
+> ∆vs V2 +4.44 +0.62 +72 +0.97 +0.84 +1.64 +0.37 +1.18 +1.07 +0.60 +0.49 +1.48 +1.44 Retain = 16 visual tokens
+> SparseVLM-v1 64.66 60.35 1366 47.44 27.36 51.94 27.21 46.40 46.21 19.40 11.40 51.18 42.36 SparseVLM-v2 67.11 60.74 1414 48.50 28.42 53.09 27.92 47.46 47.20 20.30 12.04 53.05 43.45 ToMe 60.50 58.42 1302 44.95 23.40 50.07 25.26 44.81 44.05 17.40 10.71 49.92 40.15 Pool 30.50 53.21 812 30.05 4.50 27.45 20.40 36.10 39.40 1.50 7.55 14.40 24.51
+> EOS 76.78 61.35 1492 49.55 29.04 55.10 28.55 48.65 48.42 20.80 12.55 56.57 45.30
+> ∆vs V2 +9.67 +0.61 +78 +1.05 +0.62 +2.01 +0.63 +1.19 +1.22 +0.50 +0.51 +3.52 +1.85
+
+A.5.2 Cross-Budget Robustness 
+
+A single searched configuration is reused across all six retain budgets in Figure 7. Table 8 reports the per-benchmark POPE/MME/MMB-en scores for every budget; the full table for the remaining nine benchmarks is provided in our supplementary release. Two trends are visible: (i) EOS strictly improves on S PARSE VLM-V2 starting at r≤96 ; and (ii) the gap is bounded by sampling noise at 
+
+r=192 but grows monotonically as r shrinks, peaking at r=16 .
+
+A.5.3 Layer-Placement Robustness 
+
+The two-dimensional sweep over (l1, l 3) in Figure 5d indicates that the searched layer placement 
+
+R⋆={3, 6, 16 } lies on a wide high-performance plateau. We further enumerate three off-plateau perturbations in Table 9 to quantify the cost of misplacement. Moving the central reducer up or down by two layers degrades POPE@ r=16 by 0.5–0.9 points, while removing the middle reducer 15 Table 8: Cross-budget POPE / MME / MMBench-en. Best per budget block in bold ; the searched 
+
+Θ⋆ is unchanged across budgets. 
+
+Method r=192 r=128 r=96 r=64 r=32 r=16 
+
+POPE accuracy 
+
+SparseVLM-v1 85.22 84.88 84.10 80.51 76.04 64.66 SparseVLM-v2 85.79 85.02 84.32 81.05 77.39 67.11 ToMe 85.09 84.32 82.96 79.40 71.05 60.50 Pool 52.38 49.70 47.05 44.20 41.20 30.50 
+
+EOS 85.78 85.21 84.46 82.78 81.83 76.78 
+
+MME (Perception + Cognition) 
+
+SparseVLM-v1 1825 1806 1742 1622 1535 1366 SparseVLM-v2 1869 1840 1791 1672 1574 1414 ToMe 1858 1801 1716 1564 1409 1302 Pool 1287 1180 1085 1010 942 812 
+
+EOS 1876 1851 1804 1698 1646 1492 
+
+MMBench-en accuracy 
+
+SparseVLM-v1 63.92 63.05 62.20 60.30 56.10 51.18 SparseVLM-v2 63.75 63.40 62.55 60.85 57.14 53.05 ToMe 63.40 62.86 61.74 59.62 53.40 49.92 Pool 24.14 22.80 21.50 19.86 17.05 14.40 
+
+EOS 63.83 63.92 63.04 61.79 58.62 56.57 
+
+entirely (collapsing K=3 to K=2 ) costs 1.7 points. The searched placement is therefore stable but not interchangeable with arbitrary deep-layer choices. Table 9: POPE@ r=16 for layer-placement perturbations. The searched placement R⋆={3, 6, 16 }
+
+is robust to local shifts but breaks under reducer-count changes.                    
+
+> RPOPE@ r=16 ∆Note
+> {3,6,16} 76.78 0.00 Searched (baseline). {3,4,16} 76.18 −0.60 Central reducer too early. {3,8,16} 75.85 −0.93 Central reducer too late. {2,6,15} 75.92 −0.86 SparseVLM-v2 default. {3,16} 75.05 −1.73 K=2 reducers, no central.
+
+B PyTorch Reference Implementations of the Operator Equivalence 
+
+Section 2.7 shows in closed form how the unified reduction operator collapses to P RUNE , M ERGE ,POOL , and R EWEIGHT at four corners of the parameter cube (γl, τ l, θ l, ρ l, ν l). This appendix gives the corresponding code, so the claim can be checked directly. Listing 1 is the unified operator exactly 
+
+as executed at every reducer layer (cf. Eqs. (2)–(6)). Listing 2 implements the four canonical operators from scratch as independent algorithms — a hard argmax scatter loop for merge, a direct mean for pool, a norm rescaling for reweight — sharing no code with the unified path. Listing 3 sets the corner parameters and prints the discrepancy: on real LLaVA-1.5-7B layer-2 hidden states it is 0 to single precision ( visualize/operator_equivalence.py –real ); on the i.i.d. Gaussian tokens used in the listing it is O(10 −6), the floating-point footprint of using finite τ ∈ { 10 −4, 10 6} and θ = −10 9
+
+as numerical stand-ins for the limits τ → 0, τ → ∞ , θ → −∞ .Throughout, the batch and head dimensions are dropped for readability; the implementation vectorises over them. A ∈ RK×d are the anchor (kept) tokens, D ∈ RM ×d the discards ( M = Nl − Kl), 
+
+s ∈ RM their text-to-visual attention scores, and β = 10 the per-token-gate sharpness. 
+
+Why each corner collapses the formula. PRUNE (γ=0) : the information-transfer term 
+
+γ (W⊤(D ⊙ m)) vanishes and the reweight / norm-preserve steps are off (ρ=ν=0) , so 
+
+unified_operator returns A unchanged — exactly the kept top-K tokens, with the M discards 16 Listing 1 The unified reduction operator — the exact body executed at each reducer layer l ∈ R 
+
+(cf. Eqs. (2)–(6)). With γ = 0 it is the identity on A; the per-token gate m and the norm-preserve blend ν are no-ops at all four canonical corners ( θ → −∞ ⇒ m ≡ 1, ν = 0 ).                                   
+
+> 1import torch
+> 2import torch.nn.functional as F
+> 34def unified_operator(A, D, s, gamma, tau, theta, rho, nu, beta=10.0):
+> 5# A: [K, d] anchors (kept) D: [M, d] discards s: [M] discard scores
+> 6S = F.normalize(D, dim=-1) @ F.normalize(A, dim=-1).t() # [M, K] cosine similarity
+> 7W = F.softmax(S / tau, dim=-1) # [M, K] soft assignment
+> 8m = torch.sigmoid(beta * (S. max (dim=-1).values - theta)) # [M] per-token gate
+> 9out = A + gamma * (W.t() @ (D * m.unsqueeze(-1))) # [K, d] information transfer
+> 10 p = (F.softmax(S, dim=-1) * F.softmax(s, dim=-1).unsqueeze(-1)). sum (0) # [K] importance
+> 11 out = out * (1.0 + rho * p.unsqueeze(-1)) # [K, d] anchor reweighting
+> 12 keep = A.norm(dim=-1, keepdim=True) / out.norm(dim=-1, keepdim=True).clamp( min =1e-6)
+> 13 return (1.0 - nu) * out + nu * (out * keep) # [K, d] norm-preserve blend
+
+Listing 2 The four canonical token-reduction operators as standalone algorithms. None calls 
+
+unified_operator or its softmax-over-similarity machinery: P RUNE (FastV [ 2], SparseVLM [ 32 ]) keeps the top-K and drops the rest; M ERGE (ToMe [ 1]) routes each discard to its single nearest anchor via argmax ; P OOL adds the uniform mean of the discards to every anchor; R EWEIGHT only rescales anchor norms.                                        
+
+> 1def prune(A, D, s): # keep top-K, drop the rest -- the M discard rows are gone
+> 2return A.clone()
+> 34def merge(A, D, s): # ToMe: each discard -> its single nearest anchor (argmax)
+> 5S = F.normalize(D, dim=-1) @ F.normalize(A, dim=-1).t() # [M, K]
+> 6nn = S.argmax(dim=-1) # [M] index of nearest anchor
+> 7out = A.clone()
+> 8for jin range (D.shape[0]):
+> 9out[nn[j]] += D[j] #scatter-add into nearest anchor
+> 10 return out
+> 11 12 def pool(A, D, s): # uniform pooling: split each discard equally over all K anchors
+> 13 return A + D. sum (dim=0, keepdim=True) / A.shape[0] # [K, d]; every anchor += sum(D) / K
+> 14 15 def reweight(A, D, s, alpha): # norm rescaling only -- no content moves between tokens
+> 16 S = F.normalize(D, dim=-1) @ F.normalize(A, dim=-1).t() # [M, K]
+> 17 p = (F.softmax(S, dim=-1) * F.softmax(s, dim=-1).unsqueeze(-1)). sum (0) # [K]
+> 18 return A * (1.0 + alpha * p.unsqueeze(-1)) # [K, d]
+
+absent from the output, identical to physically deleting them. MERGE (γ=1 , τ →0+): each row of 
+
+softmax( S/τ ) concentrates all mass on arg max k Sjk , so W becomes the one-hot nearest-anchor matrix and W⊤D scatter-adds each discard onto its nearest anchor — ToMe’s hard merge, ob-tained as a temperature limit rather than an argmax . POOL (γ=1 , τ →∞ ): cosine similarities are bounded, so S/τ → 0 and softmax( S/τ ) → 1/K ; every anchor then receives 1
+
+> K
+
+P 
+
+> j
+
+Dj — a uniform mean over the token set (not a spatial grid: post-ViT visual tokens carry no 2-D adja-cency). REWEIGHT (γ=0 , ρ> 0) : no content moves; the only effect is out = A · (1 + ρ p ), where 
+
+pi = P 
+
+> j
+
+softmax( Sj )i softmax( s)j is the proximity-weighted importance of the discards that an-chor i best represents — anchors that “stand in for” many high-attention discards have their norm boosted, with direction untouched. Off these corners — e.g. for the gradient-discovered values 
+
+(γ6=0 .08 , τ 6=0 .22) at L6 — the formula is a smooth interpolation among the four, augmented by the two extra degrees of freedom θ (which discards to merge vs. prune, per token) and ν (how much of the original token norm to retain) that no single canonical operator exposes. 17 Listing 3 The equivalence check. Each canonical operator equals unified_operator at one corner of (γ, τ, θ, ρ, ν ). NEG = −10 9 realises θ → −∞ so m ≡ 1. ρ here is the reweight coefficient α. The printed output is shown beneath the code.  
+
+> 1
+
+torch.manual_seed(42)  
+
+> 2
+
+K, M, d, alpha, NEG = 8, 16, 64, 1.5, -1e9  
+
+> 3
+
+A, D, s = torch.randn(K, d), torch.randn(M, d), torch.randn(M)  
+
+> 45
+
+# gamma tau theta rho nu recovers  
+
+> 6
+
+configs = {  
+
+> 7
+
+"PRUNE": (0.0, 1.0, NEG, 0.0, 0.0), # gamma=0 -> out = A (identity on kept set)  
+
+> 8
+
+"MERGE": (1.0, 1e-4, NEG, 0.0, 0.0), # tau -> 0 -> softmax(S/tau) one-hot (ToMe)  
+
+> 9
+
+"POOL": (1.0, 1e6, NEG, 0.0, 0.0), # tau -> inf -> softmax(S/tau) = 1/K (avg pool)  
+
+> 10
+
+"REWEIGHT": (0.0, 1.0, NEG, alpha, 0.0), # gamma=0, rho>0 -> A * (1 + rho * importance)  
+
+> 11
+
+} 
+
+> 12
+
+refs = {"PRUNE": prune(A, D, s), "MERGE": merge(A, D, s),  
+
+> 13
+
+"POOL": pool(A, D, s), "REWEIGHT": reweight(A, D, s, alpha)}  
+
+> 14 15
+
+for name, (g, t, th, r, n) in configs.items():  
+
+> 16
+
+u = unified_operator(A, D, s, gamma=g, tau=t, theta=th, rho=r, nu=n)  
+
+> 17
+
+print (f"{name:9s} max|unified - reference| = {(u - refs[name]).abs().max().item():.2e}")  
+
+> 18 19
+
+# PRUNE max|unified - reference| = 0.00e+00  
+
+> 20
+
+# MERGE max|unified - reference| = 9.54e-07  
+
+> 21
+
+# POOL max|unified - reference| = 4.77e-07  
+
+> 22
+
+# REWEIGHT max|unified - reference| = 0.00e+00 
+
+18

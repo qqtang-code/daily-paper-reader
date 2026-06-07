@@ -6,77 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-06
-- 运行时间：2026-06-06 21:32:44 UTC
+- 最新运行日期：2026-06-07
+- 运行时间：2026-06-07 20:51:53 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日精选19篇论文，重点精读7篇，其中多模态大模型稀疏性与3D问答研究获高分推荐。最值得关注《Mechanistic Insights into Functional Sparsity in Multimodal LLMs via CoRe Heads》，揭示多模态大模型功能稀疏性的核心机制；同时《Zero-Shot 3D Question Answering via Hierarchical View-to-Token Transportation》在零样本3D问答上取得突破。建议普通读者优先精读这两篇，深入理解多模态推理的稀疏性原理与跨视角对齐方法。
-- 详情：[/202606/06/README](/202606/06/README)
+今日精读19篇论文，两篇9.0高分聚焦多模态幻觉校准与视觉文档检索，速读中空间推理与长对话检索值得关注。  
+最值得细读P²-DPO：通过校准直接偏好优化抑制感知层幻觉；Argus-Retriever：区域感知MoE提升视觉文档检索精度。  
+建议优先消化两篇精读论文的原理与实验，再延伸至速读中Imaginative Perception Tokens的空间推理增强思路。
+- 详情：[/202606/07/README](/202606/07/README)
 
 ### 精读区论文标签
-1. [Mechanistic Insights into Functional Sparsity in Multimodal LLMs via CoRe Heads](/202606/06/2606.05843v1-mechanistic-insights-into-functional-sparsity-in-multimodal-llms-via-core-heads)  
+1. [P$^2$-DPO: Grounding Hallucination in Perceptual Processing via Calibration Direct Preference Optimization](/202606/07/2606.03376v2-p2-dpo-grounding-hallucination-in-perceptual-processing-via-calibration-direct-preference-optimization)  
    标签：评分：9.0/10、query:multimodal
-   evidence：多模态大模型中的功能稀疏性与跨模态检索
-2. [Zero-Shot 3D Question Answering via Hierarchical View-to-Token Transportation](/202606/06/2606.03100v1-zero-shot-3d-question-answering-via-hierarchical-view-to-token-transportation)  
+   evidence：通过偏好优化解决多模态大模型中的幻觉问题
+2. [Argus-Retriever: Vision-LLM Late-Interaction Retrieval with Region-Aware Query-Conditioned MoE for Visual Document Retrieval](/202606/07/2606.04300v1-argus-retriever-vision-llm-late-interaction-retrieval-with-region-aware-query-conditioned-moe-for-visual-document-retrieval)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：基于查询条件化的后期交互视觉文档检索器
+3. [MUSE: A Unified Agentic Harness for MLLMs](/202606/07/2606.03005v1-muse-a-unified-agentic-harness-for-mllms)  
    标签：评分：8.0/10、query:multimodal
-   evidence：利用VLM进行零样本3D问答，采用层次化视图到令牌传输
-3. [Visual Instruction Tuning Aligns Modalities through Abstraction](/202606/06/2606.03871v1-visual-instruction-tuning-aligns-modalities-through-abstraction)  
+   evidence：多模态大语言模型统一智能体框架
+4. [CR-Seg: Attention-Guided and CoT-Enhanced Coarse-to-Refined Reasoning Segmentation](/202606/07/2606.03564v2-cr-seg-attention-guided-and-cot-enhanced-coarse-to-refined-reasoning-segmentation)  
    标签：评分：8.0/10、query:multimodal
-   evidence：视觉指令微调将视觉特征嵌入LLM中间层，对齐模态
-4. [Imaginative Perception Tokens Enhance Spatial Reasoning in Multimodal Language Models](/202606/06/2606.03988v1-imaginative-perception-tokens-enhance-spatial-reasoning-in-multimodal-language-models)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：VLM中使用想象感知标记进行空间推理
-5. [MM-BizRAG: Rethinking Multimodal Retrieval-Augmented Generation for General Purpose Enterprise Q&A](/202606/06/2606.04231v1-mm-bizrag-rethinking-multimodal-retrieval-augmented-generation-for-general-purpose-enterprise-qa)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：面向企业问答的多模态检索增强生成
-6. [Echo-Infinity: Learning Evolving Memory for Real-Time Infinite Video Generation](/202606/06/2606.04527v1-echo-infinity-learning-evolving-memory-for-real-time-infinite-video-generation)  
+   evidence：注意力引导和思维链增强的粗到细推理分割
+5. [Do Transformers Need Three Projections? Systematic Study of QKV Variants](/202606/07/2606.04032v2-do-transformers-need-three-projections-systematic-study-of-qkv-variants)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：可学习演化记忆用于视频生成，压缩KV缓存和历史
-7. [Depth-Attention: Cross-Layer Value Mixing for Language Models](/202606/06/2606.05014v1-depth-attention-cross-layer-value-mixing-for-language-models)  
+   evidence：系统研究QKV投影共享以提高注意力效率
+6. [Differentiable Efficient Operator Search](/202606/07/2606.05232v1-differentiable-efficient-operator-search)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多模态模型中令牌缩减的可微分搜索
+7. [Mechanistic Insights into Functional Sparsity in Multimodal LLMs via CoRe Heads](/202606/07/2606.05843v1-mechanistic-insights-into-functional-sparsity-in-multimodal-llms-via-core-heads)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：自注意力内部跨层值混合以提升信息流动效率
+   evidence：通过专用注意力头实现跨模态检索的功能稀疏性
 
 ### 速读区论文标签
-1. [LongSpace: Exploring Long-Horizon Spatial Memory from Perception to Recall in Video](/202606/06/2606.05677v1-longspace-exploring-long-horizon-spatial-memory-from-perception-to-recall-in-video)  
+1. [Imaginative Perception Tokens Enhance Spatial Reasoning in Multimodal Language Models](/202606/07/2606.03988v2-imaginative-perception-tokens-enhance-spatial-reasoning-in-multimodal-language-models)  
    标签：评分：8.0/10、query:multimodal
-   evidence：多模态大模型用于视频长时间空间记忆
-2. [MARDoc: A Memory-Aware Refinement Agent Framework for Multimodal Long Document QA](/202606/06/2606.05749v1-mardoc-a-memory-aware-refinement-agent-framework-for-multimodal-long-document-qa)  
+   evidence：通过想象标记增强多模态语言模型空间推理
+2. [Fine-grained Fragment Retrieval in Multi-modal Long-form Dialogues](/202606/07/2606.04591v1-fine-grained-fragment-retrieval-in-multi-modal-long-form-dialogues)  
    标签：评分：8.0/10、query:multimodal
-   evidence：记忆感知改进代理框架，用于多模态长文档问答中的检索和推理
-3. [To Be Multimodal or Not to Be: Query-Adaptive Audio-Visual Person Retrieval via Active Modality Detection](/202606/06/2606.05931v1-to-be-multimodal-or-not-to-be-query-adaptive-audio-visual-person-retrieval-via-active-modality-detection)  
+   evidence：提出多模态长对话中的细粒度片段检索方法
+3. [Learning Geometric Representations from Videos for Spatial Intelligent Multimodal Large Language Models](/202606/07/2606.05833v1-learning-geometric-representations-from-videos-for-spatial-intelligent-multimodal-large-language-models)  
    标签：评分：8.0/10、query:multimodal
-   evidence：提出查询自适应多模态检索框架，通过跨模态分数一致性检测活跃模态
-4. [GRAMformer: Any-Order Modality Interactions via Volumetric Multimodal Cross-Attention](/202606/06/2606.06249v1-gramformer-any-order-modality-interactions-via-volumetric-multimodal-cross-attention)  
+   evidence：通过几何表示增强多模态大语言模型的空间智能
+4. [MemoryCard: Topic-Aware Multi-Modal Clue Compression for Long-Video Question Answering](/202606/07/2606.05917v1-memorycard-topic-aware-multi-modal-clue-compression-for-long-video-question-answering)  
    标签：评分：8.0/10、query:multimodal
-   evidence：新颖的体积多模态交叉注意力，支持任意顺序模态交互
-5. [PAR3D: A Unified 3D-MLLM with Part-Aware Representation for Scene Understanding](/202606/06/2606.06485v1-par3d-a-unified-3d-mllm-with-part-aware-representation-for-scene-understanding)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：统一的3D多模态大语言模型用于场景理解，包括视觉问答、描述和分割
-6. [Detect in Any Scene: An Agentic Framework for Object Detection with Experience-Aware Reasoning](/202606/06/2605.31174v1-detect-in-any-scene-an-agentic-framework-for-object-detection-with-experience-aware-reasoning)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：多模态大模型作为代理进行目标检测推理
-7. [DREAM-S: Speculative Decoding with Searchable Drafting and Target-Aware Refinement for Multimodal Generation](/202606/06/2606.00535v1-dream-s-speculative-decoding-with-searchable-drafting-and-target-aware-refinement-for-multimodal-generation)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：视觉语言模型的推测解码加速
-8. [SWARD: Stochastic Window-Attention-Based Relational Distillation for Cross-Architectural Semantic Segmentation](/202606/06/2606.00999v1-sward-stochastic-window-attention-based-relational-distillation-for-cross-architectural-semantic-segmentation)  
+   evidence：基于主题感知内存卡的长视频多模态压缩问答
+5. [EvoCut: Multi-Layer Evolution-Aware Visual Token Compression for Efficient Large Vision-Language Models](/202606/07/2606.01756v1-evocut-multi-layer-evolution-aware-visual-token-compression-for-efficient-large-vision-language-models)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：随机窗口注意力用于跨架构蒸馏
-9. [Self-Improving Small Object Grounding in LVLMs](/202606/06/2606.01612v1-self-improving-small-object-grounding-in-lvlms)  
+   evidence：视觉标记压缩提升大视觉语言模型效率
+6. [CRAM: Centroid-Routing and Adaptive MoE for Multimodal Continual Instruction Tuning](/202606/07/2606.02502v1-cram-centroid-routing-and-adaptive-moe-for-multimodal-continual-instruction-tuning)  
    标签：评分：7.0/10、query:multimodal
-   evidence：利用大型视觉语言模型中的注意力模式实现小目标定位，无需微调
-10. [PRISM: Progressive Reasoning through Iterative Slot Memory for Vision](/202606/06/2605.30942v1-prism-progressive-reasoning-through-iterative-slot-memory-for-vision)  
+   evidence：多模态持续指令微调，使用专家混合方法
+7. [Locality Does Not Imply Reachability: Boundary Repair in Block-Sparse Causal Attention](/202606/07/2606.02680v1-locality-does-not-imply-reachability-boundary-repair-in-block-sparse-causal-attention)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：研究块稀疏因果注意力中的边界伪影并提出修复
+8. [PhotoCraft: Agentic Reasoning with Hierarchical Self-Evolving Memory for Deep Image Search](/202606/07/2606.03099v1-photocraft-agentic-reasoning-with-hierarchical-self-evolving-memory-for-deep-image-search)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：层次记忆系统用于多步图像搜索
+9. [DREAM-S: Speculative Decoding with Searchable Drafting and Target-Aware Refinement for Multimodal Generation](/202606/07/2606.00535v1-dream-s-speculative-decoding-with-searchable-drafting-and-target-aware-refinement-for-multimodal-generation)  
    标签：评分：6.0/10、query:multimodal
-   evidence：通过槽记忆迭代视觉推理实现渐进式细化
-11. [Do Value Vectors in Deep Layers Need Context from the Residual Stream?](/202606/06/2606.02780v1-do-value-vectors-in-deep-layers-need-context-from-the-residual-stream)  
+   evidence：用于加速视觉语言模型的推测解码框架
+10. [Moment-Video: Diagnosing Temporal Fidelity of Video MLLMs on Momentary Visual Events](/202606/07/2606.02522v1-moment-video-diagnosing-temporal-fidelity-of-video-mllms-on-momentary-visual-events)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：诊断视频MLLM在瞬间事件上时间保真度的基准
+11. [When Attention Collapses: Stage-Aware Visual Token Pruning from Structure to Semantics](/202606/07/2606.03569v1-when-attention-collapses-stage-aware-visual-token-pruning-from-structure-to-semantics)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：发现无上下文值向量，支持稀疏存储以提升注意力效率
-12. [MUSE: A Unified Agentic Harness for MLLMs](/202606/06/2606.03005v1-muse-a-unified-agentic-harness-for-mllms)  
+   evidence：面向高效视觉语言模型推理的视觉令牌剪枝
+12. [Overview of the EReL@MIR 2025 Multimodal Document Retrieval Challenge (Track 1)](/202606/07/2606.04240v1-overview-of-the-erelmir-2025-multimodal-document-retrieval-challenge-track-1)  
    标签：评分：6.0/10、query:multimodal
-   evidence：为多模态大模型提供统一代理框架，无需重新训练即可增强理解
+   evidence：多模态文档检索挑战赛概述
 
 
 <div class="dpr-home-promo-card">

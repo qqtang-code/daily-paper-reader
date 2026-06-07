@@ -1,0 +1,620 @@
+Title: Locality Does Not Imply Reachability: Boundary Repair in Block-Sparse Causal Attention
+
+URL Source: https://arxiv.org/pdf/2606.02680v1
+
+Published Time: Wed, 03 Jun 2026 00:03:56 GMT
+
+Number of Pages: 36
+
+Markdown Content:
+# Locality Does Not Imply Reachability: 
+
+# Boundary Repair in Block-Sparse Causal Attention 
+
+Zhibo Yang Ocean University of China 
+
+yzbdeeplearning@163.com 
+
+May 2026 
+
+Abstract 
+
+Sparse causal attention is usually described by sequence locality: nearby tokens should remain easy to access, while distant tokens may be dropped to reduce cost. This paper studies a mismatch between sequence locality and attention-graph reachability. In fixed block causal attention, two adjacent tokens can be disconnected in the attention graph at every depth. We formalize this boundary artifact through structural dependency sets: if every attention layer uses the same fixed block causal mask and all remaining operations are positionwise, a target representation can depend only on tokens in its own block prefix. This yields an architecture-level boundary-copy separation for a constructed K-way boundary-copy distribution, with top-1 accuracy upper bound 1/K and expected cross-entropy lower bound log K.We then derive phase-conditioned coverage functions showing that reachability depends on both source–target distance and the target’s offset within its block. These coverage laws predict when a sparse pattern should fail, when a repair can help, and why sliding-window attention and boundary repair are not interchangeable. Boundary Bridge Atten-tion is treated as a constructive witness: it preserves the fixed block path and adds zero-additional-parameter auxiliary causal edges near block boundaries using shared projections. Controlled 1024-token experiments show that gains concentrate in coverage-aligned diag-nostics: Source-Extended Bridge nearly matches sliding-window attention on bridge-window retrieval, while sliding-window attention remains stronger on perplexity and standard needle retrieval. As secondary external-validity evidence, a fixed-checkpoint 8K-token Qwen2.5-7B probe shows the same coverage-incomparability pattern: PBB+Full matches SWA+Full within 0.4 percentage points on the weighted diagnostic average while using a smaller op-timized local-edge budget, and is strongest on boundary-window probes, while SWA+Full remains stronger on semantic variants. The contribution is a theory-guided diagnostic frame-work for locality–reachability mismatch in block-sparse causal attention, together with phase-conditioned coverage analysis and a minimal constructive repair. 
+
+# 1 Introduction 
+
+Full causal attention gives every token direct access to all earlier tokens, but this access is expensive: the attention score matrix grows quadratically with sequence length [Vaswani et al., 2017]. Sparse attention reduces this cost by deleting edges from the causal attention graph. The central question of this paper is what structural failures those deleted edges can introduce. We focus on a simple but revealing case: block-sparse causal attention with a fixed partition. The usual intuition for local sparse attention is metric: nearby tokens should be easier to access than distant tokens. Fixed block causal attention violates this intuition. The sequence is partitioned into blocks, and each token attends only to earlier tokens inside its own block. At a boundary p = jb , positions p − 1 and p are adjacent in sequence distance, but if every layer uses the same fixed block mask and all other operations are positionwise, there is no directed 1
+
+> arXiv:2606.02680v1 [cs.LG] 1 Jun 2026
+
+path from p − 1 to p in the attention graph. Locality in token distance therefore does not imply reachability in the computation graph. Once the fixed partition is stated, the boundary disconnection is not mysterious. The point of the paper is to turn this simple mask artifact into a diagnostic framework. The failure is not that the model has too few layers, or that optimization happens to miss a pattern; under the stated architectural assumptions, the missing dependency is structurally unavailable in a forward pass. We make this precise with structural dependency sets, derive a boundary-copy lower bound, and then characterize which source–target pairs are covered by several local sparse patterns. The resulting phase-conditioned coverage laws show that a token’s effective receptive field depends on its offset within the block, not only on backward distance. Boundary Bridge Attention appears in this paper as a constructive repair for the analyzed defect. It keeps fixed block attention as the main path and adds same-layer auxiliary causal edges around block boundaries using the same query, key, value, and output projections. Post-Boundary Bridge and Source-Extended Bridge refine the repair by changing only the source and write-back geometry. Bridge therefore serves as a minimal witness: restoring missing boundary edges changes exactly the diagnostics predicted by the graph analysis. Our empirical goal follows this theory-first framing. We train parameter-matched 1024-token base language models under identical data, optimization, and token budgets, then evaluate probes that isolate literal retrieval, bridge-window retrieval, phase-sensitive boundary behavior, and semantically cued single-fact retrieval. The paper is therefore not a sparse-attention leader-board: the experiments test graph-level predictions about which source positions are reachable under each mask. Full attention remains the upper bound. Among local models, SWA re-mains stronger on validation perplexity and standard needle retrieval. Source-Extended Bridge nearly matches SWA on bridge-window retrieval; its small fixed-checkpoint paired advantage on clean semantically cued single-fact retrieval is treated as secondary evidence. We also include a fixed-checkpoint 8K-token Qwen2.5-7B intervention as an external-validity probe, not as a sub-stitute for broad long-context benchmarking. This pattern supports the central interpretation: continuous local history and boundary repair expose different reachable source sets. We study the fixed-block model as a hard-partition limit because it admits exact graph analysis. This limit exposes a structural failure that is invisible if locality is described only by token distance. Modern efficient-attention systems still organize computation around blocks, chunks, compressed KV entries, selected pages, or windowed cache states [Yuan et al., 2025, DeepSeek-AI, 2026, Jiang et al., 2023]. In such systems, performance depends not only on whether nearby tokens exist in the context, but also on whether the relevant source is repre-sented, selected, and reachable by the query. Fixed block attention gives a minimal setting where this locality–reachability distinction can be proved exactly. The use of 1024-token, 124M GPT-2-style base models is likewise a diagnostic design choice. It keeps the boundary defect visible while avoiding confounds from scale, post-training, long-context adaptation, or hybrid attention schedules. The additional 7B probe changes this question deliberately: it asks whether the same graph intervention has a detectable signature when imposed on a pretrained checkpoint under a periodic-full hybrid schedule. The answer is used to support the theory-first claim, not to reframe the paper as a new high-performance long-context architecture. Section 5 and the scope discussion return to these external-validity axes. Our contributions are: 1. We formulate locality–reachability mismatch as a graph-level failure mode of sparse causal attention. 2. We define structural dependency sets and prove that fixed block causal attention creates an arbitrary-depth reachability barrier under a fixed partition. 3. We convert this barrier into a quantitative boundary-copy lower bound for fixed block causal Transformers. 24. We derive phase-conditioned coverage functions for Block, SWA, PBB, and SE-Bridge, making explicit how boundary phase controls reachable source sets. 5. We connect coverage functions to probe-specific risk and show that SWA and SE-Bridge are coverage-incomparable in the main geometry. 6. We reinterpret Bridge-family mechanisms as zero-additional-parameter constructive re-pairs that add residual boundary edges while preserving the block path. 7. We provide controlled diagnostics showing that empirical gains concentrate in coverage-aligned regions, while SWA remains stronger for uniform local context and the semantic result remains secondary. 8. We add a fixed-checkpoint 7B/8K probe showing the same coverage pattern under a periodic-full hybrid schedule, where PBB+Full nearly matches SWA+Full while requir-ing fewer optimized local attention edges. 
+
+# 2 Related Work 
+
+Sparse attention as a design space. Sparse attention methods all reduce the quadratic attention graph, but they differ in how the retained edges are chosen. Early long-sequence Transformers mostly used fixed or lightly structured patterns: factorized attention in Sparse Transformers [Child et al., 2019], local-plus-global layouts in Longformer and ETC [Beltagy et al., 2020, Ainslie et al., 2020], and mixtures of local, random, and global edges in Big-Bird [Zaheer et al., 2020]. Other work makes sparsity more input-dependent through routing or hashing [Kitaev et al., 2020, Roy et al., 2021]. In decoder LMs, sliding-window attention became a practical local baseline through Mistral 7B [Jiang et al., 2023]; LongNet instead stretches local access with dilated attention [Ding et al., 2023], and StreamingLLM shows that window-only decoding can still fail unless attention sinks are preserved [Xiao et al., 2024]. Practical systems also use hybrid layer schedules: Gemma 2 interleaves local and global attention layers [Gemma Team et al., 2024]. Global, random, and expander-like sparse patterns solve a different problem: they add broad or multi-hop access. Our SWA baseline belongs to the local-window family, while Bridge keeps fixed block attention as the main path and adds only a same-layer boundary residual. Recent long-context systems increasingly move beyond fixed hand-designed masks toward trainable, query-dependent, and hardware-aligned sparsity, including token selection, compres-sion, and inference-time sparse routing [Yuan et al., 2025, Tang et al., 2024, Jiang et al., 2024]. Native Sparse Attention combines coarse-grained token compression, fine-grained token or block selection, and a sliding-window branch for local context [Yuan et al., 2025]. DeepSeek-V4’s technical report similarly describes a deployed million-context system built around token-wise compression, sparse selection, and local-detail preservation [DeepSeek-AI, 2026]. DuoAtten-tion provides a complementary head-level view by distinguishing retrieval heads from streaming heads during long-context inference [Xiao et al., 2025]. This paper studies the analytically clean hard-partition limit of the same broader concern: when computation is block-structured, which sources are actually represented, selected, and reachable? 
+
+Boundary crossing versus boundary repair. The closest geometric analogy to Bridge is shifted-window attention: Swin Transformer alternates window partitions so that local attention can exchange information across window boundaries while keeping computation bounded [Liu et al., 2021]. Bridge uses a related boundary-crossing geometry, but the mechanism studied here is different. Shifted partitions are an inter-layer mixing strategy: a token may receive cross-boundary information only after that information has first been transformed under one layer’s partition and then read under a later shifted partition. Bridge is a same-layer repair: it keeps 3the original fixed-block path intact and adds auxiliary causal edges in the same layer, giving a length-one repair path for covered source–target pairs. This distinction is especially important in causal language modeling, because alternating partitions can improve multi-layer reachability without testing whether a missing boundary dependency can be restored as a same-layer residual edge. We therefore cite shifted windows as geometric context and focus on same-layer residual repair of a fixed block graph. 
+
+Implementation efficiency. Sparse attention is not only a graph design problem; it is also an implementation problem. FlashAttention and FlashAttention-2 show that attention speed and memory depend heavily on IO-aware tiling, work partitioning, and kernel design [Dao et al., 2022, Dao, 2024]. Hardware-aware sparse systems such as Native Sparse Attention make the same point from the sparse side by pairing sparse algorithms with implementation-aware execution [Yuan et al., 2025]. Our throughput numbers should therefore be read as measurements of the current PyTorch implementation rather than kernel-optimized limits. They are useful for comparing our baselines under one implementation, but they do not by themselves establish an architecture-level speed bound. 
+
+Memory and recurrent context. Another response to context fragmentation is to carry state forward instead of changing the local attention graph. Transformer-XL uses segment re-currence and relative position encodings [Dai et al., 2019]; Compressive Transformer compresses past activations into a smaller memory [Rae et al., 2020]; and Block-Recurrent Transformers maintain recurrent state over token blocks [Hutchins et al., 2022]. Landmark Attention and Infini-attention similarly preserve long-context access through landmark tokens, learned sum-maries, or compressive memory [Mohtashami and Jaggi, 2023, Munkhdalai et al., 2024]. Bridge is deliberately memory-free in the main experiments: it does not store compressed summaries, add recurrent state, or introduce learned memory slots. This lets us isolate boundary repair from the broader retrieval–compression trade-off. 
+
+Long-context evaluation. Needle-in-haystack tests popularized a simple question for long-context models: can the model recover a literal fact placed far from the query [Kamradt, 2023]? Subsequent benchmarks complicate this question along several axes. Lost in the Middle shows that even literal retrieval is strongly shaped by position, so success at one placement does not imply uniform context use [Liu et al., 2024]. RULER broadens the NIAH template into multi-needle, tracing, and aggregation tasks, moving from single fact lookup toward structured retrieval and composition [Hsieh et al., 2024]. LongBench, L-Eval, LongBench v2, ∞Bench, and BABILong push evaluation toward multilingual long-document understanding, human-aligned metrics, realistic multi-task reasoning, 100K-token contexts, and distributed fact reasoning [Bai et al., 2024, An et al., 2024, Bai et al., 2025, Zhang et al., 2024, Kuratov et al., 2024]. No-LiMa then removes lexical overlap between query and evidence, shifting the target from surface matching to latent association [Modarressi et al., 2025]. AbsenceBench studies the comple-mentary case where the model must recognize that required evidence is missing rather than retrieve a present span [Fu et al., 2025]. This progression motivates our separation of exact retrieval, boundary-local retrieval, and paraphrased semantic needle retrieval. Our evaluation is deliberately narrower than these broad long-context benchmarks: it uses controlled synthetic tests to isolate how attention patterns differ when the task asks for literal token recovery versus semantically cued recovery. 43 Locality–Reachability Mismatch 
+
+3.1 Structural Dependency Sets 
+
+We view an attention mask as a directed information-flow graph over token positions V =
+
+{0, . . . , n − 1}. An edge (s, t ) means that the hidden state at target position t may read the hidden state at source position s in one attention layer. Let Rℓ(t) be the minimal mask-induced structural dependency closure for h(ℓ) 
+
+> t
+
+after ℓ layers: it contains exactly the input positions reachable by repeatedly following allowed attention edges backward, together with residual self edges. This is a graph-level dependency set, not a statement about learned attention weights for a particular parameter setting. We initialize 
+
+R0(t) = {t}, (1) and for an attention layer with edge set E(ℓ+1) followed by positionwise operations define the structural recurrence 
+
+Rℓ+1 (t) = Rℓ(t) ∪ ⋃
+
+> (s,t )∈E(ℓ+1)
+
+Rℓ(s). (2) The explicit Rℓ(t) term accounts for residual connections. Positionwise MLPs, layer normaliza-tion, and residual additions can transform the representation at a position, but they cannot add new source positions to Rℓ(t).
+
+Scope of the graph theorem. The results in this section are mask-graph statements for a forward pass. They assume that attention is the only cross-token operation, that every fixed-block layer uses the same block partition, and that all non-attention operations are positionwise. Architectures with shifted partitions, global tokens, recurrence, memory, convolution, sequence-level normalization, or other cross-position operations introduce additional edges and require a different graph analysis. In particular, shifted partitions alter multi-layer dependency closure by changing the mask schedule across layers, whereas Bridge studies same-layer restoration of edges deleted by a fixed block mask. The claims below also do not concern dataset-level statistical associations stored in the parameters. 
+
+Lemma 1 (Structural dependency invariance). Consider a Transformer stack in which the only cross-token operation is attention. If two input sequences x and x′ agree on every position in Rℓ(t), then 
+
+h(ℓ) 
+
+> t
+
+(x) = h(ℓ) 
+
+> t
+
+(x′). (3) The statement concerns architectural information flow within a single forward pass. It does not make claims about dataset-level statistical information stored in parameters. 
+
+Proof. The proof is by induction on ℓ. At ℓ = 0 , R0(t) = {t}, so agreement on R0(t) implies identical input representations at t. Assume the result holds at layer ℓ. At layer ℓ+1 , the hidden state at t is a deterministic function of the previous hidden state at t, the previous hidden states at attention sources s with (s, t ) ∈ E(ℓ+1) , and fixed parameters. By the recurrence defining the structural closure, Rℓ+1 (t) contains Rℓ(t) and every Rℓ(s) for an attention source s of t. If x
+
+and x′ agree on Rℓ+1 (t), then by the induction hypothesis all inputs to the layer computation at position t are identical. Positionwise operations cannot introduce dependence on additional token positions. Hence h(ℓ+1)  
+
+> t
+
+(x) = h(ℓ+1)  
+
+> t
+
+(x′).53.2 Fixed-Block Reachability Barrier 
+
+We use zero-based token positions V = {0, . . . , n − 1}. Let the sequence be partitioned into fixed contiguous blocks of size b. For notational simplicity assume b divides n; otherwise the final block is intersected with V . The j-th block is 
+
+Bj = {jb, jb + 1 , . . . , (j + 1) b − 1}. (4) Here j ∈ { 0, 1, . . . , ⌈n/b ⌉ − 1} is the block index, and a token position t belongs to block Bj
+
+when jb ≤ t ≤ (j + 1) b − 1. For a target position t, define its causal prefix as 
+
+Pt = {i ∈ V : i ≤ t}. (5) The set Pt is not a block partition; it is the global set of positions that are not in the future of 
+
+t. Fixed block causal attention uses the edge set 
+
+Eblock = {(s, t ) : ∃j, s, t ∈ Bj , s ≤ t}. (6) In this notation, s is a source position, t is a target or query position, and an edge (s, t ) means that the hidden state at t may read the hidden state at s in one attention layer. Equivalently, a query at t ∈ Bj may read only the same-block causal prefix 
+
+Ablock (t) = Bj ∩ Pt. (7) Thus Ablock (t) is the prefix of the current block up to and including t.
+
+Theorem 1 (Fixed-block reachability barrier). Suppose every attention layer uses the same fixed block edge set Eblock , attention is the only cross-token operation, and all non-attention operations are positionwise. For every depth ℓ and every t ∈ Bj ,
+
+Rℓ(t) ⊆ Bj ∩ Pt. (8) Consequently, h(ℓ) 
+
+> t
+
+cannot depend on instance-specific tokens from any previous block Bi, i < j .
+
+Proof. At layer 0, R0(t) = {t} ⊆ Bj ∩ Pt. Assume the claim holds for layer ℓ. For t ∈ Bj , the block mask permits attention only to sources s ∈ Ablock (t) = Bj ∩ Pt. Thus 
+
+Rℓ+1 (t) = Rℓ(t) ∪ ⋃
+
+> s∈Ablock (t)
+
+Rℓ(s). (9) By the induction hypothesis, Rℓ(t) ⊆ Bj ∩ Pt. For any s ∈ Ablock (t), we have s ∈ Bj and s ≤ t,so Ps ⊆ Pt and 
+
+Rℓ(s) ⊆ Bj ∩ Ps ⊆ Bj ∩ Pt. (10) Therefore Rℓ+1 (t) ⊆ Bj ∩ Pt.
+
+Corollary 1 (Adjacent boundary unreachable). Let p = jb be a block boundary with 
+
+j > 0. Then for every depth ℓ,
+
+p − 1 /∈ Rℓ(p). (11) Positions p − 1 and p are adjacent in sequence distance, but fixed block attention makes the former structurally unreachable from the latter. 63.3 Boundary-Copy Lower Bound 
+
+The graph barrier implies a task-level separation. Consider a K-way boundary-copy distribution at boundary p = jb . The label is the token xp−1 ∈ C immediately before the boundary, where 
+
+|C| = K and xp−1 is uniform. The current block prefix Bj ∩ Pp is fixed independently of xp−1,and the prediction is read out from h(L) 
+
+> p
+
+. Since p is the first position of Bj , the source p − 1 lies in the previous block and is not contained in Bj ∩ Pp.
+
+Theorem 2 (Boundary-copy lower bound). For the K-way boundary-copy distribution above, any fixed-block causal Transformer satisfying Theorem 1 has top-1 accuracy at most 
+
+1
+
+K . (12) If the model outputs a distribution over C, its expected cross-entropy loss is at least 
+
+log K. (13) 
+
+Proof. By Theorem 1, RL(p) ⊆ Bj ∩ Pp. The task construction fixes every token in this set independently of xp−1. Therefore, by Lemma 1, h(L) 
+
+> p
+
+is identical for all choices of xp−1 ∈ C . The readout must produce the same prediction distribution q for every class. For top-1 prediction, a fixed prediction is correct with probability at most 1/K under the uniform label distribution. For probabilistic prediction, the expected cross-entropy is 
+
+1
+
+K
+
+> ∑
+> c∈C
+
+− log q(c), (14) which is minimized by q(c) = 1 /K , yielding log K.
+
+3.4 One Cross-Boundary Edge Suffices 
+
+Lemma 2 (One-edge boundary copy). Suppose tokens are represented by one-hot vec-tors over a finite vocabulary, positions are distinguishable by positional features, and a causal attention layer contains the edge (p − 1, p ). There exist single-head attention parameters and a linear readout that recover xp−1 at p with arbitrarily small error. In the hard-attention or infinite-margin limit, the construction exactly implements boundary copy. 
+
+Proof. Choose the query at position p and the key at position p − 1 so that their dot product exceeds the dot products between the query at p and every other allowed source by a margin 
+
+M . If there are at most m − 1 other allowed sources, then the attention mass on p − 1 is at least 
+
+eM
+
+eM + ( m − 1) = 11 + ( m − 1) e−M . (15) Thus attention leakage to non-target sources decays exponentially in M . Let the value projection copy the one-hot token identity and let the readout map this value to the desired class. As 
+
+M → ∞ , the output at p converges to the identity of xp−1. This is an expressivity construction, not a learnability guarantee. 
+
+3.5 Boundary-Phase Reachability 
+
+Fixed block reachability depends not only on source–target distance but also on the target’s phase within its block. Let 
+
+t = jb + r, 0 ≤ r < b, (16) and let the source be u = t − d.7Proposition 1 (Boundary-phase reachability). Under fixed block causal attention, u =
+
+t − d is reachable from t = jb + r if and only if 
+
+d ≤ r. (17) Thus the all-depth fixed-block coverage function for backward distance d and target phase r is 
+
+CBlock (d, r ) = 1{d ≤ r}. (18) For fixed d < b and uniformly distributed r ∈ { 0, . . . , b − 1}, the fraction of phases for which u
+
+is reachable is b − db . (19) For d ≥ b, this fraction is zero. 
+
+Proof. The target t = jb + r lies in block Bj . The source u = t − d = jb + r − d lies in the same block if and only if u ≥ jb , which is equivalent to d ≤ r. Fixed block attention permits exactly causal same-block sources, and Theorem 1 rules out cross-block reachability at greater depth. Counting phases r ≥ d gives b − d reachable phases for d < b , and none for d ≥ b.
+
+3.6 Coverage Functions of Boundary Repair 
+
+Let a bridge mechanism define, for each boundary j, a source set Sj and write-back set Rj . It adds the causal edge set 
+
+Ebridge (Sj , R j ) = {(s, t ) : s ∈ Sj , t ∈ Rj , s ≤ t}. (20) 
+
+Theorem 3 (Coverage-conditioned direct repair). A bridge window j provides a direct edge from source u to target t if and only if 
+
+u ∈ Sj , t ∈ Rj , u ≤ t. (21) If these conditions hold, the shortest bridge-supported path has length one in that layer. If any condition fails, that bridge window contributes no direct edge from u to t.
+
+Proof. This is immediate from the definition of Ebridge (Sj , R j ). The statement is local to the bridge window: other masks or later layers may provide other paths, but this bridge window restores exactly the source–target pairs covered by its source and write-back sets. The coverage functions make the difference between local attention graphs explicit. Sliding-window attention with width w has phase-independent coverage 
+
+CSWA (d, r ) = 1{0 ≤ d < w }. (22) Here d is the graph-theoretic source-to-readout token offset: the source is u = t − d for the representation being scored at position t. Plotted probe distances below follow the synthetic generator’s query-relative placement convention; candidate NLL is evaluated on answer tokens after the query string, so the plotted coordinate can differ from this graph index by a prompt-dependent offset. The empirical conclusions therefore rely on matched prompts and boundary-aligned regions, not on exact equality between every plotted distance and the theoretical d. For a centered bridge with half-width h = w/ 2 and post-boundary target phase 0 ≤ r < h , the cross-boundary bridge coverage condition is r < d ≤ r + h. PBB therefore has 
+
+CPBB (d, r ) = 1{d ≤ r} ∨ 1{0 ≤ r < h, r < d ≤ r + h}. (23) 8The first term is the block path; the second term is the bridge path. SE-Bridge uses the previous source block and a forward extension of length e, giving 
+
+CSE (d, r ) = 1{d ≤ r} ∨ 1{0 ≤ r < e, r < d ≤ r + b}. (24) For the same post-boundary write-back range e = h, SE-Bridge strictly contains PBB’s cross-boundary source coverage whenever h < b . This predicts that SE-Bridge should be most useful when the relevant source may lie anywhere in the previous block. 
+
+3.7 Redundant Pre-Boundary Write-Back 
+
+Proposition 2 (Redundant pre-boundary write-back). Consider a centered bridge win-dow [p − h, p + h) around a block boundary p = jb , with h ≤ b. For any pre-boundary target 
+
+t ∈ [p − h, p ), every causal bridge source s ≤ t in the bridge window lies in the same fixed block as t. Therefore 
+
+Abridge (t) ⊆ Ablock (t). (25) Writing the bridge residual back to pre-boundary positions introduces no new structural source positions. 
+
+Proof. If t ∈ [p − h, p ), then t ∈ Bj−1. Any causal bridge source satisfies s ∈ [p − h, t ], hence 
+
+s < p and s ∈ Bj−1. Since fixed block attention already permits all causal same-block edges 
+
+(s, t ), the bridge source set is contained in the block source set. Thus pre-boundary write-back may change numerical normalization, but it does not restore a missing causal source. 
+
+3.8 Coverage-Limited Accuracy on Mixed Probes 
+
+Proposition 3 (Coverage-limited accuracy). Consider a K-way boundary-copy probe dis-tribution in which a fraction π of examples have their relevant source–target pair covered by the attention graph, while the remaining 1 − π examples are structurally unreachable from the readout target. Even if all covered examples are solved perfectly, the maximum possible top-1 accuracy is 
+
+π + 1 − πK . (26) The expected cross-entropy lower bound contributed by the uncovered fraction is 
+
+(1 − π) log K. (27) 
+
+Proof. Covered examples can be correct with probability at most one. For uncovered ex-amples, the same invariance argument as Theorem 2 applies, so uniform K-way labels can be predicted with top-1 accuracy at most 1/K and cross-entropy at least log K. Weighting the two cases by π and 1 − π gives the result. 
+
+3.9 From Coverage Functions to Probe-Specific Risk 
+
+The previous proposition is a worst-case structural statement. For the diagnostics in this paper, the more useful abstraction is a probe distribution D over relevant source–target pairs and query cues. Let CM denote the set of source–target pairs covered by model geometry M , and define 
+
+πD(M ) = Pr  
+
+> (u,t )∼D
+
+[( u, t ) ∈ C M ] . (28) A simple empirical risk decomposition is 
+
+Acc D(M ) ≈ πD(M ) acovered (D, M ) + (1 − πD(M )) auncovered (D, M ). (29) 9For a pure K-way boundary-copy task, Theorem 2 gives auncovered ≤ 1/K . For language-model diagnostics, coverage is instead a necessary but not sufficient condition: acovered also includes whether the model has learned the relevant lexical cue, candidate ranking rule, and local token-prediction behavior. This is why coverage should be read as a structural constraint on possible instance-specific information flow, not as a complete predictor of accuracy. 
+
+Proposition 4 (Coverage non-equivalence in the main geometry). In the main setting with block size b, SWA window width b, and SE-Bridge extension 0 < e < b − 1, the SWA and SE-Bridge coverage sets are not nested: 
+
+CSWA ̸ ⊆ C SE , CSE ̸ ⊆ C SWA . (30) 
+
+Proof. SWA covers all backward distances 0 ≤ d < b , independently of phase r. SE-Bridge covers the block path d ≤ r and, for post-boundary phases 0 ≤ r < e , the extended cross-boundary region r < d ≤ r + b. First choose r = e and d = e + 1 . Then d < b , so SWA covers the pair, but SE-Bridge does not: the pair is outside the block path and r is not in the SE write-back tail. Conversely, choose r = 0 and d = b. Then SWA does not cover the pair because 
+
+d equals the window width, while SE-Bridge covers it through the extended source block. Thus each graph covers source–target pairs the other does not. This non-equivalence explains why the local models need not have a single dominance or-dering. For a probe distribution D, the expected direction of an accuracy difference depends on where D places mass over the symmetric difference of the coverage sets: 
+
+∆D(SE , SWA) ∝ E(d,r )∼D [1{(d, r ) ∈ C SE } − 1{(d, r ) ∈ C SWA }] , (31) modulated by the learned behavior on covered examples. This is the graph-level reason that SWA can be stronger on perplexity and standard needle retrieval, while SE-Bridge can be competitive or better on coverage-aligned bridge-window and clean semantically cued single-fact probes. The semantically cued single-fact probes add a second factor beyond reachability. Let E be the event that the evidence token is structurally reachable from the query representation and B
+
+the event that the model binds the query cue to that evidence. Then 
+
+P (correct) = P (E)P (correct | E) + P (¬E)P (correct | ¬ E), (32) with P (correct | E) depending on cue binding, candidate ranking, and lexical priors. Bridge-style repairs primarily target P (E) by restoring local boundary reachability. They do not by themselves guarantee B, which is why the clean single-fact probes are interpretable for boundary repair, while the candidate-distractor variant remains a harder diagnostic rather than a broad semantic-understanding claim. Finally, because zero-additional-parameter repair is not zero-compute, coverage gains can be normalized by added attention work when the question is edge allocation rather than raw accuracy: 
+
+UD(M ) = Acc D(M ) − Acc D(Block) Scores( M ) − Scores(Block) . (33) We use this kind of normalization only as an interpretive diagnostic. It does not imply that Bridge-family methods are compute-efficient replacements for SWA; it asks whether added edges are placed where the probe distribution assigns relevant source–target mass. 
+
+3.10 Residual Fusion and Parameter Neutrality 
+
+The bridge path is fused with the block path by adding messages before the shared output projection. Let 
+
+zblock  
+
+> t
+
+= ∑
+
+> s∈Ablock (t)
+
+αblock  
+
+> t,s
+
+WV hs, (34) 10 and 
+
+zbridge  
+
+> t
+
+= ∑
+
+> j:t∈Rj
+> ∑
+> s∈Sj
+> s≤t
+
+αbridge ,j t,s WV hs. (35) The fused output is 
+
+yt = WO
+
+> (
+
+zblock  
+
+> t
+
++ zbridge 
+
+> t
+> )
+
+. (36) If t / ∈ ∪ j Rj , then zbridge  
+
+> t
+
+= 0 and the layer reduces exactly to the block-attention layer at t.
+
+Proposition 5 (Zero-additional-parameter residual repair). If the bridge path shares 
+
+WQ, W K , W V , W O with the block path and is fused by addition before the shared output pro-jection, then it introduces no learnable parameters. Structurally, the available source set is the union of block and bridge edges. Numerically, however, this is not a single softmax over the union edge set; the block and bridge messages are separately normalized and then added. This distinction matters for the paper’s claim. Bridge is a parameter-neutral local edge-restoration primitive, not an optimal probabilistic fusion rule and not a zero-compute mecha-nism. 
+
+3.11 Testable Predictions 
+
+The analysis yields several predictions that guide the diagnostics: 1. Fixed block attention should fail sharply when the relevant source lies across a block boundary and outside the target’s block prefix. 2. Bridge-family methods should improve only when the relevant source–target pair satisfies their coverage condition u ∈ Sj , t ∈ Rj , and u ≤ t.3. Pre-boundary write-back in centered Bridge is structurally redundant; PBB should there-fore be a cleaner boundary repair. 4. SE-Bridge should be more favorable than PBB on probes where the relevant source may lie anywhere in the previous block, because its cross-boundary source coverage strictly contains PBB’s. 5. SWA should remain stronger on metrics requiring uniform local history, such as validation perplexity and standard needle retrieval. 6. Bridge and SWA should show paired disagreement rather than a uniform dominance rela-tion, because their coverage functions differ. 7. Aggregate probe accuracy should depend on how much probe mass falls inside each model’s coverage set, not only on average source–target distance. 8. Semantically cued single-fact retrieval should be interpreted as evidence reachability plus cue binding; Bridge-style repairs explain the reachability term, not broad semantic under-standing. 
+
+# 4 Constructive Boundary Repair 
+
+4.1 Unified Source/Write-Back Parameterization 
+
+We now instantiate the reachability analysis as a family of local edge repairs. A repair is specified by a bridge source set Sj and a write-back set Rj around each block boundary. This source/write-back parameterization is the mechanism-level object; the Bridge variants below are 11 particular choices of these sets. For the boundary at position p = jb , a centered bridge window of width w spans 
+
+Wj = [ p − w/ 2, p + w/ 2) . (37) Within a bridge source interval, tokens perform causal attention over earlier tokens in the same interval: 
+
+Attn bridge (t) = softmax  
+
+> (
+
+qtK⊤ 
+
+> Wj,≤t
+
+√dh
+
+> )
+
+VWj ,≤t, t ∈ Wj . (38) The original Bridge variant writes the full centered-window bridge output back to the cor-responding sequence positions. In our implementation, block and bridge attention outputs are represented in the concatenated-head value space, aligned to original sequence positions, summed, and then passed through the shared output projection and the standard Transformer residual connection. Tokens not covered by any bridge write-back set receive a zero bridge contribution. 
+
+4.2 Bridge, PBB, and SE-Bridge 
+
+Centered Bridge. The original Bridge variant uses Sj = Rj = Wj . It restores some boundary-crossing edges, but Proposition 2 shows that its pre-boundary write-back positions do not gain new causal source positions. 
+
+Post-Boundary Bridge. The centered Bridge window is symmetric around the boundary, but causal attention is asymmetric. Post-boundary tokens can attend backward to pre-boundary tokens; pre-boundary tokens cannot attend forward to post-boundary tokens because future positions are masked. Writing the bridge residual back to both halves of the centered window therefore creates a source-write mismatch : pre-boundary tokens receive a residual even though they do not gain a new causal source. Post-Boundary Bridge (PBB) keeps the same centered key/value source window, but writes the bridge output only to post-boundary positions: 
+
+[p, p + w/ 2) . (39) The pre-boundary half remains available as a causal source. Only the output scatter range changes. 
+
+Source-Extended Bridge. Source-Extended Bridge (SE-Bridge) aligns source and write-back regions more directly with the causal direction of repair. For each source block [s, s + b),it forms an extended interval 
+
+[s, s + b + e), (40) runs causal attention inside that interval, and writes only the forward tail 
+
+[s + b, s + b + e) (41) back as a bridge residual. In the main setting, b = 128 and e = 64 . The previous block acts as the source, and the post-boundary tail is the repaired region. 12 Variant Causal source window Bridge residual write-back Graph interpretation Bridge Centered boundary window [p − w/ 2, p + w/ 2) Full centered window [p − w/ 2, p + w/ 2) Restores some boundary edges but includes redundant pre-boundary write-back. PBB Centered boundary window [p − w/ 2, p + w/ 2) Post-boundary half [p, p + w/ 2) Removes structurally redundant pre-boundary write-back. SE-Bridge Source-extended block [s, s + b + e) Forward tail [s + b, s + b + e) Expands previous-block source coverage for post-boundary targets. 
+
+Table 1: Source and write-back geometry for the three bridge variants. The variants differ only in the auxiliary edge set and scatter range; all reuse the same attention projections as the main block path. 
+
+Figure 1: Attention-pattern comparison. Bridge keeps the block-attention path and adds auxil-iary causal windows around block boundaries, rather than replacing the base pattern with SWA or adding a global memory path. 
+
+4.3 Attention Score Accounting 
+
+All Bridge variants reuse the same projections as the main attention path and add no learnable parameters. They are zero-additional-parameter, but not zero-compute. If n is divisible by b,the block path computes O(( n/b )b2) = O(nb ) attention scores per head. A centered bridge with width w = b adds O(( n/b − 1) w2) scores. SE-Bridge with extension e adds approximately 
+
+O(( n/b − 1)( b + e)2) scores before cropping the final interval. Table 2 reports the exact causal attention-score counts for the main 1024-token setting. Bridge and PBB have almost the same score budget as SWA, while SE-Bridge is higher. The main comparison should therefore be read as a comparison of local graph structure under matched training budget, not as a claim that bridge variants are more compute-efficient than SWA. 13 Pattern Attention scores / head Ratio to SWA Bridge write-back coverage Block 66,048 0.54 × 0 / 1024 SWA ( w = 128 ) 122,944 1.00 × –Bridge ( b = w = 128 ) 123,840 1.01 × 896 / 1024 PBB ( b = w = 128 ) 123,840 1.01 × 448 / 1024 SE-Bridge ( b = 128 , e = 64 ) 195,744 1.59 × 448 / 1024 Full 524,800 4.27 × –
+
+Table 2: Causal attention-score accounting for the main 1024-token setting. Counts are per head and count score matrix entries before softmax. Bridge write-back coverage counts positions that receive an auxiliary bridge residual at least once. 
+
+# 5 Experimental Setup 
+
+5.1 Models and Training 
+
+All main comparisons use checkpoints trained under the same 2.5B-token budget and the same 1024-token context length. We compare six attention families: 
+
+• Full : dense causal self-attention. 
+
+• Block : causal block attention with block size 128. 
+
+• SWA : causal sliding-window attention with window size 128. 
+
+• Bridge : block attention plus centered boundary bridge windows. 
+
+• PBB : Post-Boundary Bridge. 
+
+• SE-Bridge : Source-Extended Bridge with extension e = 64 .For each family we train three seeds (1337, 2025, and 3047), giving 18 main checkpoints. Here 
+
+non-fusion means that the model uses a single attention mechanism at inference time; we exclude logit-fusion variants that combine outputs from separate models. All main checkpoints use GPT-2 tokenization [Radford et al., 2019], 12 layers, 12 heads, embedding size 768, dropout 0, context length 1024, batch size 8, gradient accumulation 16, AdamW [Loshchilov and Hutter, 2019] with 
+
+(β1, β 2) = (0 .9, 0.95) , weight decay 0.1, gradient clipping 1.0, learning rate 2e −4, minimum learning rate 6e −5, and 1000 warmup steps. The train/validation split contains 2.5B/50M OpenWebText tokens [Gokaslan and Cohen, 2019]. We select checkpoints by best validation loss and load all checkpoints strictly for evaluation. Appendix D gives the remaining reproducibility details. 
+
+Controlled mechanism setting. The experiment is designed to isolate boundary repair. We use 1024-token contexts because they contain repeated block boundaries and boundary offsets while avoiding additional variables from length extrapolation, long-context optimization, and data-regime differences. Longer contexts are an external-validity axis rather than an automati-cally cleaner mechanism test. For a local sparse graph, once the relevant evidence is beyond the reachable region or requires fragile multi-hop propagation, the retrieval diagnostic can approach chance; adding more distant unreachable positions mainly changes the mixture of failures rather than giving a cleaner test of boundary repair. Similarly, we use 124M base LMs and a GPT-2-style decoder because simpler models expose architectural effects with fewer confounds. Larger or more modern models may be more robust to local graph defects through scale, training data, normalization choices, positional encodings, or hybrid attention schedules. The current setup makes the attention-graph difference visible under matched training conditions. 14 The mechanism baselines are parameter-matched Full, Block, SWA, Bridge, PBB, and SE-Bridge models trained with identical data, context length, optimizer settings, and token budget. Industrial long-context LLMs are external-validity targets rather than controlled mechanism baselines: they entangle the attention mechanism with scale, data mixture, post-training, posi-tional encodings, hybrid layer schedules, implementation kernels, and long-context adaptation recipes. Those factors are essential for deployed performance, while the present experiment isolates whether fixed block causal attention creates boundary reachability defects and whether bridge-style auxiliary windows repair them. 
+
+5.2 Evaluation 
+
+Given the controlled setting above, we evaluate five diagnostic behaviors: literal retrieval, boundary-local retrieval, semantically cued single-fact retrieval, prompt-token loss, and held-out validation perplexity. 
+
+Needle retrieval. The standard needle test inserts a target word in a 1024-token context and asks the model to choose the target from four balanced candidates. Candidate ranking is NLL-based. We report the overall accuracy over the generated distance sweep, plus specialized diagnostics such as a bridge-window needle probe and distance-neighborhood sweeps. Reported prompt distances use the probe generator’s query-relative coordinate; the coverage formulas in Section 3 use source-to-readout token offsets. 
+
+Boundary sweep. The boundary tests place the target near block boundaries under con-trolled offsets. These probes isolate behavior around the discontinuities introduced by block at-tention. We report both a coarse boundary-tail probe and a finer boundary-token-neighborhood probe. 
+
+Semantically cued single-fact retrieval. We evaluate semantically cued single-fact re-trieval. The context contains one relevant fact, while the query asks for the target using related but non-identical phrasing. The clean variants are exact and paraphrased single-fact retrieval. We also report a paraphrased candidate-distractor variant and a boundary-aware variant as harder diagnostics. This probe is intentionally narrower than broad semantic understanding: it tests whether a semantically cued single fact can be recovered without requiring multi-fact entity–relation binding. 
+
+Prompt-token NLL. Prompt-token NLL averages next-token loss by sequence range on syn-thetic prompts. This metric averages over prompt tokens rather than over the candidate-answer decision alone, so it can disagree with candidate retrieval accuracy. We use it as a position-sensitive diagnostic of local token modeling, while perplexity is reported from held-out Open-WebText validation loss. 
+
+Aggregation. The main tables report per-checkpoint results and architecture means across three seeds. The 512-token single-seed study from the earlier draft is treated as preliminary context rather than the main evidence. 
+
+Coverage-derived metrics. For boundary-local probes, we also report simple derived quan-tities from existing accuracies. Let 
+
+GD(M ) = Acc D(M ) − Acc D(Block) (42) 15 Architecture Best PPL ↓ Needle Bridge-window Semantic exact Semantic paraphrase Clean sem. avg Semantic distractor Semantic boundary Full 28.56 0.967 0.989 0.985 0.906 0.946 0.314 0.549 SWA 30.56 0.513 0.991 0.541 0.444 0.493 0.282 0.278 SE-Bridge 30.84 0.436 0.983 0.560 0.471 0.516 0.223 0.290 PBB 31.38 0.438 0.842 0.481 0.420 0.451 0.237 0.292                 
+
+> Bridge 31.74 0.437 0.812 0.462 0.378 0.420 0.235 0.276 Block 36.79 0.429 0.415 0.449 0.334 0.392 0.204 0.271
+
+Table 3: Main 1024-token results averaged over three seeds. PPL is computed from best val-idation loss; all other columns are four-choice candidate-ranking accuracies. Clean semantic average is the mean of semantic exact and semantic paraphrase, excluding the harder distractor and boundary diagnostics. Bold among local models excludes Full. be the gain over Block on diagnostic D, and let 
+
+ρD(M ) = Acc D(M ) − Acc D(Block) Acc D(SWA) − Acc D(Block) (43) be the fraction of the SWA-over-Block gap recovered by model M . These are not new evaluations; they are re-expressions of the same diagnostic accuracies used in Table 3. 
+
+# 6 Results 
+
+6.1 Aggregate Results and Scope of Claims 
+
+Table 3 orients the reader across metrics before the mechanism-specific diagnostics. Full at-tention remains the upper bound on validation perplexity and retrieval. Among local models, SWA has the best average validation perplexity (30.56) and the best standard needle retrieval (0.513), reflecting the value of continuous local history. Source-Extended Bridge has slightly worse perplexity (30.84) and weaker standard needle accuracy (0.436), but it nearly matches SWA on the bridge-window diagnostic (0.983 versus 0.991). It also obtains a small local-model advantage on clean semantic needle retrieval: averaging the exact and paraphrased single-fact probes gives 0.516 for SE-Bridge versus 0.493 for SWA. The mechanism question is where each local graph exposes coverage: SWA is strongest for uniform local history, while Bridge-family gains should concentrate in coverage-aligned diagnostics predicted by the graph analysis. The earlier 512-token experiments are retained in Appendix C as preliminary ablations. They are not used as headline evidence because they are single-seed and include exploratory scalar/memory variants, but they are useful for interpreting why the main 1024 experiments keep the repair position-aligned and zero-additional-parameter. 
+
+6.2 Coverage-Normalized Boundary Repair 
+
+The bridge-window diagnostic is the cleanest empirical test of the boundary-repair prediction because the prompt construction aligns the relevant dependency with the repaired boundary region. Table 4 rewrites the same bridge-window accuracies from Table 3 as recovery of the SWA-over-Block gap. Block averages 0.415 and SWA averages 0.991, so the local-window gap over Block is 0.576. Original Bridge recovers 68.9% of that gap, PBB recovers 74.1%, and SE-Bridge recovers 98.6%. The write-back-normalized column is not a compute-efficiency claim. It only shows that PBB and SE-Bridge are not better because they scatter residuals to more positions: both write to fewer positions than original Bridge, but those positions better match the causal repair geometry. This supports Proposition 2 and the SE-Bridge coverage function in Section 3. 16 Model Bridge-window acc. Gain over Block SWA-gap recovered Gain / 100 write-back positions Bridge 0.812 +0.397 68.9% +0.044 PBB 0.842 +0.427 74.1% +0.095 SE-Bridge 0.983 +0.568 98.6% +0.127 SWA 0.991 +0.576 100.0% –
+
+Table 4: Coverage-normalized bridge-window repair. Values are derived from existing bridge-window accuracies in Table 3, not from an additional experiment. The final column divides gain over Block by bridge write-back coverage from Table 2; SWA has no bridge write-back region.   
+
+> Mechanistic prediction Existing diagnostic evidence Interpretation Fixed block attention creates a reachability barrier. On bridge-window retrieval, Block averages 0.415. The diagnostic exposes a failure mode that is much sharper than ordinary perplexity differences. Bridge windows restore local cross-boundary causal edges. Bridge-window accuracy rises to 0.812 for Bridge, 0.842 for PBB, and 0.983 for SE-Bridge; SWA is 0.991. Adding boundary edges repairs the targeted local defect without replacing the block path. Repair is coverage-conditioned rather than global. SWA remains stronger on standard needle retrieval than SE-Bridge (0.513 versus 0.436). A continuous sliding window is better for broad local literal retrieval; Bridge gains should be expected where coverage aligns with the boundary. Causal write-back alignment matters. Within the bridge family, bridge-window retrieval improves from Bridge to PBB to SE-Bridge. Restricting write-back to useful post-boundary positions and extending the source block better matches causal information flow. Boundary repair is phase- and position-dependent. Prompt-token NLL heatmaps show localized post-boundary reductions; boundary-tail diagnostics provide noisier secondary phase visualization. The effect is local structure repair, not uniform global context improvement. Bridge and SWA are not interchangeable. SWA is best among local models on PPL and standard needle; SE-Bridge has a small paired-sample advantage on the clean semantic mean (0.516 versus 0.493 for SWA). Different local attention graphs support different retrieval regimes under the same controlled training setup.
+
+Table 5: Mechanistic predictions and diagnostic evidence. The table summarizes existing mea-surements rather than introducing new experiments. It connects the graph-reachability argu-ment to the 1024-token diagnostics used in this paper. 
+
+6.3 Theory Prediction vs Diagnostic Evidence 
+
+Table 5 organizes the existing diagnostics around the reachability argument from Section 3. It is not a new benchmark; it is a compact map from the mechanism claim to the measurements already reported in Tables 3–4 and Table 9, plus the prompt-token NLL heatmaps in Figure 5. The main evidence is the coverage-aligned bridge-window recovery, the paired disagreement between SWA and SE-Bridge, and the localized NLL reductions. Boundary-offset curves are used only as secondary phase visualizations. The resulting pattern is that Bridge-family methods are most informative where the probe is aligned with the missing boundary edge, while SWA remains the stronger continuous-local-history baseline for perplexity and standard needle retrieval. 
+
+6.4 Per-Seed Stability 
+
+Tables 6–8 show the same per-seed evidence split by evaluation family. This avoids mixing per-plexity, literal retrieval, boundary-local probes, and semantic probes into one wide table. The main conclusion is that the high-level pattern is stable even though individual Bridge-family runs vary. SWA is consistently the best local model on perplexity and standard needle retrieval. Bridge-style variants are most informative on boundary-local probes, especially bridge-window retrieval. SE-Bridge shows the largest local-model mean on semantic exact and semantic para-phrase in this fixed-checkpoint comparison, with the paired comparison in Table 9 supporting a 17 Arch Seed Best PPL ↓ Standard needle Full 1337 28.25 0.940 Full 2025 28.95 0.963 Full 3047 28.47 0.999 SWA 1337 30.43 0.507 SWA 2025 30.68 0.524 SWA 3047 30.57 0.508 SE-Bridge 1337 30.47 0.428 SE-Bridge 2025 31.29 0.454 SE-Bridge 3047 30.76 0.426 PBB 1337 31.03 0.431 PBB 2025 31.77 0.461 PBB 3047 31.33 0.424 Bridge 1337 31.62 0.432 Bridge 2025 31.85 0.439 Bridge 3047 31.74 0.441 Block 1337 36.36 0.429 Block 2025 37.22 0.438 Block 3047 36.79 0.419 
+
+Table 6: Per-seed 1024-token perplexity and standard needle retrieval. SWA is the best local model on both metrics. small fixed-checkpoint paired advantage over SWA on the clean semantic mean. The 2025 seed is weaker for several bridge-style models in perplexity, but the semantic paraphrase advantage of SE-Bridge remains visible. 
+
+6.5 Boundary-Phase and Prompt-NLL Diagnostics 
+
+Architecture means are useful for orientation, but they hide the point-level structure predicted by the reachability view. Figure 2 shows the standard needle sweep by distance. The local-model average is shaped by a small number of high-visibility distances: all local models are strong at very short distances, SWA remains strong at d = 128 , and most local models fall close to chance once the target falls outside their effective retrieval path. This explains why SWA has the best standard needle mean without implying that it uniformly dominates every local retrieval regime. The bridge-window diagnostic tells a different story. Original Bridge improves over Block (0.812 versus 0.415), PBB improves over Bridge (0.842), and SE-Bridge is close to SWA on this diagnostic (0.983 versus 0.991). This supports the mechanism-level claim that bridge-style residual attention repairs a specific block-boundary failure, even though it is not a general local-window replacement. The paraphrased single-fact variant is the cleanest semantic-cue diagnostic in this suite. SE-Bridge is slightly above SWA in the exact variant (0.560 versus 0.541) and in the paraphrased variant (0.471 versus 0.444). Averaging only these two clean single-fact probes, excluding the distractor and boundary diagnostics, gives SE-Bridge a 0.516 clean semantic score versus 0.493 for SWA. This is a small fixed-checkpoint paired effect, not a broad semantic-understanding claim. Table 9 shows that the difference is detectable under paired prompts for the fixed check-points. Figure 3 shows that the advantage is not uniform: it is concentrated at the distances where the bridge geometry still provides a useful path. This is still far below Full attention (0.906 on paraphrase), but it is relevant to the paper’s narrow claim because the task asks for a target using semantically related phrasing rather than exact repetition. In contrast, the candidate-distractor version remains difficult for every model, including Full, and is not used as the headline semantic claim. 18 Arch Seed Bridge-window Boundary-tail Semantic boundary Full 1337 0.968 0.921 0.689 Full 2025 1.000 0.978 0.558 Full 3047 1.000 1.000 0.400 SWA 1337 0.995 0.370 0.287 SWA 2025 0.998 0.372 0.285 SWA 3047 0.980 0.370 0.262 SE-Bridge 1337 0.993 0.366 0.310 SE-Bridge 2025 0.993 0.380 0.318 SE-Bridge 3047 0.965 0.362 0.241 PBB 1337 0.870 0.372 0.304 PBB 2025 0.835 0.383 0.315 PBB 3047 0.823 0.363 0.257 Bridge 1337 0.803 0.376 0.258 Bridge 2025 0.823 0.372 0.311 Bridge 3047 0.810 0.377 0.259 Block 1337 0.430 0.375 0.285 Block 2025 0.423 0.376 0.294 Block 3047 0.393 0.362 0.234 
+
+Table 7: Per-seed boundary-local diagnostics. Bridge-window retrieval is the cleanest boundary-repair probe; boundary-tail and semantic-boundary are noisier offset-controlled diagnostics. 
+
+6.6 Paired Disagreement Between Bridge and SWA 
+
+Table 9 adds sample-level uncertainty for the headline comparisons. These tests pair architec-tures on identical prompts for the same training seed and probe. The paired disagreement counts show that SE-Bridge and SWA do not differ by a uniform accuracy shift. On clean semantically cued single-fact retrieval, SE-Bridge has more SE-only wins than SWA-only wins (995 versus 775), yielding a small but detectable +0.023 paired advantage. On standard needle retrieval, the direction reverses sharply in favor of SWA (664 SWA-only wins versus 293 SE-only wins). On bridge-window retrieval, SE-Bridge nearly matches SWA: the point estimate slightly favors SWA, but the paired difference is small ( −0.75 accuracy points) and not significant by exact McNemar test ( p = 0 .078 ). This supports the graph-level non-equivalence claim: the two local attention graphs expose different source sets and therefore solve partially different subsets of prompts. The bridge-window rows also show a large repair over Block, matching the coverage-normalized analysis in Table 4. 
+
+6.7 Phase-Conditioned Diagnostics and Prompt-NLL Boundary Pattern 
+
+Forward-pass implementation timings are reported in Appendix A. They are intentionally sec-ondary: the main compute accounting is the attention-score budget in Table 2, which shows that Bridge/PBB are close to SWA in score count while SE-Bridge is higher. The timing table should not be read as an architecture-level speed claim. Figure 4 is a secondary visualization of boundary phase, not a headline ranking result. The coarse boundary probe is noisy for all local models, and the boundary-tail probe should not carry the main mechanism claim. Its use is qualitative: it shows a post-boundary phase pattern in which local models are near chance before the boundary and improve on positive offsets where a causal repair path can help. This is the empirical shape behind the phase-dependent coverage argument in Section 3. The prompt-token NLL diagnostic gives a more direct local view and is a stronger mecha-nism visualization than the coarse offset curves. Figure 5 plots 16-token binned improvement 19 Arch Seed Semantic exact Semantic paraphrase Semantic distractor Full 1337 1.000 0.945 0.317 Full 2025 0.954 0.841 0.266 Full 3047 1.000 0.932 0.359 SWA 1337 0.531 0.427 0.260 SWA 2025 0.553 0.461 0.289 SWA 3047 0.540 0.443 0.297 SE-Bridge 1337 0.575 0.476 0.189 SE-Bridge 2025 0.558 0.483 0.249 SE-Bridge 3047 0.547 0.454 0.230 PBB 1337 0.501 0.461 0.233 PBB 2025 0.488 0.430 0.258 PBB 3047 0.454 0.370 0.219 Bridge 1337 0.470 0.401 0.244 Bridge 2025 0.450 0.381 0.204 Bridge 3047 0.465 0.351 0.259 Block 1337 0.463 0.381 0.217 Block 2025 0.470 0.352 0.207 Block 3047 0.414 0.269 0.187 
+
+Table 8: Per-seed semantically cued single-fact retrieval. SE-Bridge shows a small fixed-checkpoint paired advantage on exact and paraphrased single-fact retrieval, while the distractor version remains difficult for all local models.                                                             
+
+> Probe Comparison (A−B)Pairs Acc. A Acc. B Diff Boot. 95% CI A/B-only wins McNemar p
+> Clean semantic SE-Bridge – SWA 9,600 0.515 0.493 +0.023 [+0.014,+0.032] 995/775 1.87e −7
+> Bridge-window Bridge – Block 1,200 0.812 0.415 +0.397 [+0.368,+0.426] 493/17 1.42e −122
+> Bridge-window PBB – Block 1,200 0.843 0.415 +0.428 [+0.398,+0.457] 524/11 4.22e −139
+> Bridge-window SE-Bridge – Block 1,200 0.983 0.415 +0.568 [+0.540,+0.597] 682/0 9.97e −206
+> Bridge-window SE-Bridge – SWA 1,200 0.983 0.991 -0.008 [-0.015,+0.000] 6/15 0.078 Standard needle SWA – SE-Bridge 4,800 0.513 0.436 +0.077 [+0.065,+0.090] 664/293 8.59e −34
+
+Table 9: Sample-level paired uncertainty for headline 1024 comparisons. Pairs are identical prompts for the same seed and probe. Bootstrap intervals are paired sample-level intervals over fixed checkpoints and do not estimate training-seed variance. A/B-only wins count discordant prompts where only architecture A or only architecture B is correct. over Block for both the standard needle prompt distribution and the boundary-focused prompt distribution. Darker red means a larger reduction in NLL relative to Block; zero or negative gains are left near white. The strongest pattern is not a uniform global improvement; it is a set of localized post-boundary reductions. This pattern is consistent with the expected signature of bridge-style attention repairing phase-dependent block discontinuities rather than replacing SWA as a general local context mechanism. 
+
+6.8 Mechanism Summary 
+
+Finally, perplexity and retrieval do not rank the local models identically. SWA is the best local model by PPL, while SE-Bridge shows a small fixed-checkpoint advantage on exact and paraphrased semantically cued single-fact retrieval. This suggests a future design hypothesis: full or sliding-window layers can provide broad local and long-range access, while bridge-style layers can target boundary discontinuities introduced by blocked computation. Taken together, the diagnostics support a graph-repair interpretation. SWA remains stronger on validation perplexity and standard needle retrieval, while bridge-style residual attention re-pairs a boundary-local reachability defect and is most visible when the probe distribution aligns with the repaired edges. This is the intended level of the claim: a phase-conditioned mechanism 20 Figure 2: Standard needle retrieval by generated prompt distance. Curves are architecture means across three seeds; shaded regions show one standard deviation across seeds. The distance axis follows the probe generator’s placement convention, while the coverage formulas use source-to-readout offsets. A single architecture mean can hide sharp distance-specific failures.                                         
+
+> Probe NBlock+Full SWA+Full PBB+Full SE-Bridge+Full Needle 64 0.313 0.547 0.578 0.578
+> Bridge-window 312 0.458 0.583 0.599 0.590 Semantic boundary 312 0.401 0.471 0.455 0.446 Semantic exact 48 0.375 0.521 0.479 0.500 Semantic paraphrase 48 0.313 0.500 0.458 0.458 Semantic paraphrase+distractor 48 0.000 0.167 0.146 0.104 Weighted average 832 0.386 0.506 0.502 0.494
+
+Table 10: Fixed-checkpoint Qwen2.5-7B intervention on 8192-token probes. Values are four-choice candidate-ranking accuracies. All hybrid configurations use a 3:1 schedule with three local or repair layers followed by one full-attention layer. PBB+Full and SE-Bridge+Full use union masks rather than separately normalized bridge branches. Bold marks the best local-hybrid value in each row. analysis and constructive repair primitive for block-sparse causal attention. 
+
+6.9 Fixed-Checkpoint 7B Hybrid Probe 
+
+To test whether the same graph effect is visible beyond the small controlled pretraining setting, we also run a fixed-checkpoint intervention on Qwen2.5-7B [Qwen Team, 2025]. This is not a long-context benchmark and does not retrain or fine-tune the model. Instead, we impose sparse attention masks during candidate-ranking evaluation on 8192-token synthetic probes. The block size and repair width are both 128 tokens. Each hybrid uses a 3:1 layer schedule: three sparse local or repair layers followed by one full-attention layer. For the bridge-family hybrids in this section, we use the single-softmax union-mask version, so the comparison tests the added graph edges without introducing a separately normalized residual branch. Table 10 shows that the 7B probe follows the same non-dominance pattern as the controlled experiments. Block+Full is weaker across all diagnostic families. PBB+Full is competitive with SWA+Full in the weighted average (0.502 versus 0.506 accuracy) and is strongest on the boundary-window diagnostic (0.599 versus 0.583). SWA+Full remains better on the semantic variants. The result is therefore useful as an external-validity check: the boundary-repair ge-ometry is not only a small-model artifact, but the semantic robustness of a continuous sliding window still matters. 21 Figure 3: Semantically cued single-fact retrieval by distance. The exact and paraphrased single-fact probes show where SE-Bridge differs from other local models; the candidate-distractor probe remains difficult and is treated as diagnostic rather than a main semantic claim. Aggregating the 7B hybrid probe by task family sharpens this interpretation. PBB+Full is strongest on literal retrieval probes, especially needle and bridge-window retrieval, whereas SWA+Full remains strongest on semantic variants. Measured relative to the SWA+Full-over-Block+Full gain, PBB+Full recovers more than the full SWA gap on the literal probes, but only about 70–80% of that gap on most semantic probes. This supports the edge-allocation view: boundary-targeted repair is efficient for literal and boundary reachability, whereas con-tinuous sliding-window history better preserves the pretrained checkpoint’s semantic behavior; Appendix B gives the corresponding decompositions. The hybrid result also suggests an edge-allocation interpretation. Table 2 reports the branch-style score accounting used for the main 1024-token mechanisms, where the centered bridge computation is counted before write-back pruning. The Qwen hybrid intervention instead uses union masks, so one can count unique allowed edges in an optimized sparse implementation. For 
+
+L = 8192 , block size b = 128 , and PBB post-boundary width 64 , a single SWA local layer has 
+
+1,040 ,448 
+
+causal local scores, while a PBB union layer has fixed-block scores plus cross-boundary repair 22 Figure 4: Boundary needle accuracy by offset from block boundary. Positive offsets are post-boundary positions. The boundary-tail probe is a noisy secondary diagnostic, useful mainly for visualizing phase-dependent behavior. scores, 
+
+528 ,384 + 258 ,048 = 786 ,432 ,
+
+or 75 .6% of the SWA local score count. In the 3:1 hybrid, the full layer dominates the total: PBB+Full = 3 · 786 ,432 + 33 ,558 ,528 = 35 ,917 ,824 ,
+
+SWA+Full = 3 · 1,040 ,448 + 33 ,558 ,528 = 36 ,679 ,872 .
+
+Thus the total optimized score-count saving is only about 2.1% in this particular 3:1 schedule, but the local-layer saving is 24 .4% . The point is not that the present dense-mask implementation is faster; Appendix A reports nearly identical measured throughput. The relevant comparison is accuracy together with edge allocation: PBB+Full reaches nearly the same aggregate diagnostic accuracy as SWA+Full with a smaller local sparse edge budget, while shifting gains toward boundary-window probes. 23 (a) Standard needle prompts. 
+
+> (b) Boundary-focused prompts.
+
+Figure 5: Prompt-token NLL table heatmaps by token position, shown as 16-token binned positive improvement over Block. Darker red indicates a larger NLL reduction relative to Block. Binning suppresses token-level texture while preserving the boundary-phase pattern. Dashed vertical lines mark block boundaries. The heatmaps expose the point-level boundary structure hidden by architecture-level averages: Bridge, PBB, and SE-Bridge reduce many post-boundary loss spikes. 24 7 Discussion 
+
+7.1 Bridge as Boundary Repair 
+
+The 1024-token experiments sharpen the mechanism claim. SWA is the stronger continuous-local-history baseline on perplexity and standard needle retrieval. Bridge-style variants instead repair the boundary-local failure mode of hard block partitioning. The bridge-window diagnostic is the cleanest evidence: Block averages 0.415, original Bridge 0.812, PBB 0.842, and SE-Bridge 0.983. Within this diagnostic, the repair is largest for SE-Bridge, which formulates the bridge as a source block extended forward and matches the causal direction of useful information flow. This is a graph-structure result under matched training conditions. Bridge and PBB use a similar attention-score budget to SWA, while SE-Bridge uses more, so the claim is parameter-neutral boundary repair rather than compute dominance. 
+
+7.2 Additive Fusion as a Diagnostic Constraint 
+
+The simple additive fusion rule is part of the controlled mechanism claim. The block path remains the main local attention computation, and the bridge path contributes messages from auxiliary boundary edges that are absent from the fixed block graph. Because both paths share the same projections, addition is a residual edge-restoration update in a shared coordinate system rather than a learned mixture of two independent representations. A learned gate, scalar, or fusion module could be useful engineering, but it would confound the present question: whether restoring missing boundary edges helps without adding parameters. 
+
+7.3 Why SE-Bridge Aligns Better Than PBB 
+
+PBB fixes a real asymmetry in the original Bridge: pre-boundary tokens do not gain new causal sources from a centered bridge window, so scattering residuals back to them is structurally redundant. This improves over the original Bridge, but it still uses a symmetric source window around the boundary. SE-Bridge instead treats the previous block as the source and writes only to the forward tail. In coverage-function terms, SE-Bridge covers a strictly larger set of previous-block source distances for the same post-boundary write-back range. This better matches the causal repair direction: post-boundary tokens receive a residual computed from their own current tail plus the preceding source block, while the block interior remains unchanged. 
+
+7.4 Semantically Cued Single-Fact Retrieval 
+
+The earlier multi-fact semantic binding probe was too hard and too noisy for this controlled base-LM setting: even Full attention was near chance on several conflict variants. The current semantically cued single-fact retrieval ladder is cleaner. The exact variant tests whether a semantically cued fact can be recovered when the wording is simple; the paraphrased variant asks for a non-identical query phrasing while avoiding multi-fact binding. On the clean exact and paraphrased single-fact probes, SE-Bridge shows a small fixed-checkpoint advantage over SWA under paired prompts. This is a secondary consistency check that the repaired path can support more than exact string repetition. The candidate-distractor version is much harder and remains a diagnostic of future probe design. 
+
+7.5 Mechanistic Interpretation 
+
+The results are consistent with a simple graph view of causal attention. Hard block attention partitions the sequence into independent local attention regions. A token immediately after a block boundary loses direct access to the tokens immediately before that boundary, even though those tokens are semantically and temporally adjacent. This is an artificial discontinuity introduced by the sparsity pattern rather than by the data distribution. 25 SWA removes this discontinuity by giving every query a continuous local history, which explains why it is strong on perplexity and standard needle retrieval. Bridge-style attention attacks a narrower problem: it adds a second local path only where block attention cuts the graph. This makes the expected gain highly position-dependent. More specifically, it creates phase-dependent coverage heterogeneity: two tokens with the same absolute distance from the query can have different effective receptive fields depending on their offset relative to the nearest block boundary. This can produce boundary-phase sensitivity and localized performance cliffs near block-aligned distances. The difference between Bridge, PBB, and SE-Bridge follows from causality. In a centered bridge window, the pre-boundary half cannot receive useful information from the post-boundary half, because future tokens are masked. This is a source-write mismatch: the pre-boundary side is written back even though it does not gain a new causal source. PBB reduces this mismatch by keeping the full bridge window as a key/value source but writing only to post-boundary positions. SE-Bridge goes one step further and reduces the source-coverage bottleneck: it treats the previous block as the source and writes only to the forward tail, matching the actual direction in which boundary information can flow. This is consistent with SE-Bridge having the best bridge-family mean on the 1024 bridge-window diagnostic and showing a small advantage on paraphrased semantically cued single-fact retrieval. 
+
+7.6 Relation to Modern Blockwise Sparse Systems 
+
+Systems such as Native Sparse Attention and DeepSeek-V4 illustrate the broader design pat-tern: long-context attention is often mediated by compression, query-conditioned selection, lo-cal branches, and heterogeneous cache policies that introduce edges absent from the fixed-block graph [Yuan et al., 2025, DeepSeek-AI, 2026]. The fixed-block theorem therefore transfers as a diagnostic lens rather than as a literal architecture claim. Compressed-entry reachability is dis-tinct from raw-token reachability; selected-block coverage depends on the selector; compression fidelity determines whether a source token survives into a block representation; and sliding-window or local branches can repair local detail that compression alone would lose. Fixed block attention isolates one failure mode in its cleanest form, while these modern systems show why the same vocabulary of source coverage, boundary phase, and local-detail repair remains useful beyond the toy limit. 
+
+7.7 Why the 7B Probe Strengthens the Theory-First Claim 
+
+The Qwen2.5-7B intervention in Section 6.9 is intentionally narrower than a full long-context evaluation. It changes the scale and checkpoint regime while keeping the task diagnostic: the model is not fine-tuned, the candidate ranking prompts are synthetic, and the masks are imposed at inference time. This makes it a stress test of graph geometry under residual-distribution mismatch rather than a trained architecture comparison. Within that constraint, the 7B result is informative because it tests the theory where a trivial explanation would be less convincing. A periodic-full schedule already gives every fourth layer global access, yet the choice of the three intervening sparse layers still changes boundary-window behavior. PBB+Full is close to SWA+Full in aggregate accuracy and is strongest on the boundary-window probe, while SWA+Full remains more reliable on semantic variants. This is the useful signal: even in a pretrained 7B checkpoint with periodic full-attention layers, local graph geometry still leaves a measurable phase- and probe-dependent signature. The result supports the central claim of the paper rather than replacing it with an engineering claim: boundary repair and sliding windows are not ordered by a single dominance relation; they expose different source sets and therefore help different prompt subsets. The difference between the 1024-token trained models and the 7B fixed-checkpoint probe is also instructive. In the 1024-token experiments, SE-Bridge is trained from scratch, so optimiza-26 tion can adapt all layers to its wider previous-block source coverage and forward-tail write-back geometry. This likely makes SE-Bridge more useful on the clean semantically cued single-fact probes, where the model must use a broader local context and a non-identical query phrasing. In the 7B probe, by contrast, the pretrained Qwen2.5-7B weights are frozen and the sparse graph is imposed only at evaluation time. PBB is a lower-disturbance intervention: it adds boundary-targeted cross-block edges without broadening the source set as aggressively as SE-Bridge. Under a periodic-full schedule, the full layers already provide global mixing, so a local repair layer mainly needs to address the fragile boundary discontinuity. This helps explain why PBB+Full is strongest on literal and boundary-window diagnostics, while SWA+Full remains stronger on semantic variants that benefit from the pretrained model’s continuous local attention behavior. The same probe also gives a cautious edge-allocation lesson. Periodic-full architectures may not need every sparse layer to preserve a complete sliding window. When full layers already provide global mixing, some intermediate local layers can instead allocate edges specifically to block-boundary defects. PBB targets the boundary edges that fixed block attention removes, and under an optimized union-mask count uses fewer local scores than SWA. In the present 3:1 schedule this saves only a small fraction of total scores because the full layer dominates, and the current implementation does not realize a speed advantage. Still, the diagnostic pattern suggests a useful design principle: full or near-global layers can provide broad mixing, SWA-like layers can preserve continuous local history, and boundary-repair layers can spend a smaller local edge budget on the cross-block discontinuities that fixed partitions create. 
+
+7.8 Scope and Future Evidence 
+
+This is a controlled architecture-level study of a hard-partition limit. The 1024-token, 124M GPT-2-style base LMs are trained from scratch under matched budgets to isolate attention-graph effects from scale, post-training, proprietary recipes, and long-context adaptation. The fixed-checkpoint 7B probe broadens this evidence but does not replace broad benchmark suites, trained hybrid models, post-training evaluations, or kernel-optimized sparse implementations. Those are future engineering validation axes, while the present theorem and diagnostics target graph reachability. The fixed-block setting is best understood as an analytically clean limit of a broader design space in which blocks are used for compression, selection, routing, cache management, or approximate global access. The implementation is also not kernel-optimized, so speed and memory should be read as implementation measurements rather than architecture-level limits. Useful future comparisons include non-boundary or random equal-budget residual edges, learned gates or scaling for branch fusion, trained hybrid schedules that combine full, sliding-window, and boundary-repair layers, and sparse kernels that realize the optimized edge bud-gets discussed in Section 6.9. Such baselines would test whether boundary-centered repair is preferable as an engineering module. The current paper establishes the mechanism-level claim: boundary-centered edges repair the specific reachability defect predicted by the fixed-block graph analysis. The statistical evidence is strongest for the headline comparisons in Table 9. Those paired intervals and McNemar tests condition on fixed checkpoints; a seed-level or hierarchical bootstrap would be a stronger test for the small clean-semantic effect. We therefore treat semantically cued single-fact retrieval as a secondary observation. The main empirical evidence is bridge-window recovery, paired disagreement on coverage-aligned prompts, and localized post-boundary NLL reductions. 27 8 Conclusion 
+
+This paper formalizes locality–reachability mismatch in fixed block-causal attention and studies coverage-conditioned boundary repair as a constructive response. The theory shows that fixed block masks can make adjacent cross-boundary tokens unreachable at any depth, yielding a boundary-copy lower bound, and that the usefulness of a repair depends on source/write-back coverage. The 1024-token, three-seed experiments support the corresponding mechanism claim: bridge-style residual attention repairs boundary-local failures without adding learnable parame-ters. SWA remains the strongest local model on perplexity and standard needle retrieval, while Source-Extended Bridge nearly matches SWA on bridge-window retrieval. A fixed-checkpoint 8K-token Qwen2.5-7B probe provides secondary external-validity evidence: PBB+Full nearly matches SWA+Full on the weighted diagnostic average under a 3:1 periodic-full schedule and is strongest on the boundary-window diagnostic, while SWA+Full remains stronger on semantic variants. Under optimized union-mask edge accounting, PBB uses fewer local attention scores than SWA, suggesting that boundary-targeted repair can be an edge-efficient substitute for some sliding-window local layers in hybrid schedules. More broadly, sparse attention mecha-nisms should be evaluated not only by average perplexity or retrieval accuracy, but also by the graph-level failure modes introduced by their sparsity pattern. Bridge is best viewed as a diag-nostic and composable boundary-repair primitive whose usefulness depends on the surrounding attention schedule and task geometry. 
+
+# Acknowledgments 
+
+The author thanks Wenxuan Xiao and Peishun Liu for their careful reading and constructive suggestions on earlier drafts of this paper. 
+
+# AI Assistance Disclosure 
+
+AI tools were used to assist with manuscript organization, language polishing, LaTeX and ta-ble preparation, code refactoring suggestions, debugging assistance for evaluation scripts, and result-aggregation sanity checks. All experimental code, prompt-generation logic, evaluation procedures, reported numbers, references, theoretical claims, and final interpretations were in-dependently inspected, executed, and verified by the author. AI tools were not treated as scientific contributors or sources of evidence. The author takes full responsibility for the content of the manuscript. 
+
+# Data and Code Availability 
+
+The experiments use OpenWebText and synthetic diagnostic prompts generated by the author’s scripts. The arXiv source package contains the manuscript source and plotted figure artifacts. Code, prompt-generation scripts, evaluation scripts, and aggregate result files are archived by the author and will be released in a public repository; before that release, they are available from the author upon request. 28 A Forward-Pass Implementation Benchmark 
+
+Table 11 reports a small implementation benchmark for the 1024-token architecture configu-rations. The benchmark uses randomly initialized models, batch size 4, BF16 autocast, and a forward pass with language-modeling loss on an RTX 4060 Laptop GPU. It should be read together with the attention-score accounting in Table 2: Bridge and PBB have essentially the same score budget as SWA, while SE-Bridge has a larger one. In the current PyTorch imple-mentation, the measured end-to-end forward times are close because shared model components, including the vocabulary projection and loss, dominate part of the cost. These numbers are implementation measurements rather than kernel-optimized architecture limits. 
+
+Model Params Scores/head Ratio to SWA tok/s @1024 ms/fwd Peak alloc. Full 124.4M 524,800 4.27 × 68,069 60.17 2,315 MB Block 124.4M 66,048 0.54 × 70,858 57.81 2,316 MB SWA 124.4M 122,944 1.00 × 63,301 64.71 2,328 MB Bridge 124.4M 123,840 1.01 × 65,911 62.14 2,314 MB PBB 124.4M 123,840 1.01 × 66,136 61.93 2,314 MB SE-Bridge 124.4M 195,744 1.59 × 64,672 63.34 2,317 MB 
+
+Table 11: Forward-pass implementation benchmark at 1024 tokens. Measurements use random weights, batch size 4, BF16 autocast, and a forward pass with LM loss on an RTX 4060 Laptop GPU. These are implementation measurements rather than kernel-optimized architecture limits. Table 12 reports the companion implementation measurement for the 7B fixed-checkpoint probe. The benchmark uses BF16 inference on a 49GB RTX 4090, random tokens, sequence length 8192 for prefill, and no-cache decoding from a 2048-token prompt. KV caching is disabled for the patched sparse interventions because the branch and union-mask implementations score full sequences. The union-mask path uses a dense SDPA-compatible mask and therefore should not be interpreted as a specialized sparse kernel. The main use of the table is to document that the fixed-checkpoint probe was feasible under one implementation, not to claim architecture-level throughput. In particular, the edge-count savings discussed in Section 6.9 are optimized sparse score counts, not measured speedups in this implementation.                                     
+
+> Configuration Prefill tok/s @8192 Decode tok/s Peak reserved Full native SDPA 7,001 4.240 18.13 GiB Block branch 9,101 4.449 18.35 GiB SWA union 6,005 4.015 18.38 GiB PBB branch 8,258 4.047 18.35 GiB PBB union 6,002 3.912 18.38 GiB SE-Bridge branch 8,065 3.950 18.35 GiB SE-Bridge union 6,027 3.909 18.38 GiB Block+Full 3:1 union 6,211 4.070 18.38 GiB SWA+Full 3:1 union 6,213 3.977 18.38 GiB PBB+Full 3:1 union 6,218 3.941 18.38 GiB SE-Bridge+Full 3:1 union 6,202 3.938 18.38 GiB
+
+Table 12: Fixed-checkpoint Qwen2.5-7B implementation benchmark. Measurements use BF16 inference on a 49GB RTX 4090. Decode speeds are no-cache token rates with a 2048-token prompt and 16 decoded steps; they are not KV-cache optimized generation speeds. 
+
+# B Additional 7B Probe Decompositions 
+
+Table 13 groups the fixed-checkpoint Qwen2.5-7B hybrid results by task family. The split is clearer than the single weighted average in Table 10: PBB+Full is strongest on literal retrieval, 29 while SWA+Full is strongest on semantic variants. The final column reports how much of the SWA+Full-over-Block+Full accuracy gap is recovered by PBB+Full. Values above one mean that PBB+Full exceeds SWA+Full on that task family. At the individual-probe level, PBB+Full recovers 113% of the SWA+Full-over-Block+Full gap on standard needle retrieval and 113% on bridge-window retrieval, but only about 71–88% on the semantic variants.                             
+
+> Task family NBlock+Full SWA+Full PBB+Full SE-Bridge+Full PBB recovery Interpretation Literal retrieval 376 0.434 0.577 0.596 0.588 1.13 ×Boundary/literal repair favors PBB. All semantic variants 456 0.347 0.447 0.425 0.417 0.78 ×Continuous local history favors SWA. Clean semantic 96 0.344 0.510 0.469 0.479 0.75 ×SWA is strongest on pretrained semantic behavior.
+
+Table 13: Task-family decomposition of the Qwen2.5-7B 8K hybrid probe. Literal retrieval combines standard needle and bridge-window retrieval. All semantic variants combine semantic boundary, exact, paraphrase, and paraphrase+distractor probes. Clean semantic uses only exact and paraphrase probes. PBB recovery is (Acc PBB+Full − Acc Block+Full )/(Acc SWA+Full −
+
+Acc Block+Full ).Table 14 gives the same recovery ratio for each individual 8K probe. The literal probes exceed one, while semantic probes recover only part of the SWA+Full-over-Block+Full gain. This is the fine-grained pattern behind the near tie in the weighted average.                                 
+
+> Probe Block+Full SWA+Full PBB+Full PBB recovery Needle 0.312 0.547 0.578 1.13 ×
+> Bridge-window 0.458 0.583 0.599 1.13 ×
+> Semantic boundary 0.401 0.471 0.455 0.77 ×
+> Semantic exact 0.375 0.521 0.479 0.71 ×
+> Semantic paraphrase 0.312 0.500 0.458 0.78 ×
+> Semantic distractor 0.000 0.167 0.146 0.88 ×
+> Weighted average 0.386 0.506 0.502 0.97 ×
+
+Table 14: Probe-level recovery of the SWA+Full-over-Block+Full accuracy gap by PBB+Full in the fixed-checkpoint Qwen2.5-7B 8K hybrid probe. Values above one indicate that PBB+Full exceeds SWA+Full on that probe. Table 15 summarizes why the 7B hybrid probe uses the union-mask intervention rather than the separately normalized residual branch used in the trained 1024-token Bridge-family models. In the frozen-checkpoint setting, branch variants require a residual scale α and show sensitivity to that scale; the best branch results typically use small α. Union masks are a cleaner graph intervention for the 7B probe because they change the allowed edge set while keeping a single softmax normalization. This distinction is especially visible on semantic probes, where union PBB/SE-Bridge outperform their best branch counterparts.                     
+
+> Aggregation PBB branch best PBB union SE branch best SE union All probes 0.427 0.445 0.424 0.448 Literal retrieval 0.431 0.399 0.442 0.399 All semantic variants 0.423 0.483 0.425 0.489 Clean semantic 0.500 0.562 0.510 0.573
+
+Table 15: Best non-hybrid 7B branch accuracy versus union-mask accuracy by task family. Branch values choose the best tested residual scale for the family; union values use α = 1 because there is no separately normalized residual branch. The table is used only as implementation rationale for the fixed-checkpoint intervention, not as a main result. 30 C 512-Context Preliminary Ablation 
+
+The earlier 512-token experiments are useful as an ablation, but not as the main evidence. They use single checkpoints rather than three training seeds, include two exploratory non-main Bridge extensions, and evaluate an older synthetic binding diagnostic rather than the cleaner 1024 semantically cued single-fact retrieval ladder. We therefore report them as preliminary support for the mechanism, not as a source of headline claims.                                           
+
+> Model Best val loss Needle acc. Boundary acc. Legacy binding acc. Late prompt NLL tok/s @512 Full 3.3971 1.000 1.000 0.843 6.273 25,422 Block 3.5974 0.493 0.359 0.371 6.617 27,179
+> SWA 3.4410 0.554 0.348 0.552 6.527 24,309 Bridge 3.4742 0.540 0.371 0.318 5.843 25,016 Bridge-Scalar 3.4709 0.519 0.370 0.256 6.256 22,766 Bridge-Memory 3.4610 0.496 0.367 0.383 5.504 13,400
+
+Table 16: Preliminary 512-token ablation from the earlier draft. Bold within local models excludes Full. Late prompt NLL averages the three later ranges [128 , 256) , [256 , 384) , and 
+
+[384 , 512) from the synthetic prompt-token diagnostic. Bridge-Scalar and Bridge-Memory are exploratory extensions with additional parameters or state and are not part of the 1024 main comparison. The 512-token ablation is consistent with the same qualitative mechanism while also showing why it should not dominate the paper. Plain Bridge is close to SWA on corrected needle retrieval (0.540 versus 0.554) and has the best local-model boundary accuracy (0.371). This matches the boundary-repair hypothesis. However, SWA is better on validation loss and the older binding diagnostic, showing that boundary repair is not a universal substitute for a continuous sliding window. The two exploratory state variants are useful as a cautionary alignment ablation rather than as clean random-bridge controls. Bridge-Scalar keeps the same centered Bridge write-back po-sitions as plain Bridge, but it first accumulates a recurrent state in bridge-window coordinates across successive boundaries before scattering the result back. Bridge-Memory changes the ag-gregation more substantially: after the centered bridge output is scattered to sequence positions, it reshapes the residual into the original 128-token blocks and writes compressed block-aligned chunks into a memory bank. Thus the memory slots are not boundary-window-aligned; they are compressed summaries of whatever bridge residual landed inside each base block. This helps explain the trade-off in Table 16: memory lowers validation loss and late prompt-token NLL, but it is slower and loses exact needle retrieval relative to plain Bridge. The result is consistent with the design choice in the 1024 experiments: the main variants keep the repair memory-free, position-aligned, and zero-additional-parameter rather than adding learned or compressed state. The 1024 three-seed experiments keep the useful part of this story and remove the weaker parts: they replace the noisy binding probe with semantically cued single-fact retrieval and evaluate training-seed variance directly. 
+
+# D Reproducibility Details 
+
+All main checkpoints use GPT-2 tokenization [Radford et al., 2019] with vocabulary size 50,257 and end-of-text token 50,256. The corpus is streamed from Skylion007/openwebtext [Gokaslan and Cohen, 2019] with shuffle buffer 10,000 and seed 1337. The train split contains 2,500,000,000 tokens from 2,213,720 documents; the validation split contains 50,000,000 tokens from 44,892 documents. All parameter-matched 1024-context models use 12 Transformer layers, 12 attention heads, embedding size 768, dropout 0, and learned biases. The main local-attention models use 31 block/window size 128; Bridge and PBB use bridge width 128; SE-Bridge uses local block size 128 and source extension 64. Training uses AdamW [Loshchilov and Hutter, 2019], learning rate 2e −4, minimum learning rate 6e −5, cosine decay, 1000 warmup steps, weight decay 0.1, gradient clipping 1.0, batch size 8, and gradient accumulation 16. This gives 131,072 tokens per optimizer update. Runs execute through step 20,000, corresponding to 20,001 updates and 2,621,571,072 planned token exposures. Validation is run every 500 steps for 100 batches, and the best-validation checkpoint is used for evaluation. Candidate ranking is NLL-based over four candidates. The standard needle prompt places a target word in synthetic filler and queries the target near the end of the context. The semantically cued single-fact prompt places one relevant fact in the context and asks for the target with either exact or paraphrased query wording. The distractor variant includes additional candidate-bearing facts and is treated as a harder diagnostic. 
+
+# E Legacy Validation-Only Learning-Rate Sensitivity 
+
+The earlier 512-token draft included a plain Bridge run with learning rate 3e −4, which reached validation loss 3.4000 at step 20,000. This run is not part of the 1024-token, three-seed main suite, so it is not used for the primary retrieval, boundary, semantically cued single-fact retrieval, or efficiency claims. It is best treated as a legacy validation-loss sensitivity note rather than as evidence for the main Bridge-vs-SWA comparison. 32 References 
+
+Joshua Ainslie, Santiago Ontanon, Chris Alberti, Vaclav Cvicek, Zachary Fisher, Philip Pham, Anirudh Ravula, Sumit Sanghai, Qifan Wang, and Li Yang. ETC: Encoding long and structured inputs in transformers. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) , pages 268–284, Online, 2020. Association for Computational Linguistics. doi: 10.18653/v1/2020.emnlp-main.19. URL 
+
+https://aclanthology.org/2020.emnlp-main.19/ .Chenxin An, Shansan Gong, Ming Zhong, Xingjian Zhao, Mukai Li, Jun Zhang, Lingpeng Kong, and Xipeng Qiu. L-Eval: Instituting standardized evaluation for long context language models. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 14388–14411, 2024. URL 
+
+https://aclanthology.org/2024.acl-long.776/ .Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. LongBench: A bilingual, multitask benchmark for long context understanding. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 3119–3137, 2024. URL https://aclanthology.org/2024.acl-long.172/ .Yushi Bai, Shangqing Tu, Jiajie Zhang, Hao Peng, Xiaozhi Wang, Xin Lv, Shulin Cao, Jiazheng Xu, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. LongBench v2: Towards deeper understanding and reasoning on realistic long-context multitasks. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 3639–3664, 2025. doi: 10.18653/v1/2025.acl-long.183. URL 
+
+https://aclanthology.org/2025.acl-long.183/ .Iz Beltagy, Matthew E Peters, and Arman Cohan. Longformer: The long-document transformer. arXiv preprint arXiv:2004.05150 , 2020. Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers. arXiv preprint arXiv:1904.10509 , 2019. Zihang Dai, Zhilin Yang, Yiming Yang, Jaime Carbonell, Quoc V Le, and Ruslan Salakhutdinov. Transformer-XL: Attentive language models beyond a fixed-length context. In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics ,pages 2978–2988, Florence, Italy, 2019. Association for Computational Linguistics. doi: 10.18653/v1/P19-1285. URL https://aclanthology.org/P19-1285/ .Tri Dao. FlashAttention-2: Faster attention with better parallelism and work partitioning. In 
+
+International Conference on Learning Representations , 2024. Tri Dao, Daniel Y Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Processing Systems , 2022. DeepSeek-AI. DeepSeek-V4: Towards highly efficient million-token context intelligence. Technical report, 2026. URL https: //huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/main/DeepSeek_V4.pdf .Jiayu Ding, Shuming Ma, Li Dong, Xingxing Zhang, Shaohan Huang, Wenhui Wang, Nanning Zheng, and Furu Wei. LongNet: Scaling transformers to 1,000,000,000 tokens. arXiv preprint arXiv:2307.02486 , 2023. 33 Harvey Yiyun Fu, Aryan Shrivastava, Jared Moore, Peter West, Chenhao Tan, and Ari Holtzman. AbsenceBench: Language models can’t tell what’s missing. arXiv preprint arXiv:2506.11440 , 2025. Gemma Team, Morgane Riviere, Shreya Pathak, Pier Giuseppe Sessa, Cassidy Hardin, Surya Bhupatiraju, Leonard Hussenot, Thomas Mesnard, Bobak Shahriari, Alexandre Ramé, et al. Gemma 2: Improving open language models at a practical size. arXiv preprint arXiv:2408.00118 , 2024. Aaron Gokaslan and Vanya Cohen. OpenWebText Corpus. 
+
+https://skylion007.github.io/OpenWebTextCorpus/ , 2019. Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. RULER: What’s the real context size of your long-context language models? In First Conference on Language Modeling , 2024. URL 
+
+https://arxiv.org/abs/2404.06654 . arXiv:2404.06654. DeLesley Hutchins, Imanol Schlag, Yuhuai Wu, Ethan Dyer, and Behnam Neyshabur. Block-recurrent transformers. In Advances in Neural Information Processing Systems , 2022. Albert Q Jiang, Alexandre Sablayrolles, Arthur Mensch, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel, Guillaume Lample, Lucile Saulnier, et al. Mistral 7B. arXiv preprint arXiv:2310.06825 , 2023. Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H. Abdi, Dongsheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. MInference 1.0: Accelerating pre-filling for long-context LLMs via dynamic sparse attention. In Advances in Neural Information Processing Systems , 2024. doi: 10.52202/079017-1663. URL https://papers.nips.cc/paper_files/paper/2024/hash/ 5dfbe6f5671e82c76841ba687a8a9ecb-Abstract-Conference.html .Gregory Kamradt. Needle in a haystack – pressure testing LLMs. GitHub repository , 2023. URL https://github.com/gkamradt/LLMTest_NeedleInAHaystack .Nikita Kitaev, Łukasz Kaiser, and Anselm Levskaya. Reformer: The efficient transformer. In 
+
+International Conference on Learning Representations , 2020. Yuri Kuratov, Aydar Bulatov, Petr Anokhin, Ivan Rodkin, Dmitry Sorokin, Artyom Sorokin, and Mikhail Burtsev. BABILong: Testing the limits of LLMs with long context reasoning-in-a-haystack. In Advances in Neural Information Processing Systems 37 (Datasets and Benchmarks Track) , 2024. Nelson F Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. Lost in the middle: How language models use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173, 2024. doi: 10.1162/tacl_a_00638. URL https://aclanthology.org/2024.tacl-1.9/ .Ze Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan Wei, Zheng Zhang, Stephen Lin, and Baining Guo. Swin transformer: Hierarchical vision transformer using shifted windows. In 
+
+Proceedings of the IEEE/CVF International Conference on Computer Vision , 2021. Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In International Conference on Learning Representations , 2019. URL 
+
+https://openreview.net/forum?id=Bkg6RiCqY7 .34 Ali Modarressi, Hanieh Deilamsalehy, Franck Dernoncourt, Trung Bui, Ryan A Rossi, Seunghyun Yoon, and Hinrich Schütze. NoLiMa: Long-context evaluation beyond literal matching. In Proceedings of the 42nd International Conference on Machine Learning ,volume 267 of Proceedings of Machine Learning Research , pages 44554–44570. PMLR, 2025. Amirkeivan Mohtashami and Martin Jaggi. Random-access infinite context length for transformers. In Advances in Neural Information Processing Systems , 2023. URL 
+
+https://proceedings.neurips.cc/paper_files/paper/2023/hash/ ab05dc8bf36a9f66edbff6992ec86f56-Abstract-Conference.html .Tsendsuren Munkhdalai, Manaal Faruqui, and Siddharth Gopal. Leave no context behind: Efficient infinite context transformers with infini-attention. arXiv preprint arXiv:2404.07143 , 2024. Qwen Team. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 , 2025. doi: 10.48550/arXiv.2412.15115. URL https://arxiv.org/abs/2412.15115 .arXiv:2412.15115v2. Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever. Language models are unsupervised multitask learners. OpenAI technical report, 2019. URL 
+
+https://cdn.openai.com/better-language-models/language_models_are_ unsupervised_multitask_learners.pdf .Jack W Rae, Anna Potapenko, Siddhant M Jayakumar, Chloe Hillier, and Timothy P Lillicrap. Compressive transformers for long-range sequence modelling. In International Conference on Learning Representations , 2020. URL https://openreview.net/forum?id=SylKikSYDH .Aurko Roy, Mohammad Saffar, Ashish Vaswani, and David Grangier. Efficient content-based sparse attention with routing transformers. Transactions of the Association for Computational Linguistics , 9:53–68, 2021. doi: 10.1162/tacl_a_00353. URL 
+
+https://aclanthology.org/2021.tacl-1.4/ .Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. Quest: Query-aware sparsity for efficient long-context LLM inference. In International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 47901–47911. PMLR, 2024. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in Neural Information Processing Systems , 30, 2017. Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In International Conference on Learning Representations , 2024. Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Junxian Guo, Shang Yang, Haotian Tang, Yao Fu, and Song Han. DuoAttention: Efficient long-context LLM inference with retrieval and streaming heads. In International Conference on Learning Representations , 2025. URL 
+
+https://proceedings.iclr.cc/paper_files/paper/2025/hash/ 5c1ddd2e59df46fd2aa85c833b1b36ed-Abstract-Conference.html .Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Yuxing Wei, Lean Wang, Zhiping Xiao, Yuqing Wang, Chong Ruan, Ming Zhang, Wenfeng Liang, and Wangding Zeng. Native Sparse Attention: Hardware-aligned and natively trainable sparse attention. In Proceedings of the 63rd Annual Meeting of the 
+
+35 Association for Computational Linguistics (Volume 1: Long Papers) , pages 23078–23097, Vienna, Austria, July 2025. doi: 10.18653/v1/2025.acl-long.1126. URL 
+
+https://aclanthology.org/2025.acl-long.1126/ .Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed. Big bird: Transformers for longer sequences. In Advances in Neural Information Processing Systems , volume 33, pages 17283–17297, 2020. URL https://proceedings.neurips.cc/ paper/2020/hash/c8512d142a2d849725f31a9a7a361ab9-Abstract.html .Xinrong Zhang, Yingfa Chen, Shengding Hu, Zihang Xu, Junhao Chen, Moo Hao, Xu Han, Zhen Thai, Shuo Wang, Zhiyuan Liu, and Maosong Sun. ∞Bench: Extending long context evaluation beyond 100k tokens. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 15262–15277, Bangkok, Thailand, August 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.acl-long.814. URL https://aclanthology.org/2024.acl-long.814/ .36
