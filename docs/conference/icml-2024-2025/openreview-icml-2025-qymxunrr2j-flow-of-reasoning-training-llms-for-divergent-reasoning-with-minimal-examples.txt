@@ -1,0 +1,1434 @@
+Title: Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples
+
+URL Source: https://openreview.net/pdf?id=qyMxunrR2j
+
+Number of Pages: 31
+
+Markdown Content:
+# Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Fangxu Yu * 1 Lai Jiang * 1 Haoqiang Kang * 1 Shibo Hao 1 Lianhui Qin 1
+
+## Abstract 
+
+The ability to generate diverse solutions to a given problem is a hallmark of human creativ-ity. This divergent reasoning is also crucial for machines, enhancing their robustness and en-abling them to assist humans in many applica-tions such as scientific discovery. However, ex-isting approaches to multi-step reasoning with large language models (LLMs) have mostly fo-cused only on reasoning accuracy, without further discovering more diverse valid solutions. For ex-ample, supervised fine-tuning improves reason-ing quality but requires vast labeled data, while reward-maximizing reinforcement learning finds top-reward solutions while neglecting the solu-tion diversity. To fill this gap, we propose Flow of Reasoning ( FOR), an efficient diversity-seeking LLM finetuning method aimed at improving rea-soning quality and diversity with minimal data. FOR formulates multi-step LLM reasoning as a Markovian flow on a DAG-structured reasoning graph. This formulation allows us to incorporate and adapt principled GFlowNet approaches, for finetuning LLMs to sample divergent paths with probabilities proportional to the (unnormalized) reward of target problems. Extensive experiments show that, with limited training examples (e.g., 15 examples), F OR enables the discovery of diverse, creative, high-quality solutions, greatly outper-forming a wide range of existing inference and training methods across six challenging reason-ing tasks, including BlocksWorld (embodied rea-soning), Game24 (math puzzle solving), Rubik’s Cube (spatial reasoning), 1D-ARC (abstraction reasoning), GSM8k (math reasoning), and Pron-toQA (logical reasoning). Code is available at https://github.com/Yu-Fangxu/FoR.     
+
+> *Equal contribution 1University of California San Diego. Cor-respondence to: Lianhui Qin <lianhui@ucsd.edu>.
+> Proceedings of the 42 nd International Conference on Machine Learning , Vancouver, Canada. PMLR 267, 2025. Copyright 2025 by the author(s).
+
+## 1. Introduction 
+
+Divergent problem solving is the ability to generate multiple diverse solutions to a given problem (Runco, 1991; Runco & Acar, 2012). As a hallmark of human intelligence, this ability drives creativity by uncovering novel ways to ac-complish a task, providing more possibilities and adaptivity in different complex situations. Similarly, by encouraging machines to explore diverse solutions rather than confin-ing to one reasoning path, we not only enhance machines’ robustness (e.g., by ranking or aggregating different solu-tions) (Wang et al., 2022), but also empower automated systems that assist humans in generating ideas and thinking out-of-the-box, thereby potentially facilitating task comple-tion (Shinn et al., 2024), education (Li et al., 2023a), and scientific discovery (Jain et al., 2023a). State-of-the-art reasoning with large language models (LLMs), however, has largely focused on improving only the reasoning accuracy with the topmost solution, with-out moving a step further to discover more diverse valid solutions. Specifically, inference methods, such as CoT (chain of thought, Wei et al., 2022), ToT (Yao et al., 2024), RAP (Hao et al., 2023), and others (Chen et al., 2024b; Besta et al., 2024), rely heavily on the underlying pretrained LLM’s capability and decoding algorithms to obtain diverse reasoning solutions. Moreover, the search-based inference (Yao et al., 2024; Hao et al., 2023) can be computationally costly when searching for multiple reasoning paths. On the other hand, the finetuning methods like supervised finetun-ing (SFT) (Yue et al., 2023; Yu et al., 2023c) often demands extensive supervision data to capture the full diversity of solutions, which can be costly to label in many applications. Alternatively, reward-maximization reinforcement learning (RL), such as proximal policy optimization (PPO, Schulman et al., 2017), trains LLMs to generate the highest-reward rea-soning solution and overlooks solution diversity. As shown in the case study in Figure 1, the above-mentioned methods generate limited diverse solutions. To overcome the limitations, we introduce Flow of Rea-soning ( FOR), a data-efficient approach that finetunes LLMs for diverse reasoning with minimal training data. FOR draws inspirations from generative flow networks (GFlowNets) for amortized diverse sampling (Bengio et al., 1Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples left:                    
+
+> 24
+> left:
+> 3 6 15
+> Goal: orange
+> block on top
+> of the blue
+> block
+> BlocksWorld:
+> Manipulating blocks to achieve
+> specific arrangements
+> 11-4=7
+> Game of 24:
+> Use basic arithmetic
+> operations (+-*/) to reach
+> the value of 24
+> Julie is reading… She wants
+> to read half of the
+> remaining pages tomorrow.
+> How many pages should
+> she read?
+> Q: How many
+> pages did
+> she read
+> today?
+> GSM8k:
+> Grad School Math
+> 1D-ARC:
+> Identifying patterns of
+> examples and applying
+> transformations
+> Pick up
+> blue
+> Examples
+> Cube ：
+> Recover the
+> Rubik's cube
+> 3 4 6 11
+> left:
+> 376
+> {}
+> A1: 24
+> At: 42 …
+> left:
+> 46
+> left:
+> 15 9
+> left:
+> 618
+> …
+> a1
+> a2 a2
+> s0
+> s1
+> LLM
+> generated
+> action
+> color the
+> 7th into
+> yellow
+> …
+> Environment
+> generated
+> next state
+> U’
+> U2
+> U
+> R2 R’
+> R’ R2
+> left:
+> 6 11 7
+> left:
+> 717
+> FoR SFT COT
+> *2
+> *6 *2 *1 *1 *3
+> color the
+> 5th into
+> red
+> 3+4=7
+> 3+6=9
+> Caes study
+> 3+15=18
+> 6+11=
+> 17
+> 7+17=24
+> A1: 30
+> Q: How many
+> pages has
+> she read?
+> A2: 36
+> …
+> …
+> Hypothesis: 31
+> is not imaginary
+> natural
+> numbers
+> are
+> inteagers
+> PrOntoQA:
+> Reach the hypothesis
+> using reasoning
+> 31 is a
+> natural
+> number
+> 31 is an
+> integer
+> 31 is a
+> real
+> number
+> 31 is not
+> imaginary
+> 31 is a
+> number
+> …
+> …
+> …
+
+Figure 1: Multi-step LLM reasoning as a Markovian flow on six tasks, forming DAG-structured reasoning graphs. In the example of Game24 (left), we sample 20 reasoning paths from each method, respectively. Baseline methods such as SFT and CoT generate only one valid solution (leftmost path) repetitively (e.g., SFT generates this solution twice out of the 20 attempts), while our method F OR discovers three additional unique solutions. 2021) that have been studied in different domains like molecule synthesis (Koziarski et al., 2024) and operation scheduling (Zhang et al., 2023c). In particular, F OR enables diversity-seeking finetuning of multi-step LLM reasoning, to sample high-quality reasoning paths with probabilities 
+
+proportional to the reward of target problems (as opposed to reward maximization in conventional RL like PPO). To this end, we formulate multi-step LLM reasoning from a Markovian flow perspective (Figure 2), where each reason-ing step corresponds to an edge (action) that leads to the next node (state) in a flow graph. The reasoning process thus forms a flow that travels step-by-step from an initial state to the terminal states of the target problem. Based on this new formulation, we use the trajectory-balanced objec-tive and adapt efficient exploration methods from the recent GFlowNet studies, enabling finetuning of LLMs to generate more accurate and diverse solutions in reasoning tasks. FOR differs crucially from the recent GFlowNet applica-tions on autoregressive sequence generation with or without LLMs (Hu et al., 2023a; Malkin et al., 2022a). In partic-ular, contrary to the token-level modeling in the previous work (Hu et al., 2023a), F OR introduces higher-level model-ing at the granularity of reasoning steps. This overcomes the limitations of aforementioned search-based LLM reasoning (Yao et al., 2024; Hao et al., 2023) by amortizing infer-ence into training. Additionally, GFlowNets’ exploratory nature (Madan et al., 2024) enhances both reasoning qual-ity and diversity, addressing the limitations of fine-tuning methods like SFT and PPO (see §4). We evaluate the divergent reasoning capability of our ap-proach across six challenging benchmarks: BlocksWorld (embodied reasoning; Kambhampati et al., 2024), Game24 (math puzzles; Yao et al., 2024), Rubik’s Cube (spatial rea-soning; Ding et al., 2023), 1D-ARC (abstraction; Xu et al., 2023b), GSM8K (math reasoning; Cobbe et al., 2021), and ProntoQA (logical reasoning; Saparov & He, 2022; see Ap-pendix 4.7). Empirical results show that F OR, with limited (e.g. 15) training examples, generates diverse, high-quality solutions, greatly outperforming a wide range of baselines with 20% - 85% improvements, including supervised train-ing methods like SFT, reward-maximizing RL like PPO, diversity-seeking approaches GFN-CoT and various decod-ing methods, and advanced inference methods like CoT, ToT, GoT, and RAP. Ablation studies further validate the key designs in F OR that lead to robustness and effectiveness. 
+
+## 2. Related Work 
+
+Divergent Thinking. Divergent thinking involves two branches: lateral and vertical (Waks, 1997b). Lateral think-ing explores unconventional ideas and challenges assump-tions, as seen in brain teasers (Zhong et al., 2024; Summers-Stay et al., 2023), while vertical thinking focuses on struc-tured, step-by-step reasoning. Our work focuses on vertical thinking, aiming to generate multiple different reasoning paths to solve a single problem. 
+
+LLM Reasoning. Recent LLMs (Achiam et al., 2023) have shown strong potential in tackling complex reason-ing tasks (Hu et al., 2023c; Zhang et al., 2023d; Yu et al., 2023b). (1) Fine-tuning LLMs , including supervised fine-tuning (SFT) and reward-maximization reinforcement learn-2Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples …
+
+> …
+> …
+> training object: trajectory balance
+> Local search
+> Training
+> LLM
+> forward trajectory
+> backward trajectory
+
+Figure 2: Left: The forward policy PF pst|st´1; θ, g q in the flow-based formulation is parameterized as LLM and finetuned with the trajectory balance objective (Eq.5) to achieve the desired flow F psnq “ Rpsnq on all terminal states sn. Right: 
+
+FOR incorporates local search with a destroy-and-reconstruction process to augment informative trajectories in training (§3.2). This facilitates efficient exploration and improves policy learning. ing (RL), is a key method for improving LLM reasoning abilities. SFT , leveraging large and high-quality datasets of reasoning chains, has proven highly effective (Yu et al., 2023c). RL techniques like PPO and DPO are widely used for optimizing reward-driven behavior in LLMs (Ouyang et al., 2022; Bai et al., 2022). However, both approaches tend to limit solution diversity. (2) Prompting-based meth-ods engage LLMs in a step-by-step thinking process. Chain-of-Thought (CoT) (Wei et al., 2022) enhances LLMs per-formance by guiding them through intermediate steps to reach the final answer. Building on CoT, the methods like ToT (Yao et al., 2024) and GoT (Besta et al., 2024) model reasoning as tree and graph searches, and RAP (Hao et al., 2023) and XoT (Ding et al., 2023) use planning approaches to refine reasoning trajectories. DoT (Naik et al., 2023) enhances reasoning diversity through varied prompts. 
+
+GFlowNets. GFlowNets (Bengio et al., 2021) were devel-oped to generate diverse, high-reward samples from unnor-malized distributions (Shen et al., 2023b; Roy et al., 2023; Zhang et al., 2023b), making them particularly effective in domains like molecule synthesis (Koziarski et al., 2024; Kim et al., 2024a; Lu et al., 2024), where diversity is essential. Recently, GFlowNets have been integrated with LLMs (Hu et al., 2023a; Kwon et al., 2024; Lee et al., 2024b; Song et al., 2024), but none of these have addressed multi-step reasoning problems. While Takase et al. (2024) is a concur-rent work, its scope is limited to math problems and does not extend to general reasoning problems. In contrast, F ORextends GFlowNets to multi-step reasoning, modeling it as a Markovian flow through a DAG, enabling the exploration of divergent reasoning paths across six reasoning benchmarks. 
+
+## 3. F OR for Divergent Reasoning 
+
+We first formulate the divergent multi-step reasoning tasks from a Markovian flow perspective (section 3.1). Then, we develop an efficient LLM training method using GFlowNet objectives for multi-step reasoning tasks (section 3.2). 
+
+3.1. Multi-step LLM Reasoning as Markovian Flow Multi-Step Reasoning Problem as DAG. Consider a multi-step reasoning problem that gives an initial state s0 and a goal g. For example, in BlocksWorld (Figure 2), an initial state is the starting configuration of the block stack, and a goal describes the desired configuration of blocks. Rea-soning aims to find complete paths (or trajectories ) that lead from the initial state to the state(s) that satisfy the goal. Given a current state s, applying an action on it leads to the transition to the next state s1, denoted as s Ñ s1. For example, in Figure 2, the state s0 transits to s1 after an action "pickup blue" . A complete trajectory is thus a sequence of transitions τ “ p s0 Ñ s1 Ñ ¨ ¨ ¨ Ñ snq P T ,where sn is the terminal state and T is the set of all complete trajectories. Given a current state st, there could be multiple alternative next actions, resulting in different branches of the reasoning steps. Also, different sequences of actions can lead to the same intermediate/terminal states, as shown in Figure 1. As a result, we first formulate the multi-step reasoning problem as a directed acyclic graph (DAG). The reasoning graph consists of diverse trajectories that lead to different terminal states. A crucial component often provided in reasoning tasks is the reward Rpsnq P Rě0,which assigns a numerical value to any terminal state sn.For instance, a terminal state meeting the goal g receives a high reward. As discussed in §1, to generate diverse correct reasoning trajectories for solving a task, we want to sample the trajectories with probabilities proportional to the re-ward. This significantly differs from popular reinforcement learning methods (e.g., PPO) and prompting-based planning algorithms (e.g., RAP, ToT), which focus on optimizing for only the maximum-reward trajectory. 3Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+The Flow Perspective. Sampling complex multi-step tra-jectories from the (often unnormalized) reward is partic-ularly challenging (LeCun et al., 2006; Qin et al., 2022). To overcome the difficulty, we consider the above rea-soning problem from a flow-based viewpoint which was initially developed in (Bengio et al., 2021) and has been studied in other machine learning settings like molecule generation (Li et al., 2023c; Lahlou et al., 2023; Li et al., 2024a; He et al., 2024). Specifically, we define a trajectory flow function F : T Ñ Rě0. Analogous to the classi-cal concept of flows in networks, the flow F pτ q can be thought of as the volume of water traveling along this path 
+
+τ . Based on this, for any state s, we can define the state flow 
+
+F psq “ ř 
+
+> sPτ
+
+F pτ q, and for any edge s Ñ s1, the edge flow 
+
+F ps Ñ s1q “ ř 
+
+> sÑs1Pτ
+
+F pτ q. These concepts of (unnor-malized) flow are connected to the (normalized) probability distributions. Specifically, the flow trajectory determines a distribution over trajectories:              
+
+> Ppτq “ Fpτq{ Z, Z“ÿ
+> τPTFpτq.(1)
+
+With a Markov assumption, it can be shown that the distri-bution factorizes into step-wise distributions:              
+
+> Ppτq “ źnt“1PFpst|st´1q,
+> where PFpst|st´1q “ Fpst´1Ñstq{ Fpst´1q.(2)
+
+That is, intuitively, PF pst|st´1q characterizes the proportion of water at node st´1 that travels toward node st. The distribution PF is also called the forward policy , which can generate a trajectory τ by sampling a sequence of transitions step-by-step starting from the initial state s0. Equivalently (Bengio et al., 2023), there exists a backward policy that defines the distributions PB p¨| stq over the parents of each state st: PB pst´1|stq “ F pst´1 Ñ stq{ F pstq
+
+Let τ be the trajectory ending at the terminal state sn. Re-call that our aim in diverse LLM reasoning is to obtain a forward policy PF pst|st´1q such that the resulting trajec-tory distribution is proportional to the reward. From the flow perspective, according to Eqs.(1) and (2), this aim is equivalent to approximating a Markovian flow F such that 
+
+F psnq equals the reward (Bengio et al., 2021):       
+
+> Fpsnq “ Rpsnq,@terminal state sn.(3)
+
+The above flow-based concepts provide a rich set of con-straints that can be converted into training objectives for learning the desired forward policy. For example, the detailed balance constraint F pst´1qPF pst|st´1q “
+
+F pstqPB pst´1|stq yields the respective objective used in molecule generation tasks (Bengio et al., 2023). In this work (§3.2), we devise the learning objective from the re-cent trajectory balance constraint shown to be more efficient (Malkin et al., 2022a). We consider the incorporation of other more recent extensions (Jang et al., 2023; Pan et al., 2023a) like subtrajectory balance (Madan et al., 2023) as future work. 
+
+LLM Parameterization. We parameterize the forward pol-icy PF with an LLM and finetune as described in the next section. Specifically, for a reasoning task, we express its goal g, action a, and state s as natural language (see Fig-ure 1, BlocksWorld as an example). At each reasoning step 
+
+t, the LLM generates an action at „ PLLM pa|st; θ, g, c q,where c is an appropriate prompt (e.g., instructions or in-context demonstrations). The prompts used in the experi-ments are detailed in Appendix C. Once an action is gen-erated, the state transits to the next st`1 “ T pst, a tq with a transition function T . Therefore, assuming that differ-ent actions applying to the same state st lead to different next states, and that action at leads to state st`1, we can write PF pst`1|st; θ, g q “ PLLM pat|st; θ, g, c q. In the exper-iments, we follow previous work and define T either by an LLM with appropriate prompts and greedy decoding (e.g., BlocksWorld as in (Hao et al., 2023)) or by the environment (e.g., Rubik’s Cube as in (Ding et al., 2023)). 
+
+3.2. Efficient Diversity-Seeking Training of LLMs 
+
+The proposed flow-based formulation of LLM reasoning enables the adaptation from GFlowNet training methods by fine-tuning an LLM as the forward policy PF .
+
+Training Objective. Since we can sample a complete trajec-tory, we derive our training objective based on the trajectory balance approach (Malkin et al., 2022a), which has shown improved efficiency than other alternatives (Bengio et al., 2023; 2021). Specifically, for any complete forward trajec-tory τ “ p s0 Ñ s1 Ñ ¨ ¨ ¨ Ñ snq, the trajectory balance constraint, with a task goal g, says (Figure 2):           
+
+> Zps0, g qźnt“1PFpst|st´1;gq “ Fpsnqźnt“1PBpst´1|st;gq,
+> (4)
+
+where we have used the fact that P psnq “ F psnq{ Zps0, g q
+
+for the terminal state sn. Plugging in the reward R, as motivated by Eq.(3), to provide supervision signals, the constraint leads to a loss function w.r.t the parameterized forward policy PF :               
+
+> lpτ;θ, g q “
+> ˆ
+> log Zps0, g qśnt“1PFpst|st´1;θ, g q
+> Rpsnqśnt“1PBpst´1|st;θ, g q
+> ˙2
+> ,PBpst´1|st;θ, g q:“1
+> |Pa pstq|
+> (5)
+
+where |Pa pstq| denotes the number of parents of state st,and (Malkin et al., 2022a) suggested a canonical choice of setting PB p¨| stq to be uniform over the parents. Note that 
+
+Z is the total flow conditioning on each goal g and initial state s0. The term log Z is challenging to learn accurately in an LLM setting (Hu et al., 2023a). We thus follow (Zhang 4Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+et al., 2023c) to use the log-variance approximation, which implicitly estimates log Z given each trajectory τ :               
+
+> Φpτ;θq “ log Rpsnq ` ÿnt“1log PBpst´1|st;θ, g q´ÿnt“1log PFpst|st´1;θ, g q,(6)
+
+where Φpτ ; θq equals to true log Z in the optimal case. Our optimization goal then turns into minimizing the variance of Φpτ ; θq over different trajectories τ with the loss:           
+
+> LVpτ;θq “ p Φpτ;θq ´ EτrΦpτ;θqsq 2,(7)
+
+where we sample trajectories τ from a behavior policy 
+
+πpτ ; θ, g q for training, and Eτ rΦpτ ; θqs is estimated with a mini-batch of sampled trajectories. We have different con-figurations of π, such as on-policy, off-policy, and mixed explorations, which could impact training efficiency (see ablation studies (§4)). If LV pτ ; θq is globally optimized, the resulting flow satisfies Eq.(3) and PF p¨|¨ ; θ, g q samples proportionally to the reward as desired. 
+
+Efficient Exploration. Training with the loss function in Eq. (7) requires trajectory collection, raising the challenge of how to collect them efficiently and effectively. On-policy sampling, which generates trajectories via τ „ PF pτ ; gq
+
+and optimizes LV pτ ; θq with a batch of trajectories, often struggles to explore the vast trajectory space due to lim-ited exploration capabilities. This can result in inadequate estimation of the distribution needed to capture diverse rea-soning paths. To address this, we want to set up a distri-bution πpτ, g ; θq in Eq. (7) that enhances exploration while producing various training samples for policy optimization. Inspired by recent advances in GFlowNets (Vemgal et al., 2023; Hu et al., 2023a), we combine on-policy and off-policy strategies and further enhance exploration by adapt-ing local search (Kim et al., 2023) for LLM training. For on-policy exploration, we use both the online policy 
+
+PF pst|st´1; θ, g q and a tempered variant to generate trajec-tories given a goal g and initial state s0. Off-policy explo-ration leverages a replay buffer prioritizing high-reward trajectories, ϵ-sampling, and offline trajectory data (for Game24 in §4.3). To efficiently explore high-reward re-gions, we propose a modified local search method (Figure 2). Specifically, we select the highest-reward trajectory from each batch, truncate its latter portion, and reconstruct it us-ing a random policy PU . This avoids the computationally expensive forward process of LLMs, enhancing efficiency. High-reward trajectories are more likely to reconstruct cor-rectly in early steps, with errors typically occurring later. Additional details on the full algorithm, exploration strate-gies, and local search are in Appendices E and F. 
+
+## 4. Experiments 
+
+4.1. Experimental Settings Baselines. We first compare our approach with several prompting-based methods, including k-shot CoT (Wei et al., 2022), ToT (Yao et al., 2024), GoT (Besta et al., 2024), XoT (Ding et al., 2023), and RAP (Hao et al., 2023). We use the Llama-3-8B (Dubey et al., 2024) as the base model for all tasks. For fine-tuning-based methods, we evaluate SFT with diversity-enhancing decoding strategies like Tempera-ture Sampling (Shi et al., 2024), Nucleus Sampling (Holtz-man et al., 2019) ( η “ 0.95 ), Typical Sampling (Meister et al., 2023) ( τ “ 0.95 ), and diverse beam search (Vijayaku-mar et al., 2016) (DBS, beam width k “ 20 ). Additionally, we apply fine-tuning with PPO (Schulman et al., 2017) and GFN-CoT (Hu et al., 2023a). We also compare it against OpenAI-O1, which is the latest and strongest reasoning model. All finetuning methods are trained on the same dataset as F OR. In the BlocksWorld task, we evaluated most baselines for a broad comparison, but some methods (e.g., GFN-CoT) showed suboptimal performance, which informed our decision to selectively apply high-performing baselines in the subsequent tasks. 
+
+Evaluation. We generate n solutions per problem and evaluate methods based on four key metrics: (1) Accuracy (Acc) : A problem is considered correct if at least one of the 
+
+n sampled solutions is correct. (2) Diversity : For problems with at least one correct solution, we report the average number of semantically different correct solutions among the number of correct solutions, where higher is better (see Appendix for details). (3) Creativity : The proportion of unique correct solutions found by a method that are not discovered by others. (4) Runtime : The average time to generate one solution by using a single NVIDIA A100 80GB GPU is used as an efficiency metric. See Appendix C.1 and C.2 for details of metrics. 1
+
+4.2. Embodied Reasoning: BlocksWorld 
+
+BlocksWorld involves a set of blocks with unique colors that can be stacked on top of each other or moved around. The goal of this task is to enable LLMs to plan a sequence of actions to transform an initial configuration of blocks into a desired goal configuration using a series of actions. The actions are text instructions (STACK, UNSTACK, PUT, PICKUP) generated based on domain rules and block posi-tions, and a state is the current block orientation. 
+
+Setup. Blocksworld examples (Valmeekam et al., 2024) are grouped by the minimum number of required actions: 30 
+
+> 1In our experiments, we report the average accuracy and stan-dard deviation over three repetitions, except for search-based meth-ods and O1-series due to time and budget constraints. Creativity is not averaged over repetitions, as the performance exhibit low variance across runs.
+
+5Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Table 1: Results on BlocksWorld, comparing prompting-based and finetuning-based methods on questions requiring two, four, and six steps, respectively. The standard deviations of three runs are shown in brackets. α is a temperature. ♣ indicates that results from multiple runs for ToT (DFS).                                                                                                                                                                          
+
+> Method 2-step 4-step 6-step Runtime (s)
+> Acc. (%) Acc. (%) Diversity Creativity (%) Acc. (%) Diversity Creativity (%) (6-step)
+> Prompting-based methods
+> CoT (1-shot) 48.88 (8.31) 28.57 (5.83) 1.05 (0.04) 0.00 15.82 (2.08) 1.05 (0.03) 0.00 3.57 CoT (5-shot) 68.89 (8.31) 42.86 (1.94) 1.04 (0.03) 0.00 29.63 (1.72) 1.02 (0.01) 0.00 3.68 CoT (15-shot) 64.44 (6.29) 42.06 (4.89) 1.03 (0.02) 0.00 19.53 (1.26) 1.03 (0.03) 0.00 5.32 CoT (GPT-4o, 1-shot) 93.33 54.76 1.08 0.00 67.67 1.06 0.79 3.92 ToT (DFS) 13.33 16.67 --8.08 --48.91 ToT (DFS) ♣40.00 42.85 1.0 0.00 31.31 1.06 1.58 44.41 ToT (BFS) 13.33 14.28 --5.05 --398.74 RAP 100.00 92.86 --69.70 --466.09
+> O1-series methods
+> O1-mini (1-shot) * 100.00 100.00 1.05 0.00 93.93 1.05 2.38 10.38 O1-preview (1-shot) * 100.00 95.24 --78.79 --36.61
+> Finetuning-based methods
+> SFT ( α=1.0) 44.44 (3.14) 42.06 (5.44) 1.05 (0.01) 0.00 34.68 (2.52) 1.04 (0.01) 4.76 4.05 SFT ( α=0.5) 42.22 (3.14) 39.68 (2.24) 1.02 (0.02) 0.00 29.63 (1.90) 1.02 (0.02) 0.79 4.07 SFT ( α=0.1) 26.67 (5.44) 26.20 (3.89) 1.00 (0.00) 0.00 17.51 (1.26) 1.00 (0.00) 0.00 4.08 SFT + DBS 31.10 (3.11) 38.88 (1.12) 1.00 (0.00) 0.00 18.85 (1.25) 1.00 (0.00) 0.00 15.71 SFT + Nucleus 48.89 (3.14) 53.97 (2.97) 1.04 (0.03) 0.00 42.08 (1.71) 1.12 (0.03) 0.00 4.21 SFT + Typical 53.33 (5.44) 48.41 (2.25) 1.08 (0.02) 0.00 37.71 (2.38) 1.08 (0.02) 0.00 3.65 SFT + PPO 46.66 (5.44) 44.44 (2.24) 1.11 (0.05) 2.04 24.58 (1.72) 1.08 (0.03) 3.17 4.03 SFT + GFN-CoT 48.89 (8.81) 44.42 (2.96) 1.00 (0.00) 0.00 40.73 (1.25) 1.05 (0.03) 0.00 4.08 FOR (Ours) 100.00 (0.00) 98.41 (1.12) 1.27 (0.02) 12.24 78.44 (4.54) 1.33 (0.03) 9.52 13.98
+
+examples for 2 steps, 57 for 4 steps, and 114 for 6 steps, following Hao et al. (2023). We select the first 15 of each group as the training examples for F OR and the rest as test examples. We sampled 8, 20, and 40 times for the 2, 4, and 6-step datasets, respectively, to report diversity and creativity. All the baselines are included in §4.1. 
+
+Reward Design. We compose a terminal state reward and an augmented intermediate reward to evaluate trajectories. Terminal state reward is assigned to a high positive value when a trajectory reaches the goal g. The augmented in-termediate reward assesses actions by using the LLM to estimate the confidence of actions in achieving their goals. A natural choice is to use the log-likelihood of actions, 
+
+log PLLM pat|st´1, g q. However, the value of log P is nega-tive. To maintain monotonicity consistency and positive reward values, we use ´1{ log PLLM pat|st´1, g q instead. The total reward is defined as: Rpsnq “ w ¨ Ipsuccess q ` 
+
+λ řnt“1 ´1{ log PLLM pat|st´1, g q, where w is the success weight (set to 100 and the following tasks). 
+
+Results. As shown in Table 1, Our method outperforms all other baselines across all metrics, showing that F OR not only achieves the best accuracy but also finds more diverse and unique solutions. Specifically, most baselines do not find any unique solutions, resulting in a creativity score of 0. It is worth noting that the O1 series improves the accuracy to a large extent, but still struggles to find diverse reason-ing paths. Additionally, F OR matches the inference speed of high-efficiency baselines like k-shot CoT, ToT (DFS), Table 2: Results on Game of 24. 
+
+Method Acc. (%) Diversity Creativity (%) 
+
+Prompting-based methods 
+
+CoT (5-shot) 23.00 1.04 6.60 CoT (GPT-4o, 5-shot) 59.00 1.61 49.42 
+
+XoT 20.00 - -ToT 21.00 - -RAP 10.00 - -
+
+O1-series methods 
+
+OpenAI-O1-mini 94.00 - -
+
+Finetuning-based methods 
+
+SFT ( α “ 1.0) 29.00 1.18 11.22 FOR 48.00 (1.41) 1.30 (0.09) 29.15 and SFT-based methods, while being 30× faster than ToT (BFS) and RAP. Additional results of diversity-encouraging prompts, larger-size models, and out-of-distribution (OOD) generalization are in Appendix C.4, and training costs are detailed in Appendix C.3. 
+
+4.3. Math Puzzle Solving: Game of 24 
+
+Game of 24 is a mathematical reasoning task that may have multiple solutions. The objective of this task is to use 4 integers and 4 basic arithmetic operations ( `, ´, ˆ, ˜) to reach 24, where each number can only be used once. Each action at is defined as an equation composed of 2 numbers and an operator, and the state st is the left number. 
+
+Setup. We use the LLM-reasoner dataset (Hao et al., 2024) 6Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Table 3: Results on Rubik’s Cube.                                
+
+> Method Acc. (%) Diversity Creativity (%)
+> Prompting-based methods
+> CoT 0.00 0.00 0.00 CoT (GPT-4) 1.09 1.00 4.35 ToT (BFS) 0.00 --GoT 0.00 --XoT 4.92 --
+> Finetuning-based methods
+> SFT ( α“1.0)1.82 (0.06) 1.00 (0.00) 8.69 SFT + PPO 0.55 (0.45) 1.00 (0.00) 0.00 FOR10.87 (1.18) 1.29 (0.02) 82.61
+
+and randomly select 20 examples for training and 100 exam-ples for testing. Since prior work shows that LLMs struggle to sample correct trajectories online in Game24 (Yao et al., 2024; Yu et al., 2023a), we generate offline ground-truth trajectories using Python code for fine-tuning. We sample 20 solutions for all methods. 
+
+Reward Design. Similar to BlocksWorld, the success re-ward gives a high positive reward when a trajectory τ suc-ceeds in reaching 24, and the augmented reward gives the product of the probability of correctness for each action 
+
+at, given its last state st´1 provided by the untrained LLM model: Rpsnq “ w ¨ Ipsuccess q ` śnt“1 Puntrained pat|st´1q.
+
+Results. As shown in Table 2, F OR demonstrates superior accuracy and diversity in solving math puzzles compared to other baselines with the same base model. Not surprisingly, O1-mini and GPT-4o achieve better performance due to the stronger intrinsic mathematical knowledge and reasoning mechanism. We also investigate the fact that GPT-4o tends to use self-verification and reflection during Game24’s infer-ence. This may explain its superior performance in Game24. 
+
+4.4. Spatial Reasoning: Rubik’s Cube 
+
+The Rubik’s Cube is a well-known puzzle requiring multi-step spatial reasoning. The model’s task is to plan a se-quence of rotations to restore a shuffled cube, where each state st represents the block arrangement, and each action 
+
+at is a layer rotation (e.g., 90 or 180 degrees). 
+
+Setup. We randomly select 15 examples from the training dataset in from (Ding et al., 2023), and evaluate different methods on a test set containing 183 examples. Each ex-ample can be solved in four steps. All the baselines are included in §4.1. For SFT, CoT and F OR, 10 solutions are sampled. See more details in Appendix C.6. 
+
+Reward Design. Similar to previous tasks, we have a suc-cess reward and an augmented reward that is based on the difference in minimum steps required to restore the cube from its current state. Actions that reduce steps receive higher rewards, while others receive lower rewards. For-mally, Rpsnq “ w¨Ipsuccess q` řnt“1 exp prpst´1q´ rpstqq ,where rpstq represents the remaining minimum steps. Table 4: Results on 1D-ARC.                        
+
+> Method Acc. (%) Diversity Creativity (%) IO 10.37 (1.21) --CoT 39.51 (1.94) 1.04 (0.01) 1.45 CoT (GPT-4o) 40.00 1.00 0.00 Program-Only 0.74 --Hypo-Search 1.48 --FOR50.37 (1.60) 1.17 (0.02) 21.74
+
+Results. As shown in Table 3, F OR outperforms all base-lines on the Rubik’s Cube task, achieving absolute increase of 5.95% in accuracy than XoT, generating an absolute 29% increase in diverse solutions, and discovering unique and creative solutions than the baselines. 
+
+4.5. Abstraction Reasoning: 1D-ARC 
+
+1D-ARC is a one-dimensional simplification of the ARC benchmark (Chollet, 2019), introduced in (Xu et al., 2023b). Each problem in the dataset contains a set of training input-output 1D grid pairs that capture a specific underlying rule and a test case that measures if the model correctly under-stands the rule. Following recent program search approaches (Wang et al., 2023b; Qiu et al., 2023; Butt et al., 2024), which frame the problem as a sequence of transformation functions, each action at is a function (e.g., horizontal mir-roring), with the intermediate grid as state st.
+
+Setup. We randomly select 5 examples from the 1d_move_1p, 1d_padded_fill, and 1d_denoising tasks. These tasks involve moving the color bar by 1 pixel, filling in empty spaces enclosed by pixels, and removing noise-like pixels respectively. The 15 selected examples form the training set, while the remaining 45 examples from each task form the test dataset. We sample 20 solutions for each example during inference. See Appendix C.7 for details. 
+
+Baselines. Since there are no complex reasoning baselines (e.g., ToT) evaluated on this task, we compare against Input-output (IO) prompting (Mirchandani et al., 2023). Program Only and Hypothesis Search (Wang et al., 2023b) synthesize Python programs for transformation, with the latter first gen-erating language-based transformation hypotheses before program synthesis. Fine-tuning methods are not compared due to the lack of labeled reasoning data. 
+
+Reward Design. In addition to a success reward, we design the augmented rewards for actions based on how much they reduce the distance to the goal. Specifically, an action receives a higher reward if it reduces the distance between the current state and the goal. The total reward is Rpsnq “ 
+
+w ¨ Ipsuccess q ` řnt“1
+
+řKi“1 exp phdpsit´1, g iq ´ hdpsit, g iqq ,where hdp¨ , ¨q is hamming distance and K is the number of training input-output pairs. 
+
+Results. Results in Table 4 show that F OR substantially outperforms previous methods on all metrics, especially 7Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Table 5: Ablation results on BlocksWorld for different components in F OR with Llama-3-8b. 
+
+Method 2-step 4-step 6-step 
+
+Acc. (%) Acc. (%) Diversity Acc. (%) Diversity FOR (Ours) 100.00 (0.00) 98.41 (1.12) 1.27 (0.02) 78.44 (4.54) 1.33 (0.03) - w/o local search 100.00 (0.00) 89.68 (2.97) 1.18 (0.02) 53.90 (2.10) 1.31 (0.03) - w/o augmented rewards 100.00 (0.00) 91.30 (1.10) 1.22 (0.02) 47.10 (1.30) 1.21 (0.01) - w/o replay buffer 100.00 (0.00) 94.44 (2.97) 1.24 (0.04) 72.38 (1.71) 1.24 (0.01) - w/o ϵ-sampling 100.00 (0.00) 97.61 (1.95) 1.26 (0.03) 73.39 (2.38) 1.25 (0.04) 
+
+Table 6: Results on GSM8K.                         
+
+> Method Acc. (%) Diversity-H Diversity-G CoT (2-shot) 45.72 1.12 1.60 CoT-SC (2-shot) 41.74 --RAP 37.16 --SFT ( α“1.0)52.69 1.13 1.63
+> FOR57.39 1.26 1.72
+> FOR+ PRM 62.62 1.31 1.77
+
+diversity and creativity. Previous approaches (hypothesis search and program-only) generate programs at once, which easily results in errors during the intermediate process, lead-ing to inferior performance. 
+
+4.6. Mathematical Reasoning: GSM8K 
+
+GSM8K consists of grade-school math problems (Cobbe et al., 2021). Following RAP (Hao et al., 2023), we define an action at as an intermediate sub-question and a state as the history of all sub-questions and their corresponding answers. 
+
+Setup. We use the last 50 training examples in the original training dataset, and we sample 4 times for every problem at inference. We follow the baseline implementations from LLM reasoners (Hao et al., 2024). Since there is no standard metric for reasoning diversity, we manually annotate 50 test examples to evaluate the semantic difference between solutions as the diversity metric (Diversity-H), and propose an automatic metric using GPT-4o to distinguish different solutions (Diversity-G), where the prompt is provided in Appendix C.9. 
+
+Reward Design. We removed the success reward since the pretrained mathematical knowledge enables LLMs to perform relatively well compared to BlocksWorld. Using LLMs to verify each state is computationally expensive. The reward is defined as Rpsnq “ w¨Ipsuccess q. In addition, we augment the above reward with the process reward model (PRM) using Qwen2.5-Math-PRM-7B (Zhang et al., 2025) to evaluate the intermediate reasoning steps: Rpsnq “ w ¨
+
+Ipsuccess q ` λ řnt“1 PRM pat|st´1, g q.
+
+Results. As shown in the table 6, in the task of GSM8K, FOR outperforms all baselines in both accuracy and di-versity. These results highlight the potential of F OR for extending to more open-ended reasoning tasks. Table 7: PrOntoQA Results. Pred Acc measures the ac-curacy of the final conclusions, while Proof Acc evaluates the correctness of the reasoning process (e.g., no short-cuts/hallucinations).                                      
+
+> Method In-Distribution Out-of-Distribution
+> Pred Acc.(%) Proof Acc.(%) Pred Acc.(%) Proof Acc.(%)
+> Prompting-based methods
+> CoT 52.20 (1.23) 35.40 (1.86) 43.50 (1.48) 18.50 (1.91) CoT (GPT-4o) 89.00 47.80 62.92 24.78 ToT (BFS) 49.80 32.20 --RAP 50.70 39.50 --
+> Finetuning-based methods
+> STaR 88.90 54.00 50.10 24.60 FOR88.73 (1.33) 54.60 (1.50) 63.07 (1.71) 28.88 (2.36) FOR +STaR 90.50 (1.89) 54.70 (1.41) 63.00 (2.13) 26.67 (2.80)
+
+4.7. Logical Reasoning: PrOntoQA 
+
+PrOntoQA is a logical reasoning task. Each test case in-cludes a question (goal), a list of facts A (action space), and an initial state s0. A state st is the conclusion derived from the previous state st´1. Performance is evaluated using two metrics: prediction accuracy and proof accuracy. Predic-tion accuracy refers to the correctness of the final answer, regardless of the reasoning process. Proof accuracy, on the other hand, measures the correctness of the entire reasoning chain, ensuring that each step leading to the final answer is accurate. Both metrics are calculated using rule-based string matching. The Diversity metric is not applicable, as each question has only one valid reasoning chain. 
+
+Setup. We randomly select 50 examples for the training set and 120 for the test set. The evaluation is conducted on both in- and out-of-distribution (OOD) examples, with 32 samples drawn per problem during inference. In addition to the baselines described in §4.1, we adopt STaR (Zelik-man et al., 2022), which applies SFT on correct examples through online sampling. We also evaluate F OR on top of the model fine-tuned by STaR. See Appendix C.8 for more experimental details. 
+
+Reward Design. We removed the success reward to pre-vent the model from arriving at correct answers through flawed reasoning paths. Instead, we apply a rule-based augmented reward that evaluates the feasibility of a fact given the previous state st´1, checking if they share the same ontology. Formally, the reward is defined as Rpsnq “ 
+
+> 1
+> n
+
+řnt“1 w ¨ Ipst´1, s tq, where w is a hyperparameter and 8Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Table 8: Ablation results of F OR on BlocksWorld without local search. 
+
+Method 2-step 4-step 6-step 
+
+Acc. (%) Acc. (%) Diversity Acc. (%) Diversity Ours - w/o local search 100.00 89.68 1.18 53.90 1.31 - w/o augmented rewards 100.00 71.43 1.04 30.30 1.17 - w/o replay buffer 100.00 78.57 1.10 34.34 1.15 - w/o ϵ-sampling 100.00 83.33 1.12 49.49 1.14 
+
+Ipst´1, s tq is an indicator function. Ipst´1, s tq equals 1 only when the transition pst´1, s tq is part of the ground-truth reasoning path, ensuring no shortcuts are taken. 4.7.1. R ESULTS 
+
+As shown in Table 7, F OR achieves superior results on both in- and out-of-distribution problems compared to all baselines. While F OR slightly outperforms the SFT-based STaR for in-distribution tasks, its advantage is far greater for out-of-distribution tasks. Moreover, combining F OR with STaR enhances in-distribution performance while preserv-ing out-of-distribution success, revealing the complementary strengths of these methods. 
+
+4.8. Additional Analysis Ablation Study. To further demonstrate the effectiveness of F OR, we conduct ablation studies to analyze the im-pact of individual components, focusing specifically on the BlocksWorld task. Table 5 and Table 8 summarize our component-wise ablations: 1) Local search enhances exploration and high-reward tra-jectory collection—its removal causes a 31.3% absolute drop in 6-step accuracy; 2) ϵ-sampling also aids exploration, though to a lesser degree; 3) Augmented intermediate re-wards are critical—removing them yields a 51% decrease in 6-step accuracy and a 13% reduction in diversity, and tun-ing the reward weight λ (left plot of Fig. 3) further refines performance (overly large λ harms accuracy); 4) The replay buffer leverages past high-reward trajectories—dropping it incurs a 4–6% loss with local search versus an 11–19% loss without, highlighting its greater importance when search is absent. To isolate these effects, we also remove local search and reassess each component: as shown in Table 8, the replay buffer’s impact grows without search (11–19% drop vs. 4–6%), and eliminating augmented rewards still causes the largest performance degradation, underscoring their effectiveness in F OR. 
+
+Data-Efficiency. We test the final 20 examples from the 6-step test set and adjust the number of training examples for both F OR and SFT. As illustrated in the right plot of Figure 3, SFT’s accuracy improves with additional training data, while its diversity remains stable. However, SFT’s performance remains lower than F OR’s under any amount of training data. This is attributed to F OR’s ability to learn 0.0 0.5 1.0 1.5 2.0     
+
+> augmented reward weight
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Accuracy (%)
+> 2 step
+> 4 step
+> 6 step 115 30 45 60
+> Number of training data
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Accuracy (%)
+> 0.8
+> 0.9
+> 1.0
+> 1.1
+> 1.2
+> 1.3
+> 1.4
+> Diversity
+> SFT Acc
+> FoR Acc
+> SFT Div
+> FoR Div
+
+Figure 3: Additional analysis on BlocksWorld. Left : Ac-curacy of F OR across different step settings with varying intermediate reward weight ( λ). Right : Comparison of ac-curacy and diversity between SFT trained with varying data sizes and F OR trained on the test dataset. from divergent reasoning trajectories, enhancing trajectory coverage and improving generalization to new cases. 
+
+Discussion. FOR achieves higher reasoning accuracy and diversity by leveraging its exploratory nature (Madan et al., 2024) to sample multiple valid trajectories, covering a broader solution space without getting stuck on incorrect paths like SFT. This increases the likelihood of reaching a correct solution. A detailed case study that compares F ORwith SFT is provided in Appendix G. Furthermore, F ORdemonstrates robust performance across varying training set sizes, different LLM families, and larger model scales (see Appendix D). 
+
+## 5. Conclusion 
+
+We introduce F OR, which efficiently trains LLMs to gen-erate diverse, high-quality reasoning paths proportional to unnormalized rewards. By leveraging a flow-based multi-step reasoning formulation, F OR adapts and improves GFlowNets training strategies. Across six reasoning tasks, FOR outperforms finetuning- and prompting-based base-lines in both accuracy and diversity. Limitations are dis-cussed in Appendix I. 
+
+## Impact Statement 
+
+This study introduces F OR, a framework that enhances LLMs’ ability to solve multi-step reasoning problems. This approach lays the foundation for scalable, principled LLM reasoning, with potential applications in automated theorem proving, robotics, and scientific discovery, contributing to more robust and interpretable AI systems. 9Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+## References 
+
+Achiam, J., Adler, S., Agarwal, S., Ahmad, L., Akkaya, I., Aleman, F. L., Almeida, D., Altenschmidt, J., Altman, S., Anadkat, S., et al. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 , 2023. Bai, Y., Kadavath, S., Kundu, S., Askell, A., Kernion, J., Jones, A., Chen, A., Goldie, A., Mirhoseini, A., McKin-non, C., et al. Constitutional ai: Harmlessness from ai feedback. arXiv preprint arXiv:2212.08073 , 2022. Bansal, H., Hosseini, A., Agarwal, R., Tran, V. Q., and Kazemi, M. Smaller, weaker, yet better: Training llm reasoners via compute-optimal sampling. arXiv preprint arXiv:2408.16737 , 2024. Barke, S., Gonzalez, E. A., Kasibatla, S. R., Berg-Kirkpatrick, T., and Polikarpova, N. Hysynth: Context-free llm approximation for guiding program synthesis. 
+
+arXiv preprint arXiv:2405.15880 , 2024. Bengio, E., Jain, M., Korablyov, M., Precup, D., and Ben-gio, Y. Flow network based generative models for non-iterative diverse candidate generation. Advances in Neu-ral Information Processing Systems , 34:27381–27394, 2021. Bengio, Y., Lahlou, S., Deleu, T., Hu, E. J., Tiwari, M., and Bengio, E. Gflownet foundations. Journal of Machine Learning Research , 24(210):1–55, 2023. Besta, M., Blach, N., Kubicek, A., Gerstenberger, R., Pod-stawski, M., Gianinazzi, L., Gajda, J., Lehmann, T., Niewiadomski, H., Nyczyk, P., et al. Graph of thoughts: Solving elaborate problems with large language models. In Proceedings of the AAAI Conference on Artificial In-telligence , volume 38, pp. 17682–17690, 2024. Butt, N., Manczak, B., Wiggers, A., Rainone, C., Zhang, D., Defferrard, M., and Cohen, T. Codeit: Self-improving language models with prioritized hindsight replay. arXiv preprint arXiv:2402.04858 , 2024. Cai, Z., Cao, M., Chen, H., Chen, K., Chen, K., Chen, X., Chen, X., Chen, Z., Chen, Z., Chu, P., Dong, X., Duan, H., Fan, Q., Fei, Z., Gao, Y., Ge, J., Gu, C., Gu, Y., Gui, T., Guo, A., Guo, Q., He, C., Hu, Y., Huang, T., Jiang, T., Jiao, P., Jin, Z., Lei, Z., Li, J., Li, J., Li, L., Li, S., Li, W., Li, Y., Liu, H., Liu, J., Hong, J., Liu, K., Liu, K., Liu, X., Lv, C., Lv, H., Lv, K., Ma, L., Ma, R., Ma, Z., Ning, W., Ouyang, L., Qiu, J., Qu, Y., Shang, F., Shao, Y., Song, D., Song, Z., Sui, Z., Sun, P., Sun, Y., Tang, H., Wang, B., Wang, G., Wang, J., Wang, J., Wang, R., Wang, Y., Wang, Z., Wei, X., Weng, Q., Wu, F., Xiong, Y., Xu, C., Xu, R., Yan, H., Yan, Y., Yang, X., Ye, H., Ying, H., Yu, J., Yu, J., Zang, Y., Zhang, C., Zhang, L., Zhang, P., Zhang, P., Zhang, R., Zhang, S., Zhang, S., Zhang, W., Zhang, W., Zhang, X., Zhang, X., Zhao, H., Zhao, Q., Zhao, X., Zhou, F., Zhou, Z., Zhuo, J., Zou, Y., Qiu, X., Qiao, Y., and Lin, D. Internlm2 technical report, 2024. Chen, Q., Zhang, B., Wang, G., and Wu, Q. Weak-eval-strong: Evaluating and eliciting lateral thinking of llms with situation puzzles. arXiv preprint arXiv:2410.06733 ,2024a. Chen, W., Ma, X., Wang, X., and Cohen, W. W. Program of thoughts prompting: Disentangling computation from reasoning for numerical reasoning tasks. arXiv preprint arXiv:2211.12588 , 2022. Chen, Y. and Mauch, L. Order-preserving gflownets. arXiv preprint arXiv:2310.00386 , 2023. Chen, Z., White, M., Mooney, R., Payani, A., Su, Y., and Sun, H. When is tree search useful for llm plan-ning? it depends on the discriminator. arXiv preprint arXiv:2402.10890 , 2024b. Chollet, F. On the measure of intelligence. arXiv preprint arXiv:1911.01547 , 2019. Chowdhery, A., Narang, S., Devlin, J., Bosma, M., Mishra, G., Roberts, A., Barham, P., Chung, H. W., Sutton, C., Gehrmann, S., et al. Palm: Scaling language modeling with pathways. Journal of Machine Learning Research ,24(240):1–113, 2023. Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert, M., Tworek, J., Hilton, J., Nakano, R., et al. Training verifiers to solve math word problems. 
+
+arXiv preprint arXiv:2110.14168 , 2021. de Miquel, A. Arc_kaggle - abstraction and reasoning chal-lenge kaggle competition code. https://github. com/alejandrodemiquel/ARC_Kaggle , 2021. Accessed: 2024-09-29. Deleu, T. and Bengio, Y. Generative flow net-works: a markov chain perspective. arXiv preprint arXiv:2307.01422 , 2023. Deleu, T., Góis, A., Emezue, C., Rankawat, M., Lacoste-Julien, S., Bauer, S., and Bengio, Y. Bayesian structure learning with generative flow networks. In Uncertainty in Artificial Intelligence , pp. 518–528. PMLR, 2022. Deleu, T., Nishikawa-Toomey, M., Subramanian, J., Malkin, N., Charlin, L., and Bengio, Y. Joint bayesian inference of graphical structure and parameters with a single gen-erative flow network. Advances in Neural Information Processing Systems , 36, 2024. 10 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Ding, R., Zhang, C., Wang, L., Xu, Y., Ma, M., Zhang, W., Qin, S., Rajmohan, S., Lin, Q., and Zhang, D. Every-thing of thoughts: Defying the law of penrose triangle for thought generation. arXiv preprint arXiv:2311.04254 ,2023. Dubey, A., Jauhri, A., Pandey, A., Kadian, A., Al-Dahle, A., Letman, A., Mathur, A., Schelten, A., Yang, A., Fan, A., et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. Feng, X., Wan, Z., Wen, M., Wen, Y., Zhang, W., and Wang, J. Alphazero-like tree-search can guide large language model decoding and training. arXiv preprint arXiv:2309.17179 , 2023. Ghari, P. M., Tseng, A., Eraslan, G., Lopez, R., Biancalani, T., Scalia, G., and Hajiramezanali, E. Generative flow networks assisted biological sequence editing. In NeurIPS 2023 Generative AI and Biology (GenBio) Workshop ,2023. Hao, S., Gu, Y., Ma, H., Hong, J. J., Wang, Z., Wang, D. Z., and Hu, Z. Reasoning with language model is planning with world model. arXiv preprint arXiv:2305.14992 ,2023. Hao, S., Gu, Y., Luo, H., Liu, T., Shao, X., Wang, X., Xie, S., Ma, H., Samavedhi, A., Gao, Q., et al. Llm reasoners: New evaluation, library, and analysis of step-by-step reasoning with large language models. arXiv preprint arXiv:2404.05221 , 2024. Havrilla, A., Du, Y., Raparthy, S. C., Nalmpantis, C., Dwivedi-Yu, J., Zhuravinskyi, M., Hambro, E., Sukhbaatar, S., and Raileanu, R. Teaching large language models to reason with reinforcement learning. arXiv preprint arXiv:2403.04642 , 2024. He, H., Chang, C., Xu, H., and Pan, L. Looking backward: Retrospective backward synthesis for goal-conditioned gflownets. arXiv preprint arXiv:2406.01150 , 2024. Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J. Measuring math-ematical problem solving with the math dataset. arXiv preprint arXiv:2103.03874 , 2021. Hernandez-Garcia, A., Saxena, N., Jain, M., Liu, C.-H., and Bengio, Y. Multi-fidelity active learning with gflownets. 
+
+arXiv preprint arXiv:2306.11715 , 2023. Holtzman, A., Buys, J., Du, L., Forbes, M., and Choi, Y. The curious case of neural text degeneration. arXiv preprint arXiv:1904.09751 , 2019. Hosseini, A., Yuan, X., Malkin, N., Courville, A., Sordoni, A., and Agarwal, R. V-star: Training verifiers for self-taught reasoners. arXiv preprint arXiv:2402.06457 , 2024. Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., and Chen, W. Lora: Low-rank adaptation of large language models. arXiv preprint arXiv:2106.09685 ,2021. Hu, E. J., Jain, M., Elmoznino, E., Kaddar, Y., Lajoie, G., Bengio, Y., and Malkin, N. Amortizing intractable inference in large language models. arXiv preprint arXiv:2310.04363 , 2023a. Hu, E. J., Malkin, N., Jain, M., Everett, K. E., Graikos, A., and Bengio, Y. Gflownet-em for learning compositional latent variable models. In International Conference on Machine Learning , pp. 13528–13549. PMLR, 2023b. Hu, Y., Yang, H., Lin, Z., and Zhang, M. Code prompt-ing: a neural symbolic method for complex reasoning in large language models. arXiv preprint arXiv:2305.18507 ,2023c. Huang, S., Ma, S., Li, Y., Huang, M., Zou, W., Zhang, W., and Zheng, H.-T. Lateval: An interactive llms evalua-tion benchmark with incomplete information from lateral thinking puzzles. arXiv preprint arXiv:2308.10855 , 2023. Ismayilzada, M., Paul, D., Bosselut, A., and van der Plas, L. Creativity in ai: Progresses and challenges. arXiv preprint arXiv:2410.17218 , 2024. Jain, M., Bengio, E., Hernandez-Garcia, A., Rector-Brooks, J., Dossou, B. F., Ekbote, C. A., Fu, J., Zhang, T., Kil-gour, M., Zhang, D., et al. Biological sequence design with gflownets. In International Conference on Machine Learning , pp. 9786–9801. PMLR, 2022. Jain, M., Deleu, T., Hartford, J., Liu, C.-H., Hernandez-Garcia, A., and Bengio, Y. Gflownets for ai-driven scien-tific discovery. Digital Discovery , 2(3):557–577, 2023a. Jain, M., Raparthy, S. C., Hernández-Garcıa, A., Rector-Brooks, J., Bengio, Y., Miret, S., and Bengio, E. Multi-objective gflownets. In International conference on ma-chine learning , pp. 14631–14653. PMLR, 2023b. Jang, H., Kim, M., and Ahn, S. Learning energy decompo-sitions for partial inference of gflownets. arXiv preprint arXiv:2310.03301 , 2023. Jiang, Y., Ilievski, F., Ma, K., and Sourati, Z. BRAIN-TEASER: Lateral thinking puzzles for large language models. In Bouamor, H., Pino, J., and Bali, K. (eds.), 
+
+Proceedings of the 2023 Conference on Empirical Meth-ods in Natural Language Processing , pp. 14317–14332, Singapore, December 2023. Association for Computa-tional Linguistics. doi: 10.18653/v1/2023.emnlp-main. 885. URL https://aclanthology.org/2023. emnlp-main.885 .11 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Jin, C., Wu, Y., Cao, J., Xiang, J., Kuo, Y.-L., Hu, Z., Ullman, T., Torralba, A., Tenenbaum, J. B., and Shu, T. Mmtom-qa: Multimodal theory of mind question answering. arXiv preprint arXiv:2401.08743 , 2024. Jung, J., Qin, L., Welleck, S., Brahman, F., Bhagavatula, C., Bras, R. L., and Choi, Y. Maieutic prompting: Logically consistent reasoning with recursive explanations. arXiv preprint arXiv:2205.11822 , 2022. Kambhampati, S., Valmeekam, K., Guan, L., Stechly, K., Verma, M., Bhambri, S., Saldyt, L., and Murthy, A. Llms can’t plan, but can help planning in llm-modulo frame-works. arXiv preprint arXiv:2402.01817 , 2024. Kang, H., Sachdeva, E., Gupta, P., Bae, S., and Lee, K. Gflowvlm: Enhancing multi-step reasoning in vision-language models with generative flow networks. arXiv preprint arXiv:2503.06514 , 2025. Kim, H., Kim, M., Choi, S., and Park, J. Genetic-guided gflownets: Advancing in practical molecular optimization benchmark. arXiv preprint arXiv:2402.05961 , 2024a. Kim, M., Yun, T., Bengio, E., Zhang, D., Bengio, Y., Ahn, S., and Park, J. Local search gflownets. arXiv preprint arXiv:2310.02710 , 2023. Kim, M., Choi, S., Son, J., Kim, H., Park, J., and Bengio, Y. Ant colony sampling with gflownets for combinatorial optimization. arXiv preprint arXiv:2403.07041 , 2024b. Kojima, T., Gu, S. S., Reid, M., Matsuo, Y., and Iwasawa, Y. Large language models are zero-shot reasoners. Ad-vances in neural information processing systems , 35: 22199–22213, 2022. Koziarski, M., Rekesh, A., Shevchuk, D., van der Sloot, A., Gai´ nski, P., Bengio, Y., Liu, C.-H., Tyers, M., and Batey, R. A. Rgfn: Synthesizable molecular generation using gflownets. arXiv preprint arXiv:2406.08506 , 2024. Kraaijveld, K., Jiang, Y., Ma, K., and Ilievski, F. Columbus: Evaluating cognitive lateral understand-ing through multiple-choice rebuses. arXiv preprint arXiv:2409.04053 , 2024. Kumar, A., Zhuang, V., Agarwal, R., Su, Y., Co-Reyes, J. D., Singh, A., Baumli, K., Iqbal, S., Bishop, C., Roelofs, R., et al. Training language models to self-correct via reinforcement learning. arXiv preprint arXiv:2409.12917 ,2024. Kwon, O. J., Matsunaga, D. E., and Kim, K.-E. Gdpo: Learning to directly align language models with diversity using gflownets. arXiv preprint arXiv:2410.15096 , 2024. Lahlou, S., Deleu, T., Lemos, P., Zhang, D., Volokhova, A., Hernández-Garcıa, A., Ezzine, L. N., Bengio, Y., and Malkin, N. A theory of continuous generative flow net-works. In International Conference on Machine Learning ,pp. 18269–18300. PMLR, 2023. LeCun, Y., Chopra, S., Hadsell, R., Ranzato, M., and Huang, F. A tutorial on energy-based learning. Predicting struc-tured data , 1(0), 2006. Lee, H., Kim, S., Lee, S., Hwang, S., Lee, J., Lee, B.-J., and Kim, S. Arcle: The abstraction and reasoning corpus learning environment for reinforcement learning. arXiv preprint arXiv:2407.20806 , 2024a. Lee, S., Kim, M., Cherif, L., Dobre, D., Lee, J., Hwang, S. J., Kawaguchi, K., Gidel, G., Bengio, Y., Malkin, N., et al. Learning diverse attacks on large language models for robust red-teaming and safety tuning. arXiv preprint arXiv:2405.18540 , 2024b. Li, C., Liu, C.-H., Liu, D., Cai, Q., and Pan, L. Bi-furcated generative flow networks. arXiv preprint arXiv:2406.01901 , 2024a. Li, Q., Fu, L., Zhang, W., Chen, X., Yu, J., Xia, W., Zhang, W., Tang, R., and Yu, Y. Adapting large language models for education: Foundational capabilities, potentials, and challenges. arXiv preprint arXiv:2401.08664 , 2023a. Li, W., Li, Y., Li, Z., Hao, J., and Pang, Y. Dag matters! gflownets enhanced explainer for graph neural networks. 
+
+arXiv preprint arXiv:2303.02448 , 2023b. Li, Y., Luo, S., Wang, H., and Hao, J. Cflownets: Continu-ous control with generative flow networks. arXiv preprint arXiv:2303.02430 , 2023c. Li, Z., Chen, G., Shao, R., Jiang, D., and Nie, L. Enhancing the emotional generation capability of large language models via emotional chain-of-thought. arXiv preprint arXiv:2401.06836 , 2024b. Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike, J., Schulman, J., Sutskever, I., and Cobbe, K. Let’s verify step by step. arXiv preprint arXiv:2305.20050 , 2023. Lin, B. Y., Wu, Z., Yang, Y., Lee, D.-H., and Ren, X. Rid-dleSense: Reasoning about riddle questions featuring lin-guistic creativity and commonsense knowledge. In Zong, C., Xia, F., Li, W., and Navigli, R. (eds.), Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021 , pp. 1504–1515, Online, August 2021. Association for Computational Linguistics. doi: 10.18653/v1/2021. findings-acl.131. URL https://aclanthology. org/2021.findings-acl.131 .12 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Liu, D., Jain, M., Dossou, B. F., Shen, Q., Lahlou, S., Goyal, A., Malkin, N., Emezue, C. C., Zhang, D., Hassen, N., et al. Gflowout: Dropout with generative flow networks. In International Conference on Machine Learning , pp. 21715–21729. PMLR, 2023a. Liu, S., Cai, Q., He, Z., Sun, B., McAuley, J., Zheng, D., Jiang, P., and Gai, K. Generative flow network for list-wise recommendation. In Proceedings of the 29th ACM SIGKDD Conference on Knowledge Discovery and Data Mining , pp. 1524–1534, 2023b. Lu, S. Z., Lu, Z., Hajiramezanali, E., Biancalani, T., Ben-gio, Y., Scalia, G., and Koziarski, M. Cell morphology-guided small molecule generation with gflownets. In 
+
+ICML 2024 Workshop on Structured Probabilistic Infer-ence tz &u Generative Modeling , 2024. Luong, T. Q., Zhang, X., Jie, Z., Sun, P., Jin, X., and Li, H. Reft: Reasoning with reinforced fine-tuning. arXiv preprint arXiv:2401.08967 , 2024. Ma, G., Bengio, E., Bengio, Y., and Zhang, D. Baking sym-metry into gflownets. arXiv preprint arXiv:2406.05426 ,2024. Madaan, A., Tandon, N., Gupta, P., Hallinan, S., Gao, L., Wiegreffe, S., Alon, U., Dziri, N., Prabhumoye, S., Yang, Y., et al. Self-refine: Iterative refinement with self-feedback. Advances in Neural Information Processing Systems , 36, 2024. Madan, K., Rector-Brooks, J., Korablyov, M., Bengio, E., Jain, M., Nica, A. C., Bosc, T., Bengio, Y., and Malkin, N. Learning gflownets from partial episodes for improved convergence and stability. In International Conference on Machine Learning , pp. 23467–23483. PMLR, 2023. Madan, K., Zhan, A., Lamb, A., Bengio, E., Pan, L., Berseth, G., and Bengio, Y. Goal2flownet: Learning diverse pol-icy covers using GFlownets for goal-conditioned RL, 2024. URL https://openreview.net/forum? id=VCscggkg2t .Malkin, N., Jain, M., Bengio, E., Sun, C., and Bengio, Y. Trajectory balance: Improved credit assignment in gflownets. Advances in Neural Information Processing Systems , 35:5955–5967, 2022a. Malkin, N., Lahlou, S., Deleu, T., Ji, X., Hu, E., Everett, K., Zhang, D., and Bengio, Y. Gflownets and variational inference. arXiv preprint arXiv:2210.00580 , 2022b. Meister, C., Pimentel, T., Wiher, G., and Cotterell, R. Lo-cally typical sampling. Transactions of the Association for Computational Linguistics , 11:102–121, 2023. Mialon, G., Fourrier, C., Swift, C., Wolf, T., LeCun, Y., and Scialom, T. Gaia: a benchmark for general ai assistants. 
+
+arXiv preprint arXiv:2311.12983 , 2023. Michail, A., Clematide, S., and Opitz, J. Paraphrasus: A comprehensive benchmark for evaluating paraphrase de-tection models. arXiv preprint arXiv:2409.12060 , 2024. Min, D., Hu, N., Jin, R., Lin, N., Chen, J., Chen, Y., Li, Y., Qi, G., Li, Y., Li, N., et al. Exploring the impact of table-to-text methods on augmenting llm-based ques-tion answering with domain hybrid data. arXiv preprint arXiv:2402.12869 , 2024a. Min, D., Xu, Z., Qi, G., Huang, L., and You, C. Unihgkr: Unified instruction-aware heterogeneous knowledge re-trievers. arXiv preprint arXiv:2410.20163 , 2024b. Mirchandani, S., Xia, F., Florence, P., Ichter, B., Driess, D., Arenas, M. G., Rao, K., Sadigh, D., and Zeng, A. Large language models as general pattern machines. arXiv preprint arXiv:2307.04721 , 2023. Mishra, S., Finlayson, M., Lu, P., Tang, L., Welleck, S., Baral, C., Rajpurohit, T., Tafjord, O., Sabharwal, A., Clark, P., et al. Lila: A unified benchmark for math-ematical reasoning. arXiv preprint arXiv:2210.17517 ,2022. Naik, R., Chandrasekaran, V., Yuksekgonul, M., Palangi, H., and Nushi, B. Diversity of thought improves reason-ing abilities of large language models. arXiv preprint arXiv:2310.07088 , 2023. Ouyang, L., Wu, J., Jiang, X., Almeida, D., Wainwright, C., Mishkin, P., Zhang, C., Agarwal, S., Slama, K., Ray, A., et al. Training language models to follow instructions with human feedback. Advances in neural information processing systems , 35:27730–27744, 2022. Pan, L., Zhang, D., Courville, A., Huang, L., and Bengio, Y. Generative augmented flow networks. arXiv preprint arXiv:2210.03308 , 2022. Pan, L., Malkin, N., Zhang, D., and Bengio, Y. Better training of gflownets with local credit and incomplete trajectories. In International Conference on Machine Learning , pp. 26878–26890. PMLR, 2023a. Pan, L., Zhang, D., Jain, M., Huang, L., and Bengio, Y. Stochastic generative flow networks. In Uncertainty in Artificial Intelligence , pp. 1628–1638. PMLR, 2023b. Qin, L., Welleck, S., Khashabi, D., and Choi, Y. Cold decoding: Energy-based constrained text generation with langevin dynamics. Advances in Neural Information Processing Systems , 35:9538–9551, 2022. 13 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Qiu, L., Jiang, L., Lu, X., Sclar, M., Pyatkin, V., Bhaga-vatula, C., Wang, B., Kim, Y., Choi, Y., Dziri, N., et al. Phenomenal yet puzzling: Testing inductive reasoning ca-pabilities of language models with hypothesis refinement. 
+
+arXiv preprint arXiv:2310.08559 , 2023. Rein, D., Hou, B. L., Stickland, A. C., Petty, J., Pang, R. Y., Dirani, J., Michael, J., and Bowman, S. R. Gpqa: A graduate-level google-proof q&a benchmark. arXiv preprint arXiv:2311.12022 , 2023. Roy, J., Bacon, P.-L., Pal, C., and Bengio, E. Goal-conditioned gflownets for controllable multi-objective molecular design. arXiv preprint arXiv:2306.04620 ,2023. Runco, M. A. Divergent thinking . Ablex Publishing Corpo-ration Norwood, NJ, 1991. Runco, M. A. and Acar, S. Divergent thinking as an indica-tor of creative potential. Creativity research journal , 24 (1):66–75, 2012. Saparov, A. and He, H. Language models are greedy rea-soners: A systematic formal analysis of chain-of-thought. 
+
+arXiv preprint arXiv:2210.01240 , 2022. Saunders, W., Yeh, C., Wu, J., Bills, S., Ouyang, L., Ward, J., and Leike, J. Self-critiquing models for assisting human evaluators. arXiv preprint arXiv:2206.05802 , 2022. Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O. Proximal policy optimization algorithms. 
+
+arXiv preprint arXiv:1707.06347 , 2017. Sendera, M., Kim, M., Mittal, S., Lemos, P., Scimeca, L., Rector-Brooks, J., Adam, A., Bengio, Y., and Malkin, N. On diffusion models for amortized inference: Bench-marking and improving stochastic control and sampling. 
+
+arXiv preprint arXiv:2402.05098 , 2024. Shen, M. W., Bengio, E., Hajiramezanali, E., Loukas, A., Cho, K., and Biancalani, T. Towards understanding and improving gflownet training. In International Conference on Machine Learning , pp. 30956–30975. PMLR, 2023a. Shen, T., Pandey, M., and Ester, M. Tacogfn: Target con-ditioned gflownet for structure-based drug design. arXiv preprint arXiv:2310.03223 , 2023b. Shi, C., Yang, H., Cai, D., Zhang, Z., Wang, Y., Yang, Y., and Lam, W. A thorough examination of decoding meth-ods in the era of llms. arXiv preprint arXiv:2402.06925 ,2024. Shinn, N., Cassano, F., Gopinath, A., Narasimhan, K., and Yao, S. Reflexion: Language agents with verbal rein-forcement learning. Advances in Neural Information Processing Systems , 36, 2024. Shridhar, M., Yuan, X., Côté, M.-A., Bisk, Y., Trischler, A., and Hausknecht, M. Alfworld: Aligning text and embodied environments for interactive learning. arXiv preprint arXiv:2010.03768 , 2020. Singh, A., Co-Reyes, J. D., Agarwal, R., Anand, A., Patil, P., Liu, P. J., Harrison, J., Lee, J., Xu, K., Parisi, A., et al. Beyond human data: Scaling self-training for problem-solving with language models. arXiv preprint arXiv:2312.06585 , 2023. Song, Z., Yang, C., Wang, C., An, B., and Li, S. Latent logic tree extraction for event sequence explanation from llms. arXiv preprint arXiv:2406.01124 , 2024. Summers-Stay, D., Voss, C. R., and Lukin, S. M. Brain-storm, then select: a generative language model im-proves its creativity score. In The AAAI-23 Workshop on Creative AI Across Modalities , 2023. URL https: //openreview.net/forum?id=8HwKaJ1wvl .Takase, R., Tsunokake, M., Tsuchiya, Y., and Inuzuka, S. Gflownet fine-tuning for diverse correct solu-tions in mathematical reasoning tasks. arXiv preprint arXiv:2410.20147 , 2024. Tan, J. C. M. and Motani, M. Large language model (llm) as a system of multiple expert agents: An approach to solve the abstraction and reasoning corpus (arc) challenge. 
+
+arXiv preprint arXiv:2310.05146 , 2023. Tian, Y., Peng, B., Song, L., Jin, L., Yu, D., Mi, H., and Yu, D. Toward self-improvement of llms via imagination, searching, and criticizing. arXiv preprint arXiv:2404.12253 , 2024. Todd, G., Merino, T., Earle, S., and Togelius, J. Missed connections: Lateral thinking puzzles for large language models. arXiv preprint arXiv:2404.11730 , 2024. Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 ,2023. Trinh, T. H., Wu, Y., Le, Q. V., He, H., and Luong, T. Solv-ing olympiad geometry without human demonstrations. 
+
+Nature , 625(7995):476–482, 2024. Uesato, J., Kushman, N., Kumar, R., Song, F., Siegel, N., Wang, L., Creswell, A., Irving, G., and Higgins, I. Solv-ing math word problems with process-and outcome-based feedback. arXiv preprint arXiv:2211.14275 , 2022. Valmeekam, K., Marquez, M., Sreedharan, S., and Kamb-hampati, S. On the planning abilities of large language models-a critical investigation. Advances in Neural Infor-mation Processing Systems , 36, 2024. 14 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Vemgal, N., Lau, E., and Precup, D. An empirical study of the effectiveness of using a replay buffer on mode discovery in gflownets. arXiv preprint arXiv:2307.07674 ,2023. Vijayakumar, A. K., Cogswell, M., Selvaraju, R. R., Sun, Q., Lee, S., Crandall, D., and Batra, D. Diverse beam search: Decoding diverse solutions from neural sequence models. arXiv preprint arXiv:1610.02424 , 2016. Waks, S. Lateral thinking and technology education. Jour-nal of Science Education and Technology , 6:245–255, 1997a. URL https://api.semanticscholar. org/CorpusID:108865906 .Waks, S. Lateral thinking and technology education. Jour-nal of Science Education and Technology , 6(4):245–255, 1997b. doi: 10.1023/A:1022534310151. URL https: //doi.org/10.1023/A:1022534310151 .Wang, P., Li, L., Shao, Z., Xu, R., Dai, D., Li, Y., Chen, D., Wu, Y., and Sui, Z. Math-shepherd: A label-free step-by-step verifier for llms in mathematical reasoning. 
+
+arXiv preprint arXiv:2312.08935 , 2023a. Wang, R., Zelikman, E., Poesia, G., Pu, Y., Haber, N., and Goodman, N. D. Hypothesis search: Inductive reasoning with language models. arXiv preprint arXiv:2309.05660 ,2023b. Wang, X., Wei, J., Schuurmans, D., Le, Q., Chi, E., Narang, S., Chowdhery, A., and Zhou, D. Self-consistency im-proves chain of thought reasoning in language models. 
+
+arXiv preprint arXiv:2203.11171 , 2022. Wei, J., Wang, X., Schuurmans, D., Bosma, M., Xia, F., Chi, E., Le, Q. V., Zhou, D., et al. Chain-of-thought prompting elicits reasoning in large language models. Advances in neural information processing systems , 35:24824–24837, 2022. Wu, Y., Sun, Z., Li, S., Welleck, S., and Yang, Y. An empirical analysis of compute-optimal inference for problem-solving with language models. arXiv preprint arXiv:2408.00724 , 2024. Xie, J., Zhang, K., Chen, J., Zhu, T., Lou, R., Tian, Y., Xiao, Y., and Su, Y. Travelplanner: A benchmark for real-world planning with language agents. arXiv preprint arXiv:2402.01622 , 2024a. Xie, Y., Kawaguchi, K., Zhao, Y., Zhao, J. X., Kan, M.-Y., He, J., and Xie, M. Self-evaluation guided beam search for reasoning. Advances in Neural Information Processing Systems , 36, 2024b. Xu, Y., Khalil, E. B., and Sanner, S. Graphs, constraints, and search for the abstraction and reasoning corpus. In 
+
+Proceedings of the AAAI Conference on Artificial Intelli-gence , volume 37, pp. 4115–4122, 2023a. Xu, Y., Li, W., Vaezipoor, P., Sanner, S., and Khalil, E. B. Llms and the abstraction and reasoning corpus: Suc-cesses, failures, and the importance of object-based rep-resentations. arXiv preprint arXiv:2305.18354 , 2023b. Yang, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Li, C., Liu, D., Huang, F., Wei, H., et al. Qwen2. 5 technical report. arXiv preprint arXiv:2412.15115 , 2024. Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., and Cao, Y. React: synergizing reasoning and acting in language models (2022). arXiv preprint arXiv:2210.03629 , 2023. Yao, S., Yu, D., Zhao, J., Shafran, I., Griffiths, T., Cao, Y., and Narasimhan, K. Tree of thoughts: Deliberate problem solving with large language models. Advances in Neural Information Processing Systems , 36, 2024. Yu, F., Gao, A., and Wang, B. Outcome-supervised verifiers for planning in mathematical reasoning. arXiv preprint arXiv:2311.09724 , 2023a. Yu, F., Jiang, L., Huang, S., Wu, Z., and Dai, X. Persuasive-tom: A benchmark for evaluating machine theory of mind in persuasive dialogues. arXiv preprint arXiv:2502.21017 ,2025. Yu, J., He, R., and Ying, R. Thought propagation: An analogical approach to complex reasoning with large lan-guage models. arXiv preprint arXiv:2310.03965 , 2023b. Yu, L., Jiang, W., Shi, H., Yu, J., Liu, Z., Zhang, Y., Kwok, J. T., Li, Z., Weller, A., and Liu, W. Metamath: Boot-strap your own mathematical questions for large language models. arXiv preprint arXiv:2309.12284 , 2023c. Yuan, L., Cui, G., Wang, H., Ding, N., Wang, X., Deng, J., Shan, B., Chen, H., Xie, R., Lin, Y., et al. Advancing llm reasoning generalists with preference trees. arXiv preprint arXiv:2404.02078 , 2024a. Yuan, W., Pang, R. Y., Cho, K., Sukhbaatar, S., Xu, J., and Weston, J. Self-rewarding language models. arXiv preprint arXiv:2401.10020 , 2024b. Yuan, Z., Yuan, H., Li, C., Dong, G., Tan, C., and Zhou, C. Scaling relationship on learning mathematical rea-soning with large language models. arXiv preprint arXiv:2308.01825 , 2023. Yue, X., Qu, X., Zhang, G., Fu, Y., Huang, W., Sun, H., Su, Y., and Chen, W. Mammoth: Building math generalist models through hybrid instruction tuning. arXiv preprint arXiv:2309.05653 , 2023. 15 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Zelikman, E., Wu, Y., Mu, J., and Goodman, N. Star: Boot-strapping reasoning with reasoning. Advances in Neural Information Processing Systems , 35:15476–15488, 2022. Zhang, D., Malkin, N., Liu, Z., Volokhova, A., Courville, A., and Bengio, Y. Generative flow networks for discrete probabilistic modeling. In International Conference on Machine Learning , pp. 26412–26428. PMLR, 2022. Zhang, D., Dai, H., Malkin, N., Courville, A., Bengio, Y., and Pan, L. Let the flows tell: Solving graph combinato-rial optimization problems with gflownets. arXiv preprint arXiv:2305.17010 , 2023a. Zhang, D., Pan, L., Chen, R. T., Courville, A., and Bengio, Y. Distributional gflownets with quantile flows. arXiv preprint arXiv:2302.05793 , 2023b. Zhang, D. W., Rainone, C., Peschl, M., and Bondesan, R. Robust scheduling with gflownets. arXiv preprint arXiv:2302.05446 , 2023c. Zhang, Z., Yao, Y., Zhang, A., Tang, X., Ma, X., He, Z., Wang, Y., Gerstein, M., Wang, R., Liu, G., et al. Igniting language intelligence: The hitchhiker’s guide from chain-of-thought reasoning to language agents. arXiv preprint arXiv:2311.11797 , 2023d. Zhang, Z., Zhang, A., Li, M., Zhao, H., Karypis, G., and Smola, A. Multimodal chain-of-thought reasoning in lan-guage models. arXiv preprint arXiv:2302.00923 , 2023e. Zhang, Z., Zheng, C., Wu, Y., Zhang, B., Lin, R., Yu, B., Liu, D., Zhou, J., and Lin, J. The lessons of developing process reward models in mathematical reasoning. arXiv preprint arXiv:2501.07301 , 2025. Zhao, Z., Lee, W. S., and Hsu, D. Large language models as commonsense knowledge for large-scale task planning. 
+
+Advances in Neural Information Processing Systems , 36, 2024. Zhong, S., Huang, Z., Gao, S., Wen, W., Lin, L., Zitnik, M., and Zhou, P. Let’s think outside the box: Exploring leap-of-thought in large language models with creative humor generation, 2024. URL https://arxiv.org/abs/ 2312.02439 .Zhou, D., Schärli, N., Hou, L., Wei, J., Scales, N., Wang, X., Schuurmans, D., Cui, C., Bousquet, O., Le, Q., et al. Least-to-most prompting enables complex reasoning in large language models. arXiv preprint arXiv:2205.10625 ,2022. Zhu, D., Li, Y., Shao, Y., Hao, J., Wu, F., Kuang, K., Xiao, J., and Wu, C. Generalized universal domain adaptation with generative flow networks. In Proceedings of the 31st ACM International Conference on Multimedia , pp. 8304–8315, 2023. Zhu, X., Wang, J., Zhang, L., Zhang, Y., Huang, Y., Gan, R., Zhang, J., and Yang, Y. Solving math word problems via cooperative reasoning induced language models. arXiv preprint arXiv:2210.16257 , 2022. Zimmermann, H., Lindsten, F., van de Meent, J.-W., and Naesseth, C. A. A variational perspective on generative flow networks. arXiv preprint arXiv:2210.07992 , 2022. 
+
+## A. Additional Related Work 
+
+Reasoning with LLM. Recent LLMs (Achiam et al., 2023; Touvron et al., 2023; Bai et al., 2022; Chowdhery et al., 2023) have demonstrated great potentials in tackling com-plex reasoning tasks (Cobbe et al., 2021; Mishra et al., 2022; Hendrycks et al., 2021; Rein et al., 2023; Mialon et al., 2023). (1) Fine-tuning LLMs is a primary way to enhance their reasoning abilities, including SFT and reward-maximization reinforcement learning (RL) approaches. SFT 
+
+with large-scale and high-quality datasets of reasoning chains has proven very effective (Yu et al., 2023c; Yue et al., 2023; Yuan et al., 2024a). Various methods for constructing training samples have been proposed when ground truth rea-soning chains are not available. For example, STaR (Zelik-man et al., 2022) uses online sampling with self-correction to find positive samples. ReST EM (Singh et al., 2023) and V-STaR(Hosseini et al., 2024) filter samples with external verifiers. RL techniques, particularly reward-maximizing policy optimization methods like PPO, are widely employed in LLMs (Ouyang et al., 2022; Bai et al., 2022; Havrilla et al., 2024; Luong et al., 2024). However, both maximum likelihood training (i.e. SFT) and reward-maximizing pol-icy optimization (e.g., PPO) do not encourage models to generate diverse solutions. (2) prompting-based reason-ing algorithms aim to better elicit the knowledge inside LLMs without tuning their parameters. Techniques such as CoT (Wei et al., 2022) and its variants (Chen et al., 2022; Li et al., 2024b; Zhang et al., 2023e; Zhou et al., 2022; Kojima et al., 2022) have improved LLM performance by enabling them to generate intermediate steps before arriving at a final answer. To provide reasoning more guidance , self-evaluation (Xie et al., 2024b; Shinn et al., 2024; Madaan et al., 2024) and reward models are introduced to enhance reasoning process (Uesato et al., 2022; Lightman et al., 2023) Besides, a more relevant series of works combine LLM reasoning capabilities with planning and search algo-rithms such as MCTS (Hao et al., 2023; Feng et al., 2023; Zhao et al., 2024), tree and graph search (Jung et al., 2022; Zhu et al., 2022; Yao et al., 2024; Besta et al., 2024; Yao et al., 2023). Moreover, recent studies turn to amortizing computation for reasoning paths (Yuan et al., 2023; Wu et al., 2024; Bansal et al., 2024), such as self-correct (Kumar et al., 2024; Saunders et al., 2022), self-improvement (Tian et al., 2024; Yuan et al., 2024b). 16 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+GFlowNets. GFlowNets (Bengio et al., 2021) were origi-nally proposed to learn policies for sampling from unnor-malized distributions, with a primary motivation from scien-tific discovery (Jain et al., 2023a), which requires generat-ing diverse high-reward samples (Shen et al., 2023b; Roy et al., 2023; Zhang et al., 2023b; Ma et al., 2024; Pan et al., 2023b), such as molecular generation (Koziarski et al., 2024; Kim et al., 2024a; Lu et al., 2024) and biological sequence generation (Ghari et al., 2023; Jain et al., 2022). Beyond the science domain, GFlowNets have also been applied in various downstream applications such as recommendation systems (Liu et al., 2023b), domain adaptation (Zhu et al., 2023), combinatorial optimization (Zhang et al., 2023a; Kim et al., 2024b) and explainability of deep neural networks (Li et al., 2023b). Additionally, GFlowNets have proven to be suitable for sampling from posterior distributions (Hu et al., 2023b; Deleu et al., 2022; 2024; Zhang et al., 2022). As a reinforcement learning method, prior works have incor-porated intermediate feedback with GFlowNets to address sparse reward issues (Pan et al., 2023a; Jang et al., 2023; Pan et al., 2022) and multi-objective rewards (Jain et al., 2023b; Hernandez-Garcia et al., 2023; Chen & Mauch, 2023). There are also theoretical analyses treating GFlowNets as recurrent MCMC (Deleu & Bengio, 2023) and variational inference (Malkin et al., 2022b; Zimmermann et al., 2022) that are used to model the distribution over trajectories. 
+
+Diverse Thinking. Vertical and lateral thinking (Waks, 1997a; Ismayilzada et al., 2024) are two distinct approaches that differ significantly in their focus and methodology. Ver-tical thinking emphasizes logical, structured, and sequen-tial reasoning, often following a step-by-step approach to solve problems. Our work aligns with this paradigm to generate multiple correct, structured reasoning processes to achieve specific goals. In contrast, lateral thinking priori-tizes creativity and innovation, encouraging the exploration of unconventional perspectives and challenging established assumptions. There are multiple works that evaluate (Huang et al., 2023; Chen et al., 2024a; Kraaijveld et al., 2024; Todd et al., 2024) and promote(Zhong et al., 2024; Summers-Stay et al., 2023; Jiang et al., 2023; Lin et al., 2021) the lateral thinking ability of LLMs. 
+
+## B. Preliminaries and Background 
+
+GFlowNets (Bengio et al., 2021; 2023; Liu et al., 2023a) are a class of models that amortize the cost of sampling from an intractable target distribution over terminal states 
+
+X by learning a neural network-facilitated approximation of the target distribution using its unnormalized density or reward function. The task of sampling from this distribution resorts to a decision-making process. Below, we introduce GFlowNets with more details. 
+
+Settings. We are given a pointed directed acyclic graph (DAG) G “ p S, Aq, where S is a finite set of vertices (states), and A Ď S ˆ S is a set of directed edges (ac-tions). If s Ñ s1 is an action, we say s is a parent of s1 and 
+
+s1 is a child of s. There is exactly one state that has no in-coming edge, called the initial state s0 P S. States that have no outgoing edges are called terminal states . We denote by X the set of terminal states. A complete trajectory is a sequence τ “ p s0 Ñ . . . Ñ snq such that each si Ñ si`1
+
+is an action and sn “ x P X . We denote by T the set of complete trajectories and the terminal state as τx.Here we define the reward R : X Ñ R`, and define a forward transition probability function, or a forward policy, 
+
+PF p¨| sq, which is a distribution over the children of every state s P S. The forward policy is typically parametrized by a neural network that takes a representation of s as input and produces the logits of a distribution over its children. Any forward policy PF induces a distribution over complete trajectories τ P T (denoted by PF as well), which in turn defines a marginal distribution over terminal states x P X :
+
+PF pτ q “ PF ps0 Ñ . . . Ñ snq “ 
+
+> n´1
+
+ź
+
+> i“0
+
+PF psi`1|siq @τ P T
+
+(8) Given a forward policy PF , terminal states x P X can be sampled from PF by sampling trajectories τ from PF pτ q
+
+and taking their final states sn. GFlowNets aim to find a forward policy PF such that the induced distribution P J 
+
+> F
+
+pxq
+
+is proportional to the reward function: 
+
+P J 
+
+> F
+
+pxq9 Rpxq (9) 
+
+Training. Training GFlowNets considers achieving a consis-tent flow (Bengio et al., 2023; Malkin et al., 2022a), which means the flow for the forward direction should equal to the flow for the backward direction. Below we introduce relevant objectives. 
+
+Detailed Balance (DB). The DB objective (Bengio et al., 2023) requires learning two objectives in addition to para-metric forward policy PF p¨| sq: 1. A Backward policy ,which is distribution PB ps1|s; θq over the parents of any non-initial state. 2. A State flow function : F p¨ ; θq : S Ñ Rą0.Then DB loss for a single transition s Ñ s1 is defined as: 
+
+LDB “
+
+ˆ
+
+log F ps; θqPF ps1|s; θq
+
+F ps1; θqPB ps|s1; θq
+
+˙2
+
+(10) if LDB is optimized to 0 for each transition, then the forward policy PF satisfies 9. 
+
+Trajectory Balance (TB). Trajectory balance (Malkin et al., 2022a) introduces a backward policy PB , which is a learned distribution PB p¨| s1q over the parents of every state s P S.We have the following backward probability: 17 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+PB pτ q “ PB ps0 Ñ . . . Ñ sn|snq “ 
+
+> n´1
+
+ź
+
+> i“0
+
+PB psi|si`1q @τ P T
+
+(11) Then we give the trajectory balance constraint for any com-plete trajectory τ “ p s0 Ñ . . . Ñ snq:
+
+F ps0q
+
+> n
+
+ź
+
+> i“1
+
+PF pst|st´1q “ F psnq
+
+> n
+
+ź
+
+> i“1
+
+PB psi´1|siq (12) where we have P psnq “ F psnq{ Z. To enforce this con-straint, we convert equation 12 into an objective for op-timization. Suppose that a model with parameters θ out-puts estimated forward policy PF p¨| s; θq and backward pol-icy PB p¨| s; θq for states s, as well as a scalar Zθ estimat-ing F ps0q. GFlowNets aim to approximate a Markovian Flow Fθ that F psnq “ Rpsnq. For a complete trajectory 
+
+τ “ p s0 Ñ . . . Ñ snq, define the trajectory balance loss as follows: 
+
+LT B pτ ; θq “ 
+
+˜
+
+log Zθ
+
+śn´1 
+
+> t“0
+
+PF pst`1|st; θq
+
+Rpsnq śn´1 
+
+> t“0
+
+PB pst|st`1; θq
+
+¸2
+
+(13) If LT B is made equal to 0 for every complete trajectory τ ,then equation 9 satisfies for all x P X and Z is the inverse constant of proportionality: Z “ ř 
+
+> xPX
+
+Rpxq.
+
+Conditional GFlowNets. In a GFlowNet, both the policy and reward function can be conditioned on additional infor-mation. For instance, in the tasks we focus on, a GFlowNet policy generates actions sequentially for an embodied rea-soning problem, starting from an initial state s0 and a goal 
+
+g. Furthermore, the allowable actions vary depending on the specific s0 in each case. The conditional GFlowNets we train achieve amortization by sharing the policy model across different s0 and g, enabling the model to generalize to initial states and targets that were not seen during training. 
+
+## C. Experimental details 
+
+C.1. Diversity Metric 
+
+We define the following metric to measure the diversity of reasoning paths found by different approaches. Under the same number of samplings at inference time, we count the number of different successful trajectories a policy finds for the successful example on average. Diversity “
+
+řni“1 Si ¨ IpSi ě 1qi
+
+řni“1 IpSi ě 1qi
+
+ě 1 (14) where n is the total number of problems, Si is the number of successful trajectories found for the i-th question, and Table 9: Training time shown is seconds when training on the BlocksWorld. 
+
+Method Runtime (s) 
+
+SFT 196.37 SFT+PPO 1740.96 FOR 6833.37 
+
+IpSi ě 1q is an indicator function that is 1 if there is at least one successful trajectory found for the i-th question and 0 otherwise. Thus, the denominator is the number of exam-ples in which a model finds at least one trajectory, and the nominator is the sum of all successful trajectories a model finds across all examples. The smallest diversity is 1 when a method can only find at most one successful trajectory on average, and diversity “ 1.5 indicates a method is able to find 1.5 different successful trajectories on average. 
+
+C.2. Creativity Metric 
+
+We define the following metric to quantify the creativity of a reasoning method. Given the same number of samples during inference, we calculate the ratio of unique success-ful trajectories that a method identifies in the test dataset 
+
+Dtest , which are not found by any other methods. Let 
+
+M “ t m1, m 2, . . . , m |M|u represent the set of reasoning methods. For the i-th problem, the l-th method has a so-lution set Sli , where 1 ď l ď | M|. The complete set of solutions across all methods is defined as: 
+
+S “
+
+> n
+
+ď
+
+> i“1
+> |M|
+
+ď
+
+> l“1
+
+Sli (15) Then we can define the creativity metric of method ml as: Creativity pmlq “ 1
+
+|S|
+
+> |Dtest |
+
+ÿ
+
+> i“1
+
+ÿ
+
+> sPSli
+
+Ips, i, l q, (16) where for the i-th problem, if the solution s P Sli is found only by method ml and not by any other method mk (where 
+
+k ‰ l), then Ips, i, l q “ 1. Otherwise, Ips, i, l q “ 0. The indicator function Ips, i, l q is defined as: 
+
+Ips, i, l q “ 
+
+#
+
+1, if s R Ť 
+
+> k‰l
+
+Ski
+
+0, otherwise (17) 
+
+C.3. Efficiency Analysis 
+
+All experiments were conducted using a server with a single NVIDIA A100 GPU. Below we report the average of 3 times training for 6-step training cost on BlocksWorld dataset for 10 epochs. We compare with SFT, PPO and table 9 shows the results. 18 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+PPO and F OR need much more training costs because they need exploration and interaction with environments to col-lect trajectories for training, and SFT only trains on ground-truth trajectories which take less time. 
+
+C.4. BlocksWorld. FOR Setup. During the training, we finetune the LLM with LoRA (Hu et al., 2021) with r “ 32 , α “ 64 , and dropout=0.1. We set ϵ from 0.3 and decrease it to 0.01, 
+
+β from 1 to 2, and the probability δ using replay buffer increases from 0.3 to 0.5 throughout the iterations linearly. The learning rate is set to 1e-4 with a cosine annealing schedule, and the number of training iterations is set to 10. Reward weight λ is set to 1.5. In our ablation study when setting λ “ 0, we add a small number b “ 0.5 to avoid 
+
+log 0 . Table 7 shows the template we use for the forward policy in the 6-step setting, and its difference between 2-step and 4-step is only replacing the 6-step demonstration to 2-step and 4-step. During testing, we sample 8, 20, and 40 trajectories for 2, 4, and 6 steps respectively. As long as one trajectory reaches the goal, we label this instance as solved, all the baselines conform to the same rule. 
+
+Additional details for baselines. We compare F OR the following baselines: (1) Chain-of-Thoughts prompting (CoT) (Wei et al., 2022): It concatenates k problems with ground truth solutions and the test problem, and prompts the LLM to generate a solu-tion. We test the setting where k “ 1, 5, 15 , and pass the test cases to LLMs at the same times as F OR, and the test case is regarded as solved if at least one plan is correct. (2) Tree-of-Thoughts prompting (ToT) (Yao et al., 2024): This approach constructs a tree of actions and searches for the solution with the highest reward. For each action, the reward includes (a) the likelihood of the LLM predicting the action and (b) self-evaluation, where the LLM is prompted with the question, "Is this action good?" and the answer is mapped to a reward value. We implement ToT with both breadth-first search (BFS) and depth-first search (DFS), terminating after generating 10 solutions. (3) Reasoning-via-Planning (RAP) (Hao et al., 2023): This method also conducts a tree search for the optimal solution. Different from ToT, it alternatively predicts the next action and predicts the resulting block arrangement. Besides the rewards used in ToT, if the predicted block arrangement matches the goal, a high reward will be assigned. (4) Supervised Fine-Tuning (SFT) : We use problems in the training set and their corresponding ground truth solutions to finetune the LLM. Note that this is an easier setting than FOR which does not have access to ground truth solutions. We train LLM with the same iterations as F OR. (5) Proximal Policy Optimization (PPO) (Schulman et al., 2017): This is a widely-used reward-maximization rein-forcement learning method for LLM training. We de-sign the objective to encourage the LLM to generate so-lutions that satisfy the goal. Following the common prac-tice of previous work (Ouyang et al., 2022; Wang et al., 2023a), we penalize the policy if it deviates too much from the reference policy. Formally, the objective is 
+
+max πθ Eτ „πθ rRpx, y qs ´ βDKL rπθ py | xq} πref py | xqs .(6) GFN-CoT (Hu et al., 2023a): This approach adapts the GFlowNets training paradigm, which is a diversity-seeking RL method, to enable posterior sampling of the intermediate reasoning process from LLMs. 
+
+Performance on OOD settings. We further assess perfor-mance on out-of-distribution (OOD) settings. Specifically, we train the model using F OR and SFT on a 2-step training set and evaluate it on a 4-step test set, and then train the model on the 4-step training set and evaluate it on the 6-step test set. This allows us to analyze their generalization on OOD problems. For prompting-based baselines, we use 2-step and 4-step examples as demonstrations, respectively. According to the result in table 10, F OR maintains the high-est accuracy (71.43%) on OOD tasks compared to other methods like CoT and SFT, which range from 9.52% to 14.28%. F OR also achieves greater diversity (by an abso-lute improvement of 0.2 over SFT), highlighting its superior generalization and solution exploration capabilities. 
+
+Additional results on search-based approaches. To as-sess whether search-based methods can generate diverse solutions, we execute ToT (DFS) multiple times (equal to the number of runs performed for our method) and com-pare their performance. The results shown in Table 13 demonstrate that though search-based methods improve the diversity, they still underperform F OR. 
+
+Additional baseline results with diversity-encouraging in-struction. To further stimulate the diverse reasoning ability in the baseline approaches, we add a diversity-encouraging prompt as instruction: 
+
+Please carefully understand the goals and initial states, then come up with diverse solutions and think outside the box. 
+
+We evaluate multiple baseline methods using LLama-3-8B as the base model, following the exact same settings as in Section 4.2. The results for BlocksWorld are reported in Table 11. The numbers in parentheses indicate the perfor-mance difference compared to the original prompt without the diversity-encouraging instruction. We observe that diversity-encouraging prompts for the CoT and SFT baselines lead to improvements in both diversity and accuracy, with average absolute gains of 0.03 and 5.11%, 19 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Table 10: OOD results on BlocksWorld.                                                        
+
+> Method 2-step to 4-step 4-step to 6-step
+> Acc. (%) Diversity Creativity (%) Acc. (%) Diversity Creativity (%) CoT (1-shot) 9.52 1.00 3.12 2.02 1.00 0.00 CoT (5-shot) 14.28 1.00 3.12 12.12 1.08 3.45 CoT (15-shot) 11.90 1.00 3.12 8.08 1.00 0.00 ToT (BFS) 9.52 --8.08 --ToT (DFS) 4.76 --6.06 --RAP 80.95 --34.34 --SFT ( α=1.0) 11.92 1.00 9.37 28.28 1.03 1.15 FOR (Ours) 71.43 1.20 59.38 65.65 1.25 60.92
+
+Table 11: Baseline results with diversity-encouraging instruction prompt. "+" denotes the performance improvement compared to the absence of the prompt.                                      
+
+> Method 4-step 6-step
+> Acc. (%) Diversity Creativity (%) Acc. (%) Diversity Creativity (%) CoT (1-shot) 16.67 (-10.90) 1.00 (-0.05) 0.0 (0.00) 11.11 (-4.71) 1.09 (+0.04) 0.0 (0.00) CoT (5-shot) 59.52 (+16.66) 1.12 (+0.08) 2.04 (+2.04) 33.33 (+3.70) 1.03 (+0.00) 0.79 (+0.79) CoT (15-shot) 52.38 (+12.32) 1.09 (+0.06) 0.0 (0.00) 13.13 (-6.40) 1.07 (+0.04) 0.0 (0.00) SFT ( α=1.0) 59.52 (+17.46) 1.10 (+0.05) 0.0 (0.00) 47.47 (+12.79) 1.10 (+0.06) 0.0 (0.00) FOR (Ours) 98.41 1.27 12.24 78.44 1.33 9.52
+
+respectively. However, F OR still outperforms them, achiev-ing average absolute improvements of 0.19 in diversity, 9.46% in creativity, and 34.93% in accuracy compared to the best baseline for each metric. 
+
+Additional case study. In Table 12, we show examples generated by F OR. We observe that after training, F OR can sample the terminal state with probability approximately proportional to the rewards, leading to an approximate sam-pling of different plans with the same probability. This empirically verifies the efficacy of the training objective. 
+
+C.5. Game of 24. FOR Setup. See Figure 8 for the prompt template used in the experiment of the Game of 24. We use LoRA to train the model with r “ 8, α “ 32 , dropout=0.1. We load the LLM in fp16, and set the hyperparameters as follows: batch size = 4, learning rate = 1e-5, number of epochs = 5, and the reward weight w “ 100 .
+
+C.6. Rubik’s Cube FOR Setups. The training hyperparameters are identical to BlocksWorld. During testing, we sample 10 trajectories. See Figure 9 for the prompt template of the Rubik’s Cube task. 
+
+Additional details for baselines. Apart from the baselines in Blocksworld, we further compare them with GoT and XoT. 
+
+Graph-of-Thought (GoT) (Besta et al., 2024): GoT builds upon the ToT method by introducing the ability to create graph-like thought structures, achieved through the aggrega-tion and refinement of thoughts during intermediate search stages. While this approach allows for more adaptable thought structures, it still requires several LLM inference calls for evaluation, leading to substantial computational expenses. 
+
+Everything-of-Thought( XoT) (Ding et al., 2023): XOT is a collaborative framework combining LLMs with MCTS to optimize the thought generation process, aiding LLMs in solving complex problems. It first trains a small network to explore the space fast while LLMs refine and correct the thoughts generated by MCTS. 
+
+C.7. 1D-ARC FOR Setups. Except that we train the model for 1 iteration, other training hyperparameters are identical to BlocksWorld. We use the hand-crafted transformation functions in ARC Challenge 2nd-place (de Miquel, 2021) on Kaggle 2020. See Figure 11 for the prompt template of the 1D-ARC task. Part of the prompt is adapted from (Tan & Motani, 2023). For CoT and F OR, we sampled 20 times. IO methods di-rectly predict the output grids without an explicit reasoning process, while program-only and Hypothesis Search ap-proaches generate a large number of candidate programs and choose the best candidates, which is time-consuming. As a result, we do not report diversity and creativity metrics for these methods. 
+
+Additional details for baselines. In addition to IO and CoT, we also compare our approach with Hypothesis Search which belongs to discrete program search methods (Barke et al., 2024; Xu et al., 2023a; Lee et al., 2024a). 20 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Table 12: An example of the probability of two trajectories to be sampled by F OR.       
+
+> Initial State goal Trajectory Terminal State PFpτq
+> the red block is on top of the blue block 1. unstack the orange block from on top of the blue block 2. put down the orange block 3. unstack the blue block from on top of the red block 4. put down the blue block 5. pick up the red block 6. stack the red block on top of the blue block
+> 0.47
+> the red block is on top of the blue block 1. unstack the orange block from on top of the blue block 2. put down the orange block 3. unstack the blue block from on top of the red block 4. stack the blue block on top of the orange block 5. pick up the red block 6. stack the red block on top of the blue block
+> 0.46
+
+Table 13: Performance of Search-based methods with multi-ple runs. ♣ denotes results from a single run.                       
+
+> Method 2-step 4-step 6-step
+> Acc. (%) Acc. (%) Diversity Acc. (%) Diversity ToT (DFS) ♣13.33 16.67 -8.08 -ToT (DFS) 40.00 42.85 1.0 31.31 1.06 FOR100.00 98.41 1.27 78.44 1.33
+
+Hypothesis Search (Wang et al., 2023b): The method first generates multiple hypotheses describing the underlying transformation rules in natural language, and then selects a subset of potentially correct hypotheses. Based on these selected hypotheses, numerous Python programs are synthe-sized, which are subsequently tested on the training input-output pairs to verify whether they pass all the cases. If a program successfully passes all the training input-output pairs, it is considered to have accurately captured the under-lying transformation rules. 
+
+OOD data creation. We separate the in-distribution and OOD data by topics and ontology. We use the animal-related problems as in-distribution examples and the number-related problems as OOD examples. 
+
+C.8. Logical Reasoning Setup. We use LoRA to train the model with r “ 8, α “
+
+32 , dropout=0.1. We load the LLM in fp16, and set the hyperparameters as follows: batch size = 4, learning rate = 5e-6, number of epochs = 40, and the reward weight 
+
+w “ 100 . See Table 10 for the prompt template of the logical reasoning task. 
+
+Additional details for Baselines. Apart from CoT, ToT, and RAP, we compare F OR with STaR (Zelikman et al., 2022), which uses online sampling to filter our positive examples consistent with ground truth trajectories to finetune the LLM. Note that this is an easier setting than F OR, which doesn’t have access to ground truth solutions. It also indicates an upper bound of SFT methods that do not rely on ground truth solutions, like. All baselines use Llama3 8B as the base model. 
+
+C.9. Mathematical Reasoning Automatic Diversity Metric. To distinguish different solu-tions, we adapt a paraphrase-based method (Michail et al., 2024) to automatically evaluate the diversity with GPT-4o to measure the number of different solutions for each problem. The prompt is shown in Figure 13 Additional results. To further investigate the relationship between accuracy and the number of samples, we set the sampling counts to 1, 5, 10, and 20, and compared the performance under these configurations. As shown in Figure 4, F OR consistently out-performs SFT by a significant margin, ranging from 3.5% to 6.6%. The higher accuracy demonstrates that aligning with the reward distribution of solutions enables F OR to better explore the reasoning space, increasing the possibility of reaching the correct solution. 
+
+## D. Additional Analysis Results 
+
+Performance with various LLMs. We conduct experi-ments to evaluate F OR’s scalability and diversity gains us-ing larger Llama-3-70B model and different family models, Qwen2.5 (7B & 72B) (Yang et al., 2024) and Intern2.5-21 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Table 14: Performance with larger models and different families of models.                                     
+
+> Method 4-step 6-step
+> Acc. (%) Diversity Acc. (%) Diversity CoT 5-shot (Llama3-8B) 28.57 1.05 15.82 1.05 CoT 5-shot (Llama3-70B) 45.23 1.05 46.46 1.11 FOR (Llama3-8B) 98.41 1.27 78.44 1.33 FOR (Llama3-70B) 100.00 1.38 87.65 1.40 FOR (Qwen2.5-7B) 100.00 1.24 86.86 1.36 FOR (Qwen2.5-72B) 100.00 1.41 90.13 1.46 FOR (InternLM2.5-7B-Chat) 100.00 1.26 83.83 1.31 1510 20
+> Number of solutions
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Accuracy (%)
+> SFT (Mean ± Std)
+> FoR (Mean ± Std)
+
+Figure 4: Accuracy of F OR and SFT across the different number of sampled solutions. 7B-Chat (Cai et al., 2024) on the BlocksWorld task. Re-sults shown in Table 14 indicate that F OR consistently im-proves accuracy and diversity with larger models. Com-pared to CoT baselines, F OR exhibits greater diversity gains as model size increases. This suggests that the gains of FOR become more pronounced as model capacity increases. Even with minimal data (15 examples), F OR yields clear improvements, highlighting its potential for robust perfor-mance across different base models. 
+
+## E. Exploration and Training 
+
+FOR employs the following techniques to explore during the training phase: 1. Online training: (1) we employ the online policy 
+
+PF pat|st´1, α q, and its tempered version (2) Similar to 
+
+ϵ-greedy, we sample action at step t by PF with probabil-ity ϵ, and sample with uniform distribution over action space PU pat|st´1q with p1 ´ ϵq probability. (3) To fur-ther explore the high-reward region, we modified the local search (Kim et al., 2023; Zhang et al., 2022). More specifically, we select the trajectory with the highest reward in a batch and conduct a destroy and reconstruc-tion process for augmenting the trajectories to enable a higher probability of sampling successful trajectories, referring to Appendix F for more details. 2. Offline training: (1) Experience replay represents a significant advancement in reinforcement learning, of-fering enhancements in both learning efficiency and stability, as evidenced by recent empirical studies in GFlowNets (Vemgal et al., 2023; Shen et al., 2023a). To optimize the utility of the trajectories collected, we set up a prioritized replay buffer (PRB). This buffer facilitates the sampling of trajectories in proportion to their reward value, Rpτ q, or its logarithmic value, thereby prioritizing potentially more informative experiences. (2) For tasks (e.g. Game of 24) that have a large space, online sam-pling diverse trajectories with LLMs is computationally expensive. Therefore, we integrate the offline trajecto-ries to have a larger coverage of space and improve the efficiency, which means δ “ 0.Algorithm 1 describes the training framework. 
+
+## F. Modified Local Search 
+
+Local search is a simple data augmentation technique for GFlowNets (Kim et al., 2023; Zhang et al., 2022; Sendera et al., 2024), which is designed to enhance training ef-ficiency. Different from the original local search which is conducted on each sampled trajectory, we select the trajectory in a batch with the highest reward to conduct a local search. Here we denote the trajectory reward 
+
+Rpτ q as the reward of the terminal state of the trajectory 
+
+Rpτ “ p s0 Ñ . . . Ñ snqq “ Rpsnq. More specifically, we illustrate our modified local search for one instance as follows: • Sampling: Sample a set of complete trajectories 
+
+tτ1, ..., τ M u using forward policy PF and select the τm
+
+with the largest reward Rpτmq
+
+• Searching: We destroy τm by backtracking K-step into a partial trajectory and reconstruct the complete trajec-tory from the partial trajectory: 
+
+τdestroy “ p s0 Ñ . . . Ñ s1 
+
+> n´K
+
+q,τrecon “ p s1 
+
+> n´K
+
+Ñ . . . Ñ s1
+
+> n
+
+q (18) 22 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Algorithm 1 FOR Training  
+
+> 1:
+
+Input: I: number of iterations, PF : initial LLM policy, D: Prioritized Replay Buffer, M : Batch-size, δ:online-offline ratio, E: Training Dataset, O: offline Data  
+
+> 2:
+
+Output: Trained policy PF 
+
+> 3:
+
+for i “ 1 to I do  
+
+> 4:
+
+Sample from training dataset E with initial state s0 and goal g 
+
+> 5:
+
+Sample u „ r 0, 1s 
+
+> 6:
+
+if u ă δ then  
+
+> 7:
+
+// Exploration  
+
+> 8:
+
+Sample M online trajectories tτ1, . . . , τ M u with forward policy PF 
+
+> 9:
+
+Select trajectory τm P t τ1, . . . , τ M u with the largest Rpτmq 
+
+> 10:
+
+tτ 1 
+
+> 11
+
+, . . . , τ 1  
+
+> N1
+
+u Ð Local Search pτmq 
+
+> 11:
+
+Update D Ð D Y t τ1, . . . , τ M u Y t τ 1 
+
+> 11
+
+, . . . , τ 1  
+
+> N1
+
+u 
+
+> 12:
+
+else  
+
+> 13:
+
+// Exploitation  
+
+> 14:
+
+if is Game24 then  
+
+> 15:
+
+Sample M offline trajectories from Offline Data O 
+
+> 16:
+
+else  
+
+> 17:
+
+Sample M offline trajectories from D 
+
+> 18:
+
+Exploit M (with N 1) trajectories to compute the objective function in Eq. 7  
+
+> 19:
+
+Update the parameter in PF with respect to Eq. 7  
+
+> 20:
+
+return PF
+
+We obtain the local searched trajectory τ 1:
+
+τ 1 “ p s0 Ñ . . . Ñ s1 
+
+> n´K
+
+Ñ . . . Ñ s1
+
+> n
+
+q (19) Where the τrecon is completed by the random policy 
+
+PU which randomly selects a feasible action for effi-ciency. We can obtain a set of reconstructed trajectories 
+
+tτ 1
+
+> 1
+
+, ..., τ 1 
+
+> N
+
+u
+
+• Filtering: We now need to evaluate the collected recon-structed trajectories tτ 1
+
+> 1
+
+, ..., τ 1 
+
+> N
+
+u and determine whether to accept or reject τ 1 P t τ 1
+
+> 1
+
+, ..., τ 1 
+
+> N
+
+u. Specifically, we accept τ 1 as follows: 
+
+Apτ, τ 1q “ 1Rpτ 1qą Rpτ q (20) This means we greedily filter out the candidates 
+
+tτ 1 
+
+> 11
+
+...τ 1  
+
+> N1
+
+u Ă t τ 1
+
+> 1
+
+, ..., τ 1 
+
+> N
+
+u that have a higher reward than τm, which has a higher possibility of reaching the goal. Then we return these trajectories and add them into the replay buffer D.
+
+## G. Case Study 
+
+Balance between diversity and accuracy. According to Figure 5, we use the problem (3,4,6,11) to show how F ORachieves such high performance while focusing on diversity. As illustrated in the figure, we compare trajectories sampled 20 times by both SFT and F OR. While both methods pro-duce diverse trajectories initially, F OR demonstrates better capability in reaching successful final steps from various middle steps. For example, F OR successfully transitions from intermediate steps (3,6,15) to target 24, whereas SFT fails to do so. This highlights the effectiveness of F OR ’s design in simultaneously promoting diversity and ensuring accuracy. 
+
+Better robustness due to exploratory nature. According to Figure 6, we use the problem (7,9,9,13) to demonstrate the robustness of F OR. As shown in the figure, SFT repeat-edly fails by getting stuck in a single second state of (9,3,16) 
+
+20 times, while F OR successfully discovers multiple diverse trajectories leading to the correct solution. This robustness can be attributed to the exploratory nature of F OR’s train-ing objective, which encourages the model to sample di-verse successful trajectories. By expanding the search space through high-reward exploration, F OR increases the chance of finding successful outcomes. This capability not only improves the robustness of the model but also enhances its generalization to new scenarios, showcasing the effective-ness of F OR in addressing complex reasoning tasks. 
+
+Other examples Figure 14 shows generated samples for the BlocksWorld, Figure 15 for Game24, and Table 15 for PrOntoQA, respectively. 
+
+## H. Prompts. 
+
+Below, we detail all the prompts we used in all settings from Figure 7, 8, 9, 10, 11, 12. 23 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples left:                             
+
+> 24
+> left:
+> 3 6 15
+> 3 4 6 11
+> left:
+> 376
+> left:
+> 46
+> left:
+> 15 9
+> left:
+> 618
+> left:
+> 6 11 7
+> left:
+> 717
+> left:
+> 24
+> left:
+> 3 6 15
+> 3 4 6 11
+> left:
+> 376
+> left:
+> 46
+> left:
+> 15 3
+> left:
+> 45
+> left:
+> 15 9
+> left:
+> 135
+> left:
+> 610
+> left:
+> 16
+> left:
+> 3 4 17
+> left:
+> 17 1
+> left:
+> 17
+> left:
+> 718
+> left:
+> 25
+> left:
+> 610
+> left:
+> 60
+> left:
+> 3 4 5
+> left:
+> 415
+> left:
+> 19 left:
+> 60
+> left:
+> 3 4 5
+> left:
+> 48
+> left:
+> 32
+> left:
+> 3 11 2
+> left:
+> 39
+> left:
+> 27
+> FoR SFT
+> Green blocks represents the states that can achieve 24.
+> Blue numbers represent the sample times of trajectories bigger than 1.
+> The figure shows that FoR can achieve 24 in multiple different states while SFT usually fail to do so.
+> *2
+> *2 *3
+> *6 *2 *4
+
+Figure 5: Problem (3,4,6,11) . Green blocks represent the states that can achieve 24. Blue numbers represent the sample times of trajectories bigger than 1. This shows that F OR can achieve 24 in multiple different states while SFT usually fails to do so. Table 15: Examples for PrOntoQA. 
+
+Query: True or false: 31 is not imaginary. (OOD) 
+
+State Action 
+
+31 is a natural number. Natural numbers are integers. 31 is an integer. Integers are real numbers. 31 is a real number. Real numbers are not imaginary. 31 is not imaginary. Finish. 
+
+Query: True or false: Wren is not bony. (In-distribution) 
+
+State Action 
+
+Wren is a painted lady. Each painted lady is a butterfly. Wren is a butterfly. Each butterfly is a lepidopteran. Wren is a lepidopteran. Each lepidopteran is an insect. Wren is an insect. Each insect is an arthropod. Wren is an arthropod. Each arthropod is not bony. Wren is not bony. Finish. 
+
+## I. Limitations and Future Work 
+
+Future work should further address the two limitations of FOR. The first is acquisition of a large number of trajectories efficiently . Online sampling with LLMs is computationally expensive, leading to more efficient and effective strate-gies to explore more complex settings, such as real-world settings, AlfWorld (Shridhar et al., 2020), and TravelPlan-ner (Xie et al., 2024a) to be further studied. The second is faciliating F OR long-range steps reasoning. 
+
+LLMs fall short in long-range planning and reasoning, thus methods like MCTS (Feng et al., 2023) or an automatic reasoning system (Trinh et al., 2024) can be combined with LLMs for long-horizon divergent reasoning. Future work can extend F OR to broader reasoning tasks, including reasoning on structured data (Min et al., 2024a;b), social reasoning (Jin et al., 2024; Yu et al., 2025), and mul-timodal reasoning (Zhang et al., 2023e; Kang et al., 2025). 24 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples left:             
+
+> 24
+> 7 9 9 13
+> left:
+> 9 13 2
+> left:
+> 915
+> left:
+> 731
+> left:
+> 18 13 7
+> left:
+> 9 13 16
+> 7 9 9 13
+> left:
+> 16 4
+> left:
+> 64
+> left:
+> 13 7
+> left:
+> 91
+> left:
+> 13 25
+> left:
+> 38
+> left:
+> 9 9 20
+> left:
+> 929
+> left:
+> 20
+> left:
+> 9 13 16
+> left:
+> 13 7
+> left:
+> 20
+
+FoR SFT 
+
+Green blocks represents the states that can achieve 24. 
+
+Blue numbers represent the sample times of trajectories bigger than 1. 
+
+The figure shows that FoR can achieve 24 in multiple different states while SFT usually fail to do so.    
+
+> *2 *3
+> *14 *4 *2
+> left:
+> 38
+> left:
+> 7 9 22
+> left:
+> 22 16
+> *5
+
+Figure 6: Problem (7,9,9,13) . Green blocks represent the states that can achieve 24. Blue numbers represent the sample times of trajectories bigger than 1. This shows that F OR can achieve 24 in multiple different states while SFT usually fails to do so. 25 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Prompt for BlocksWorld 
+
+I am playing with a set of blocks where I need to arrange the blocks into stacks. Here are the actions I can do Pick up a block Unstack a block from on top of another block Put down a block Stack a block on top of another block I have the following restrictions on my actions: I can only pick up or unstack one block at a time. I can only pick up or unstack a block if my hand is empty. I can only pick up a block if the block is on the table and the block is clear. A block is clear if the block has no other blocks on top of it and if the block is not picked up. I can only unstack a block from on top of another block if the block I am unstacking was really on top of the other block. I can only unstack a block from on top of another block if the block I am unstacking is clear. Once I pick up or unstack a block, I am holding the block. I can only put down a block that I am holding. I can only stack a block on top of another block if I am holding the block being stacked. I can only stack a block on top of another block if the block onto which I am stacking the block is clear. Once I put down or stack a block, my hand becomes empty. [STATEMENT] As initial conditions I have that, the orange block is clear, the hand is empty, the red block is on top of the blue block, the orange block is on top of the red block and the blue block is on the table. My goal is to have that the blue block is on top of the orange block. My plan is as follows: [PLAN] unstack the orange block from on top of the red block put down the orange block unstack the red block from on top of the blue block put down the red block pick up the blue block stack the blue block on top of the orange block [PLAN END] [STATEMENT] As initial conditions I have that, <current state> My goal is to My goal is to have that <goals> My plan is as follows: [PLAN] <action> 
+
+Figure 7: Prompt template for the embodied reasoning task (6-step). 26 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Prompt for Game of 24 
+
+Use numbers and basic arithmetic operations (+ - * /) to obtain 24. For each step, you are only allowed to choose two of the remaining numbers to obtain a new number. Input: 4 4 6 8 Steps: 4 + 8 = 12 (left: 4 6 12) 6 - 4 = 2 (left: 2 12) 2 * 12 = 24 (left: 24) Input: 2 9 10 12 Steps: 12 * 2 = 24 (left: 9 10 24) 10 - 9 = 1 (left: 1 24) 24 * 1 = 24 (left: 24) Input: 4 9 10 13 Steps: 13 - 10 = 3 (left: 3 4 9) 9 - 3 = 6 (left: 4 6) 4 * 6 = 24 (left: 24) Input: 1 4 8 8 Steps: 8 / 4 = 2 (left: 1 2 8) 1 + 2 = 3 (left: 3 8) 3 * 8 = 24 (left: 24) Input: 5 5 5 9 Steps: 5 + 5 = 10 (left: 5 9 10) 10 + 5 = 15 (left: 9 15) 15 + 9 = 24 (left: 24) Input: <input> Steps: <action> 
+
+Figure 8: Prompt template for the mathematical puzzle task. 
+
+Prompt for Rubik’s Cube 
+
+You are a virtual expert in solving a 2x2 Pocket Cube. Your task is to restore a scrambled 2x2 Rubik’s Cube to its original state. All the given problems can be solved in 1 to 4 moves. You cannot exceed more than 11 moves. Provide the sequence of moves required for the restoration. Please follow the instructions and rules below to complete the solving: 1. A 2x2 Pocket Cube has six faces, namely: [Upper, Front, Bottom, Left, Right, Back] Each consisting of a 2x2 grid of squares, with each square having its own color. 2. Colors in the Cube are represented in numbers: [0, 1, 2, 3, 4, 5] 3. You must make a move to the Cube to achieve a Restored State. Note that we just need each face to have the same numbers, no matter which face has which color. 4. A restoration of a Pocket Cube is to move squares in each face to have the same numbers. 5. You are only allowed to use the following moves [U, U’, U2, R, R’, R2, F, F’, F2]. Now strictly follow the above process to form Restoration Moves. [STATEMENT] As initial state of the cube, I have that [Initial Cube State]: <current state> [Process]: [Step 1] [Move] <action> 
+
+Figure 9: Prompt template for the spatial Reasoning task. 27 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Prompt for PrOntoQA 
+
+Given a list of facts, and a current claim, output one possible fact as the next step ONLY BASED ON THE LAST CLAIM without using your knowledge. Be sure to copy the EXACT sentence in the facts. Do NOT change any wording. Do NOT create your own words. Give me the next step ONLY. Facts 1: Each lepidopteran is an insect. Each arthropod is a protostome. Every animal is multicellular. Protostomes are invertebrates. Each whale is bony. Each painted lady is a butterfly. Invertebrates are animals. Butterflies are lepidopterans. Each insect is six-legged. Every insect is an arthropod. Arthropods are not bony. Query 1: True or false: Sally is not bony. Claim 1.1: Sally is an insect. Next 1.1: Every insect is an arthropod. Claim 1.2: Sally is an arthropod. Next 1.2: Arthropods are not bony. Claim 1.3: Sally is not bony. Next 1.3: Finish. Facts 2: Lepidopterans are insects. Every animal is multicellular. Each insect is an arthropod. Each invertebrate is an animal. Insects are six-legged. Arthropods are small. Arthropods are invertebrates. Each butterfly is a lepidopteran. Whales are not small. Query 2: True or false: Polly is not small. Claim 2.1: Polly is a lepidopteran. Next 2.1: Lepidopterans are insects. Claim 2.2: Polly is an insect. Next 2.2: Each insect is an arthropod. Claim 2.3: Polly is an arthropod. Next 2.3: Arthropods are small. Claim 2.4: Polly is small. Next 2.4: Finish. Facts 3: <facts> Query 3: <query> Claim 3.1: <initial state> Next 3.1: <action> 
+
+Figure 10: Prompt template for logical reasoning task. 
+
+Prompt for 1D-ARC 
+
+You are provided with a series of input-output pairs, where each value from ’a’ to ’j’ represents a different color, and ’.’ denotes a blank cell. For example, [[’.’,’a’,’.’],[’.’,’.’,’b’]] represents a grid with 2 rows and 3 columns, where color ’a’ is at position (1,0) and color ’b’ is at position (2,1). Coordinates are expressed in 2D positions (row, col), with ’row’ indicating the row number and ’col’ indicating the column number, both using zero-based indexing. The input-output pairs may not cover all possibilities, so you should infer the simplest possible relationship between them. Your task is to reason through a sequence of Python functions that can transform the input grid into the output grid. Please strictly follow this process to form the appropriate Python function. [STATEMENT] You have the following input-output pairs: [Initial Grid State]: <init_state> Based on the provided list of Python functions, select the appropriate function to achieve the transformation from the input to the output: <python_function> Now, please choose one function from the above list: <action> 
+
+Figure 11: Prompt template for abstraction reasoning task. 28 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples 
+
+Prompt for GSM8K 
+
+Given a question, please decompose it into sub-questions. For each sub-question, please answer it in a complete sentence, ending with "The answer is". When the original question is answerable, please start the subquestion with "Now we can answer the question: ". Question 1: Four years ago, Kody was only half as old as Mohamed. If Mohamed is currently twice as 30 years old, how old is Kody? Question 1.1: How old is Mohamed? Answer 1.1: He is currently 30 * 2 = 60 years old. The answer is 60. Question 1.2: How old was Mohamed four years ago? Answer 1.2: Four years ago, he must have been 60 - 4 = 56 years old. The answer is 56. Question 1.3: How old was Kody four years ago? Answer 1.3: Kody was half as old as Mohamed four years ago. Thus, Kody was 56 / 2 = 28 years old. The answer is 28. Question 1.4: Now we can answer the question: How old is Kody? Answer 1.4: She is currently 28 + 4 = 32 years old. The answer is 32. Question 2: On a moonless night, three fireflies danced in the evening breeze. They were joined by four less than a dozen more fireflies before two of the fireflies flew away. How many fireflies remained? Question 2.1: How many fireflies joined? Answer 2.1: The fireflies were joined by four less than a dozen more fireflies, which are 12 - 4 = 8 fireflies. The answer is 8. Question 2.2: Now we can answer the question: How many fireflies remained? Answer 2.2: Three fireflies were dancing originally. They were joined by 8 fireflies before two of them flew away. So there were 3 + 8 - 2 = 9 remaining. The answer is 9. Question 3: <question> 
+
+Figure 12: Prompt template for the mathematical Reasoning task. 
+
+Prompt for counting different solutions 
+
+Analyze the given problem-solving approaches and identify the number of distinct methods used to arrive at the solution. Consider variations in reasoning, calculation steps, and logical structuring. Directly return the total count of unique solution approaches without additional explanations. Solution 1: "Question 3: Claire makes a 3 egg omelet every morning for breakfast. How many dozens of eggs will she eat in 4 weeks? Question 3.1: How many eggs does she eat per day? Answer 3.1: She makes a 3 egg omelet every morning for breakfast. So she eats 3 eggs per day. The answer is 3. Question 3.2: How many days are in a week? Answer 3.2: There are 7 days in a week. The answer is 7." Solution 2: "Question 3: Claire makes a 3 egg omelet every morning for breakfast. How many dozens of eggs will she eat in 4 weeks? Question 3.1: How many eggs does she eat in a day? Answer 3.1: She eats 3 eggs in a day. The answer is 3. Question 3.2: How many days are there in 4 weeks? Answer 3.2: There are 4 * 7 = 28 days in 4 weeks. The answer is 28. Question 3.3: How many eggs does she eat in 4 weeks? Answer 3.3: She eats 3 eggs in a day. So she eats 3 * 28 = 84 eggs in 4 weeks. The answer is 84. Question 3.4: Now we can answer the question: How many dozens of eggs will she eat in 4 weeks? Answer 3.4: She eats 84 eggs in 4 weeks. 84 eggs is 84 / 12 = 7 dozens. The answer is 7." Number: 2 Solution 1: Three of the 16 eggs go to Janet breakfast. Four of the remaining 13 eggs go to her muffins. That leaves 9 eggs to sell. The eggs sell for 2each, soshemakes 9x2 “18. The answer is 18. Solution 2: Janet lays 16 eggs a day. She eats three eggs for breakfast and bakes muffins with four this, so she has 16 - 3 - 4 = 9 eggs left. She sells these eggs at 2 each, so she make 9 x 2 = 18 at the market. The answer is 18. Number: 1 Solution 1: <solution1> Solution 2: <solution2> Number: 
+
+Figure 13: Prompt template measures the number of different solutions. 29 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples Goal: red block on 
+
+top of the blue block 
+
+Figure 14: Example of BlocksWorld for 6-step planning. 30 Flow of Reasoning: Training LLMs for Divergent Reasoning with Minimal Examples input: 
+
+4 6 11 11 
+
+left: 
+
+4 6 22 
+
+left: 
+
+0
+
+left: 
+
+4 6 0 
+
+left: 
+
+-7 17 
+
+left: 
+
+6 18 
+
+left: 
+
+24 0
+
+left: 
+
+66 15 
+
+left: 
+
+6 11 15 
+
+left: 
+
+6 4 
+
+left: 
+
+24 
+
+left: 
+
+6 11 -7 
+
+left: 
+
+24 
+
+left: 
+
+10 
+
+left: 
+
+24 
+
+left: 
+
+6 18 left: 
+
+24 
+
+left: 
+
+24 
+
+left: 
+
+0
+
+left: 
+
+2 0 left: 
+
+2
+
+left: 
+
+990 
+
+left: 
+
+51 
+
+left: 
+
+-119 
+
+left: 
+
+10 22 
+
+left: 
+
+220 
+
+left: 
+
+12 left: 
+
+3
+
+11 + 11 = 22 
+
+4 + 6 = 10 
+
+10 * 22 = 220 
+
+22 - 10 = 12 18 / 6 = 3 
+
+18 + 6 = 24 
+
+-7 * 17 = -119 
+
+17 - (-7) = 24 
+
+6 + 11 = 17 
+
+11 - (-7) = 18 6 + 18 = 24 
+
+22 - 4 = 18 
+
+4 - 11 = -7 
+
+11 - 11 = 0 
+
+4 + 11 = 15 
+
+6 - 4 = 2 
+
+2 - 0 = 2 
+
+4 * 6 = 24 
+
+0 / 24 = 0 24 * 0 = 24 
+
+24 + 0 = 24 
+
+66 - 15 = 51 
+
+66 * 15 = 
+
+6 * 11 = 66 
+
+15 - 11 = 4 
+
+6 * 4 = 24 
+
+6 + 4 = 10 
+
+Figure 15: Example of game of 24. {}     
+
+> Q1: How... classroom?
+> A1: 8
+> Q1: How...per today?
+> A1: 2
+> Q2: How...whiteboard?
+> A2: 4
+> Q2: How...per day?
+> A2: 2 *3=6
+
+A classroom has a whiteboard which is ... how 
+
+many times is the whiteboard cleaned in a day? 
+
+How many lessons will be 
+
+held in the classroom?   
+
+> Q2: How... day?
+> A2: 8*3=24
+
+How many times is the 
+
+whiteboard cleaned in a day? 
+
+How many lessons do the 
+
+teachers have per day? 
+
+How many teachers 
+
+share the whiteboard? 
+
+How many times does 
+
+each teacher clean the 
+
+board per day? 
+
+> Q3: How...per day?
+> A3: 4 *2*3=24
+> Q3: How...per day?
+> A3: 4 *6=24
+
+How many times is the 
+
+whiteboard cleaned per day? 
+
+How many times is the 
+
+whiteboard cleaned per day? 
+
+Figure 16: Example of GSM8K. 31

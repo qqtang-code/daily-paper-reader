@@ -1,0 +1,1176 @@
+Title: Think Smarter not Harder:  Adaptive Reasoning with Inference Aware Optimization
+
+URL Source: https://openreview.net/pdf?id=0ERw2196o1
+
+Number of Pages: 22
+
+Markdown Content:
+# Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+Zishun Yu 1 Tengyu Xu 2 Di Jin 2 Karthik Abinav Sankararaman 2 Yun He 2 Wenxuan Zhou 2
+
+Zhouhao Zeng 2 Eryk Helenowski 2 Chen Zhu 2 Sinong Wang 2 Hao Ma 2 Han Fang 2
+
+# Abstract 
+
+Solving mathematics problems has been an in-triguing capability of language models, and many efforts have been made to improve reasoning by extending reasoning length, such as through self-correction and extensive long chain-of-thoughts. While promising in problem-solving, advanced long reasoning chain models exhibit an undesired uni-modal behavior, where trivial questions re-quire unnecessarily tedious long chains of thought. In this work, we propose a way to allow models to be aware of inference budgets by formulating it as utility maximization with respect to an infer-ence budget constraint, hence naming our algo-rithm Inference Budget-Constrained Policy Opti-mization (IBPO). In a nutshell, models fine-tuned through IBPO learn to “understand” the difficulty of queries and allocate inference budgets to harder ones. With different inference budgets, our best models are able to have a 4.14 % and 5.74 % ab-solute improvement ( 8.08 % and 11 .2% relative) on MATH500 using 2.16 x and 4.32 x inference budgets respectively, relative to LLaMA3.1 8B In-struct. These improvements are approximately 2xthose of self-consistency under the same budgets. 
+
+# 1. Introduction 
+
+Complex reasoning has been an intriguing ability of large language models (LLMs), with application in for exam-ple mathematical problem-solving (Cobbe et al., 2021; Hendrycks et al., 2021b; Lightman et al., 2023) or cod-ing (Chen et al., 2021; Austin et al., 2021; Hendrycks et al., 2021a), which does not only require nature language com-prehending but also logical and critical “thinking”. An      
+
+> 1Department of Computer Science, The University of Illinois Chicago, USA 2MetaAI, Menlo Park, USA. Correspondence to: Zishun Yu <zyu32@uic.edu >.
+> Proceedings of the 42 nd International Conference on Machine Learning , Vancouver, Canada. PMLR 267, 2025. Copyright 2025 by the author(s).
+
+observation merged in the LLM reasoning literature is that longer reasoning traces often leads to improved reasoning soundness and correctness. The seminal work of chain-of-thought (CoT) (Wei et al., 2022) is an excellent example of how enriching reasoning details, by decomposing rea-soning traces into steps, improves its problem-solving ca-pability. CoT has been considered a standard technique in reasoning, recent works extend CoT by allow LLMs to expand its reasoning steps, by for example CoT with more steps (Jin et al., 2024) (as explicitly required by in-struction), self-reflection/correction (Madaan et al., 2024; Zelikman et al., 2022; Yan et al., 2024; Qu et al., 2024), multi-turn reasoning (Kumar et al., 2024) or multi-agent debate (Liang et al., 2023; Pham et al., 2023) (as a hetero-geneous case of multi-turn). It was conjectured that scaling the test-time compute or the reasoning length unleashes LLMs’ potential for reasoning (Snell et al., 2024), which has been empirically verified by recent hype of ultra-long reasoning models, such as OpenAI-o1 (Jaech et al., 2024) and DeepSeek-R1 (DeepSeek-AI et al., 2025). We’ll later categorizes these type of responses as (standard) CoT re-sponses, extended responses, and (ultra-)long responses, respectively, given the nature of their reasoning lengths. While scaling reasoning length is promising in problem-solving, advanced long reasoning-chain models show an undesired uni-modal behavior that trivial questions may re-quire unnecessarily tedious long reasoning trace, an example is shown in Appendix A. This uni-modal behavior creates unnecessarily higher inference costs and increased carbon footprints (Henderson et al., 2020; Anthony et al., 2020). To partially address this, we study how to enable multi-modal behavior for reasoning models in a way the length of reason-ing traces are automatically adjusted according to the hard-ness level of the queries. From the aspect of query-adaptive reasoning length, some heuristic methods (e.g. Aggarwal et al., 2023; Xu et al., 2024a; Wang et al., 2024) have been making effort towards better token efficiency, by which is meant better accuracy with (hopefully) less token overhead. We take a reinforcement learning (RL) perspective, where the accuracy gain over the token overhead is nothing but a non-differentiable objective to be optimized. One could, for instance, take the negative response length or a metric of this 1Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+sort as an intrinsic reward (Chentanez et al., 2004; Pathak et al., 2017). However, balancing the intrinsic and extrin-sic (accuracy) rewards might also be challenging (Liu et al., 2021), and might be vulnerable to reward hacking (Pan et al., 2022; Skalse et al., 2022; Karwowski et al., 2023). Instead explicit modeling the length of responses, we take a more abstract formulation, where we consider labeling each response y with an unique group label Gi : i ∈ JGK
+
+for total number of G groups, so that the union of these disjoint groups exactly form the response space ∪iGi = Y.For example G could be the group of CoT responses (with standard length) or extended responses. We could then im-pose an density constraint on each or a set of groups, by caping Ex∼μEy∼π(x)[1{y∈G i}] ≤ qi for some prompt distri-bution μ and some response distribution π(x), induced from LLMs, conditioned on a prompt x. This naturally formu-lates a constrained RL (Garcıa & Fern ´andez, 2015; Altman, 2021) problem. Also this group definition is motivated by the resource-allocation literature (Chenery & Kretschmer, 1956; Ibaraki & Katoh, 1988; Karlin, 2003), from the opti-mization and econometric communities, which have been later applied in many machine learning applications (e.g. Zemel et al., 2013; Badanidiyuru et al., 2018). This general-ization allows potential broader application of our algorithm as discussed in Section 6. We’ve now set our goal: A constrained RL framework controlling how response groups {G i} are distributed. Therefore, one could control how responses of different lengths (which are supposed to belong to different groups) are distributed. Our rationale of algorithm design is given in Section 2, derived from an optimization perspective but ended as a very simple generalization of iterative super-vised fine-tuning (SFT) methods such as reward-ranking fine-tuning (RAFT) (Dong et al., 2023) and rejection sam-pling fine-tuning (RFT) (Ouyang et al., 2022; Touvron et al., 2023), see details in Section 3. Given the motivation of our algorithm, we call the resulted algorithm as Inference Budget-Constrained Policy Optimization (IBPO). 
+
+Paper structure. Section 2 present the derivation of our algorithm from an optimization view, resulting in a simple weighted iterative SFT update. Section 3 provides further details on practical implementation, including the base al-gorithm and the reward design. Section 4 introduces some experimental settings. The empirical results of our IBPO are presented in Section 5. And Section 6 concludes our work with limitations, broader impact, and further discussions. 
+
+# 2. Algorithm Design 
+
+Problem setup. To make the notation compact, we take the sequence-level notation (or the bandit notation), com-monly used in LLMs (Ziegler et al., 2019; Rafailov et al., 2024), especially in preference modeling, that suppresses the transition probabilities and intermediate rewards, and see a response as a whole. In particular, a policy π : X → ∆( Y)
+
+takes a prompt x ∈ X and draw a response a1 ◦a2 · · ·◦ aT =: 
+
+y ∈ Y from the produced probability simplex ∆( Y), where 
+
+◦ denotes concatenation, ai ∈ V corresponds to the i-th token drawn from the vocabulary V, and T is the maxi-mum length. A LLM is a parametric policy πθ ∈ Πθ ⊆ Π,where Πθ and Π are the parametric and non-parametric policy space respectively. Let J (π; μ, r ) or sometimes 
+
+J (π) be a general objective function, defined by a prompt distribution μ ∈ ∆( X ), and a bounded reward function 
+
+r : X × Y → [−Rmax , R max ]. Also, we define μΩ as an empirical distribution induced from Ω, a set of prompts. As aforementioned, we define G disjoint groups Gi such that ∪iGi = Y and Gi ∩ G j = ∅ for all i̸ = j. Each re-sponse y ∈ Y is attached to exactly one group, in the sense that y ∈ G i for some i. In the context of LLM reason-ing, without loss of generality, we consider two groups for brevity: G◦ and G+, corresponding to regular-length CoT responses and extended responses (with low and high in-ference costs), respectively. To conclude the formulation of constrained RL with resource allocation constraints, we could in general define the feasible set as a convex polytope, 
+
+ΦG := {π : ExEy∼π(x)[1{y∈G i}] ≤ qi for all i}, that caps the total density mass of each group Gi by qi. In our setting, we only need to cap the total mass of extended responses to optimize the inference efficiency, posing a half-space 
+
+Φ+ := {π : ExEy∼π(x)[1{y∈G +}] ≤ q+} for some q+ > 0.
+
+Background. With the bandit setup, our setting draw a lot connections to the online learning literature, especially on-line/bandit convex optimization (Hazan et al., 2016; Slivkins et al., 2019), although we optimize a fixed function the train-ing data is however collected in an online fashion. In the sense of distributing resources across groups, it is connected to for example knapsack bandits (Badanidiyuru et al., 2018) and statistical parity (Zemel et al., 2013), aka group fairness. Although the definition of groups and optimization pro-grams could be different. This allocation optimization point of view allows us to further extend our method to broader LLM applications. To the end of policy optimization with constraints, common techniques include projection (Zinke-vich, 2003; Flaxman et al., 2004; Bubeck et al., 2015; Yang et al., 2020), Lyapunov-based (Chow et al., 2018; Cayci et al., 2022), or Lagrangian methods (Ray et al., 2019). 
+
+Non-parametric space Π. In our case, our goal is to solve: 
+
+max πθ ∈Πθ J (πθ ) s.t. πθ ∈ Φ+ (1) where Πθ is the parameterized policy space. Solving Eq. (1) is however intractable due to the LLM parameterized pol-icy space Πθ . A common practice is alternating gradients 2Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+between reward maximization and constraint satisfaction. For example in Lagrangian methods such as TRPO/PPO-Lagrangian (Ray et al., 2019), one could do alternating up-date πθ and the Lagrangian multiplier. Another workaround is to first obtain a solution π⋆ in the non-parametric pol-icy space Π := ∆( X × Y ), aka tabular representations, and project π⋆ onto the parameteric one Πθ , as a technique used in many (constrained) RL works (Peters et al., 2010; Montgomery & Levine, 2016; Zhang et al., 2020). The advantage of working in the non-parametric space Π
+
+is: solving max π∈Π J (π) s.t. π ∈ Φ+ is easy, on the conditions that (i) J (π) is concave in π so that it is a con-vex program, and (ii) sampling and evaluating the reward function r(·, ·) and the cost indicator 1{·} are cheap. The condition (i) is sometimes true, for instances: bandit ob-jective (Slivkins et al., 2019); the LP formulation (Manne, 1960; Denardo, 1970; Nachum & Dai, 2020; Nachum et al., 2019) and (relative) entropy regularized RL (Ziebart, 2010; Haarnoja et al., 2017; 2018) are often concave in occupancy measure ρ. However, in rare case condition (ii) holds, RL works (Haarnoja et al., 2018; Peng et al., 2019; Zhang et al., 2020) often resort to value function approximation, making it is easy, for discrete action space, to evaluate Q-values (or alternatively advantages) for all actions for a specific state. It is then tractable to obtain closed-form solution (optimal w.r.t. the value/advantage approximations) in Π. Once an optimal policy π⋆ is found, one could then project it onto Πθ through (reverse) information projection θ = arg min θ KL (π⋆∥πθ )
+
+(often done approximately by taking gradient steps). 
+
+Stochastic optimization. With a LLM, it is obviously in-tractable to sample and evaluate the reward function r(x, y )
+
+for all (x, y ) ∈ X × Y , similarly for the cost indicator 
+
+1{·} . To avoid the training of additional value models for LLMs (Snell et al., 2022; Yu et al., 2023), which can cre-ate significant overhead in terms of memory usage, imple-mentation complexity, and training stability, we consider a stochastic optimization. The stochastic counterpart as described in Eq. (2) solves an approximate ˆπ⋆ using a man-ageable number of samples rather than directly solving for the global optimum π⋆, still, in the non-parametric space Π:
+
+ˆπ⋆(X, Y) ∈ arg max π∈Π ˆJ (π; X, Y) s.t. π ∈ ˆΦ+(X, Y)ˆJ (π; X, Y) := 1
+
+> nm
+
+Pni
+
+Pmj [π(yij |xi)r(xi, y ij )] ˆΦ+(X,Y) := {π :P
+
+> i
+
+P 
+
+> j
+
+[π(yij |xi) 1{yij ∈G +} − q+
+
+] ≤ 0}
+
+(2) where X ∈ X n is a vector of n sampled prompts and Y ∈Yn×m is a matrix of responses, with m responses for each of the n prompts; we explicitly write ˆJ with the conventional expected reward maximization for notational convenience, though alternative objectives are not restricted. Since the empirical problem (2) is a convex program with relative small sample size, it is now manageable. Comb-ing the aforementioned projection step, we could write the program as a bi-level stochastic optimization: 
+
+πθ = arg min πθ ∈Πθ Ex
+
+KL (ˆ π⋆ 
+
+> X,Yθ
+
+∥πθ )[ x]
+
+s.t. ˆπ⋆ 
+
+> X,Yθ
+
+∈ arg max π∈Π∩ ˆΦ+(X,Yθ ) ˆJ (π; X, Yθ ) (3) where Yθ ∼ πθ (X), hence ˆπ⋆ is indirectly a function of θ.
+
+Practical update. For general bi-level optimization prob-lems, iteratively solving the upper and lower-level problems by alternatively fixing one while optimizing the other could be expensive (Zhang et al., 2024). We’ve however already setup a manageable inner problem, making it easy to solve for example using convex solvers. One could therefore do iterative gradient updates on the upper level while directly solving the lower-level at each iteration: 
+
+θ′ = θ − α∇θ Ex∼μX
+
+KL (ˆ π⋆ 
+
+> X,Yθ
+
+∥πθ )[ x]
+
+s.t. ˆπ⋆ 
+
+> X,Yθ
+
+∈ arg max π∈Π∩ ˆΦ+(X,Yθ ) ˆJ (π; X, Yθ ) (4) where θ and θ′ are the parameters of current and next itera-tion, respectively; and the projection step is also done with samples (X, Yθ ) of the current iteration. Note that ˆπ⋆ is indirectly a function of θ through the sam-ples (X, Yθ ). The gradient ∇θ KL (ˆ π⋆ 
+
+> X,Yθ
+
+∥πθ ) hence re-quires differentiation through ˆπ⋆ 
+
+> X,Yθ
+
+, meaning differentiate through an arg max operator, which can in principle be achieved through implicit differentiation (Amos & Kolter, 2017; Lorraine et al., 2020). However, to avoid additional implementation and computation overhead, instead we use the semi-gradient ∇θ KL (SG {ˆπ⋆ 
+
+> X,Yθ
+
+}∥ πθ ), where SG {·} is a stop gradient operator. This stop-gradient trick is quite common in many ML applications (Sutton, 2018; Foerster et al., 2018; Chen & He, 2021), leading to the update: 
+
+θ′ = θ − α∇θ Ex∼μX
+
+KL (SG {ˆπ⋆ 
+
+> X,Yθ
+
+}∥ πθ )[ x]| {z }
+
+> approximate projection / weighted SFT
+
+s.t. ˆπ⋆ 
+
+> X,Yθ
+
+∈ arg max π∈Π∩ ˆΦ+(X,Yθ ) ˆJ (π; X, Yθ )
+
+| {z }
+
+> optimization for weight
+
+(5) The semi-gradient leads to weighted SFT update (via ˆπ⋆) as 
+
+∇θ KL (SG {ˆπ⋆}∥ πθ)[ xi] = −P 
+
+> j
+
+ˆπ⋆(yij |xi) ∂∂θ log πθ (yij |xi).This observation creates an extremely simple update with negligible implementation overhead. 
+
+Discussion. The update rule ended up aligning many it-erative weighted SFT algorithms, such as RAFT (Dong et al., 2023) and RFT (Ouyang et al., 2022; Touvron et al., 2023). In hindsight, our algorithm is motivated by the ob-servation that these extremely successful algorithms can be interpreted as projecting empirical solutions onto a paramet-ric space. Consequently, it is reasonable to use the empirical estimate in Eq. (2) , as RAFT and RFT have demonstrated 3Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+Table 1: SFT methods from our optimization point-of-view. (w)-XE denotes (weighted) cross-entropy loss. RM stands for reward model. Binary reward indicates correctness. ˆπ⋆
+
+are (unnormalized) weights for the subsequent XE update.                            
+
+> ALGO loss Lreward rfeas. set Φ
+> acceptance or weight ˆπ⋆
+> SFT XE constant Πconstant RFT w-XE binary Π1{r(x, y ) = 1 }
+> RAFT
+> (Best-of-N)w-XE RM Π1{r(xi, y ) = r⋆},
+> r⋆= max jr(xi, y ij )
+> Ours w-XE Sec. 3 Eq. (2) Eq. (2)
+
+strong practical performance despite the inherent bias in-troduced by the non-linearity of these estimations. Since it is essentially generalizes SFT by re-weighting a sample pair (xi, y ij ) by ˆπ⋆(yij |xi), at each iteration based on the solution of an optimization problem ˆπ⋆, we create a Table 1 to outline the corresponding interpretation for some iterative SFT methods, from this optimization point-of-view. The optimization problems for RFT and RAFT are trivial, as they assign ˆπ⋆(y|x) = 1 to accepted responses and to the response with the highest reward model score, respectively. Formulating these methods as optimization does not offer much advantages. However, this perspective provides flexi-bility for future work to extend our framework, allowing for feasible sets and weighting tailored to specific applications. 
+
+# 3. Practical Implementation 
+
+Yet, as we are working in an algorithm-agnostic fashion, we are now ready to select a specific RL algorithm, define its corresponding objective J , and specify a reward function r.
+
+Reward function. Since we are working on mathematical problem-solving, a ground-truth reward could be obtained through string matching (Cobbe et al., 2021; Hendrycks et al., 2021b) of the model’s solution against the ground truth solution, yielding a binary reward function rmatch : X × Y → { 0, 1} that indicates correctness. On top of the binary reward, we define our reward r∆ as the reward margin. To formally construct the margin, we first define the expected reward of a set G such that ¯rπ (x, G) := Ey∼π [rmatch (x, y ) |
+
+y ∈ G ]. We then define the reward margin r∆ as the reward advantage of a group G against all other groups Y \ G :
+
+r∆(x, y ∈ G ) := ¯ rπ (x, G) − ¯rπ (x, Y \ G ) (6) We have r∆(x, y ∈ G +) = ¯ rπ (x, G+)−¯rπ (x, G◦), in our case, and similarly for G◦. r∆ may appear odd for not counting the correctness of individual y. This is handled subsequently. 
+
+RL objective. For the learning algorithm, our choice is Con-straint Generative Policy Optimization (CGPO) (Xu et al., 2024b), which is designed for multi-objective constrained optimization of LLMs. The choice is driven by implementa-tion considerations: CGPO’s modular constraint-handling design makes it straightforward to incorporate additional constraints, such as the group density constraint in our case. CGPO in a nutshell can be viewed as a generalized Best-of-
+
+N (BoN), though depending on the specific CGPO settings. It operates by defining a feasible set Ξ over the sample space 
+
+X × Y , which are designed to capture constraint adherence for, e.g. correctness, factuality, and safety (Xu et al., 2024b). In short, (x, y ) /∈ Ξ will be rejected. In the context of math reasoning, the objective of CGPO can be summarized as: 
+
+max  
+
+> π
+
+ExEy∼π [r(x, y )] s.t. P 
+
+> y
+
+[π(y|x)1{y∈Ξx}] ≥ 1 ∀x
+
+Ξx:= {y : rmatch (x, y ) = 1 
+
+| {z }
+
+> correctness
+
+}∩{ y : ˆKL (y; x, π ref ) ≤ KL max 
+
+| {z }
+
+> empirical KL
+
+}
+
+(7) This objective essentially optimizes reward over the feasible sets Ξx such that feasible response y is correct and within an KL range of KL max , where the KL constraint is mea-sured using point estimate of the (forward) KL defined as 
+
+ˆKL (y; x, π ref ) := log π(y|x) − log πref (y|x).
+
+Resulted update (IBPO w/ OPT IuB ). Recap our update is defined as θ′ = θ − α∇θ Ex∼μX
+
+KL (SG {ˆπ⋆ 
+
+> X,Yθ
+
+}∥ πθ )[ x]
+
+s.t. ˆπ⋆ 
+
+> X,Yθ
+
+∈ arg max π∈Π∩ ˆΦ+(X,Yθ ) ˆJ (π; X, Yθ ). And we have now defined the RL objective J and the margin reward function r∆. We are now ready to put everything together: 
+
+ˆπ⋆ 
+
+> X,Yθ
+
+∈ arg max π ˆJ∆(π; X, Yθ ) := 
+
+> 1
+> nm
+
+Pni
+
+Pmj [π(yij |xi)r∆(xi, y ij )] 
+
+s.t. π ∈ Π ∩ ˆΦ+(X, Yθ ) and 
+
+P 
+
+> y∈Yθ
+
+[π(y|x)1{y∈Ξx}] ≥ 1 ∀ x ∈ X
+
+| {z }  
+
+> shorthanded as OPT IuB (inference under budget)
+
+(8) In addition, as CGPO is a generalization of BoN (with tie breaking randomly), ˆπ⋆ will be a pure strategy instead of stochastic one, meaning at most one y will be accepted for each x, for subsequent projection (SFT). 
+
+Intuition. Behind this update our intuition can be verbally interpreted as: If a prompt x is hard, the margin of extended responses r∆(x, y ∈ G +) = ¯ rπ (x, G+) − ¯rπ (x, G◦) is likely to be large for y ∈ G +. Therefore ˆπ⋆ will more likely to assign positive weight to an extended response y ∈ G + so that the objective receive larger margin reward. In contrast, if a query x is simple, r∆(x, y ∈ G +) is likely to be small. Hence ˆπ⋆ will possibly assign positive weight to regular re-sponses y ∈ G ◦, so that one could save some density budget for harder queries. See a concrete example in Table 2. 
+
+Reward models. Note that the original CGPO implemen-tation has reward models for BoN ranking. We however intentionally excludes reward models, in our OPT IuB formu-lation as shown in Eq. (8) , to highlight our methodologi-cal contributions, by decoupling reward modeling efforts. 4Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+Table 2: An example of OPT IuB compared to OPT cgpo -Eq. (7) -with tie broken randomly , resulting in potentially non-unique 
+
+ˆπ⋆. This table shows several such ˆπ⋆ solutions but not all. KL is omitted for brevity. Given the rewards below we have 
+
+¯r(x1, G◦) = ¯ r(x1, G+) = ¯ r(x2, G+) = 1 and ¯r(x2, G◦) = 0 .5.Suppose the cap q+ = 0 .5, allowing at most 50 % of accepted responses are extended y ∈ G +. For a solution matrix ˆπ⋆, 1
+
+and 0 represent accepted and rejected response, respectively. prompt x1 (easy) x2 (hard) responses y11 , y 12 ∈ G ◦ y21 , y 22 ∈ G ◦
+
+y13 , y 14 ∈ G + y23 , y 24 ∈ G +
+
+r(x, y )
+
+1 11 1
+
+ 1 01 1
+
+
+
+r∆(x, y )
+
+0 00 0
+
+ − 12 − 121212
+
+
+
+ˆπ⋆ 
+
+> 1
+
+= OPT cgpo †
+
+0 01 0
+
+ 1 00 0
+
+
+
+ˆπ⋆ 
+
+> 2
+
+= OPT cgpo ‡
+
+0 00 1
+
+ 0 01 0
+
+
+
+ˆπ⋆ = OPT IuB ♯
+
+1 00 0
+
+ 0 01 0
+
+                        
+
+> †CGPO case 1: for x2(hard), y21 ∈ G ◦is accepted even though
+> G+has higher expected reward ¯r(x2,G+);‡case 2: y14 and y23
+> are both accepted, which exceeds the density budget q+= 0 .5.
+> ♯Ours: accepts y11 and y23 to maximize margin, r∆(x2, y 23 ) = 0.5, while adhering to the density cap q+= 0 .5.
+
+Nonetheless, using reward models remains possible. To avoid introducing additional notation, we elaborate verbally:  
+
+> OPT IuB
+
+essentially selects either group G+ or G◦ for a query 
+
+x. Within a group G, all responses receive the same re-ward r∆(x, G), leaving it possible to further rank responses within each group using reward models. 
+
+Implementation & solvers. A pseudo-code of our IBPO with OPT IuB is listed in Algorithm 1. The essential change is to replace the constrained reward ranking OPT CGPO with a general optimization problem, in our case the mar-gin maximization under budget denoted as OPT IuB . The  
+
+> OPT IuB
+
+problem is a (integer) linear programming prob-lem that could be solved by off-the-shelf solvers, such as CPLEX (Cplex, 2009), Gurobi (Gurobi Optimization, LLC, 2024), or SciPy (Virtanen et al., 2020) which is our choice. 
+
+# 4. Na¨ ıve Construction of G+
+
+Yet we work on abstract groups G◦ and G+. In this sec-tion, we present the details of our constructions of extended length responses, i.e. the group G+. However developing long reasoning models is beyond the scope of this work, as our focus is on the constrained optimization of LLMs. Our constructions are for demonstrative purpose only. 
+
+Algorithm 1 Inference Budget-Constrained PO (IBPO) 
+
+Require: prompt set D, batch size n, number of responses 
+
+m, init policy π0 = πref , num of iters T , budgets q+
+
+1: for t = 1 , . . . , T do 
+
+2: prompt sampling: Xn ∼ μD
+
+3: response generation: Yn×mθ ∼ πθt (X)
+
+4: evaluate correctness: Rn×m 
+
+> c
+
+= rmatch (X, Y)
+
+5: empirical KL: ˆKL n×m
+
+= ˆKL (Y; X, π ref )
+
+6: if CGPO (i.e. w/o IuB) then 
+
+7: solve BoN (7): ˆπ⋆
+
+> X,Yθ
+
+∈ OPT cgpo (X,Yθ ,Rc, ˆKL )
+
+8: end if 
+
+9: if IBPO (i.e. w/ IuB) then 
+
+10: solve Eq. (8): ˆπ⋆
+
+> X,Yθ
+
+∈ OPT IUB (X,Yθ ,Rc, ˆKL ,q +)
+
+11: end if 
+
+12: grad step: −P
+
+> i
+
+P 
+
+> j
+
+ˆπ⋆
+
+> X,Yθ
+
+(yij |xi) ∂∂θ log πθ (yij |xi) θ=θt
+
+13: end for 
+
+Due to the intricate details and the space limit, we defer the full version of this section to Appendix B, including details of prompting, dataset construction, training pipelines, etc. Figure 1 provides examples of our constructions, which should be visually telling. In a nutshell, we use the step CoT (SCoT) format from Dubey et al. (2024) as G◦, and construct a sequential voting (SV) response as G+. SV serves as a unimodal baseline to demonstrate the performance of our construction. Adaptive SV (ASV) generates a mixture of SCoT and SV responses, allowing us to optimize its ability to adaptively choose between the two. For further details about the constructions, refer to Figure 1 and Appendix B. 
+
+Notations. , we use LLaMA to refer to instruction-tuned LLaMA 3.1 8B (Dubey et al., 2024). ASV-SFT-α denotes ASV models that are supervise fine-tuned with a coefficient 
+
+α (see Appendix B). ASV-IuB-q+ refers to ASV models optimized by our Algorithm 1 with a budget constraint q+.
+
+# 5. Evaluation of IBPO w/ OPT IuB 
+
+In this section, we show that: (i) SV is a valid construction with reasonable absolute improvement (Table 3) and scales as good as majority vote (MV, aka self-consistency (Wang et al., 2022)) (Figure 2a & 2b); (ii) ASV-SFT does not achieve good efficiency (Figure 2a & 2b) as SFT does not optimize efficiency as an optimization objective; (iii) ASV-IuB optimized by IBPO achieves better efficiency (Figure 2a & 2b), adherence to constraints (Figure 2c), and allocation of inference to harder quires (Figure 2e & Figure 2f). 
+
+5.1. Absolute Improvement (Table 3) “Baselines”. To put SV/ASV in comparison with other baselines in literature, we gather several baselines from the self-correction literature as essentially these methods in-5Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+SV Prompt (Simplified) 
+
+You are asked to give at most eight diverse solutions in different way, without referencing to the previous trials. If a solution occurs three times, it is considered as a consensus and will be used as the final answer. 
+
+ASV Prompt (Simplified) 
+
+For medium and hard level problems, you are asked to give at most eight diverse solutions in different way, with-out referencing to the previous trials. For easy level problems, you are allowed only one attempt, which will be considered your final answer. 
+
+Voting Response G+ (SV, ASV Case 1) 
+
+[TRIAL] ## Step 1: ... steps omitted The final answer is: A1 . [/TRIAL] [TRIAL] ## Step 1: ... steps omitted The final answer is: A2 . [/TRIAL] [TRIAL] ## Step 1: ... steps omitted The final answer is: A1 . [/TRIAL] [TRIAL] ## Step 1: ... steps omitted The final answer is: A1 . [/TRIAL] The answer A1 has occurred three times, and is consid-ered as a consensus. The final answer is A1 . I hope it is correct. 
+
+Non-Voting Response G◦ (ASV Case 2) 
+
+[TRIAL] ## Step 1: ... steps omitted The final answer is: A1 . [/TRIAL] Terminated due to difficulty level. 
+
+Figure 1: Example of prompts and responses. For G◦, we use standard step CoT (SCoT). To construct G+, the model is prompted to sequentially generate up to 8 trials encapsulated within the special tokens [TRIAL] and [/TRIAL], followed by a consensus answer. The SV prompt instructs the model to output only voting responses, allowing us to later evaluate its performance and show that it is a reasonable construction. The ASV prompt asks the model to decide whether to output a voting or non-voting response, facilitating our further optimization of budget allocation in Section 5. crease inference length, though not extensively as Jaech et al. (2024). The results in Table 3 are mainly gathered from Qu et al. (2024); Kumar et al. (2024). The self-correction base-lines often admit a multi-turn structure, similarly to the multi-trial construction of SV. We therefore include a col-umn of inference cost measured by number of turns/trials for a rough comparison. The SFT comparators we include are (reproduced) Self-Refine (Madaan et al., 2024), STaR (Ze-Table 3: Comparison of approaches on their improvements versus base models. †, ‡, †† indicate results duplicated from Qu et al. (2024); Yan et al. (2024); Kumar et al. (2024), respectively. ∗ indicates our methods/constructions and the improvements are relative to LLaMA model. 
+
+approach pass@ 1 improv. turns/trials per response SFT/Prompting-based 
+
+SV-SFT ∗
+
+LLaMA 56.8 5.54 5.67x 
+
+ASV-SFT-1 ∗
+
+LLaMA 55.6 4.43 5.74x 
+
+SFT-RISE †
+
+setting 1 (table 1 of †) 5.5 -0.3 5x setting 2 (table 1 of †) 5.0 0.0 5x 
+
+SFT-SCoRe †† 
+
+setting 1 (table 1 of †† ) 54.2 1.8 2x setting 2 (table 1 of †† ) 55.0 0.0 2x 
+
+RISE †
+
+LLaMA2 Base 1.4 -0.5 5x + boosting 5.5 0.0 5x 
+
+S3C‡
+
+not studied LLaMA3-8B 33.14 2.56 Mistral-7B 25.48 1.44  
+
+> DeepSeek-Math-Base-7B
+
+41.40 3.18 Qwen2-Math-7B 51.76 0.44 
+
+Self-Refine †
+
+Base 1.9 0.0 3x GPT-3.5 36.5 -3.2 3x Mistral-7B 7.1 -0.4 3x Eurus-7B-SFT 9.0 -3.3 3x 
+
+STaR †† 
+
+setting 1 (table 1 of †† ) 54.0 0.4 2x setting 2 (table 1 of †† ) 41.2 -14.2 2x Online Iterative/RL 
+
+ASV-IuB-q+∗
+
+q+ = 25% 54.2 2.94 2.24x 
+
+q+ = 50% 55.4 4.14 2.16x 
+
+q+ = 75% 57.0 5.74 4.32x 
+
+RISE †
+
++ Iteration 1 9.7 3.4 5x + Iteration 2 10.4 4.6 5x 
+
+SCoRe †† 
+
+Gemini 1.5 Flash 64.4 4.4 2x + more turns (fig. 8 †† ) ≈66 ≈6 5x-10x 
+
+likman et al., 2022), S 3C (Yan et al., 2024), SFT-RI and SFT-SCoRe, where SFT-RI and SFT-SCoRe are SFT com-parators implemented in Recursive Introspection (RI) (Qu et al., 2024) and SCoRe (Kumar et al., 2024) respectively. 
+
+ASV experiments. SV-SFT follows our training pipeline of Exp 1.2 in Table 7 (Appendix B) and is an voting only baseline. ASV-SFT-α follows our Exp 2.1 setup and is an adaptive baseline, meaning model decide whether to vote or 6Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization   
+
+> (a) performance of last checkpoints
+> (b) best checkpoints (steps in parentheses)
+> (c) voting ratio of correct responses (train)
+> (d) voting response ratio (test set)
+> (e) voting ratio by difficulty ( q+= 50% )
+> (f) voting ratio by difficulty ( q+= 25% )
+
+Figure 2: Column 1: Comparison of pass@ 1 (maj@ N for MV) against the average number of trials per response (x-axis). OSS refers to LLaMA. The interpolation between OSS and SV-SFT (aligning with MV) serves as a hypothetical efficiency boundary. ASV-SFT shows lower efficiency relative to this boundary, whereas ASV-IuB consistently achieves better efficiency (i.e. above the boundary). Column 2: Voting response ratio versus training steps. Dashed line denotes the budget 
+
+q+. On the training set, IuB formulation follows the budget constraints almost exactly. Due to distribution shift, the constraint on testing set is not entirely exact, but still it is noticeable that the voting ratio follows the order of 75% ≻ 50% ≻ 25% .Column 3: The IuB formulation enables the model to dynamically allocate voting budget to harder problems. not for a query. We report ASV-SFT-1 only as it is empiri-cally the best ASV-SFT-α baseline, though still fall short in terms of efficiency. The ASV-IuB-q+ experiments, initial-ized from ASV-SFT-1, are our RL-tuned adaptive models, optimized by IBPO with OPT IuB as inner optimization. 
+
+Observations. We would like to first emphasize that the comparison in Table 3 is not intended to demonstrate that SV outperforms SFT-based self-correction or that our ASV-IuB surpasses RL-based self-corrections. These efforts are orthogonal, as our focus is on constrained optimization. As observed, our SFT constructions—SV-SFT and ASV-SFT-1 achieve a clear improvement in pass@ 1 with high inference costs ( 5+ times the number of trials). The ASV-IuB-q+
+
+formulation, particularly with q+ = {50% , 75% }, shows significant improvement while reducing costs by 4.14% 
+
+at 2.16 × and 5.74% at 4.32 ×. This performance is on par with SCoRe, a state-of-the-art RL-based self-correction method. Note that the performance of ASV-IuB-q+ is re-ported using the best checkpoints. Results from the last checkpoint are shown in Figure 2a. Additionally, training curves are presented in Appendix E, which shows consistent improvements. As a somewhat tangential yet potentially intriguing observation, it is evident that prompting-based and SFT-based methods struggle with both absolute im-provement (Table 3) and efficiency (Figure 2), support-ing the conjecture that SFT alone does not enable self-correction capabilities (Huang et al., 2023; Kumar et al., 2024). This observation is also partially supported by con-current work (DeepSeek-AI et al., 2025), which suggests that such self-correction emerges automatically during RL rather than manually created by prompting or SFT. 
+
+5.2. Efficiency, Budget Adherence & Allocation 
+
+Table 3 shows that our ASV-IuB-q+ models achieve results comparable to RL-based self-correction models, simply by inference budget management. In this subsection, we extend our discussion on: (i) performance-budget efficiency, (ii) constraint satisfaction, and (iii) inference budget allocation. 
+
+Performance-budget efficiency. In Figure 2a and 2b, we vi-sually assess the performance-budget efficiency, compared to a hypothetical efficiency boundary. This boundary is 7Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+an interpolation between OSS LLaMA model and SV-SFT. It is reasonable to consider it as a hypothetical boundary for two reasons: (i) OSS and SV-SFT are two extremes of ASV-IuB-q+, corresponding to the cases of q+ = 0 and 
+
+q+ = 1 respectively; and (ii) this interpolation achieves an increase comparable to MV, if not slightly better. The SFT version of ASV is generally much worse than the bound-ary, as SFT alone does not optimize resource allocation as a mathematical objective. For ASV-IuB-q+ optimized by IBPO, we report both the last and best checkpoint results in Figure 2a and Figure 2b, respectively. Our formulation achieves, in general, better performance-budget efficiency, except q+ = 75% in Figure 2a. We will extend our discus-sion on this unsuccessful case in subsequent paragraphs. 
+
+Constraint satisfaction. We then evaluate how effectively the constraints are enforced. In Figure 2c, the budget constraints are successfully maintained during training for 
+
+q+ = {25% , 50% , 75% }. Due to distribution shifts, exact adherence to these constraints is not expected on the test set. Nevertheless, Figure 2d demonstrates that constraints are still upheld at the end of training for q+ = {25% , 50% },and the ratio of voting responses follows the order 75% ≻
+
+50% ≻ 25% . (Figure 2c illustrates that our model meets the budget constraints for the set of correct responses. The constraints also hold for all responses, see Appendix E.) 
+
+Difficulty-adaptive allocation. We have show improved efficiency and adherence to constraints, we would like to fur-ther validate the intuition of our design: that more challeng-ing problems may require longer reasoning steps, whereas simpler problems can be resolved with just SCoT responses. Ideally, the model should allocate more voting responses to problems with higher difficulty levels. To this end, we use the difficulty levels from the metadata of Hendrycks MATH and plot the ratio of voting responses for each difficulty level. Figure 2f and 2e illustrates that for both q+ = {25% , 50% },more challenging problems, such as those at levels 4 and 5, receive a higher allocation of budgets. This allocation pattern is particularly evident for the case of q+ = 25% ,where only 2% of level 1 problems receive voting responses. 
+
+Discussion on the unsuccessful case. There is one ob-served unsuccessful case in Figure 2a: the last checkpoint of ASV-IuB-75% , which falls on the hypothetical boundary rather than above it. This outcome is arguably expected, as observed in Figure 2d, where ASV-IuB-75% outputs almost exclusively voting responses at the end of training. As a result, this model is not adaptively allocating resources, and thus no improvement in efficiency is anticipated. This unsuc-cessful case is hence caused by the distribution shift between the training set and the testing set. It is possible that scaling the training set—given that our training set DRL contains approximately 10 k prompts, which is relatively small—will make the testing set more likely to be in-distribution and thereby alleviate the distribution shift issue. 
+
+# 6. Conclusion & Discussions 
+
+We derived a constrained policy optimization framework, IBPO, from an optimization perspective, resulting in a sim-ple weighted SFT update that resembles successful iterative SFT algorithms such as RFT and RAFT. In each iteration, the optimal weight is obtained by solving an (integer) linear program. The practical implementation of IBPO is build on top of CGPO, and is evaluated on a math reasoning task with inference budget constraints. Empirical evaluations show that our framework enables the model to adhere to constraints and dynamically allocate the inference budget. 
+
+Batch optimization & solver time. Since we solve an opti-mization problem per iteration (i.e. per mini-batch), limited computational resources can result in smaller sample sizes for the inner optimization problem, leading to larger vari-ance. This issue can be mitigated through “sample accumu-lation”, accumulating samples across multiple consecutive steps, similar to gradient accumulation practice in LLMs. A pseudo-code for sample accumulation can be found in Appendix H. In addition, though integer linear program-ming is NP-hard (Vazirani, 1997), the number of variables in our batch-level optimization is typically small, resulting in minimal computational overhead. Refer to the wall-time plot for the SciPy solver in Appendix H for details. 
+
+Broader applications. Our framework has only been evalu-ated with inference in math, the resource allocation problem however has far-reaching implications within the ML com-munity. As a result, our framework can be potentially ex-tended to further LLM applications. For example, a promis-ing application is statistical parity (Zemel et al., 2013), aka group fairness. In this context, one could consider attribut-ing responses to their respective social groups, and cap the density of responses that correspond to socially privi-leged groups, to encourage more inclusive and equitable responses across different demographics. Another poten-tial application is the balanced expert activation in mixture of experts (Jacobs et al., 1991; Shazeer et al., 2017; Lep-ikhin et al., 2020) systems, which is sometimes achieved by adding an auxiliary balancing loss (Wei et al., 2024). Alter-natively, this balance can be possibly achieved by enforcing a minimal total activation density for each expert. This may help to prevent over-reliance on a subset of experts, and hence enhancing the overall robustness and efficiency. We leave the exploration of broader applications and their implementations as future directions. 
+
+# Impact Statement 
+
+This paper presents work whose goal is to advance the field LLMs. There are many potential societal consequences of our work, none of which we feel must be highlighted here. 8Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+# References 
+
+Aggarwal, P., Madaan, A., Yang, Y., et al. Let’s sample step by step: Adaptive-consistency for efficient reasoning and coding with llms. arXiv preprint arXiv:2305.11860 ,2023. Altman, E. Constrained Markov decision processes . Rout-ledge, 2021. Amos, B. and Kolter, J. Z. Optnet: Differentiable opti-mization as a layer in neural networks. In International conference on machine learning , pp. 136–145. PMLR, 2017. Anthony, L. F. W., Kanding, B., and Selvan, R. Car-bontracker: Tracking and predicting the carbon foot-print of training deep learning models. arXiv preprint arXiv:2007.03051 , 2020. Austin, J., Odena, A., Nye, M., Bosma, M., Michalewski, H., Dohan, D., Jiang, E., Cai, C., Terry, M., Le, Q., et al. Program synthesis with large language models. arXiv preprint arXiv:2108.07732 , 2021. Badanidiyuru, A., Kleinberg, R., and Slivkins, A. Bandits with knapsacks. Journal of the ACM (JACM) , 65(3):1–55, 2018. Bubeck, S., Dekel, O., Koren, T., and Peres, Y. Bandit convex optimization: \sqrtt regret in one dimension. In 
+
+Conference on Learning Theory , pp. 266–278. PMLR, 2015. Cayci, S., Zheng, Y., and Eryilmaz, A. A lyapunov-based methodology for constrained optimization with bandit feedback. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 36, pp. 3716–3723, 2022. Chen, M., Tworek, J., Jun, H., Yuan, Q., Pinto, H. P. D. O., Kaplan, J., Edwards, H., Burda, Y., Joseph, N., Brockman, G., et al. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 , 2021. Chen, X. and He, K. Exploring simple siamese represen-tation learning. In Proceedings of the IEEE/CVF con-ference on computer vision and pattern recognition , pp. 15750–15758, 2021. Chenery, H. B. and Kretschmer, K. S. Resource allocation for economic development. Econometrica, Journal of the Econometric Society , pp. 365–399, 1956. Chentanez, N., Barto, A., and Singh, S. Intrinsically moti-vated reinforcement learning. Advances in neural infor-mation processing systems , 17, 2004. Chow, Y., Nachum, O., Duenez-Guzman, E., and Ghavamzadeh, M. A lyapunov-based approach to safe reinforcement learning. Advances in neural information processing systems , 31, 2018. Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert, M., Tworek, J., Hilton, J., Nakano, R., et al. Training verifiers to solve math word problems. 
+
+arXiv preprint arXiv:2110.14168 , 2021. Cplex, I. I. V12. 1: User’s manual for cplex. International Business Machines Corporation , 46(53):157, 2009. DeepSeek-AI, Guo, D., Yang, D., Zhang, H., Song, J., Zhang, R., Xu, R., Zhu, Q., Ma, S., Wang, P., Bi, X., Zhang, X., Yu, X., Wu, Y., Wu, Z. F., Gou, Z., Shao, Z., Li, Z., Gao, Z., Liu, A., Xue, B., Wang, B., Wu, B., Feng, B., Lu, C., Zhao, C., Deng, C., Zhang, C., Ruan, C., Dai, D., Chen, D., Ji, D., Li, E., Lin, F., Dai, F., Luo, F., Hao, G., Chen, G., Li, G., Zhang, H., Bao, H., Xu, H., Wang, H., Ding, H., Xin, H., Gao, H., Qu, H., Li, H., Guo, J., Li, J., Wang, J., Chen, J., Yuan, J., Qiu, J., Li, J., Cai, J. L., Ni, J., Liang, J., Chen, J., Dong, K., Hu, K., Gao, K., Guan, K., Huang, K., Yu, K., Wang, L., Zhang, L., Zhao, L., Wang, L., Zhang, L., Xu, L., Xia, L., Zhang, M., Zhang, M., Tang, M., Li, M., Wang, M., Li, M., Tian, N., Huang, P., Zhang, P., Wang, Q., Chen, Q., Du, Q., Ge, R., Zhang, R., Pan, R., Wang, R., Chen, R. J., Jin, R. L., Chen, R., Lu, S., Zhou, S., Chen, S., Ye, S., Wang, S., Yu, S., Zhou, S., Pan, S., Li, S. S., Zhou, S., Wu, S., Ye, S., Yun, T., Pei, T., Sun, T., Wang, T., Zeng, W., Zhao, W., Liu, W., Liang, W., Gao, W., Yu, W., Zhang, W., Xiao, W. L., An, W., Liu, X., Wang, X., Chen, X., Nie, X., Cheng, X., Liu, X., Xie, X., Liu, X., Yang, X., Li, X., Su, X., Lin, X., Li, X. Q., Jin, X., Shen, X., Chen, X., Sun, X., Wang, X., Song, X., Zhou, X., Wang, X., Shan, X., Li, Y. K., Wang, Y. Q., Wei, Y. X., Zhang, Y., Xu, Y., Li, Y., Zhao, Y., Sun, Y., Wang, Y., Yu, Y., Zhang, Y., Shi, Y., Xiong, Y., He, Y., Piao, Y., Wang, Y., Tan, Y., Ma, Y., Liu, Y., Guo, Y., Ou, Y., Wang, Y., Gong, Y., Zou, Y., He, Y., Xiong, Y., Luo, Y., You, Y., Liu, Y., Zhou, Y., Zhu, Y. X., Xu, Y., Huang, Y., Li, Y., Zheng, Y., Zhu, Y., Ma, Y., Tang, Y., Zha, Y., Yan, Y., Ren, Z. Z., Ren, Z., Sha, Z., Fu, Z., Xu, Z., Xie, Z., Zhang, Z., Hao, Z., Ma, Z., Yan, Z., Wu, Z., Gu, Z., Zhu, Z., Liu, Z., Li, Z., Xie, Z., Song, Z., Pan, Z., Huang, Z., Xu, Z., Zhang, Z., and Zhang, Z. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning, 2025. URL 
+
+https://arxiv.org/abs/2501.12948 .Denardo, E. V. On linear programming in a markov decision problem. Management Science , 16(5):281–288, 1970. Dong, H., Xiong, W., Goyal, D., Zhang, Y., Chow, W., Pan, R., Diao, S., Zhang, J., Shum, K., and Zhang, T. Raft: Re-9Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+ward ranked finetuning for generative foundation model alignment. arXiv preprint arXiv:2304.06767 , 2023. Dubey, A., Jauhri, A., Pandey, A., Kadian, A., Al-Dahle, A., Letman, A., Mathur, A., Schelten, A., Yang, A., Fan, A., et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. Flaxman, A. D., Kalai, A. T., and McMahan, H. B. On-line convex optimization in the bandit setting: gradient descent without a gradient. arXiv preprint cs/0408007 ,2004. Foerster, J., Farquhar, G., Al-Shedivat, M., Rockt ¨aschel, T., Xing, E., and Whiteson, S. Dice: The infinitely differen-tiable monte carlo estimator. In International Conference on Machine Learning , pp. 1529–1538. PMLR, 2018. Garcıa, J. and Fern ´andez, F. A comprehensive survey on safe reinforcement learning. Journal of Machine Learning Research , 16(1):1437–1480, 2015. Gurobi Optimization, LLC. Gurobi Optimizer Reference Manual, 2024. URL https://www.gurobi.com .Haarnoja, T., Tang, H., Abbeel, P., and Levine, S. Rein-forcement learning with deep energy-based policies. In 
+
+International conference on machine learning , pp. 1352– 1361. PMLR, 2017. Haarnoja, T., Zhou, A., Abbeel, P., and Levine, S. Soft actor-critic: Off-policy maximum entropy deep reinforce-ment learning with a stochastic actor. In International conference on machine learning , pp. 1861–1870. PMLR, 2018. Hazan, E. et al. Introduction to online convex optimization. 
+
+Foundations and Trends® in Optimization , 2(3-4):157– 325, 2016. Henderson, P., Hu, J., Romoff, J., Brunskill, E., Jurafsky, D., and Pineau, J. Towards the systematic reporting of the energy and carbon footprints of machine learning. 
+
+Journal of Machine Learning Research , 21(248):1–43, 2020. Hendrycks, D., Basart, S., Kadavath, S., Mazeika, M., Arora, A., Guo, E., Burns, C., Puranik, S., He, H., Song, D., et al. Measuring coding challenge competence with apps. arXiv preprint arXiv:2105.09938 , 2021a. Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J. Measuring math-ematical problem solving with the math dataset. arXiv preprint arXiv:2103.03874 , 2021b. Huang, J., Chen, X., Mishra, S., Zheng, H. S., Yu, A. W., Song, X., and Zhou, D. Large language mod-els cannot self-correct reasoning yet. arXiv preprint arXiv:2310.01798 , 2023. Ibaraki, T. and Katoh, N. Resource allocation problems: algorithmic approaches . MIT press, 1988. Jacobs, R. A., Jordan, M. I., Nowlan, S. J., and Hinton, G. E. Adaptive mixtures of local experts. Neural computation ,3(1):79–87, 1991. Jaech, A., Kalai, A., Lerer, A., Richardson, A., El-Kishky, A., Low, A., Helyar, A., Madry, A., Beutel, A., Car-ney, A., et al. Openai o1 system card. arXiv preprint arXiv:2412.16720 , 2024. Jin, M., Yu, Q., Shu, D., Zhao, H., Hua, W., Meng, Y., Zhang, Y., and Du, M. The impact of reasoning step length on large language models. arXiv preprint arXiv:2401.04925 , 2024. Karlin, S. Mathematical methods and theory in games, programming, and economics , volume 2. Courier Corpo-ration, 2003. Karwowski, J., Hayman, O., Bai, X., Kiendlhofer, K., Grif-fin, C., and Skalse, J. Goodhart’s law in reinforcement learning. arXiv preprint arXiv:2310.09144 , 2023. Kumar, A., Zhuang, V., Agarwal, R., Su, Y., Co-Reyes, J. D., Singh, A., Baumli, K., Iqbal, S., Bishop, C., Roelofs, R., et al. Training language models to self-correct via reinforcement learning. arXiv preprint arXiv:2409.12917 ,2024. Lai, X., Tian, Z., Chen, Y., Yang, S., Peng, X., and Jia, J. Step-dpo: Step-wise preference optimiza-tion for long-chain reasoning of llms. arXiv preprint arXiv:2406.18629 , 2024. Lepikhin, D., Lee, H., Xu, Y., Chen, D., Firat, O., Huang, Y., Krikun, M., Shazeer, N., and Chen, Z. Gshard: Scaling giant models with conditional computation and automatic sharding. arXiv preprint arXiv:2006.16668 , 2020. Liang, T., He, Z., Jiao, W., Wang, X., Wang, Y., Wang, R., Yang, Y., Shi, S., and Tu, Z. Encouraging divergent thinking in large language models through multi-agent debate. arXiv preprint arXiv:2305.19118 , 2023. Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike, J., Schulman, J., Sutskever, I., and Cobbe, K. Let’s verify step by step. arXiv preprint arXiv:2305.20050 , 2023. Liu, E. Z., Raghunathan, A., Liang, P., and Finn, C. Decou-pling exploration and exploitation for meta-reinforcement learning without sacrifices. In International conference on machine learning , pp. 6925–6935. PMLR, 2021. Lorraine, J., Vicol, P., and Duvenaud, D. Optimizing mil-lions of hyperparameters by implicit differentiation. In 10 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+International conference on artificial intelligence and statistics , pp. 1540–1552. PMLR, 2020. Madaan, A., Tandon, N., Gupta, P., Hallinan, S., Gao, L., Wiegreffe, S., Alon, U., Dziri, N., Prabhumoye, S., Yang, Y., et al. Self-refine: Iterative refinement with self-feedback. Advances in Neural Information Processing Systems , 36, 2024. Manne, A. S. Linear programming and sequential decisions. 
+
+Management Science , 6(3):259–267, 1960. Montgomery, W. H. and Levine, S. Guided policy search via approximate mirror descent. Advances in Neural Information Processing Systems , 29, 2016. Nachum, O. and Dai, B. Reinforcement learning via fenchel-rockafellar duality. arXiv preprint arXiv:2001.01866 ,2020. Nachum, O., Chow, Y., Dai, B., and Li, L. Dualdice: Behavior-agnostic estimation of discounted stationary distribution corrections. Advances in neural information processing systems , 32, 2019. Ouyang, L., Wu, J., Jiang, X., Almeida, D., Wainwright, C., Mishkin, P., Zhang, C., Agarwal, S., Slama, K., Ray, A., et al. Training language models to follow instructions with human feedback. Advances in neural information processing systems , 35:27730–27744, 2022. Pan, A., Bhatia, K., and Steinhardt, J. The effects of reward misspecification: Mapping and mitigating misaligned models. arXiv preprint arXiv:2201.03544 , 2022. Pathak, D., Agrawal, P., Efros, A. A., and Darrell, T. Curiosity-driven exploration by self-supervised predic-tion. In International conference on machine learning ,pp. 2778–2787. PMLR, 2017. Peng, X. B., Kumar, A., Zhang, G., and Levine, S. Advantage-weighted regression: Simple and scalable off-policy reinforcement learning. arXiv preprint arXiv:1910.00177 , 2019. Peters, J., Mulling, K., and Altun, Y. Relative entropy policy search. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 24, pp. 1607–1612, 2010. Pham, C., Liu, B., Yang, Y., Chen, Z., Liu, T., Yuan, J., Plummer, B. A., Wang, Z., and Yang, H. Let models speak ciphers: Multiagent debate through embeddings. 
+
+arXiv preprint arXiv:2310.06272 , 2023. Qu, Y., Zhang, T., Garg, N., and Kumar, A. Recursive introspection: Teaching language model agents how to self-improve. arXiv preprint arXiv:2407.18219 , 2024. Rafailov, R., Sharma, A., Mitchell, E., Manning, C. D., Er-mon, S., and Finn, C. Direct preference optimization: Your language model is secretly a reward model. Ad-vances in Neural Information Processing Systems , 36, 2024. Ray, A., Achiam, J., and Amodei, D. Benchmarking safe ex-ploration in deep reinforcement learning. arXiv preprint arXiv:1910.01708 , 7(1):2, 2019. Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., and Dean, J. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. 
+
+arXiv preprint arXiv:1701.06538 , 2017. Skalse, J., Howe, N., Krasheninnikov, D., and Krueger, D. Defining and characterizing reward gaming. Advances in Neural Information Processing Systems , 35:9460–9471, 2022. Slivkins, A. et al. Introduction to multi-armed bandits. 
+
+Foundations and Trends® in Machine Learning , 12(1-2):1–286, 2019. Snell, C., Kostrikov, I., Su, Y., Yang, M., and Levine, S. Offline rl for natural language generation with implicit language q learning. arXiv preprint arXiv:2206.11871 ,2022. Snell, C., Lee, J., Xu, K., and Kumar, A. Scaling llm test-time compute optimally can be more effective than scal-ing model parameters. arXiv preprint arXiv:2408.03314 ,2024. Sutton, R. S. Reinforcement learning: An introduction. ABradford Book , 2018. Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 ,2023. Vazirani, V. V. Approximation algorithms. Georgia Inst. Tech , 1997. Virtanen, P., Gommers, R., Oliphant, T. E., Haberland, M., Reddy, T., Cournapeau, D., Burovski, E., Peterson, P., Weckesser, W., Bright, J., van der Walt, S. J., Brett, M., Wilson, J., Millman, K. J., Mayorov, N., Nelson, A. R. J., Jones, E., Kern, R., Larson, E., Carey, C. J., Polat, ˙I., Feng, Y., Moore, E. W., VanderPlas, J., Laxalde, D., Perktold, J., Cimrman, R., Henriksen, I., Quintero, E. A., Harris, C. R., Archibald, A. M., Ribeiro, A. H., Pedregosa, F., van Mulbregt, P., and SciPy 1.0 Contributors. SciPy 1.0: Fundamental Algorithms for Scientific Computing in Python. Nature Methods , 17:261–272, 2020. doi: 10.1038/s41592-019-0686-2. 11 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+Wang, X., Wei, J., Schuurmans, D., Le, Q., Chi, E., Narang, S., Chowdhery, A., and Zhou, D. Self-consistency im-proves chain of thought reasoning in language models. 
+
+arXiv preprint arXiv:2203.11171 , 2022. Wang, X., Feng, S., Li, Y., Yuan, P., Zhang, Y., Pan, B., Wang, H., Hu, Y., and Li, K. Make every penny count: Difficulty-adaptive self-consistency for cost-efficient rea-soning. arXiv preprint arXiv:2408.13457 , 2024. Wei, J., Wang, X., Schuurmans, D., Bosma, M., Xia, F., Chi, E., Le, Q. V., Zhou, D., et al. Chain-of-thought prompting elicits reasoning in large language models. Advances in neural information processing systems , 35:24824–24837, 2022. Wei, T., Zhu, B., Zhao, L., Cheng, C., Li, B., L ¨u, W., Cheng, P., Zhang, J., Zhang, X., Zeng, L., et al. Skywork-moe: A deep dive into training techniques for mixture-of-experts language models. arXiv preprint arXiv:2406.06563 ,2024. Xu, M., Li, Y., Sun, K., and Qian, T. Adaption-of-thought: Learning question difficulty improves large language models for reasoning. In Proceedings of the 2024 Con-ference on Empirical Methods in Natural Language Pro-cessing , pp. 5468–5495, 2024a. Xu, T., Helenowski, E., Sankararaman, K. A., Jin, D., Peng, K., Han, E., Nie, S., Zhu, C., Zhang, H., Zhou, W., et al. The perfect blend: Redefining rlhf with mixture of judges. 
+
+arXiv preprint arXiv:2409.20370 , 2024b. Yan, Y., Jiang, J., Liu, Y., Cao, Y., Xu, X., Cai, X., Shao, J., et al. S 3c-math: Spontaneous step-level self-correction makes large language models better mathematical reason-ers. arXiv preprint arXiv:2409.01524 , 2024. Yang, T.-Y., Rosca, J., Narasimhan, K., and Ramadge, P. J. Projection-based constrained policy optimization. arXiv preprint arXiv:2010.03152 , 2020. Yu, Z., Tao, Y., Chen, L., Sun, T., and Yang, H. B-coder: On value-based deep reinforcement learning for program synthesis. In The Twelfth International Conference on Learning Representations , 2023. Zelikman, E., Wu, Y., Mu, J., and Goodman, N. Star: Boot-strapping reasoning with reasoning. Advances in Neural Information Processing Systems , 35:15476–15488, 2022. Zemel, R., Wu, Y., Swersky, K., Pitassi, T., and Dwork, C. Learning fair representations. In International conference on machine learning , pp. 325–333. PMLR, 2013. Zhang, Y., Vuong, Q., and Ross, K. First order constrained optimization in policy space. Advances in Neural Infor-mation Processing Systems , 33:15338–15349, 2020. Zhang, Y., Khanduri, P., Tsaknakis, I., Yao, Y., Hong, M., and Liu, S. An introduction to bilevel optimization: Foun-dations and applications in signal processing and machine learning. IEEE Signal Processing Magazine , 41(1):38– 59, 2024. Ziebart, B. D. Modeling purposeful adaptive behavior with the principle of maximum causal entropy . Carnegie Mel-lon University, 2010. Ziegler, D. M., Stiennon, N., Wu, J., Brown, T. B., Radford, A., Amodei, D., Christiano, P., and Irving, G. Fine-tuning language models from human preferences. arXiv preprint arXiv:1909.08593 , 2019. Zinkevich, M. Online convex programming and generalized infinitesimal gradient ascent. In Proceedings of the 20th international conference on machine learning (icml-03) ,pp. 928–936, 2003. 12 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+# A. Motivating Example 
+
+Figure 3 is an example that advanced reasoning model spent more than enough time on a trivial problem. 
+
+Figure 3: A long reasoning-chain model spent more than enough inference time on a trivial problem. 
+
+# B. Full Version of Section 4: Acronyms, Na¨ ıve Construction of G+ & Training Pipelines 
+
+Yet we work on abstract groups G◦ and G+. In this section, we present the details of our constructions of extended length responses, i.e. the extended group G+. However developing long reasoning models is beyond the scope of this work, as our focus is on the constrained optimization of LLMs. Our constructions are for demonstrative purpose only. Due to the intricate details involved in prompts, datasets, and training pipelines, this section may appear somewhat dense. To make it more approachable, we have structured our writing in a way that readers can, if they wish, focus on the broader ideas without delving deeply into the specifics of constructions. A TL;DR version of this section is provided below. 
+
+TL;DR. We construct two types of illustrative extended responses: Sequential Voting (SV) and Adaptive Sequential Voting (ASV). Figure 4 visually explains how these constructions are implemented. The goal of the SV is to establish a baseline that generates only responses in G+, thereby serving as an uni-modal comparator. SV scales roughly as well as vanilla majority voting (MV), aka self-consistency (Wang et al., 2022). In contrast, ASV outputs a mixture of responses of y ∈ G ◦ and 
+
+y ∈ G +. This allows the model to adaptively decide which type of response to produce based on the query. The goal of ASV is to further enable IBPO optimization, as IBPO implicitly assumes the model generates both regular and extended-length responses. In Section 5, we show that ASV optimized by IBPO, achieves better allocation of the inference budget. 
+
+B.1. Construction of Sequential Vote Acronyms. For clarity, we explicitly define key terms to hopefully resolve any potential ambiguities. Response : A response refers to a sequence generated until a terminal token is encountered. For precision, we sometimes refer to these as voting responses or SCoT responses, as illustrated in Figure 4, after introducing our sequential voting baselines. Trial : A trial denotes a solution instance, which is demarcated by the special tokens [TRIAL] . . . [/TRIAL], as shown in the voting response example in Figure 4. While a voting response contains multiple trials, a SCoT response or a non-voting response contains exactly one trial, as also depicted in Figure 4. For the description of training and testing details, we use LLaMA and LLaMA-b to denote the instruction-tuned and base versions of the LLaMA 3.1 8B models (Dubey et al., 2024), respectively. MATH refers specifically to the training split of the Hendrycks MATH dataset (Hendrycks et al., 2021b), while the 500-sample subset of the testing split is referred to as MATH500 (Lightman et al., 2023). SDPO stands for step-DPO (Lai et al., 2024) dataset, a curated step-annotated dataset from which we retain only the prompts and positive responses (ground truth solutions), excluding any step signals (see Appendix G for details). It is important to note that while we leverage their curated dataset, the original SDPO method is not relevant to this work. The SDPO dataset was chosen because its ground truth responses follow the SCoT format of LLaMA responses, making it convenient to run supervised fine-tuning (SFT) mixed with LLaMA samples. 
+
+Construction details. To be more specific, the na ¨ıve sequential voting baselines, as the “expensive” group G+, have increased inference costs by simply sequentially output multiple trials and find the sequential majority vote until stop condition met. In particular, the early-stopping sequential voting (SV) baseline is created to show that such na ¨ıve baseline could achieve performance gain, on par with vanilla majority voting (MV). The adaptive sequential voting (ASV) allows model to output both SCoT response y◦ and sequential voting response y+, allowing us to further conduct the budget controll experiments in Section 5. • Early Stopping Sequential Vote (SV): For a single response, model are allowed to output at most 8 trials, and conclude 13 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+SCoT Prompt + Cond. 
+
+Solve the following math problem efficiently and clearly: - For simple problems (2 steps or fewer): Provide a concise solution with minimal explanation. - For complex problems (3 steps or more): Use this step-by-step format: ## Step 1: [Concise description] [Brief explanation and calculations] ## Step 2: [Concise description] [Brief explanation and calculations] ... Regardless of the approach, always conclude with: Therefore, the final answer is: $ \\ boxed {answer }$. I hope it is correct. Where [answer] is just the final number or expression that solves the problem. [Condition Description] Problem: {{ problem }} 
+
+SCoT Response 
+
+## Step 1: ... steps omitted The final answer is: A1 . I hope it is correct. 
+
+SV Cond. 
+
+You are asked to give at most eight diverse solutions in different way, without referencing to the previous trials. Each trial should be contained in a separate [TRIAL] trial solution [/TRIAL] block. If a solution occurs three times, it is considered as a consen-sus and will be used as the final answer. If there is no consensus, use the solution from the most plausible trial. 
+
+ASV Cond. 
+
+For medium and hard level problems, you are asked to give at most eight diverse solutions in different way, without referencing to the previous trials. Each trial should be contained in a separate [TRIAL] trial solution [/TRIAL] block. If a solution occurs three times, it is considered as a consen-sus and will be used as the final answer. If there is no consensus, use the solution from the most plausible trial. For easy level problems, you are allowed only one attempt, which will be considered your final answer. 
+
+Voting Response (SV, ASV Case 1) 
+
+[TRIAL] ## Step 1: ... steps omitted The final answer is: A1 . [/TRIAL] [TRIAL] ## Step 1: ... steps omitted The final answer is: A2 . [/TRIAL] [TRIAL] ## Step 1: ... steps omitted The final answer is: A1 . [/TRIAL] [TRIAL] ## Step 1: ... steps omitted The final answer is: A1 . [/TRIAL] The answer A1 has occurred three times, and is considered as a consensus. The final answer is A1 . I hope it is correct. 
+
+Non-Voting Response (ASV Case 2) 
+
+[TRIAL] ## Step 1: ... steps omitted The final answer is: A1 . [/TRIAL] Terminated due to difficulty level. 
+
+Figure 4: Prompt templates. For G◦, we use the SCoT prompt without including an additional [condition description] and generate a standard SCoT response. For G+, we simply insert the corresponding condition into the [condition description] placeholder to create a new prompt. In the case of SV, the SV condition is integrated into the prompt, and the model is asked to perform repeated trials to reach a consensus. The ASV prompt instructs the model to output either a voting response (case 1) or a non-voting response (case 2), with the decision made by the model itself. with majority of trials. In addition to the terminal condition of maximum 8 trials, model will early stop if an answer appears 3 times and this answer will be considered as the majority answer. • Adaptive Sequential Vote (ASV): Model is allowed to choose either vote (case 1, i.e. y+) or not (case 2, i.e. y◦). This baseline is created to further allow model-driven resource allocation. We later, in Section 5, show that one could optimize the ability of resource allocation with our IBPO. 
+
+Dataset. We define our construction of dataset as a product of a problem set Q, format template of question Tq and answer 
+
+Ta, and a response set A, subjected to some filtration F. Formally, a dataset D is defined as: D := ( F ◦ T q ◦ T a)( Q × A),where F removes undesired question-answer pairs, such as incorrect responses when A are model generated; The templates 
+
+Tq and Ta collectively transform each question-answer pair into a specific text format, as shown in Figure 4; Slightly abusing the notation, the Cartesian product Q × A is used to pair each response with its corresponding question, defined as: 
+
+Q × A := {(qi, a ij ) : ∀i, j }.Specifically, we summarize the datasets used in subsequent sections in Table 4. For instance, for SV training, we construct 14 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+Table 4: Summary of constructed datasets for different experimental purposes. DSV , DESSV and DASV uses the same set of prompts but different prompt/response tem-plates. QSDPO and AGOLDEN SDPO are from Lai et al. (2024) with details deferred to Appendix G. ASV1 and ASV2 correspond to ASV case 1 and 2 (see Section B.1) re-spectively. Set Tq Ta F Q ADSV SV SV G QMATH ASAMPLE MATH 
+
+DASV 1 ASV ASV1 
+
+DASV 2 ASV ASV2 - QSDPO AGOLDEN SDPO 
+
+DSCOT SCoT SCoT -
+
+DRL ASV - - QSDPO ∅
+
+Table 5: Stopping conditions. 
+
+stopping conditions SV (i) max 8 trials; (ii) if an answer occurs 3 times. ASV voting (case 1): (i) max 8 trials; (ii) if an answer occurs 3 times; non-voting (case 2): exact 1 trial. 
+
+Table 6: Prompt and response sources. 
+
+Set Query-Response Source Training QMATH & ASAMPLE MATH MATH & LLaMA samples 
+
+QSDPO & AGOLDEN SDPO (Lai et al., 2024) Testing QMATH 500 MATH500 
+
+Table 7: Training pipelines. For Sec. B.2, we aim to create a demonstration experiment showing that with the same model (of roughly same math knowledge) SV can achieve reasonable performance-cost efficiency on par with MV. Sec. 5 further show we can optimize performance-cost efficiency through our IuB generalization of CGPO, where α in row 2.1 is a coefficient of DASV 2.Exp. Sec. Type Init. Ckpt. Dataset Purpose 1.1 Sec. B.2 SFT LLaMA-b DSV ∪ DSCOT Allow model follow both SV and SCoT prompt. 
+
+1.2 Sec. 5 SFT LLaMA 2.1 Sec. 5 SFT LLaMA DASV 1 ∪ αDASV 2 Follow the ASV instruction to let model decide vote or not. 
+
+2.2 RL Exp. 2.1 DRL Optimize the capability of dynamic budget allocation. 
+
+(a) (Nested) MV measured with number of responses (b) (Nested) MV measured with number of tokens 
+
+Figure 5: SV tested on MATH500. MV stands for vanilla majority voting, aka self-consistency (Wang et al., 2022), with SCoT responses. Nested MV refers to majority voting with our (early-stopping) SV responses. It is “nested” as each SV response is already a voting, as shown in Figure 4. The SV method has “clear” gains when performance is measured with the number of responses. When measured with the number of tokens, SV aligns the performance-cost efficiency of vanilla MV. This is another indicator that one should worry about token efficiency when measuring reasoning performance. 
+
+DSV with question set QMATH from Hendrycks et al. (2021b) and LLaMA generated responses ASAMPLE MATH using the SV templates 15 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+defined in Figure 4, subjected to data selection described in Appendix G. 
+
+Training pipelines. We summarize our training pipelines for our toy experiments in Section B.2 and our IuB experiments in Section 5. For instance, experiment 2.2 (Section 5) in Table 7 is the summary of our IBPO training, using dataset DRL as constructed in Table 4 and initialized from ASV models from experiment 2.2. Further details of each training can be found in Appendix G and F. 
+
+B.2. Performance of Nai¨ ve Sequential Vote 
+
+We start by evaluating the performance of SV compared to vanilla MV, following the setup of Exp. 1.1 in Table 7. This toy experiment is designed to demonstrate: (i) SV scales approximately as well as MV, thereby qualifying it as an example of 
+
+G+; and (ii) measuring performance based on the number of responses is inadequate, therefore we later measure performance relative to the number of tokens/trials in Section 5. 
+
+Metrics. The metrics we use are pass@ k and majority@ k, both of which are widely used in the literature (Hendrycks et al., 2021b; Wang et al., 2022). We occasionally refer to pass rate as pass@ 1. In both metrics, k specifically denotes the number of responses, regardless of the number of trials per response. Since our voting methods may involve multiple trials, we may use the average number of trials (as illustrated in Figure 2) on the x-axis for cost-aware comparisons. In addition, we evaluate “performance-cost” efficiency by comparing each method’s scaling efficiency to that of MV, following the comparison in Snell et al. (2024). As shown in Figure 5a, SV exhibits significant improvements—nearly 10%—in terms of majority@ k when performance is measured by the number of responses. However, this improvement is misleading since each SV response effectively consists of multiple SCoT responses. Therefore, measuring performance with taking length into consideration provides a more reasonable assessment. As demonstrated in Figure 5b, SV’s scaling performance aligns with that of vanilla MV, supporting its role as a suitable construction example for G+.
+
+# C. Batch Accumulation 
+
+This is a batch accumulation implementation of Algorithm 1. For brevity, we use OPT IUB as an example. One could increase the optimization problem size of n × m to (n · kb) × (m · kr ) using Algorithm 2, where superscripts indicate matrix shape, left subscripts denote accumulation indices (distinguishing them from element indices). 
+
+Algorithm 2 IBPO with Sample Accumulation 
+
+Require: prompt set D, batch size n, number of responses m, init policy π0 = πref , num of iters T , budgets q+ 
+
+> 1:
+
+for t = 1 , . . . , T do  
+
+> 2:
+
+for i = 1 , . . . , k b do  
+
+> 3:
+
+prompt sampling : iXn ∼ μD 
+
+> 4:
+
+for j = 1 , . . . , k r do  
+
+> 5:
+
+response generation : ij Yn×m ∼ πθt (iX) 
+
+> 6:
+
+end for  
+
+> 7:
+
+end for  
+
+> 8:
+
+prompt accumulation : ˜X(n·kb) = [ 1X, 2X, · · · , kb X] 
+
+> 9:
+
+response accumulation : ˜Y(n·kb)×(m·kr ) = [ 11 Y, 12 Y, · · · , 1kr Y; · · · ; kb1Y, kb2Y, · · · , kbkr Y] 
+
+> 10:
+
+evaluate correctness and empirical KL : Rmatch = rmatch ( ˜X, ˜Y) and ˆKL = ˆKL ( ˜Y; ˜X, π ref ) 
+
+> 11:
+
+margin maximization : ˆπ⋆  
+
+> ˜X,˜Y
+
+∈ OPT IUB ( ˜X, ˜Y, Rmatch , ˆKL , q +) as defined in Eq. (8)  
+
+> 12:
+
+gradient update : with − Pn·kb
+
+> i=1
+
+Pm·kr 
+
+> j=1
+
+ˆπ⋆  
+
+> ˜X,˜Y
+
+(yij |xi) ∂∂θ log πθ (yij |xi) θ=θt 
+
+> 13:
+
+end for 
+
+16 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+# D. Sample Responses 
+
+We show a couple of example responses of ASV-IuB-50% , the omitted prompt could be found in Figure 4. 
+
+Voting Example 
+
+Prompt omitted ... Problem: Compute arcsin  − 12
+
+ . Express your answer in radians. [TRIAL] ## Step 1: Recall the definition of arcsine The function arcsin x is the inverse of the sine function. It returns the angle whose sine is x.## Step 2: Use the unit circle to find the angle From the unit circle, we know that sin  − π
+
+> 3
+
+ = − 12 .## Step 3: Determine the value of arcsin  − 12
+
+ Since sin  − π
+
+> 3
+
+ = − 12 , we have arcsin  − 12
+
+ = − π 
+
+> 3
+
+.The final answer is: − π
+
+3 . [/TRIAL] [TRIAL] ## Step 1: Recall the sine function values for common angles. The sine of π 
+
+> 3
+
+is √32 .## Step 2: Use the relationship between sine and arcsine. Given sin( θ) = − 12 , we are looking for arcsin  − 12
+
+.## Step 3: Identify the angle whose sine is − 12 . From the unit circle or trigonometric identities, we know that sin  − π
+
+> 6
+
+ = − 12 .## Step 4: Express the answer in radians. Therefore, arcsin  − 12
+
+ = − π 
+
+> 6
+
+.Therefore, the final answer is: − π
+
+6 [/TRIAL] [TRIAL] ## Step 1: Recall the sine function’s relationship with the unit circle. The sine of an angle in a right triangle is the ratio of the length of the side opposite the angle to the length of the hypotenuse. For angles in the unit circle (a circle with radius 1), the sine of an angle is the y-coordinate of the point where the terminal side of the angle intersects the circle. ## Step 2: Identify the angle with a sine of − 12 . From the unit circle, we know that sin   π
+
+> 3
+
+ = 12 . Since sine is negative in the third and fourth quadrants, and we are looking for an angle whose sine is − 12 , the angle must be in either the third or fourth quadrant. ## Step 3: Determine the angle in the correct quadrant. Considering the unit circle, the reference angle for π 
+
+> 3
+
+is π 
+
+> 3
+
+itself. Since we are looking for an angle with a sine of − 12 , and knowing that sine is negative in the third and fourth quadrants, the angle we are looking for is in the fourth quadrant because sin   5π
+
+> 3
+
+ would indeed be negative. ## Step 4: Calculate the angle. The angle whose sine is − 12 is 5π 
+
+> 3
+
+.Therefore, the final answer is: 5π
+
+3 [/TRIAL] [TRIAL] ## Step 1: Recall the definition of arcsine The function arcsin x is the inverse of the sine function. It returns the angle whose sine is x.## Step 2: Use the sine function to find the angle We want to find the angle whose sine is − 12 . We can use the sine function to find this angle. ## Step 3: Recall common angles and their sines From the unit circle or trigonometric identities, we know that sin   π
+
+> 6
+
+ = 12 .Since sine is an odd function, sin  − π
+
+> 6
+
+ = − 12 .## Step 4: Determine the angle Therefore, the angle whose sine is − 12 is − π 
+
+> 6
+
+.Therefore, the final answer is: − π
+
+6 [/TRIAL] [TRIAL] ## Step 1: Recall the sine function’s values for common angles. The sine function has well-known values for certain angles. Specifically, sin   π
+
+> 6
+
+ = 12 .## Step 2: Use the symmetry and periodicity of the sine function. Given that sin   π
+
+> 6
+
+ = 12 , and knowing that sine is an odd function, we have sin  − π
+
+> 6
+
+ = − 12 . This step utilizes the property of odd functions where f (−x) = −f (x).## Step 3: Solve for arcsin  − 12
+
+. Given that sin  − π
+
+> 6
+
+ = − 12 , the angle whose sine is − 12 is − π 
+
+> 6
+
+. This is because the inverse sine function, arcsin , returns the angle whose sine is a given value. Therefore, the final answer is: − π
+
+6 [/TRIAL] The answer − π
+
+6 has occured three times and is considered as a consensus. The final answer is − π
+
+6 . I hope it is correct. 
+
+17 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+Non-voting Example 
+
+Prompt omitted ... Problem: If f (x) = 3x−2 
+
+> x−2
+
+, what is the value of f (−2) + f (−1) + f (0) ? Express your answer as a common fraction. [TRIAL] ## Step 1: Substitute x = −2 into the function f (x). To find f (−2) , substitute x = −2 into the function: 
+
+f (−2) = 3( −2) − 2
+
+−2 − 2 = −6 − 2
+
+−4 = −8
+
+−4 = 2 .
+
+## Step 2: Substitute x = −1 into the function f (x). To find f (−1) , substitute x = −1 into the function: 
+
+f (−1) = 3( −1) − 2
+
+−1 − 2 = −3 − 2
+
+−3 = −5
+
+−3 = 53 .
+
+## Step 3: Substitute x = 0 into the function f (x). To find f (0) , substitute x = 0 into the function: 
+
+f (0) = 3(0) − 20 − 2 = 0 − 2
+
+−2 = −2
+
+−2 = 1 .
+
+## Step 4: Sum the values of f (−2) , f (−1) , and f (0) . Sum the calculated values: 
+
+f (−2) + f (−1) + f (0) = 2 + 53 + 1 .
+
+## Step 5: Simplify the sum to express it as a common fraction. To combine the terms into a common fraction, convert the whole numbers to fractions with a common denominator: 
+
+2 + 53 + 1 = 63 + 53 + 33 = 6 + 5 + 3 3 = 14 3 .
+
+Therefore, the value of f (−2) + f (−1) + f (0) is 14 3 .Therefore, the final answer is: 14 3 [/TRIAL] Terminated due to difficulty level. 
+
+# E. Training Curves & Further Discussions 
+
+Budgets constraints. In Section 5, we show that the constraints hold exactly on the training set, for responses that are correct. Figure 6b further shows the ratio of voting responses for all online samples. It’s clear that the constraints also hold. 
+
+(a) Voting ratio of correct responses (training set) (b) Voting ratio of all responses (training set) 
+
+Figure 6: Voting response ratio versus training steps. Dashed line denotes the budget q+. On the training set, IuB formulation follows the budget constraints almost exactly for both: (a) correct responses; (b) all responses. 18 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+CGPO on DRL w/ LLaMA. To further understand the results we presented in Section 5 is benfit from our budget-aware formulation or from the prompt set of Lai et al. (2024). We further run CGPO with open-sourced LLaMA model and the SDPO dataset in the SCoT format. Figure 7 compares the training dynamics of CGPO with LLaMA versus our ASU-IuB-q+
+
+experiments. In general, the SDPO prompt set does not provide much additional knowledge as suggested by the OSS w/ vanilla CGPO experiment, but ASV-IuB-q+ experiments are able to achieve noticable gain. 
+
+Figure 7: Training curves: each point corresponds an evaluation of MATH500 test set, and dashed line is the pass@ 1 of LLaMA 8B Instruct. 
+
+Controlled setting. Our experiment setting is minimal: we do not use reward models; we use only an 8B model to generate any set of sampled responses, ASAMPLE . Our RL training set, DRL , contains only 10k prompts, leaving the setting quite controlled and providing room for improvement through engineering efforts. 
+
+Limitations. Our work is limited in its choice of RL algorithms and applications. While it should be straightforward to apply our framework to different RL frameworks, additional effort is required to derive an optimization problem for different application tasks. Future work may include extending our constrained policy optimization framework to a broader range of LLM applications or scaling up our experiments. 19 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+# F. Hyperparameters 
+
+We list the hyperparameters used for experiments setup 1.2, 2.1, 2.2, as described in Table 7. And we conduct our experiments with NVIDIA-A100-80Gs. (Please refer to Xu et al. (2024b) for the definition of some RL-specific hyper-parameters.) Table 8: Hyperparameters for Experiment setups 1.2, 2.1, and 2.2 
+
+Hyperparameter Setup 1.2 Setup 2.1 Setup 2.2 
+
+prompt size 11295 11295 10795 number of nodes 4 4 8learning rate 1e-6 1e-6 5e-7 batch size (per node) 8 16 4num of steps 1024 2048 240 optimizer AdamW AdamW AdamW scheduler constant constant constant packing yes yes -max sequence length 32768 32768 6144 gradient accumulation 1 2 1RL-specific params num generation per prompt 8max generation length 4096 temperature 1.0 top-p 0.9 KL-threashold 1024 batch accumulation kb 4response accumulation kr 1
+
+# G. Data Construction 
+
+We elaborate on the details of QSDPO , AGOLDEN SDPO , QMATH , ASAMPLE MATH , and the filteration function F.
+
+SDPO dataset. Lai et al. (2024) create a dataset (see their Section 3.2) contains 10,795 step-wise preference pairs, where the winning response is a correct solution, the losing response is incorrect starting from certain step. For our purpose of SFT and RL training, we do not need losing responses, hence we create AGOLDEN SDPO with only wining (correct) responses. The step-formatted response (see an example below) is the reason we choose the dataset from Lai et al. (2024), as it adhere the SCoT format of LLaMA models. Therefore, one do not need to worry about potential format changes. 
+
+SDPO question-response example 
+
+Problem: Sides of a rectangular park are in the ratio 3: 2 and its area is 3750 sq m, the cost of fencing it at 40 ps per meter is? ## Step 1: Let’s assume the sides of the rectangle are 3x and 2x. The area of the rectangle is the product of its sides, so we have 
+
+3x · 2x = 6 x2 = 3750 . Solving for x, we get x2 = 3750 6 = 625 , so x = √625 = 25 .## Step 2: So the sides of the rectangle are 3x = 3 · 25 = 75 meters and 2x = 2 · 25 = 50 meters. ## Step 3: The perimeter of the rectangle is 2 × (75 + 50) = 2 × 125 = 250 meters. ## Step 4: The cost of fencing is 40 paise per meter, so the total cost of fencing is 250 × 40 = 10000 paise. Since 1 rupee is equal to 100 paise, the cost in rupees is 10000 100 = 100 rupees. Therefore, the final answer is: 100 
+
+SV dataset for MATH. We also created datasets, DSV and DASV 1, for SFT so that a model could follow the SV instructions. We take DSV as an example and DASV 1 could be created similarly. To do so, we first generate 32 responses per prompt for the entire MATH training split with a temperature of 1.2 and top-p of 0.9. We then apply our SV templates Tq and Ta to create corresponding SV question and answer pairs. The procedure of creating a SV response is given by Algorithm 3. While we have include an example of SV responses in Figure 8, we make it more concrete the SV response template below, We then apply some filtration F to the created dataset. We remove SV responses whose final answers are incorrect. From the remaining set, we sub-sample 500 question-response pairs. These pairs are selected from problems that have between 4 and 8 distinct answers out of 32 samples, ensuring that we construct sequential responses with a diverse trials. The distribution of trial counts and distinct answer counts are shown in Figure 9. It can be observed that the filtered data is diversely distributed. 20 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+SV template: Ta(A1, · · · , A k, final answer ) (if con-sensus found)           
+
+> [TRIAL] {A1}[/TRIAL] [TRIAL] {A2}[/TRIAL]
+> · · ·
+> [TRIAL] {Ak}[/TRIAL] The answer final answer has occurred three times, and is considered as a consensus. The final answer is final answer . I hope it is correct.
+
+SV template: Ta(A1, · · · , A 8, final answer ) (if no consensus found)         
+
+> [TRIAL] {A1}[/TRIAL] [TRIAL] {A2}[/TRIAL]
+> · · ·
+> [TRIAL] {A8}[/TRIAL] Maximum trials reached but no consensus found due to a tie; the most plausible answer is final answer . The final answer is final answer . I hope it is correct.
+
+Figure 8: SV response templates. Left: suppose a consensus is found at k-th answer; Right: no consensus found. Note the subscript i of Ai only denotes index of answer, Ai and Aj could still have same final answer for i̸ = j.
+
+Algorithm 3 Creating SV Response for SFT . 
+
+Require: template Tq , Ta, a problem Q, a set of shuffled responses {Ai : i = 1 , 2, · · · , K } 
+
+> 1:
+
+create prompt: Tq (Q) replace problem placeholder with Q 
+
+> 2:
+
+responses = []; final answer = [INVALID ANSWER]; found = False  
+
+> 3:
+
+for i = 1 , 2, · · · , K do  
+
+> 4:
+
+responses.append( Ai) 
+
+> 5:
+
+majority = find majority(responses)  
+
+> 6:
+
+majority count = count majority(responses, majority)  
+
+> 7:
+
+if majority count == 3 then  
+
+> 8:
+
+found = True; final answer = majority; break  
+
+> 9:
+
+end if  
+
+> 10:
+
+end for  
+
+> 11:
+
+if found == False and responses contain correct solution then  
+
+> 12:
+
+final answer = random pick a correct solution  
+
+> 13:
+
+end if  
+
+> 14:
+
+create SV response: Ta(responses, final answer ) 
+
+> (a) Distribution of number of trials per response (b) Distribution of number of distinct answers
+
+Figure 9: The distribution of filtered prompt-responses subset, which suggests that the construct data is generally diversely distributed. 21 Think Smarter not Harder: Adaptive Reasoning with Inference Aware Optimization 
+
+# H. Integer Linear Program Solving 
+
+We use SciPy MILP solver, available here, to solve an integer LP every iter. Figure 1 is a Pythonic pseudo-code. And the wall-time consumed could be found in Figure 10. As the problem size is small, so the computational overhead is negligible.  
+
+> 1
+
+import numpy as np  
+
+> 2
+
+from scipy.optimize import milp, LinearConstraint, Bounds  
+
+> 34
+
+def solve_iub(acceptance, is_vote, budget):  
+
+> 5
+
+""" solves a Inference under Budget (IuB) problem. Parameters:  
+
+> 6
+
+- acceptance: an n x m array where each element is 1 if accepted, 0 otherwise.  
+
+> 7
+
+- is_vote: an n x m array indicating whether response is voting (1) or non-voting (0).  
+
+> 8
+
+- budget: the fractional budget (q+) constraint for the problem. """  
+
+> 9
+
+n, m = acceptance.shape  
+
+> 10
+
+# calculate pass rates for vote-based and non-vote-based responses  
+
+> 11
+
+vote_pass_rate = np.mean(acceptance * is_vote, axis=1, keepdims=True)  
+
+> 12
+
+sample_pass_rate = np.mean(acceptance * (1 - is_vote), axis=1, keepdims=True)  
+
+> 13
+
+margin = vote_pass_rate - sample_pass_rate # (n, 1)  
+
+> 14
+
+# flattern acceptance and vote indicator, tile the margin  
+
+> 15
+
+acceptance = np.reshape(acceptance, -1) # (n x m, ) 
+
+> 16
+
+is_vote = np.reshape(is_vote, -1) # (n x m, ) 
+
+> 17
+
+margin = np.reshape(np.tile(margin, [1, m]), -1) # (n x m, ) 
+
+> 18 19
+
+# define the objective function coefficients  
+
+> 20
+
+c = -1 * margin * is_vote + margin * (1 - is_vote)  
+
+> 21
+
+# acceptance constraints: ensure each prompt meets acceptance criteria  
+
+> 22
+
+A_acceptance = np.eye(len(acceptance))  
+
+> 23
+
+b_acceptance = acceptance  
+
+> 24
+
+# one response per problem constraint (BoN)  
+
+> 25
+
+A_problem = np.zeros((n, n * m))  
+
+> 26
+
+for i in range(n):  
+
+> 27
+
+A_problem[i, i * m:(i + 1) * m] = 1 
+
+> 28
+
+b_problem = np.ones(n)  
+
+> 29
+
+# voting responses budget constraint  
+
+> 30
+
+A_vote_budget = np.where(is_vote == 1, 1, 0).reshape(1, -1)  
+
+> 31
+
+vote_budget = np.round(budget * len(acceptance))  
+
+> 32 33
+
+# combine all constraints into a single matrix  
+
+> 34
+
+A = np.vstack([A_acceptance, A_problem, A_vote_budget])  
+
+> 35
+
+b_lower = -np.inf * np.ones(A.shape[0]) # lower bounds for constraints  
+
+> 36
+
+b_upper = np.hstack([b_acceptance, b_problem, vote_budget]) # upper bounds  
+
+> 37
+
+# solve the MILP problem using the defined objective and constraints  
+
+> 38
+
+result = milp(c, integrality=np.ones(len(c)), bounds=Bounds(0, 1),  
+
+> 39
+
+constraints=LinearConstraint(A, b_lower, b_upper))  
+
+> 40
+
+return result 
+
+Listing 1: Pythonic code snippet for solving IuB with SciPy: Note that this is for demonstration purposes, and error-free execution is not guaranteed, due to omitted corner cases. 
+
+Figure 10: Wall time (averaged across ranks) spent by solver in seconds. 22

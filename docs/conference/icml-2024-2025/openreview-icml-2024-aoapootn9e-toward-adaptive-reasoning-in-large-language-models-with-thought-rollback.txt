@@ -1,0 +1,869 @@
+Title: Toward Adaptive Reasoning in Large Language Models with Thought Rollback
+
+URL Source: https://openreview.net/pdf?id=aoAPOOtN9E
+
+Number of Pages: 24
+
+Markdown Content:
+## Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+Sijia Chen 1 Baochun Li 1
+
+Abstract 
+
+Large language models (LLMs) have been rou-tinely used to solve various tasks using step-by-step reasoning. However, the structure of inter-mediate reasoning steps, or thoughts , is rigid and unidirectional, such as chains, trees, or acyclic-directed graphs. Consequently, the resulting in-flexible and forward-only reasoning may not ad-dress challenging tasks and fail when the LLM frequently gives false responses, i.e., “hallucina-tions”. This paper proposes a new reasoning framework, called Thought Rollback (TR), al-lowing LLMs to adaptively build thought struc-ture while maintaining effective reasoning toward problem-solving under “hallucinations”. The core mechanism of TR is rolling back thoughts ,which allows LLMs to perform error analysis on thoughts, and thus roll back to any previously mistaken thought for revision. Subsequently, by including such trial-and-error in the prompt to guide the LLM, each rollback leads to one more reliable reasoning path. Therefore, start-ing with a simple prompt without human anno-tations, LLM with TR adaptively and gradually explores thoughts for a correct solution. Com-prehensive experiments on mathematical prob-lems and multi-task reasoning demonstrate the state-of-the-art performance of TR in terms of problem-solving rate and interaction cost. For instance, the solving rate of GPT-4 with TR out-performs the current best by 9% on the MATH 
+
+dataset. The source code is available under the folder examples/ThoughtRollback of https:// github.com/iQua/llmpebase .    
+
+> 1Department of Electrical and Computer Engineering, Univer-sity of Toronto, Toronto, Ontario, Canada. Correspondence to: Sijia Chen <sjia.chen@mail.utoronto.ca >.
+> Proceedings of the 41 st International Conference on Machine Learning , Vienna, Austria. PMLR 235, 2024. Copyright 2024 by the author(s).
+
+1. Introduction 
+
+Large Language Models, initially designed for text gener-ation with autoregression, are widely recognized to excel in a diverse array of natural language processing (NLP) tasks. Yet, at a particular model scale, their reasoning abili-ties, particularly in scaled-up versions like GPT-4 (OpenAI, 2023) and Llama 2 (Touvron et al., 2023), heavily depend on prompt engineering. With well-crafted prompts — even just a simple Let’s think step by step (Kojima et al., 2022) — LLMs are able to perform step-by-step reasoning and achieved noteworthy success in mathematical, symbolic, and common sense tasks. With reasoning, LLMs are ca-pable of producing coherent language sequences, called 
+
+thoughts , which serve as intermediate reasoning steps to-ward solving the problem at hand. Extended from simple chain reasoning (Wei et al., 2022) with linear left-to-right thoughts, more complex reasoning became feasible in re-cent works by establishing thought structures that resembled trees (Yao et al., 2023) and graphs (Besta et al., 2023; Zhang et al., 2023; Luo et al., 2024). However, existing thought structures are unidirectional and thus allow a forward-only reasoning process, meaning that thoughts are generated sequentially from the start to the end. The efficacy of this reasoning process hinges on a redundant and, consequently, inefficient thought structure, requiring thorough explorations of each thought before progressing to the next. One major drawback of forward-only reasoning is that errors can propagate quickly (Yu et al., 2024). Consider the common case where one thought is incorrect or inaccu-rate: with forward-only reasoning, all thoughts derived from it can be misled. Even with revisions based on step-by-step evaluations (Weng et al., 2023), such propagation of errors can introduce further deviations from the correct path of rea-soning, since LLMs have been found to confidently provide false information (i.e., “hallucinations” or “laziness”) (Jiang et al., 2023). Indeed, humans also provide false information as frequently and randomly as LLMs do during reasoning but can still solve challenging problems eventually. This is attributed to adaptive reasoning, in which one does not pre-defined a fixed structure for thoughts and does not simply deduce forward but adaptively adjusts the thought structure after evaluating errors during reasoning. Such reasoning enables 1Toward Adaptive Reasoning in Large Language Models with Thought Rollback (b). Tree Thought Structure                              
+
+> N-1, S-1 error of Chain thought structure :
+> The first step is to calculate the expected winnings for each
+> type of card drawn. There are four Aces in a deck, so the
+> expected winnings for drawing an Ace is 4 * $1 = $4.
+> Similarly, there are four of each card from 2 through 10, so
+> the expected winnings for these cards is 4 * (2 + 3 + 4 + 5 +
+> 6 + 7 + 8 + 9 + 10) = $180. There are 12 face cards in a
+> deck, so the expected winnings for drawing a face card is
+> 12 * $20 = $240.
+> N-3, S-1 error of Tree thought structure :
+> There are 4 Aces in a deck, so the probability of drawing an
+> Ace is 4/52 or 1/13. .... E(Ace) = (1/13 * $1 * 2) + (1/13 * $1
+> * 3) + (1/13 * $1) + (1/13 * $1) = $0.154 + $0.231 + $0.077
+> + $0.077 = $0.539
+> Thought
+> QQuestion
+> Solution
+> Bad Thought
+> N-Node Identity
+> S-Step Index
+> Rollback
+> RThought Induced
+> by Rollback
+> R
+> Forward Reasoning
+> (a). Chain Thought Structure (c). Thought Rollback (TR) Structure
+> N-2, S-2 error analysis of TR structure :
+> The error lies in the calculation for cards 2 through 10. The
+> correct approach would be to calculate the expected value for
+> each card from 2 to 10 individually, ..... After calculating the
+> expected value for each card, we would sum these values
+> together.
+> N-6, S-4 thought of TR structure :
+> Adding up all these expected winnings, we get the total
+> expected winnings for drawing any card from the deck:
+> E(Total) = E(Ace) + Sum(2 through 10) + E(Face cards) =
+> $1.75 + $94.50 + $105 = $201.25.
+> N-7, S-2 revised thought of TR
+> structure :
+> The next step ... However, remembering the
+> error from the previous experience, we need to
+> remember that there are exactly 9 different values
+> for the cards 2 through 10, not 36 or 1. .... So, the
+> correct calculation for the expected value of the
+> cards 2 through 10 should be (4/52) * $2 + (4/52) *
+> $3 + ... + (4/52) * $10.
+> N-2, S-2 error of TR structure :
+> The next step is to calculate the expected winnings for drawing
+> a card from 2 through 10. For each of these nine cards, there
+> are four of each in the deck (one each of hearts, diamonds,
+> clubs, and spades). .... Sum(2 through 10) = 9/2 * ($3.50 +
+> $17.50) = $94.50.
+
+Figure 1. Schematic illustrating thought structures for problem solving with GPT-4. The chain, tree, and our thought rollback (TR) structures are plotted based on the NetworkX lib (Hagberg et al., 2008). The question from the MATH dataset (Hendrycks et al., 2021b) is: 
+
+I draw a card from a standard 52-card deck. If I draw an Ace, I win 1 dollar. If I draw a 2 through 10, I win a number of dollars equal to the value of the card. If I draw a face card (Jack, Queen, or King), I win 20 dollars. If I draw a ‘clubsuit’, my winnings are doubled, and if I draw a ‘spadesuit’, my winnings are tripled. ... What would be a fair price to pay to play the game? In (c), we present a partial thought structure built by GPT-4 with TR and place the full version of the TR structure in Figure 4 of the Appendix. 
+
+humans to begin with one simple or wrong thought but fre-quently introspect during reasoning, that is, to reconsider previous steps and build new reasoning paths from these reflections. In this paper, we argue that this iterative error correction nature of adaptive reasoning is essentially sup-ported by rollback — jumping to previous steps with a new experience to reconsider the reasoning. Therefore, we propose a new reasoning framework, Thought Rollback (TR), relying upon the rolling back of thoughts to enable the adaptive reasoning of LLMs for general problem solving. TR embraces a rollback controller and a prompt enhancer that works seamlessly to enable the LLMs to generate an effective thought structure from one thought derived from a simple input prompt, as shown by Figure 1. LLMs with TR start with generating one thought from a simple zero-shot prompt containing only the question de-scription. Subsequently, for each generated thought, the 
+
+rollback controller allows the LLM to analyze the obtained chain of thoughts and thus determines whether to roll back and to which previous thought. Once rollback is triggered, 
+
+prompt enhancer accumulates this error analysis as experi-ence in the prompt. As a result, by avoiding making similar mistakes mentioned by experience, LLM is able to generate a new and more effective reasoning path from the chosen thought. Therefore, “hallucinations” that occur in thought or analysis of LLM may not influence reasoning due to the continuous thought revision guaranteed by the iterative rollbacks during reasoning. For example, in Figure 1, dif-ferent from chain (Wei et al., 2022) and tree (Yao et al., 2023) structures, which assume a fixed and unidirectional structure, reasoning with rollbacks enables LLM to build a thought structure adaptively and revise thoughts to achieve complex but reliable reasoning. Specifically, after reaching the N -2 S-2 and N -6 S-4, LLM finds an error in 2-th step 
+
+N -2 S-2 and thus rolls back to 1-th step N -1 S-1 to create two new reasoning paths. The rollback N -6 → N -1 leads to the revised thought N -7 S-2. The rollback N -2 → N -1
+
+utilizes the error analysis to enhance the prompt and obtains 
+
+N -3 S-2, leading to a correct answer 15 .48 compared to the previous mistaken 3.87 .We observe four contributions of TR. First, it is a lightweight and generalized automatic prompting framework. TR al-lows LLMs to perform complex reasoning effectively on various tasks without introducing task-specific human an-notations in the prompt or additional human-made designs. Second, the performance of TR is robust to the “hallucina-tions” as LLMs are able to reconsider and revise any existing thoughts adaptively and repeatedly during reasoning. Thus, third, TR is cost-friendly as the thought structure is built progressively to reach a solution instead of relying on bulky search structures (Yao et al., 2023) or question analogies (Yu et al., 2024). Finally, our evaluation of TR on math-ematical problems and multi-task reasoning demonstrates that TR outperforms some state-of-the-art approaches while maintaining a lower interaction cost. 
+
+2. Related Work 
+
+By only guiding the reasoning behavior of LLMs, such as GPT-4 (OpenAI, 2023) and Llama2 (Touvron et al., 2023) with the text prompt, prompt engineering (Brown et al., 2020; Kojima et al., 2022) is parameter efficient and often matches or surpasses fine-tuning performance. Therefore, plenty of work has been proposed to enable LLMs to per-form multi-step reasoning containing a series of interme-diate steps, each known as the thought presented as a text sequence. Starting from chain-of-thought (CoT) (Wei et al., 2022) prompting, which provides reasoning examples in the prompt to deduce a chain of thoughts, subsequent endeavors, 2Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+especially SC (Wang et al., 2022) and Complex CoT (Fu et al., 2023) augment the chain reasoning. Recent advances extend the chain structure into structured thoughts. ToT (Yao et al., 2023) and BoT (Sijia et al., 2024) pre-defines the thought structure as a tree, thus supporting exploring multiple thoughts in each step before generating the next. The graph of thoughts (GoT) (Besta et al., 2023) and cumu-lative reasoning (CR) (Zhang et al., 2023) further instantiate thoughts toward a solution as the graph structure. Another line of work focuses on the thought structure that allows the thought ensemble in each step. Thought propagation (Yu et al., 2024) explores analogous problems and then ag-gregates their results to update the solution for the given question, leading to a radial thought structure. To the best of our knowledge, none of the existing work supports the cyclic structure to allow LLMs to revise previous thoughts or recreate a new reasoning path from the previous step after being blocked at the current reasoning step. We fill this gap by proposing the rollback of thought, leading to a thought structure of directed cyclic graphs. Despite these achievements, LLMs often struggle with com-plex tasks, primarily due to the frequent occurrence of “hal-lucinations”—producing false outputs (Jiang et al., 2023; Yu et al., 2024), and “laziness”—yielding invalid or no output. Therefore, after noticing that LLMs have self-verification 
+
+(Weng et al., 2023; Madaan et al., 2023) abilities and thus can analyze the answer for further correcting the errors in reasoning (Zheng et al., 2023; Wu et al., 2024). How-ever, the most recent work (Huang et al., 2024) argues that LLMs cannot self-correct their reasoning, emphasizing the invalidity of applying simple verification to the reasoning path. Thus, most recent work either builds iterative-based verification (BoT (Sijia et al., 2024)) or focuses on step-by-step verification (Ling et al., 2023; Lightman et al., 2024). Combining these insights, we aim to exploit LLMs to ana-lyze intermediate thoughts during reasoning to correct these thoughts and adjust reasoning direction adaptively. Contin-uous verification and revision may eliminate the negative impact of “hallucinations” or mistakes on the solutions. Another related research stream is automatic prompting 
+
+(Kojima et al., 2022; Zhang et al., 2022), which automat-ically constructs effective prompts to facilitate reasoning without human-made and task-specific demonstrations. As LLMs can learn from mistakes to become better reason-ers (An et al., 2023; Sijia et al., 2024), this paper also re-leases human efforts from the prompt design by boosting the prompt with the error analysis of thoughts. We also show that by accumulating error analysis in the prompt during reasoning, LLMs are able to avoid making similar mistakes and explore correct solutions with interaction cost far less than ToT (Yao et al., 2023) and BoT (Sijia et al., 2024). 
+
+3. Preliminary 
+
+3.1. Problem Statement 
+
+Given a pre-trained large language model (LLM) denoted as f (·), the prompt engineering is to design the prompt 
+
+I (·) to make the model perform desired reasoning be-havior toward addressing the given problem x. Specifi-cally, multi-step reasoning contains T intermediate steps 
+
+z0...T = [ z0, z 1, ..., z T ] to bridge z0 := x and the answer 
+
+zT := y. To get z0...T , we focus on step-wise thought generation in which each thought is a coherent language sequence zn, behaving as one intermediate reasoning step, and zn is generated as zn ∼ f (zn|I (z0,1...n −1)) . There-fore, as thought is the LLM’s output, we can define the bad thought caused by the “hallucinations”, “laziness”, or false reasoning of LLMs as ̂ zn.These generated thoughts z0...T naturally follow a specific structure, such as a chain or tree. These structures are uni-directional and thus only support forward-only reasoning ,which proceeds in a linear, sequential manner, meaning that LLMs only generate the subsequent thought zn+1 from zn.For instance, any edge en,m of the structure is limited to 
+
+m = {n, n + 1 } while m > = n.This paper focuses on alleviating the effect of bad thoughts on the solution by making LLM not simply perform forward-only reasoning but achieve adaptive reasoning , which al-lows LLMs to 1) start from a simple prompt I (z0), 2). self-organize the thought structure adaptively during reasoning, and thus 3). when ̂ zn occurs, LLM can make revisions and create better new reasoning paths till getting the solution. Specifically, not only advancing the reasoning sequentially, any previously generated thought will be reconsidered by continuously rolling back from n-th thought to one previous 
+
+m-th thought, where m ∈ [0 , n − 1] .
+
+3.2. Motivation: Forward-only reasoning fails in bad thoughts 
+
+Forward-only reasoning may fail as the bad thought ̂ zn is caused by the following three cases of error propagation .
+
+Case [̂ zm,̂ zm+1 , ..., ̂ zn]. A bad or illogical thought ̂ zm leads to all subsequent errors, where ̂ zn ∼ f (̂ zn|I (̂z0,...m...n −1)) 
+
+and m < n .
+
+Case [̂ zm, z m+1 ..., ̂ zn].̂ zm does not lead to direct mistakes but causes a bad thought ̂ zn after many steps. For instance, this appears when ̂ zm behaves as one part of a solution. 
+
+Case [zm...n −1,̂ zn]. A bad thought ̂ zn may arise from one previous correct though zm because the wrong reasoning direction appears from this step. The chain reasoning, typically in Chain-of-thought (CoT) prompting, generates a chain of thoughts z0,1...T (Wei et al., 3Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+2022) sequentially; thus, when any cases appear, it gets a mistaken answer y. Subsequent Complex CoT (Fu et al., 2023) provides well-designed examples in z0 to decrease the frequency of bad thoughts. And SC (Wang et al., 2022) performs majority voting for many generated chains. They are still trapped in the error propagation of chain structure, as shown in Figure 1 (a). The tree reasoning, such as Tree of Thoughts (ToT) (Yao et al., 2023), Graph of Thoughts (GoT) (Besta et al., 2023), and Thought Propagation (TP) (Yu et al., 2024), extends the chain thought structure by generating multi-ple thoughts in each step. For instance, ToT or GoT con-tains P n -th thought, representing as 
+
+(
+
+z(1)  
+
+> n
+
+, ..., z (P )
+
+> n
+
+)
+
+∼
+
+f (zn|I (z0,1...n −1)) . These approaches hope to explore more thoughts to increase the possibility of getting a correct thought. However, error propagation still exists, and any cases that appear in one reasoning path will inevitably cause the failure, as shown in Figure 1 (b). Therefore, we argue that to address the error propagation, the reasoning should continuously reconsider the source of error, that is, to find and fix the previous m-th thought after reaching n-th thought, where m < n . This is equivalent to 
+
+human-like reasoning, in which one may not simply deduce forward but look back to check previous thoughts to decide to continue, revise old thoughts, or create a new reasoning path . Without losing generality, we refer to such reasoning behavior as the rollback . In the context of reasoning, to enable such a rollback n → m, we allow LLM to adaptively build the edge en,m with m < n during reasoning, making the thought structure a directed graph with cycles. 
+
+3.3. Motivation: Error analysis induces better thoughts 
+
+The rollback mechanism is insufficient to support adaptive reasoning in LLMs. Without introducing more information to prompt LLMs after each rollback, LLMs may repeat similar mistakes in the thought generation, which more rollbacks in reasoning cannot solve. Thus, it is essential to enable LLMs to know why rollback is triggered and how to avoid producing the ̂ zm+1 .Motivated by the effectiveness of enhancing prompts by including an error report (Sijia et al., 2024), we propose that analysis of [z1, ..., z n] could be rolled back to zm to guide the thought generation. Also, the work (Ling et al., 2023) pointed out that LLMs perform more reliable reasoning in CoT when using step-by-step verification. We aim to allow LLMs to perform rollback-by-rollback verification. First, this can produce more analysis to facilitate the subsequent reasoning. Second, invalid or mistake rollbacks can be removed, thus also eliminating the cycles in the thought structure. LLM          
+
+> LLM
+> LLM
+> R-1
+> LLM
+> Rollback-1
+> R
+> Figure 2. Schematic illustrating the rollback of thought when the LLM with TR reaches the n-th reasoning step. We add Aχ(·)
+> z0...m −1
+> in the reasoning from zm−1to zmto cover the case that zm−1
+> may also derive from a rollback. We present a clear example from
+> SVAMP in Figure 5 of the Appendix.
+
+4. Thought Rollback Framework 
+
+4.1. Reasoning Overview 
+
+In contrast to existing approaches relying on pre-defined uni-directional thought structures, which are limited to forward-only reasoning, Thought Rollback (TR) generates a bidirec-tional thought structure by adaptively deducing forward and rolling back of thoughts. After reaching a reasoning step zn,as shown in Figure 2, TR allows LLM to roll back to the bad thought zm after analyzing the existing thought chain z0...n .As the error analysis Anm is to be accumulated in the prompt, a new and more reliable reasoning path znm is generated from zm. Therefore, iteratively performing this rollback develops the thought structure from a simple thought to a directed graph with cycles. Such adaptive reasoning is summarized into three stages. 
+
+Initialization . Generate thought z1 ∼ f (z1|I (z0)) .
+
+Rollback of thoughts . For each generated thought zn, roll-back controller exploits LLM to determine a rollback to one thought zm ∈ z0...n .• Once the rollback to m ∈ [0 , 1, ..., n ] is triggered, the reasoning of LLM rolls back to the thought zm−1 and 
+
+prompt enhancer is used to enhance the prompt. Subse-quently, the reasoning continues by creating a new m-th thought znm and generating zn+1 , where znm means a m-th thought deduced from a rollback from n.• When no rollback is required, generate zn+1 .
+
+Early stopping . Stop reasoning when TR yields K number of solutions obtained. Otherwise, continue the Rollback of thoughts. 
+
+Solution ensemble . Perform weighted majority voting on 
+
+K solutions. 4Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+4.2. Rolling Back Thought with Reasoning Analysis 
+
+During reasoning, rollback controller enables an adap-tive rollback by exploiting LLM to determine the rollback 
+
+n → m. However, making LLM know the concept of roll-back may introduce unnecessary complexity. Thus, TR supports the rollback mechanism by performing error analy-sis on thoughts. Specifically, with a task-agnostic prompt 
+
+IR (R, [z0...n ]) , where R is a common error analysis in-struction, LLM is guided to analyze a thought chain [z0...n ],leading to the error analysis Anm ∼ f (A|IR (R, [z0...n ])) .Eventually, LLM is able to identify the indexes ̂ M of bad thoughts ̂ zm∈̂M .To get which thought to roll back to from zn, TR follows the rule to roll back to the one step before the first bad thought. There are two reasons for this. First, generating the next thoughts from a bad thought is unreasonable. Second, we aim not to remove the bad thought but to generate a new reasoning path. Thus, we choose zm−1 as the rollback destination, where m = arg min ̂ M . Besides, one thought will not be selected as the rollback destination more than 
+
+U times to avoid all subsequent thoughts rolling back to the same previous thought. Thus, when the number of rollbacks to a thought reaches U , the next earliest one of 
+
+m = arg min ̂ M \
+
+{
+
+arg min ̂ M
+
+}
+
+will be selected. Therefore, when ̂ M is not empty, TR generates the next thought znm from m − 1, meaning that a new reasoning path [z0...z m−1, z nm] derived from the rollback n → m is created for the thought structure. As the existing z0...n 
+
+remains unchanged, the reasoning continues by generating 
+
+z0...n +1 . For ease of description, we define n → m as the 
+
+outgoing rollback for z0...n +1 and the incoming rollback for the new reasoning path [z0...z m−1, z nm].
+
+4.3. Enhancing the Prompt with Errors as Experience 
+
+Through iterative rollback from the n-th to the m − 1-th step, TR gains the opportunity to address the three scenarios outlined in subsection 3.2. However, as discussed in 3.3, regenerating a next thought znm based on the same prompt may repeat existing mistakes in the new reasoning path. Especially considering that TR is built upon the prompt containing no human annotations, the thought regeneration after the rollback is equivalent to randomly exploring znm as in unidirectional structures. Therefore, TR embraces prompt enhancer to also roll back the error analysis Anm to the m − 1-th thought. Unlike BoT (Sijia et al., 2024) with outcome analysis, which uti-lizes error feedback on the final result, TR performs process analysis, i.e., rollback-by-rollback verification, to get error reports on intermediate thoughts, guiding the subsequent thought generation. With error analysis, each rollback is regarded as a trial on generating subsequent thoughts for 
+
+zm−1 because the analysis contains a trial experience: what mistakes may appear in the following steps of zm−1. By including Anm as an experience in the prompt, LLMs can avoid making existing bad thoughts after learning from mis-takes. Eventually, each rollback n → m creates the error experience Anm.
+
+Experience accumulation . The thoughts Zχ(·) 
+
+> z0...q −1
+
+={zij |zij ∈ z0...q −1, z i /∈ z0...q −1, j ∈ [0 , q − 1] , i ∈ χ (j)}
+
+of a reasoning path z0...q −1 may derive from multiple 
+
+incoming rollbacks , where χ (j) is the set of rollbacks whose destination is j-th thought of this path. As each rollback creates an error experience from one trial of the given question, incoming rollbacks lead to a series of experiences Aχ(·) 
+
+> z0...q −1
+
+. By accumulating an ensemble of trial-and-error reasoning experiences as the in-context learning examples in the prompt, LLM will learn from more experiences to generate the correct next thought 
+
+zq ∼ f
+
+(
+
+zq |I
+
+(
+
+Aχ(·) 
+
+> z0...q −1
+
+, z 0...q −1
+
+)) 
+
+, as shown in Figure 2 and two examples of Figure 8 and Figure 10. 
+
+4.4. Ensembling Solutions 
+
+TR may create massive final solutions as each adaptive triggered rollback leads to one more new reasoning path toward answering the question. Thus, we directly stop rea-soning when there is K number of solutions {z0...T k }Kk=1 
+
+obtained. Then, weighted majority voting (W-Voting) will be performed on them for a final solution. Specifically, for the solution zTk , the weight wt is higher when 1) it has a lower number of outgoing rollbacks denoted as αTk ,meaning that fewer bad thoughts are identified; and 2) more experiences βTk = |Aχ(·) 
+
+> z0...T k
+
+| are accumulated along this reasoning path. Eventually, TR outputs the final solution as: arg max v∈V
+
+∑Kk=1 I (vk = v) ( βTk − αTk ), where V
+
+is the collection of solutions and vk is the value of k-th solution. 
+
+5. Experiments 
+
+Datasets . We conduct experiments on two streams of tasks. For the mathematical problems, we evaluate the perfor-mance of TR on test sets of GSM8K 1319 (Cobbe et al., 2021), 
+
+SVAMP 300 (Patel et al., 2021), AQUA-RAT 254 (Ling et al., 2017), MATH 900 (Hendrycks et al., 2021b), TheoremQA 400 
+
+(Chen et al., 2023b) datasets, where numerical subscripts indicate sample size. For TheoremQA 400 , we specifically use half of the test set without visual information, leading to 
+
+400 samples. Following ToT (Yao et al., 2023), we utilize 
+
+100 challenging games of Game of 24 . For multi-task reasoning, such as symbolic reasoning, we extract 900 sam-ples from 56 categories of MMLU (Hendrycks et al., 2021a), i.e. MMLU 900 .5Toward Adaptive Reasoning in Large Language Models with Thought Rollback                                                                                                                                                 
+
+> Table 1. Evaluating the reasoning ability of TR with GPT models under four well-known mathematical problems. TR is specifically evaluated against leading methods such as Faithful-CoT (Lyu et al., 2023), and CSV (Zhou et al., 2024), each achieving state-of-the-art (SOTA) performance on the SVAMP and MATH datasets, respectively. The best results, apart from the SOTA, are in bold. The 5shots of CoT examples used by our TR experiments are extracted randomly from the trainset of the same category. Methods ZeroShot GPT-4 GPT-3.5-turbo
+> GSM8K SVAMP AQuA-RAT MATH GSM8K SVAMP AQuA-RAT MATH
+> SOTA ✗98.7 895.4 85.04 884.32 89.2 84.3 60.6 840.56 ZeroShot ✓87.1 79.33 †50.4 42.2 76.3 74.8 53.5 24.5 †
+> ZeroShot-CoT ✓93.1 †84.67 †73.2 44.7 79.6 77.5 53.9 30 †
+> CoT ✗94.2 5†91.9 575.2 848.9 887.4 5,sc 15 83 559.4 5-C-CoT ✗94.9 890.5 877.5 850.4 882.8 881.0 857.4 834.1 8
+> PHP+C-CoT ✗95.5 891.9 879.9 853.9 885.1 883.1 860.6 836.5 8
+> BoT ✓97.1 92.67 81.5 62.44 ---40.56
+> BoT+CoT ✗98.7 895 885.04 866.33 8----Chain Reasoning †✓89.76 80.33 74.41 45.44 76.72 71.67 47.64 26.89 ToT Reasoning †✓90.9 84 76.38 48 79.83 78.33 54.72 30.44 TR †✓94.24 89 79.92 55 82.49 77.67 56.69 32.78 TR + CoT 5†✗96.06 91.33 84.25 62.56 86.5 79.67 57.87 31.44 TR + W-Voting †✓96.36 93 87.8 71.89 85.9 82.33 63.39 39.78 TR + CoT 5+ W-Voting †✗96.97 93.33 87.4 72.11 87.79 82.67 62.6 35.89
+
+Large language models . We utilize GPT-3.5-turbo (gpt-3.5-turbo-16k-0613), GPT-4 (gpt-4-1106-preview) (OpenAI, 2023) and Llama2 (Touvron et al., 2023), including Llama2-13b (Llama-2-13b-chat-hf) and Llama2-70b (Llama-2-70b-chat-hf) where 1b means one billion parameters. For LLMs with TR, the default settings for temperature and top p are 
+
+0.7.
+
+Baselines . Apart from zero-shot prompting (Kojima et al., 2022), the comparison approaches include Chain-of-thought (CoT) (Wei et al., 2022), SC (Wang et al., 2022) and Com-plex CoT (Fu et al., 2023) (C-CoT), where the subscript 5
+
+or 8 indicates the number of shots while the subscript sc 
+
+denotes the number of sample paths. Also, TR is compared with the related approaches, such as Boosting of thoughts (BoT) (Sijia et al., 2024), Tree of thoughts (ToT) (Yao et al., 2023), Cumulative Reasoning (CR) (Zhang et al., 2023), and Progressive-Hint Prompting (PHP) (Zheng et al., 2023). ToT follows the best first search (BFS). The breadth limit of ToT is 6 while BoT performs 10 boosting iterations on 
+
+15 binary trees. We also include the state-of-the-art (SOTA) methods, such as CSV (Zhou et al., 2024) that relies on GPT-4 Code Interpreter, on each dataset as an additional comparison. We set K = 8 for possible early stopping of TR in all experiments. 
+
+Metrics . All experiments report the Solve Rate (%) of the questions. We make LLM explicitly report the solution value after the strings, such as “The solution is” and “The choice is” in the z0...T . Thus, the value is directly extracted and compared with the ground truth. The Interaction Num-ber refers to the frequency at which we must consult the LLM until we receive conclusive responses. 
+
+Reproducibility . The results and methods marked with a superscript † are the results we obtained based on the open source platform llmpebase . Others without such a tag are collected from existing work, as shown in the Appendix’s subsection C.1. 
+
+5.1. Main Evaluation Results Adaptive reasoning . With zero-shot prompting and no pre-defined thought structures, such as chain of Chain Rea-soning and the tree of ToT Reasoning, TR allows GPT-3.5-turbo, GPT-4, and Llama2 to self-organize and explore thought structures toward answering the question. Under challenging tasks, LLMs with TR adaptively build com-plex structures, as shown by examples in the Appendix, by continuously rolling back from thoughts with “hallucina-tions”. For simpler tasks, lightweight structures are built by LLMs with TR. As such, with the ability to adjust thoughts and prompt the LLMs with accumulated experience of er-rors during reasoning, TR achieves a high solving rate and relatively lower resource cost. 
+
+Overall comparison . We show, especially in Table 1, that compared to existing multi-step reasoning approaches, LLMs with TR achieve the best and the second best solving rate on AQuA-RAT &MATH and GSM8K & SVAMP , re-spectively. Meanwhile, contrary to the resource-cost SOTA ones, such as BoT, which undertakes reasoning through massive tree thought structures, and CSV, which relies on GPT-4 Code Interpreter, TR yields notable performance by interacting less with relatively simpler LLMs. First, TR surpasses BoT by 6.3 on AQuA-RAT and 9.45 on MATH 
+
+using GPT-4. In particular, TR requires only around 40 in-6Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+teractions compared to the 500+ interactions of BoT. Using TR with zero-shot prompting, GPT-4 and GPT-3.5-turbo outperform the ones using few-shot CoT prompting and self-consistency. Under hard math problems, especially MATH, the solving rate of TR is 17 .99 and 3.28 higher than PHP+C-CoT under GPT-4 and GPT-3.5-turbo, respec-tively. Second, LLMs with TR adaptively explore thought structures, which is significantly better than pre-defined forward-only Chain Reasoning and ToT Reasoning. After large-scale interactions with LLMs, the performance of the latter two zero-shot prompting methods only approaches the 8 shots Complex CoT. Figure 3 (a) shows that compared to ToT reasoning, our TR requires one-third or less of the interactions to achieve a new state-of-the-art. Finally, with an average 28 interactions with GPT-4, TR yields a compet-itive solving rate 87 .56 on the multi-task dataset MMLU, which contains symbolic reasoning. We emphasize that TR is more effective in challenging prob-lems, as shown in Table 2 and Table 3. In the level 5 dif-ficulty of MATH, GPT-4 with TR is only 2.84 lower than the CSV that embraces the GPT-4 Code Interpreter as an auxiliary. The solving rate of GPT-4+TR is 4.35 higher than the current best in TheoremQA . Along with better performance, interaction cost is reduced to an acceptable range by TR. Another observation is that LLMs with TR introduce more interactions in hard problems than the sim-pler ones. For instance, as shown in Figure 3 (a) and the first two columns of Table 2 , the average interaction cost increases to around 60 . Also, in Table 3, the results of the 
+
+Game of 24 dataset show that GPT-4 with TR requires an average of 32 interactions to reach a solving rate of 87% ,which is only 7% lower than the CR 2 (Zhang et al., 2023). This is a remarkable achievement as CR-related approaches rely on human-made demonstrations while TR is zero-shot prompting. Moreover, introducing the CR’s demonstrations into the prompt of TR increases the solving rate to 93% 
+
+while reducing the number of interactions to 24 . In addi-tion, the better performance of TR + CR-Prompt shows that including demonstrations reduces the reliance on majority voting. 
+
+Effect of the rollback of thoughts . In Figure 3 (b) and (c), we specifically present the relation between rollbacks and the solving rate of reasoning paths and the decrease in the failure rates at the first step of the Game of 24 . We define a reasoning path z0...T as In Rollback if a majority of its thoughts, represented by Zχ(·) 
+
+> z0...T
+
+in the subsection 4.3, are derived from incoming rollbacks . z0...T is defined as Out Rollback if more than two of its thoughts trigger outgoing rollbacks and as No Rollback if it includes no rollbacks. Figure 3 (b) presents these three types of reasoning paths TR generates during reasoning in four datasets. As TR al-lows the error analysis of each rollback to be accumulated in the prompt, as discussed in subsection 4.3, a In Rollback 
+
+Table 2. Evaluating TR with the ZeroShot setting on challenging mathematical problems and multi-task reasoning. With GPT-4, the existing SOTA zero-shot methods on the level 5 difficulty of the 
+
+MATH , TheoremQA , and MMLU are from CSV (Zhou et al., 2024), PoT (Chen et al., 2023a), and BoT (Sijia et al., 2024), respectively. We use 324 samples out of 1324 for the MATH dataset. The average interaction number with LLM to solve each problem is reported within () behind the number. Methods MATH -level5 324 TheoremQA 400 MMLU 900                                                         
+
+> SOTA 55 (3) 52.4 (1) 93.2 (900+)
+> Llama2-13b †2.47 (1) 9.3 51.78 (1)
+> Llama2-70b †8.64 (1) 25.5 65.44 (1)
+> GPT-4 + ZeroShot-CoT †23.46 (1) 43.75 (1) 82.33 (1)
+> GPT-4 + Chain Reasoning †22.53 (11) 36.5 (9) 78.11 (6)
+> GPT-4 + ToT Reasoning †24.38 (150) 38.25 (110) 79.22 (70)
+> Llama2-70b + TR + W-Voting †12.65 (36) 29 (34) 58.33 (22)
+> GPT-3.5-turbo + TR + W-Voting †20.06 (38) 39.5 (30) 70.11 (18)
+> GPT-4 + TR †31.48 46.25 84.67 GPT-4 + TR + W-Voting †52.16 (62) 56.75 (56) 87.56 (28)
+
+Table 3. Utilizing TR with GPT-4 achieves competitive perfor-mance while maintaining low interaction cost on Game of 24 
+
+dataset. Method Solving rate #Interactions Generate tokens Prompt tokens Standard 7.3 1 - -Standard (best of 100) 33 100 1.8k 1k CoT 4 1 - -CoT (best of 100) 49 100 6.7k 2.2k CoT-SC 9 sc 100 100 - -ToT (b = 5) 74 30 5.5k 1.4k CR (b = 2) 94 27.4 - -CR (b = 5) 98 29.72 - -BoT 83.7 724 15.8k 18.6k BoT+CoT 5 84.9 543 11.2k 15.5k Chain Reasoning † 5 3 0.14k 0.22k ToT (b = 5) Reasoning † 25.6 36 2.82k 1.63k TR † 70 32 5.96k 9.98k TR + W-Voting † 87 TR + CR-Prompt † 86 24 5.03k 8.1k TR + W-Voting + CR-Prompt † 93 
+
+path generally benefits from exploiting more experiences during reasoning. Therefore, as Figure 3 (b) verifies, In Rollback paths consistently correspond to a higher solving rate because of prompting LLMs with these trial-and-error experiences. On the contrary, those Out Rollback paths have significantly low solving rates because they include more bad thoughts (“hallucinations”), which consequently trigger more rollbacks after being identified by LLMs. Similarly, when the first step of Game of 24 derives from the num-ber of 0 to 5 incoming rollbacks , the failing rate decreases significantly from higher than 0.8 to lower than 0.3. The fi-nal observation is that longer spans of rolling back are more important for revising thoughts. Figure 3 (c) shows that the first step caused by a rollback 3 → 0 has a higher success rate than the one caused by 2 → 0 and 1 → 0. Therefore, we argue that a rollback, especially generated from more latter reasoning steps (thoughts), contribute more to the thought revision . This may be because the error analysis brought by rollbacks of later reasoning steps contains more information and is more helpful in improving prompts. 7Toward Adaptive Reasoning in Large Language Models with Thought Rollback GSM8K SVAMP AQuA-RAT MATH             
+
+> (a)
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> 110
+> 120
+> 130
+> 140
+> 150
+> Number of Interaction
+> Interaction Cost Distribution
+> TR
+> Chain Reasoning
+> ToT Reasoning
+> PHP+C-CoT GSM8K SVAMP AQuA-RAT MATH
+> (b)
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> 300
+> 350
+> 400
+> 450
+> 500
+> 550
+> Number of Reasoning Path
+> 88
+> 129
+> 266
+> 499
+> 104
+> 64
+> 153
+> 547
+> 217
+> 177 161
+> 83
+> Relation between Rollbacks and Reasoning
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Solving Rate In Rollback
+> Out Rollback
+> No Rollback
+> In Rollback Solving Rate
+> Out Rollback Solving Rate
+> No Rollback Solving Rate Baseline 013571->0 2->0 3->0
+> (c)
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> Error Rate
+> Thoughts failed at the first step
+> ToT
+> Tree Reasoning
+> Number(#) of In Rollbacks
+> In Rollbacks
+
+Figure 3. Effectiveness of TR on interaction cost saving and thought revision through the rolling back of thoughts. a). distributions of the interactions required to address problems in four datasets; b). solving rates of three types of reasoning path: “No Rollback” — thoughts receive no rollbacks, “Out Rollback” — rollbacks triggered by mistaken thoughts, and “In Rollback” — thoughts derive from rollbacks; c). the reduction of failure rates due to the rollbacks in the first step of Game of 24 , where [0 , 1, 3, 5, 7] denotes the number of rollbacks that cause the first step and 2 → 0 means the first step derives from the rollback from the 2-th step. 
+
+Concerns . First, TR contributes less to the performance enhancement when the LLMs inherently do not have solid ability. Especially in AQuA-RAT and MATH of Table 1, GPT-3.5-turbo with TR is 2.91 and 3.25 higher than PHP+C-CoT, which are significantly lower than these under GPT-4. Likewise, in Table 2, the solving rate of Llama2-70b with TR is around 4% higher than Llama2-70b but costs more interactions. Therefore, the performance of TR depends on LLMs’ abilities to perform correct error analysis and understand the experience in the prompt. Second, to address harder problems, LLMs with TR tend to build over-complex thought structures, which generally contain more than 100 
+
+thoughts. The main reason is that a rollback generated by bad thoughts identified by LLMs or a mistaken rollback caused by hallucinations of LLMs leads to one more reason-ing path. This appears frequently in challenging tasks; thus, LLMs self-organize a large-scale thought structure toward solutions. We present more visible examples in Figure 4, Figure 9, and Figure 10 of the Appendix. 
+
+5.2. Main Insights 
+
+The notable performance enhancement of TR in terms of both solving rate and interaction cost shows the insight that adaptive adjusting thoughts supported by the rollback of thoughts during reasoning is core to the success of LLMs in complex mathematical reasoning. In addition, we can gain three more insights. 
+
+Experience accumulation of error analysis from interme-diate thoughts is better than that obtained by analyzing the whole reasoning path . Existing work (Huang et al., 2024) pointed out that LLMs are unable to revise reasoning based on the outcome analysis, which gives feedback on the final reasoning. Thus, BoT (Sijia et al., 2024), which relies on outcome analysis, had to embrace more careful-selected outcome analysis to prompt LLMs. Our TR opens a new di-rection of relying on process analysis, which provides error analysis for each intermediate reasoning step (rollback-by-rollback verification), to revise thought adaptively during reasoning. Besides, with the rollback of thought, outcome analysis is a special case of process analysis when analysis is used not to re-do reasoning but to adjust previous thought to create a correct reasoning path. 
+
+Experience-guided Solution Ensemble is critical to the effectiveness of trial-and-error reasoning . After stopping reasoning, LLMs with TR yield K reasoning paths due to the adaptive exploration. Each reasoning path caused by one rollback of TR can be regarded as a trial for addressing the problem. When LLMs frequently make mistakes and occur “hallucinations”, the solution obtained in any trial may not be correct. Since TR exploits the error analysis of each incoming rollback as experience to prompt LLMs, a solution from the reasoning path with more incoming rollback is more acceptable. Therefore, we should ensemble these solutions by filtering out ones with limited experiences or many bad thoughts. As shown by comparisons between TR and TR + W-Voting in Table 1, Table 2, Table 3 and Figure 3 (b), such an experience-guided solution ensemble is critical. 
+
+Weak LLMs may not identify multiple targets mentioned in the prompt . Including CoT examples in the prompt im-proves the solving rate of LLMs with TR, as shown in the GPT-4 column of Table 1. However, for the more challeng-ing AQUA-RAT and MATH datasets in the GPT-3.5-turbo column, adding CoT causes a significant performance de-crease. We argue that it may be hard for the weak LLMs to understand and distinguish instructions with different tar-gets in the prompt. For example, the instruction of CoT examples emphasizes how to follow demonstrations, while the prompt with experiences in TR focuses on how to avoid given errors. Weak LLMs may not benefit from the en-hanced prompt containing these two different guidances, especially when the reasoning is complex. 8Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+Table 4. Evaluating the token cost when using GPT-4 with TR to address questions from MATH and TheoremQA . The ratios in the table indicate how many times the token costs of various approaches exceed the token cost of ZeroShot CoT. △ represents the increase in the problem-solving rate of various approaches compared to ZeroShot CoT. We also provide the average and standard deviation values, expressed as mean ± std, for the tokens required to prompt LLMs and those generated by LLMs in addressing a single question from two challenging datasets. Method MATH TheoremQA                                                                                                
+
+> Generate tokens Ratios Prompt tokens Ratios △Generate tokens Ratios Prompt tokens Ratios △
+> ZeroShot CoT 212.3 ±152.6 1110.3 ±25.5 10240.8 ±100.5 1121.2 ±43.1 10CoT 8441.3 ±310.7 2.08 4611.4 ±1952.2 41.8 4.2 -----Chain Reasoning 603.2 ±244.7 2.84 2657.5 ±1187 24.1 0.74 976.3 ±1056.4 4.05 4614.6 ±7632.1 38.07 -7.25 ToT Reasoning 1569.8 ±474.7 7.39 9963.7 ±4487.5 90.33 3.3 1886 ±982.5 7.83 11982 ±8872.2 98.86 -5.5 TR + W-Voting 7484.9 ±5873.9 35.26 46904.9 ±37980.8 425.25 27.19 6762.9 ±6513 28.09 43444.8 ±49391.2 358.46 13
+
+5.3. Token Cost Analysis 
+
+As shown in Table 4, when addressing questions from chal-lenging datasets, the token cost of GPT-4 with TR is sig-nificantly higher than baseline approaches. Specifically, on the MATH dataset, the TR approach, on average, generates 35.26 times more tokens and requires 425 .25 times more prompt tokens than the ZeroShot CoT. The corresponding ratios in the TheoremQA dataset are 28 .09 and 358 .46 .This resource-intensive nature of our proposed TR derives from continuously identifying the errors and appending the prompt with error analysis during reasoning. However, these additional operations and the high token cost are necessary as hallucinations of LLMs frequently appear. First, since numerous erroneous thoughts are gener-ated during reasoning, consistently identifying and revising them is crucial to ensuring the correctness of the answer. Second, in many cases, the error analysis of LLMs is in-valid and even incorrect due to the inevitable hallucinations. Thus, accumulating error analysis derived from different reasoning paths decreases the negative impact of the flawed analysis on thought revisions. Third, many reasoning paths of the thought structure derive from rollbacks triggered by erroneous feedback from LLMs. Since mistaken rollbacks cannot be identified, the TR approach retains all generated paths and ultimately employs majority voting to enhance reliability. Therefore, we conclude that there is a trade-off between the high token cost and the problem-solving rate. On the one hand, since the TR approach requires many tokens to address a single question, its application may be lim-ited for users with insufficient resources. On the other hand, compared to zero-shot GPT-4, GPT-4 with TR gains 27.19% and 13% improvements in solving rates on MATH 
+
+and TheoremQA datasets. When users prioritize problem-solving rates, integrating GPT-4 with the TR approach en-sures its applicability in many challenging scenarios. 
+
+6. Concluding Remarks 
+
+In this paper, we proposed Thought Rollback (TR), an ef-fective reasoning framework supported by the rollback of thoughts that allows LLMs to perform adaptive reasoning to solve challenging problems. Without relying on hu-man annotations and specific thought structure designs for reasoning, LLMs with TR can progressively self-organize and revise thoughts based on trial-and-error experiences until reaching a correct solution for various tasks. The 
+
+rollback controller and prompt enhancer , together with the experience-guided weights majority voting, make TR achieve the state-of-the-art solving rate in many mathemat-ical and multi-task reasoning datasets while maintaining a lower cost than the alternative leading approaches. We hope this work could shed light on the adaptive reasoning in LLMs toward addressing challenging tasks, especially when mathematical problems are involved. 
+
+Impact Statement 
+
+Large language models (LLMs) can break a complex task into manageable subproblems and solve them through step-by-step reasoning. TR, a lightweight framework, guarantees the reliability of LLMs’ multi-step reasoning under halluci-nations, thus extending their applications to a wider range of tasks. Furthermore, compared to the BOT that performs outcome analysis, TR built upon prompting the LLMs with feedback from process analysis is more effective and sig-nificantly reduces the interaction cost. This may open a research direction emphasizing the importance of exploit-ing feedback during the step-by-step reasoning of LLMs. In addition, the plug-and-play nature of TR allows other approaches, such as CR, to involve the thought rollback mechanism to improve performance further. Ultimately, thanks to the expansion in the context window of LLMs and the decreasing token prices, the token cost of TR may not be a major concern. 9Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+References 
+
+An, S., Ma, Z., Lin, Z., Zheng, N., Lou, J.-G., and Chen, W. Learning from mistakes makes llm better reasoner. arXiv preprint arXiv:2310.20689 , 2023. Besta, M., Blach, N., Kubicek, A., Gerstenberger, R., Gi-aninazzi, L., Gajda, J., Lehmann, T., Podstawski, M., Niewiadomski, H., Nyczyk, P., et al. Graph of thoughts: Solving elaborate problems with large language models. 
+
+arXiv preprint arXiv:2308.09687 , 2023. Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J. D., Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G., Askell, A., et al. Language models are few-shot learners. In Advances in Neural Information Processing Systems ,volume 33, pp. 1877–1901, 2020. Bubeck, S., Chandrasekaran, V., Eldan, R., Gehrke, J., Horvitz, E., Kamar, E., Lee, P., Lee, Y. T., Li, Y., Lundberg, S., et al. Sparks of artificial general intel-ligence: Early experiments with gpt-4. arXiv preprint arXiv:2303.12712 , 2023. Chen, W., Ma, X., Wang, X., and Cohen, W. W. Program of thoughts prompting: Disentangling computation from reasoning for numerical reasoning tasks. Transactions on Machine Learning Research , 2023a. Chen, W., Yin, M., Ku, M., Lu, P., Wan, Y., Ma, X., Xu, J., Wang, X., and Xia, T. Theoremqa: A theorem-driven question answering dataset. In Proc. Conference on Em-pirical Methods in Natural Language Processing , 2023b. Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert, M., Tworek, J., Hilton, J., Nakano, R., et al. Training verifiers to solve math word problems. 
+
+arXiv preprint arXiv:2110.14168 , 2021. Fu, Y., Peng, H., Sabharwal, A., Clark, P., and Khot, T. Complexity-based prompting for multi-step reasoning. In 
+
+Proc. International Conference on Learning Representa-tions , 2023. Gao, L., Madaan, A., Zhou, S., Alon, U., Liu, P., Yang, Y., Callan, J., and Neubig, G. Pal: Program-aided lan-guage models. In International Conference on Machine Learning , pp. 10764–10799. PMLR, 2023. Hagberg, A. A., Schult, D. A., and Swart, P. J. Exploring net-work structure, dynamics, and function using networkx. In Proc. 7th Python in Science Conference , pp. 11–15, 2008. Hendrycks, D., Burns, C., Basart, S., Zou, A., Mazeika, M., Song, D., and Steinhardt, J. Measuring massive multitask language understanding. In Proc. International Conference on Learning Representations , 2021a. Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J. Measuring math-ematical problem solving with the math dataset. arXiv preprint arXiv:2103.03874 , 2021b. Huang, J., Chen, X., Mishra, S., Zheng, H. S., Yu, A. W., Song, X., and Zhou, D. Large language models cannot self-correct reasoning yet. In Proc. International Confer-ence on Learning Representations , 2024. Jiang, M., Ruan, Y., Huang, S., Liao, S., Pitis, S., Grosse, R. B., and Ba, J. Calibrating language models via aug-mented prompt ensembles. In International Conference on Machine Learning , 2023. Kojima, T., Gu, S. S., Reid, M., Matsuo, Y., and Iwasawa, Y. Large language models are zero-shot reasoners. In 
+
+Advances in Neural Information Processing Systems , vol-ume 35, pp. 22199–22213, 2022. Kong, A., Zhao, S., Chen, H., Li, Q., Qin, Y., Sun, R., and Zhou, X. Better zero-shot reasoning with role-play prompting. arXiv preprint arXiv:2308.07702 , 2023. Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike, J., Schulman, J., Sutskever, I., and Cobbe, K. Let’s verify step by step. In Proc. International Conference on Learning Representations , 2024. Ling, W., Yogatama, D., Dyer, C., and Blunsom, P. Pro-gram induction by rationale generation: Learning to solve and explain algebraic word problems. arXiv preprint arXiv:1705.04146 , 2017. Ling, Z., Fang, Y., Li, X., Huang, Z., Lee, M., Memisevic, R., and Su, H. Deductive verification of chain-of-thought reasoning. In Advances in Neural Information Processing Systems , 2023. Liu, N. F., Lin, K., Hewitt, J., Paranjape, A., Bevilacqua, M., Petroni, F., and Liang, P. Lost in the middle: How language models use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173, 2024. Luo, L., Li, Y.-F., Haffari, G., and Pan, S. Reasoning on graphs: Faithful and interpretable large language model reasoning. In Proc. International Conference on Learning Representations , 2024. Lyu, Q., Havaldar, S., Stein, A., Zhang, L., Rao, D., Wong, E., Apidianaki, M., and Callison-Burch, C. Faithful chain-of-thought reasoning. In Proc. IJCNLP-AACL , 2023. Madaan, A., Tandon, N., Gupta, P., Hallinan, S., Gao, L., Wiegreffe, S., Alon, U., Dziri, N., Prabhumoye, S., Yang, Y., et al. Self-refine: Iterative refinement with self-feedback. arXiv preprint arXiv:2303.17651 , 2023. 10 Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+OpenAI. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 , 2023. Patel, A., Bhattamishra, S., and Goyal, N. Are nlp models really able to solve simple math word problems? arXiv preprint arXiv:2103.07191 , 2021. Qin, C., Zhang, A., Zhang, Z., Chen, J., Yasunaga, M., and Yang, D. Is chatgpt a general-purpose natural language processing task solver? In Proc. Conference on Empirical Methods in Natural Language Processing , 2023. Sijia, C., Baochun, L., and Niu, D. Boosting of thoughts: Trial-and-error problem solving with large language mod-els. In Proc. International Conference on Learning Rep-resentations , 2024. Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 ,2023. Wang, X., Wei, J., Schuurmans, D., Le, Q., Chi, E., Narang, S., Chowdhery, A., and Zhou, D. Self-consistency im-proves chain of thought reasoning in language models. In 
+
+Proc. International Conference on Learning Representa-tions , 2022. Wei, J., Wang, X., Schuurmans, D., Bosma, M., Xia, F., Chi, E., Le, Q. V., Zhou, D., et al. Chain-of-thought prompting elicits reasoning in large language models. In Advances in Neural Information Processing Systems , volume 35, pp. 24824–24837, 2022. Weng, Y., Zhu, M., Xia, F., Li, B., He, S., Liu, S., Sun, B., Liu, K., and Zhao, J. Large language models are better reasoners with self-verification. In Proc. Conference on Empirical Methods in Natural Language Processing , pp. 2550–2575, 2023. Wu, Z., Jiang, M., and Shen, C. Get an a in math: Progres-sive rectification prompting. In Proc. AAAI Conference on Artificial Intelligence , 2024. Yao, S., Yu, D., Zhao, J., Shafran, I., Griffiths, T. L., Cao, Y., and Narasimhan, K. Tree of thoughts: Deliberate problem solving with large language models. In Advances in Neural Information Processing Systems , 2023. Yu, J., He, R., and Ying, R. Thought propagation: An analogical approach to complex reasoning with large lan-guage models. In Proc. International Conference on Learning Representations , 2024. Zhang, Y., Yang, J., Yuan, Y., and Yao, A. C.-C. Cumulative reasoning with large language models. arXiv preprint arXiv:2308.04371 , 2023. Zhang, Z., Zhang, A., Li, M., and Smola, A. Automatic chain of thought prompting in large language models. In 
+
+Proc. International Conference on Learning Representa-tions , 2022. Zhao, X., Xie, Y., Kawaguchi, K., He, J., and Xie, Q. Au-tomatic model selection with large language models for reasoning. In Proc. Conference on Empirical Methods in Natural Language Processing , 2023. Zheng, C., Liu, Z., Xie, E., Li, Z., and Li, Y. Progressive-hint prompting improves reasoning in large language models. arXiv preprint arXiv:2304.09797 , 2023. Zhou, A., Wang, K., Lu, Z., Shi, W., Luo, S., Qin, Z., Lu, S., Jia, A., Song, L., Zhan, M., et al. Solving challenging math word problems using gpt-4 code interpreter with code-based self-verification. In Proc. International Con-ference on Learning Representations , 2024. 11 Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+A. Supplement to Figures of the Main Paper 
+
+Figure 4 is the full version of the partial one shown in Figure 1. This shows a complex thought structure built by GPT-4 with TR to address a challenging question from MATH dataset. It shows that GPT-4 with TR tends to build a large-scale thought structure by iteratively rolling back thoughts during reasoning. Figure 4 demonstrates the details about how TR exploits 
+
+rollback controller and prompt enhancer to create a new and correct reasoning path after analyzing the bad thoughts. Specifically, from the details presented in Figure 5, we can observe what TR shown in Figure 2 does after reaching the thought. GPT-4 with TR starts from generating a first thought N − 1S − 1 based on a simple and zero-shot prompt 
+
+Q. Then, Rollback of thoughts follow the process in Figure 2. First, rollback controller analyzes the reasoning path 
+
+N − 1 → N − 2 → N − 3 → N − 5 → N − 6 to output the error analysis presented in “N-6, S-5 error analysis:”. This analysis shows that reasoning steps N − 5 S − 4 and N − 6 S − 5 are bad thoughts. According to our discussion in subsection 4.2, rollback controller allows the LLM to roll back to the thought N − 3S − 3, which is one step before the first bad thought N − 5 S − 4. Then, prompt enhancer accumulates the error analysis as experience in the prompt, as shown in “N-3, S-3 to N-7 S-4 Prompt ” which includes the “#### The 0-th Experience with Analysis ####”. As a result, by avoiding making similar mistakes mentioned by experience, LLM is able to generate a new thought N − 7 S − 4 from the chosen thought N − 3 S − 3. Therefore, “hallucinations” that occur in thought or analysis of LLM may not influence reasoning due to the continuous thought revision guaranteed by the iterative rollbacks during reasoning. As can be seen from N − 9 S − 6,the final solution is revised to be a correct answer 737 . Additionally, we can also observe that each rollback will lead to a new reasoning path with the experience from the corresponding error analysis. Thus, two rollbacks N − 6 → N − 3 and 
+
+N − 3 → N − 2 of GPT-4 with TR adaptively create two new reasoning paths. 
+
+B. Reproducibility of Thought Rollback Framework 
+
+B.1. Source Code 
+
+One can also access the source code under the examples/ThoughtRollback folder in the code . The implementation is based on the llmpebase library. The code is written in Python and imports the datasets from Hugging Face to build PyTorch’s data loader. Also, the source code for Chain Of Thought, Chain Reasoning, ToT reasoning, and GoT reasoning that we mention in experiments are available in the examples/ChainOfThought , examples/ChainReasoning , examples/TreeReasoning , and 
+
+examples/GraphReasoning folders, respectively. All configuration files used to conduct the experiments are provided in the configs/ folder in the code . About how to run, please read the README.md under the examples/ThoughtRollback folder. 
+
+B.2. Locations of Generated Thoughts and Reasoning Details 
+
+Our code will automatically save the generated thoughts and reasoning details under one folder of LLMPE in the root directory. The direct results are placed under the LLMPE/results while the corresponding visible thought structures are stored in LLMPE/visualizations . Then, their sub-folder name will represent the setting of the configuration, such as “TRReasoning gpt-4 zeroshot cot MATH”, where “TRReasoning” is the name of our Thought Rollback. Eventually, as shown in Figure 6, you can access the sample by index in thought structure * while reading the results in llm records . The thought structure for reasoning will be saved in the .json format, and the visualizations will be in the .pdf format. 
+
+B.3. Prompts 
+
+This subsection presents the basic prompts used in our implementation of Thought Rollback framework. 
+
+System prompt for thought generation : You possess expertise in solving mathematical problems through a systematic, step-by-step reasoning process during which you are dedicated to preventing repeating any errors analyzed in experiences. Your objective is to address the question using a series of reasoning steps delivered in multiple responses, with each response containing one reasoning step. It is crucial to avoid repeating errors mentioned in the given experiences. Begin by reading the provided reasoning steps and then proceed to generate the most appropriate next step in the response, ensuring that the logical progression steadily leads towards a solution. 
+
+System prompt for reasoning analysis : You are a mathematician specializing in checking and analyzing the reasoning 
+
+12 Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+process containing multiple intermediate reasoning steps proposed to address a math question. Please check the correctness of the overall reasoning logic and each reasoning step regarding mathematical logic and rationality. 
+
+Prompt I for the next thought generation :
+
+Answer the question about the problem {Problem Name }. After getting the final solution, place it after the sentence ’The final solution is’ for readability. \n\nExperience containing previously made mistakes: \n\n######### {Experiences }######### \n\nConsider the analysis in the above experience to avoid making similar mistakes during reasoning for the question. \n\n\nQuestion: {Question } \n\nAnswer: Let’s think step by step. Let’s focus on carefully generating the next possible reasoning step for reasoning steps below. \n\n\n{Existing Reasoning Steps }\n\n\nFor reasoning steps within , please generate their best next step containing analysis and the corresponding mathematical expression. 
+
+where the {Problem Name } contains what question to solve, such as “Multiplication”, {Experiences } present the accumulated experiences Aχ(·) 
+
+> z0...q −1
+
+discussed in subsection 4.3, {Question } is the given question description and finally {Experiences } is a placeholder to be replaced by the preceding chain of thoughts z0..,n −1.
+
+Prompt IR for the error analysis :
+
+Analyze the reasoning steps proposed for the question about the problem {Problem Name }. \nQuestion: {Question } \n
+
+Toward addressing the given question, below is a reasoning process containing {Number of Steps } steps: \n\n\n {Existing Reasoning Steps } \n\n\nDouble-check the reasoning process within , please analyze its overall and each step’s correctness by checking whether they are mathematical logic and rationality. Please report an error when any step does not contain a clear mathematical expression. Output empty string when no steps are given. \n
+
+where the {Number of Steps } presents the number of current reasoning steps, i.e., n for a reasoning path z0..,n .
+
+B.4. Basic Engineering Settings for TR 
+
+During implementation, we set the upper bound U of the incoming rollback for one thought to be 3, making no more than 3
+
+rollbacks use this thought as the destination. Besides, we utilize the depth-first search algorithm to find the current growing thought. As mentioned in the subsection 4.4, the reasoning path with more incoming rollback is more important. Therefore, for this depth-first search algorithm, we assign higher priority to the reasoning path with a larger number of incoming rollbacks . As LLMs with TR first generate subsequent thoughts for these reasoning paths, the corresponding solution will be explored in advance. Such a mechanism increases the possibility of getting better answers. Apart from these basic settings, our implementation also includes some engineering tricks. First, during reasoning, once a reasoning path causes outgoing rollbacks more than 5 times, it will be ignored in the subsequent reasoning. Second, we do not allow one thought to cause more than 3 outgoing rollbacks to avoid the case that LLMs repeatedly identify a bad thought and trigger rollbacks for it. Third, to increase the speed of reasoning, after noticing that different reasoning paths are independent of each other, we achieve parallel running, which makes LLM generate thoughts for all reasoning paths simultaneously. Therefore, once a new reasoning path is created, one process will be created to make LLM work on the path without blocking others. This can increase the reasoning speed from the scale of minutes to seconds. 
+
+C. Discussion: Insights Gained from the TR Framework 
+
+We argue that the outstanding performance of TR is attributed to three insights. First, as mentioned by the work (Lightman et al., 2024), compared to outcome supervision, which provides feedback for a final result, process supervision, which provides feedback for each intermediate reasoning step, is more important to guarantee the reliable reasoning of LLMs. In summary, process supervision significantly outperforms outcome supervision. Actually, TR roughly belongs to process supervision because it performs rollback-by-rollback error analysis during reasoning and continues to revise thoughts based on the accumulation of experience. Thus, the reasoning of LLMs can be adjusted adaptively during reasoning rather than after the results are obtained. However, BoT (Sijia et al., 2024) belongs to outcome supervision as it only collects error analysis after reasoning. Second, the work (Huang et al., 2024) figured out that the outcome analysis is sometimes invalid as LLMs cannot use feedback to revise thoughts to improve the solving rate. As discussed in subsection 3.2 of our paper, this may be because when there are many errors in the intermediate reasoning steps, capturing the source mistake and performing useful analysis 13 Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+is challenging. Thus, BoT (Sijia et al., 2024) has to do many tree ensembles and design a complex boosting mechanism to mine effective error analysis to drive LLM’s reasoning revision. On the contrary, TR performs thought rollback triggered by continuous error analysis during reasoning. Thus, once the error is identified, LLMs can directly revise or adjust the reasoning based on timely accumulated experience in the prompt. Third, prompting LLMs with a long input context may cause the degradation of reasoning performance. As pointed out by the work (Liu et al., 2024), LLMs do not fairly utilize all the information in the prompt but focus more on the content at the beginning or end of the input context. For BoT, the prompt tends to become extremely long due to the continuous collection of generated reasoning steps and their error analysis over iterations, particularly since the error analysis focuses on the whole reasoning chain. For instance, in the 10 -th iteration, the prompt contains ten long contents, each containing all reasoning steps and step-wise analysis. Some of them may not even be correct. However, our TR accumulates experience during reasoning; thus, each experience only contains analysis on very few intermediate steps, generally leading to a quick revision after the rollback. For instance, LLMs with TR can easily generate a correct second step based on the experience “Reasoning step 1: ... correct. Reasoning step 2: ... wrong because....”. However, the BoT’ experience “Reasoning step1: ....correct. Reasoning step 2: ... wrong because.... . Reasoning step 3: ... wrong because..... Reasoning step 4: ... wrong because.... . Reasoning step 5: ... wrong because....” may just mislead the LLM. Finally, regarding the time complexity of the TR framework, LLMs with TR incrementally construct the thought structure from #node 0 to #node n. By focusing on the leading term and disregarding constants and lower order terms, the worst-case time complexity of TR is determined to be O(n2).
+
+C.1. Source of Experimental Results 
+
+In Table 5 and Table 6, we collect experimental results of GPT-4 and GPT-3.5-turbo on various settings. We especially show the corresponding work that reports the results. 
+
+Table 5. Source of experiment results of GSM8K . Methods are CSV (Zhou et al., 2024), PHP (Zheng et al., 2023) with GPT-3.5-turbo-, Model Selection (MS) (Zhao et al., 2023), PAL (Gao et al., 2023), PLAY (Kong et al., 2023), Faithful (Lyu et al., 2023), Exps (Bubeck et al., 2023), PoT (Chen et al., 2023a), IG (Qin et al., 2023), BoT (Sijia et al., 2024). Source GPT-4 GPT-3.5-turbo ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT CSV - - - 92.0 5 - - 57.1 5 - - -Code 92.9, 94.9 sc 5 - - - - - - - - -Code+CSV 94.5, 97 sc 5 - - - - - - - - -PHP - - - - 94.9 8 - - - - 82.8 8                                                                                                                                       
+
+> +PHP ----95.5 8----85.1 8
+> MS ---94.6 5, 95.6 5,sc 5, 95.6 5,sc 15 ----80.8 5, 85.4 5,sc 5, 87.4 5,sc 15 -PAL ---94.0 5, 94.7 5,sc 5, 95.5 5,sc 15 ----79.2 5, 80.9 5,sc 5, 82.4 5,sc 15 -Ours ---95.6 5, 96.5 5,sc 5, 96.8 5,sc 15 ----82.6 5, 88.2 5,sc 5, 89.2 5,sc 15 -PLAY -----76.0 -79.6 76.9 -Role -----78.2 ----Faithful 46.9 --64.9 8------Faithful ---95 8------Exps 87.1 ---------PoT* -----76.3 ----IG -----23.8 -78.9 --BoT 87.1 -89.6 92 894.9 -----BoT --97.1 98.7 8------
+
+D. Examples of GPT-4 with TR in GSM8K 
+
+In Figure 7, we present a simple reasoning performed by GPT-4 with TR. As no bad thoughts are identified during reasoning, GPT-4 with TR directly performs correct reasoning toward a correct solution. This simple example aims to give an overview of 1). how multi-step reasoning with multi-step prompts work; 2). how to prompt LLMs to generate the next thought, such as N − 2 S − 2 → N − 3 S − 3; and 3) how LLMs with TR are able to perform normal reasoning when no rollback is triggered. Besides, as discussed in subsection 4.1, LLMs with TR start from a zero-shot prompt containing only the question and task information. Then, Figure 8 shows a more complex reasoning process conducted by GPT-4 with TR. In this case, rollback controller 
+
+triggers 5 rollbacks during reasoning, leading to 8 different solutions. After operating the experience-guided solution ensemble, we get 6 as the final answer, which is correct. LLMs with TR first generate one thought N − 1S − 1. Then, 
+
+rollback controller exploits LLMs to analyze the current reasoning path N − 0 S − 1, N − 1 S − 1 and N − 2 S − 2 and thus identifies the error in N − 2S − 2. This triggers a rollback N − 2 S − 2 → N − 1 S − 1, leading to a new reasoning 14 Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+Table 6. Source of experiment results of SVAMP , AQuA-RAT , MATH , TheoremQA and MMLU . They are CSV (Zhou et al., 2024), PHP (Zheng et al., 2023), Model Selection (MS) (Zhao et al., 2023), PAL (Gao et al., 2023), PLAY (Kong et al., 2023), Faithful (Lyu et al., 2023), Exps (Bubeck et al., 2023), PoT (Chen et al., 2023a), IG (Qin et al., 2023), BoT (Sijia et al., 2024), CR (Zhang et al., 2023), TheoremQA (Chen et al., 2023b) and GPT4-report (OpenAI, 2023).                                                                                                                                                                                                                                                                                                                                                                                                                             
+
+> SVAMP
+> Source GPT-4 GPT-3.5-turbo ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT PHP ----90.5 8----81.0 8
+> +PHP ----91.9 8----83.1 8
+> MS ---91.9 5----83 5-PAL ---92.2 5----80.3 5-Ours ---93.7 5----84.3 5-PLAY -----75.3 -76.3 82.2 -Role -----83.8 ----Faithful -88.4 -80 8------Faithful ---95.4 8------PoT* -----88.2 ----IG -----74.8 -77.5 --BoT 68.7 -74.3 77.6 890.5 8-----BoT --92.7 94.9 8------
+> AQuA-RAT
+> Source GPT-4 GPT-3.5-turbo ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT PHP ----77.5 8----57.4 8
+> +PHP ----79.9 8----60.6 8
+> PLAY -----53.5 -53.9 59.4 -Role -----63.8 ----Faithful 50.4 --75.2 8------Faithful ---73.6 8------PoT* ---72.4 ------IG -----28.0 -53.5 --BoT 40.6 -73.2 74 877.5 -----BoT --81.4 84.9 8------
+> MATH
+> Source GPT-4 GPT-3.5-turbo ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT CSV 42.2 ---50.36 8----34.12 8
+> Code 69.69, 79.88 sc 16 ---------Code+CSV 73.54, 83.54 sc 16 , 84.32 sc vw
+> 16 ---------PHP ---42.5 850.36 8----34.12 8
+> +PHP ----53.9 8----36.5 8
+> BoT 42.5 -47.7 48.93 850.4 8-----BoT --62.5 66.3 8------CR 500
+> CR ---54.2 4------PHP+CR ---58 4------
+> TheoremQA
+> Source GPT-4 GPT-3.5-turbo ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT TheoremQA ---43.8 ----30.2, 30.8 theorem -PoT -52.4 ----35.6, 35.8 theorem ---
+> MMLU
+> Source GPT-4 GPT-3.5-turbo ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT ZeroShot FewShot ZeroShot-CoT CoT Complex-CoT GPT4-report 86.5 86.4 ---70 ----BoT --90.86 93.42 5------
+
+path N − 1 S − 1 → N − 3 S − 2 in which the prompt includes the error analysis, thereby revising the thought to gain a final correct solution N − 9 S − 4.As there are 3 incoming rollbacks for the thought N − 10 S − 2, the corresponding three different error analyses are accumulated as shown by the N-10 S-2 Experience Accumulation: . prompt enhancer include these error analyses as experiences in the prompt to guide LLMs to produce correct thoughts. For instance, N-10 S-2 → N-17 S-3 Prompt shows that GPT-4 generates the thought N − 17 S − 3 from the thought N − 10 S − 2 with the prompt that accumulates two experiences. Eventually, GPT-4 with TR adaptively builds a thought structure towards generating solutions that, most of which are correct due to the continuous thought revisions via rollback of thoughts. 
+
+E. Examples of GPT-4 with TR in MATH 
+
+Limited by space, we store the detailed experimental result and visualization files of Figure 9 in the folder MATH-example-1 
+
+of the supplementary. Thus, we present the question, the thoughts of correct solutions, and the values of all solutions. Specifically, in response to our discussion in section 4, we present how GPT-4 with TR is able to identify the bad thought 
+
+N − 34 S − 6 and thus the rollback controller gets the N − 34 S − 6 error analysis. The triggered rollback N − 34 S − 6
+
+→ N − 32 S − 4 leads to a new reasoning path N − 32 S − 4 → N − 35 S − 5, which generates a correct thought and gets 15 Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+the correct answer 0.We specifically utilize the example in Figure 10 to show how Experience Accumulation works in the TR framework. For the reasoning path from N − 0 S − 0 to N − 17 S − 3, there are 4 incoming rollbacks , including the rollback N − 3 S − 2
+
+→ N − 0 S − 0, the rollback N − 10 S − 3 → N − 4 S − 1, and the rollback N − 15 S − 3 → N − 11 S − 2. As each rollback creates an error experience from one trial of the given question, incoming rollbacks lead to a series of experiences, as shown by N-11 S-2 Experience Accumulation :. Therefore, to generate N − 17 S − 3 from N − 11 S − 2, the prompt enhancer includes these error analyses as experiences in the prompt, as shown in N-11 S-2 -¿ N-17 S-3 Prompt: . By learning from these experiences, LLMs are able to generate the correct thought N − 17 S − 3 and thus the correct answer 
+
+47 . The detailed files of this example is presented in the folder MATH-example-2 of the supplementary. 
+
+F. Examples of GPT-4 with TR in TheoremQA 
+
+GPT-4 with TR tends to build complex thought structures when reasoning with the challenging TheoremQA dataset (Chen et al., 2023b). As seen in Figure 11, the overall thought scale and the complexity of reasoning paths increase a lot compared to other examples. Also, we show in Figure 12 that GPT-4 with TR can build even more complex thought structures. In these two figures, we present the obtained reasoning path toward the correct answer. For example, the “Final solution of the reasoning path N-0 S-0 → N-11 S-7:” in Figure 11 and the “Final solution of the reasoning path N-0 S-0 → N-12 S-7:” in Figure 12 are the correct solutions obtained by GPT-4 with TR. 16 Toward Adaptive Reasoning in Large Language Models with Thought Rollback 
+
+Figure 4. Complete thought structure of Figure 1 (c) built by GPT-4 with TR for the question from MATH dataset (Hendrycks et al., 2021b). This structure contains 23 nodes, i.e. 23 thoughts and leads to K = 8 reasoning paths towards solutions. It is plotted by based on the NetworkX lib (Hagberg et al., 2008) under the “fdp” layout. 
+
+17 Toward Adaptive Reasoning in Large Language Models with Thought Rollback N-6, S-5  error  Thought :
+
+The final solution is to confirm the number of buses needed for the trip.\n\nMathematically, this is represented as:\n\nThe school needs 738 buses for the trip. 
+
+N-6, S-5  error analysis: 
+
+The overall reasoning logic is correct, and each reasoning step is logically sound and mathematically rational. Here is the analysis for each step:\n\nReasoning Step 1: The step is correct. The total number of students can be found by multiplying the number of classrooms by the number of students in each classroom.\n\nReasoning Step 2: The step is correct. The calculation 67 classrooms * 66 students/classroom = 4422 students is correct.\n\nReasoning Step 3: The step is correct. The number of buses can be found by dividing the total number of students by the number of seats on each bus.\n\nReasoning Step 4: The step is correct, but there is a calculation error. The correct division is 4422 students / 6 seats/bus = 737 buses with a remainder. The step correctly identifies that we cannot have a fraction of a bus, so we need to round up to the nearest whole number. However, the calculation should result in 737 buses with a remainder, not 738 buses.\n\nReasoning Step 5: The step is incorrect because it carries forward the calculation error from the previous step. The final solution should be that the school needs 737 buses for the trip, not 738.\n\nSo, the error is in Reasoning Step 4 and 5, where the division result was incorrectly rounded up to 738 instead of 737. 
+
+N-5, S-4  error  Thought :
+
+The next step is to perform the division operation to find out the number of buses needed. \n\nMathematically, this is represented as:\n\n4422 students / 6 seats/bus = 737 buses. \n\nHowever, since we cannot have a fraction of a bus, we need to round up to the nearest whole number because even if a bus is not full, it will still be needed. So, the school needs 738 buses for the trip. 
+
+N-3, S-3 to N-7 S-4 Prompt :
+
+Answer the question about the problem Multiplication. After getting the final solution, place it after the sentence 'The final solution is' for readability. Experience containing previously made mistakes: ######### The 0-th Experience with Analysis ######### 
+
+{N-6, S-5 error analysis}. #################### Consider the analysis in the above experience to avoid making similar mistakes during reasoning for the question. Question: The school is planning a field trip. The school has 67 classrooms. There are 66 students in each classroom in the school. If there are 6 seats on each school bus How many buses are needed to take the trip? 
+
+Answer: Let's think step by step.  Let's focus on carefully generating the next possible reasoning step for reasoning steps below. --------------------
+
+The first step is to find out how many students are in the school. We can do this by multiplying the number of classrooms by the number of students in each classroom. 
+
+Mathematically, this is represented as: 
+
+67 classrooms * 66 students/classroom = Total number of students. 
+
+The next step is to calculate the total number of students in the school. We can do this by performing the multiplication operation as suggested in the first step. Mathematically, this is represented as: 67 classrooms * 66 students/classroom = 4422 students. 
+
+The next step is to find out how many buses are needed to transport all the students. We can do this by dividing the total number of students by the number of seats on each bus. Mathematically, this is represented as: 4422 students / 6 seats/bus = Number of buses needed. 
+
+--------------------For reasoning steps within --------------------, please generate their best next step containing analysis and the corresponding mathematical expression. 
+
+N-9, S-6  Thought :
+
+The next step is to finalize the solution. \n\nMathematically, this is represented as:\n\nThe final solution is that the school needs 737 buses for the trip. 
+
+Q:
+
+Answer the question about the problem Multiplication. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nQuestion: The school is planning a field trip. The school has 67 classrooms. There are 66 students in each classroom in the school. If there are 6 seats on each school bus How many buses are needed to take the trip? \n\nAnswer: Let's think step by step. 
+
+N-1 S-1 :
+
+The first step is to find out how many students are in the school. We can do this by multiplying the number of classrooms by the number of students in each classroom. \n\nMathematically, this is represented as: \n\n67 classrooms * 66 students/classroom = Total number of students. 
+
+Figure 5. Complete thought structure of Figure 2 built by GPT-4 with TR for the question from SVAMP dataset (Patel et al., 2021). This structure contains 10 nodes, i.e. 10 thoughts and leads to K = 3 reasoning paths towards solutions. It is plotted by based on the NetworkX lib (Hagberg et al., 2008) under the “dot” layout. 
+
+Figure 6. Illustrating of all results generated by LLMs with TR. The left sub-figure presents the details of the generated thought structure. The upper right sub-figure shows the files of obtained results, while the lower right sub-figure presents the visualizations. 
+
+18 Toward Adaptive Reasoning in Large Language Models with Thought Rollback Q:
+
+Answer the question about the problem Algebra. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nQuestion: Gloria is shoe shopping when she comes across a pair of boots that fit her shoe budget. However, she has to choose between the boots and two pairs of high heels that together cost five dollars less than the boots. If one pair of heels costs $33 and the other costs twice as much, how many dollars are the boots? \n\nAnswer: Let's think step by step. 
+
+N-1 S-1 :
+
+Given that one pair of heels costs $33 and the other costs twice as much, we can find the total cost of the two pairs of heels by adding the cost of the first pair to twice its cost. This can be represented by the mathematical expression: \n\nCost of two pairs of heels = $33 + 2*$33. 
+
+N-2 S-2 :
+
+Given the expression for the cost of two pairs of heels as $33 + 2*$33, we can calculate the total cost by performing the operations. This results in:\n\nCost of two pairs of heels = $33 + $66. 
+
+N-3 S-3 :
+
+The next reasoning step would be to add the costs together to find the total cost of the two pairs of heels. This can be represented by the mathematical expression:\n\nCost of two pairs of heels = $33 + $66 = $99. 
+
+N-4 S-4 :
+
+Given that the two pairs of high heels together cost five dollars less than the boots, we can represent the cost of the boots in terms of the cost of the two pairs of heels. This can be represented by the mathematical expression:\n\nCost of boots = Cost of two pairs of heels + $5. \n\nSubstituting the calculated cost of two pairs of heels ($99) into this expression gives:\n\nCost of boots = $99 + $5. 
+
+N-5 S-5 :
+
+The next reasoning step would be to calculate the total cost of the boots by adding $99 and $5. This can be represented by the mathematical expression:\n\nCost of boots = $99 + $5 = $104. \n\nThe final solution is the boots cost $104. 
+
+N-2 S-2 -> N-3 S-3 Prompt: 
+
+Answer the question about the problem Algebra. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nQuestion: Gloria is shoe shopping when she comes across a pair of boots that fit her shoe budget. However, she has to choose between the boots and two pairs of high heels that together cost five dollars less than the boots. If one pair of heels costs $33 and the other costs twice as much, how many dollars are the boots? \n\nAnswer: Let's think step by step.  Let's focus on carefully generating the next possible reasoning step for reasoning steps below.\n\n--------------------\n\tGiven that one pair of heels costs $33 and the other costs twice as much, we can find the total cost of the two pairs of heels by adding the cost of the first pair to twice its cost. This can be represented by the mathematical expression: \n\nCost of two pairs of heels = $33 + 2*$33. \n\tGiven the expression for the cost of two pairs of heels as $33 + 2*$33, we can calculate the total cost by performing the operations. This results in:\n\nCost of two pairs of heels = $33 + $66. \n--------------------\n\nFor reasoning steps within --------------------, please generate their best next step containing analysis and the corresponding mathematical expression. 
+
+Figure 7. A simple thought structure built by GPT-4 with TR for the question from GSM8K dataset (Cobbe et al., 2021). This structure contains 5 nodes, i.e. 5 thoughts and leads to K = 1 reasoning path towards one solution because no error is identified by the rollback controller with GPT-4 during reasoning. 
+
+19 Toward Adaptive Reasoning in Large Language Models with Thought Rollback Q:
+
+Answer the question about the problem Algebra. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nQuestion: Marissa is hiking a 12-mile trail. She took 1 hour to walk the first 4 miles, then another hour to walk the next two miles. If she wants her average speed to be 4 miles per hour, what speed (in miles per hour) does she need to walk the remaining distance? \n\nAnswer: Let's think step by step. 
+
+N-2 S-2  error analysis: 
+
+The first step of the reasoning process is correct. Marissa has indeed walked a total of 6 miles in 2 hours, which gives her an average speed of 3 miles per hour. The mathematical expression is also correct: Average speed = Total distance/Total time = 6 miles/2 hours = 3 miles/hour.\n\nHowever, the second step of the reasoning process is incorrect. The mathematical expression is correct in that Total time = Total distance / Average speed = 12 miles / 4 miles/hour = 3 hours, but the interpretation of this expression is wrong. This calculation gives the total time Marissa has to complete the entire trail to maintain an average speed of 4 miles per hour, but she has already spent 2 hours hiking. Therefore, she only has 1 hour left to complete the remaining 6 miles of the trail.\n\nTo find the speed she needs to walk the remaining distance, we should use the formula Speed = Distance / Time. So, the speed she needs to maintain for the remaining 6 miles in 1 hour is 6 miles/hour. 
+
+N-2 S-2 :
+
+Next Reasoning Step: Marissa still has 6 miles left to hike. To achieve her target average speed of 4 miles per hour for the entire 12-mile trail, she needs to complete the hike in 3 hours.\n\nMathematical Expression: Total time = Total distance / Average speed = 12 miles / 4 miles/hour = 3 hours. 
+
+N-4 S-2 :
+
+Next Reasoning Step: Since Marissa has already spent 2 hours hiking, she has 1 hour left to complete the remaining 6 miles.\n\nMathematical Expression: Remaining time = Total time -Time spent = 3 hours - 2 hours = 1 hour. 
+
+N-6 S-5 :
+
+Next Reasoning Step: Therefore, Marissa needs to walk at a speed of 6 miles per hour for the remaining 1 hour to achieve her target average speed of 4 miles per hour for the entire 12-mile trail.\n\nMathematical Expression: The final solution is Marissa's required speed = 2 miles/hour.. 
+
+N-3 S-2 :
+
+Next Reasoning Step: Marissa still has 6 miles left to hike. To achieve her target average speed of 4 miles per hour for the entire 12-mile trail, she needs to complete the hike in 3 hours. However, she has already spent 2 hours hiking. Therefore, she only has 1 hour left to complete the remaining 6 miles of the trail.\n\nMathematical Expression: Remaining time = Total time - Time already spent = 3 hours - 2 hours = 1 hour. 
+
+N-9 S-4 :
+
+Next Reasoning Step: Therefore, to achieve her target average speed of 4 miles per hour for the entire 12-mile trail, Marissa needs to walk the remaining 6 miles at a speed of 6 miles per hour.\n\nMathematical Expression: The final solution is Marissa needs to walk at a speed of 6 miles/hour for the remaining 6 miles. 
+
+Rollback  N-11 -> N-10 :
+
+The overall reasoning process is logical and the steps are mathematically rational. However, there is an error in Reasoning Step 3. The step incorrectly calculates the total time Marissa has to complete the hike. Instead, it should determine the time Marissa has left to complete the hike after considering the time she has already spent.\n\nThe corrected Reasoning Step 3 should be: Determine the time Marissa has left to complete the hike to achieve her target average speed of 4 miles per hour.\n\nMathematical Expression: Time left = Total time - Time spent = 3 hours - 2 hours = 1 hour.\n\nThen, a new Reasoning Step 4 should be added: Determine the speed Marissa needs to walk the remaining distance in the time left.\n\nMathematical Expression: Required speed = Remaining distance / Time left = (12 miles - 6 miles) / 1 hour = 6 miles/hour. \n\nSo, Marissa needs to walk at a speed of 6 miles per hour to complete the remaining distance in time to achieve her target average speed of 4 miles per hour. 
+
+N-10  S-2 Experience Accumulation: 
+
+Rollback  N-12 -> N-10 :
+
+The overall reasoning process is correct, and each step is logically sound and rational. Here is the breakdown of each step:\n\nReasoning Step 1: This step is correct. The total distance Marissa has covered so far is indeed 6 miles (4 miles + 2 miles), and the total time she has spent is 2 hours (1 hour + 1 hour). The mathematical expressions are clear and accurate.\n\nReasoning Step 2: This step is also correct. The average speed is calculated by dividing the total distance by the total time, which in this case is 6 miles divided by 2 hours, giving an average speed of 3 miles per hour. The mathematical expression is clear and accurate.\n\nReasoning Step 3: This step is correct, but it is not complete. It correctly calculates the total time Marissa has to complete the hike to achieve her target average speed of 4 miles per hour. However, it does not answer the original question: what speed does she need to walk the remaining distance? \n\nTo answer the original question, we need an additional step:\n\nReasoning Step 4: Calculate the remaining distance and the time she has left, then find the speed she needs to maintain to cover the remaining distance in the remaining time.\n\nMathematical Expression: Remaining distance = Total distance - Distance covered so far = 12 miles - 6 miles = 6 miles. Time left = Total time - Time spent so far = 3 hours - 2 hours = 1 hour. Speed needed = Remaining distance / Time left = 6 miles / 1 hour = 6 miles/hour.\n\nThis step would complete the reasoning process and answer the original question. 
+
+Rollback  N-17 -> N-10 :
+
+The overall reasoning process is mostly correct, but there is a logical error in the final step. Let's analyze each step:\n\nReasoning Step 1: The calculations for total distance and total time are correct. Marissa has indeed covered 6 miles in 2 hours. \n\nMathematical Expression: Total distance = 4 miles + 2 miles = 6 miles \nTotal time = 1 hour + 1 hour = 2 hours \n\nReasoning Step 2: The calculation for Marissa's average speed so far is correct. She has been hiking at an average speed of 3 miles per hour.\n\nMathematical Expression: Average speed = Total distance / Total time = 6 miles / 2 hours = 3 miles/hour. \n\nReasoning Step 3: This is where the logical error occurs. While it's correct that the total time for Marissa to complete the 12 miles at an average speed of 4 miles per hour would be 3 hours, the question asks for the speed she needs to maintain for the remaining distance. Since she has already spent 2 hours, she has only 1 hour left to complete the remaining 6 miles. Therefore, she needs to walk at a speed of 6 miles per hour for the remaining distance.\n\nThe corrected Mathematical Expression should be: Remaining distance = Total distance - Distance covered = 12 miles - 6 miles = 6 miles. Time left = Total time - Time spent = 3 hours - 2 hours = 1 hour. Required speed = Remaining distance / Time left = 6 miles / 1 hour = 6 miles/hour. 
+
+N-10 S-2 -> N-22 S-3 Prompt: 
+
+Answer the question about the problem Algebra. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nExperience containing previously made mistakes:\n\n######### The 0-th Experience with Analysis #########\n\t  Experience of the rollback N-12 -> N-10  \n####################\n\n######### The 1-th Experience with Analysis #########\n\t  Experience of the rollback N-17-> N-10\n####################\n\nConsider the analysis in the above experience to avoid making similar mistakes during reasoning for the question.\n\n\nQuestion: Marissa is hiking a 12-mile trail. She took 1 hour to walk the first 4 miles, then another hour to walk the next two miles. If she wants her average speed to be 4 miles per hour, what speed (in miles per hour) does she need to walk the remaining distance? \n\nAnswer: Let's think step by step.  Let's focus on carefully generating the next possible reasoning step for reasoning steps below.\n\n--------------------\n\tReasoning Step 1: Calculate Marissa's total distance covered and total time spent so far. \n\nMathematical Expression: Total distance = 4 miles + 2 miles = 6 miles \nTotal time = 1 hour + 1 hour = 2 hours \n\tReasoning Step 2: Calculate Marissa's average speed so far. \n\nMathematical Expression: Average speed = Total distance / Total time = 6 miles / 2 hours = 3 miles/hour. \n--------------------\n\nFor reasoning steps within --------------------, please generate their best next step containing analysis and the corresponding mathematical expression.. 
+
+.
+
+Final solution of the reasoning path N-0 S-0 --> N-27 S-6 :
+
+\tReasoning Step 1: Calculate Marissa's total distance covered and total time spent so far. \n\nMathematical Expression: Total distance = 4 miles + 2 miles = 6 miles \nTotal time = 1 hour + 1 hour = 2 hours \n\tReasoning Step 2: Calculate Marissa's average speed so far. \n\nMathematical Expression: Average speed = Total distance / Total time = 6 miles / 2 hours = 3 miles/hour. \n\tReasoning Step 3: Determine the total time Marissa has to complete the hike to achieve her target average speed of 4 miles per hour.\n\nMathematical Expression: Total time = Total distance / Target average speed = 12 miles / 4 miles/hour = 3 hours. \n\tReasoning Step 4: Determine the remaining distance Marissa needs to cover and the time she has left to complete the hike.\n\nMathematical Expression: Remaining distance = Total distance - Distance covered = 12 miles - 6 miles = 6 miles. \nTime left = Total time - Time spent = 3 hours - 2 hours = 1 hour. \n\tReasoning Step 5: Now that we know the remaining distance Marissa needs to cover and the time she has left to do so, we can calculate the speed she needs to maintain to complete the hike in the desired total time.\n\nMathematical Expression: Required speed = Remaining distance / Time left = 6 miles / 1 hour = 6 miles/hour. \n\tReasoning Step 6: Based on the calculations, Marissa needs to walk the remaining 6 miles in 1 hour to achieve her target average speed of 4 miles per hour for the entire 12-mile trail. This means she needs to walk at a speed of 6 miles per hour for the remaining distance.\n\nMathematical Expression: The final solution is 6 miles/hour. 
+
+Figure 8. A slightly complex thought structure built by GPT-4 with TR for the question from GSM8K dataset (Cobbe et al., 2021). This structure contains 27 nodes, i.e. 27 thoughts and leads to K = 8 reasoning paths towards 8 solutions as 5 number of rollbacks are triggered by the rollback controller with GPT-4 during reasoning. 
+
+20 Toward Adaptive Reasoning in Large Language Models with Thought Rollback p(1) + p(3) + p(5) + ... + p(283) - p(286) = -5 / (48*20*101*129) * [(1 - 55)(1 - 83)(1 - 204)(1 -232) + (3 - 55)(3 - 83)(3 - 204)(3 - 232) + ... + (283 - 55)(283 - 83)(283 - 204)(283 - 232) -(286 - 55)(286 - 83)(286 - 204)(286 - 232)] + 8 * 141. 
+
+N-35 S-5 :
+
+Reasoning Step:\n\nAt this point, it's important to recognize the symmetry of the polynomial p(x) due to its roots. Specifically, p(x) = p(287 - x) due to the symmetry of the polynomial's roots. This symmetry will greatly simplify the calculation of the alternating sum given in the question.\n\nMathematical Expression:\n\np(x) = p(287 - x)\n\nNow, let's consider the alternating sum from p(1) to p(286). Due to the symmetry of the polynomial, for each pair of terms in the sum (e.g., p(1) and p(286), p(2) and p(285), etc.), they are equal and thus cancel out in the alternating sum. This leads us to the conclusion that the sum from p(1) to p(286) following the given pattern would be 0.\n\nMathematical Expression:\n\np(1) - p(2) + p(3) -p(4) + ... + p(285) - p(286) = 0\n\nThe final solution to the problem is therefore 0.\n\nMathematical Expression:\n\nThe final solution is 0. 
+
+N-34 S-6 :
+
+Reasoning Step:\n\nNow, we can calculate the sum by substituting the value of f into the expression for the sum. \n\nMathematical Expression:\n\nSum = f*(1 - 55)*(1 - 83)*(1 - 204)*(1 - 232) + 8 - f*(2 - 55)*(2 - 83)*(2 - 204)*(2 - 232) + 8 + ... - f*(286 - 55)*(286 - 83)*(286 - 204)*(286 - 232) + 8\n\nBy calculating this sum, we will get the final solution for the given problem. \n\nReasoning Step:\n\nAfter calculating the sum, we can state the final solution to the problem.\n\nMathematical Expression:\n\nThe final solution is Sum. 
+
+N-34 S-6 error analysis :
+
+The overall reasoning process is correct and each step is logically sound and mathematically rational. However, there is a critical step missing in this reasoning process. \n\nIn Reasoning Step 5, the alternating sum pattern is correctly recognized, but the crucial observation that the polynomial p(x) is symmetric around x = 143.5 is missed. Specifically, p(x) = p(287 - x) due to the symmetry of the polynomial's roots. This means that for each pair of terms in the sum (e.g., p(1) and p(286), p(2) and p(285), etc.), they are equal and thus cancel out in the alternating sum. \n\nSo, the sum from p(1) to p(286) following the given pattern would be 0, not the complicated expression provided in Reasoning Step 5. \n\nThe final solution should be 0, not the Sum as stated in Reasoning Step 6. \n\nSo, the error is in Reasoning Steps 5 and 6 where the symmetry of the polynomial and the cancellation in the alternating sum is not taken into account, leading to an incorrect final solution. 
+
+N-40 S-5 :
+
+Reasoning Step:\n\nNow, let's observe that the polynomial p(x) has the same value at four different points: 55, 83, 204, and 232. This is a characteristic of periodic functions, not polynomials. However, we can take advantage of this observation by considering the polynomial modulo these differences. In other words, we can consider the values of p(x) for x modulo 55, 83, 204, and 232. \n\nIf we look at the numbers 1 and 286 (the arguments of the terms that do not cancel out in the telescoping series), we can see that 286 is congruent to 1 modulo 55, 83, 204, and 232. This means that p(286) should be equal to p(1) because the polynomial has the same value at these congruent points. Therefore, the value of the expression p(1) -p(286) should be zero. \n\nThe final solution is 0.\n\nMathematical Expression:\n\np(1) - p(286) = 0. 
+
+N-17 S-7 :
+
+Reasoning Step:\n\nSince all pairs of consecutive terms cancel each other out and the roots of the polynomial result in p(x) = 8, the final solution is 0.\n\nMathematical Expression:\n\nThe final solution is 0. 
+
+2*[a*(143^5 / 5 + 143^4 / 2 + a_2*143^3 + a_1*143^2 + a_0*143) + b*(143^4 / 4 + 143^3 / 2 + b_2*143^2 + b_1*143 + b_0) + c*(143^3 / 3 + 143^2 / 2 + c_1*143 + c_0) + d*(143^2 / 2 + 143) + 143*e] - 64. 
+
+Q:
+
+Answer the question about the problem Intermediate Algebra. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nQuestion: Let $p(x)$ be a polynomial of degree 4 such that $p(55) = p(83) = p(204) = p(232) = 8$ and $p(103) = 13.$  Find\n\ [p(1) - p(2) + p(3) - p(4) + \dots + p(285) - p(286).\] \n\nAnswer: Let's think step by step.  .
+
+Final solution of the reasoning path N-0 S-0 --> N-35 S-5 :
+
+\tReasoning Step: \n\nThe polynomial p(x) has degree 4, which means it can be written in the form ax^4 + bx^3 + cx^2 + dx + e. Since p(55) = p(83) = p(204) = p(232) = 8, we know that p(x) - 8 = 0 for x = 55, 83, 204, 232. This means that x - 55, x - 83, x - 204, and x - 232 are factors of p(x) - 8. Since these are four factors and the polynomial is of degree 4, we can say that p(x) - 8 is of the form f(x)(x - 55)(x - 83)(x - 204)(x - 232), where f(x) is a constant function. \n\nMathematical Expression: \n\np(x) - 8 = f(x)(x - 55)(x - 83)(x - 204)(x - 232) \n\tReasoning Step:\n\nGiven that p(103) = 13, we can substitute x = 103 into the equation to solve for the constant function f(x). \n\nMathematical Expression:\n\n13 - 8 = f(103)(103 - 55)(103 - 83)(103 - 204)(103 - 232) \n\tReasoning Step:\n\nBy simplifying the right side of the equation, we can solve for the value of f(103).\n\nMathematical Expression:\n\n5 = f(103)(48)(20)(-101)(-129) \n\tReasoning Step:\n\nSolving for f(103) from the equation, we get f(103) as a constant value.\n\nMathematical Expression:\n\nf(103) = 5 / [(48)(20)(-101)(-129)] \n\tReasoning Step:\n\nThe constant function f(x) is the same for all x, so we can now write the polynomial p(x) in terms of x.\n\nMathematical Expression:\n\np(x) = f(103)(x - 55)(x - 83)(x - 204)(x - 232) + 8 \n\tReasoning Step:\n\nWe can now substitute the values of x from 1 to 286 into the equation. However, noticing the pattern of the expression, p(1) - p(2) + p(3) - p(4) + ... + p(285) - p(286), we can see that each pair of consecutive terms cancel each other out, except for the terms where x = 55, 83, 204, and 232. These are the roots of the polynomial, for which p(x) = 8.\n\nMathematical Expression:\n\np(1) - p(2) + p(3) - p(4) + ... + p(285) - p(286) = 8 - 8 + 8 - 8 + ... + 8 - 8 = 0 \n\tReasoning Step:\n\nSince all pairs of consecutive terms cancel each other out and the roots of the polynomial result in p(x) = 8, the final solution is 0.\n\nMathematical Expression:\n\nThe final solution is 0. 
+
+Figure 9. A complex thought structure built by GPT-4 with TR for the question from MATH dataset (Hendrycks et al., 2021b). This structure contains 46 nodes, i.e. 46 thoughts and leads to K = 8 reasoning path towards 8 solutions as 13 number of rollbacks are triggered by the rollback controller with GPT-4 during reasoning. It is plotted by based on the NetworkX lib (Hagberg et al., 2008) under the “fdp” layout. 
+
+21 Toward Adaptive Reasoning in Large Language Models with Thought Rollback N-17 S-3 :
+
+Reasoning Step 2: We can solve the equations 6 + (n1 - 1) * 4 = 94 and 7 + (n2 - 1) * 4 = 95 to find the number of terms in each arithmetic sequence. \n\nFor the first equation, we can subtract 6 from both sides to get (n1 - 1) * 4 = 88. Then, we can divide both sides by 4 to get n1 - 1 = 22. Finally, we can add 1 to both sides to get n1 = 23. \n\nFor the second equation, we can subtract 7 from both sides to get (n2 - 1) * 4 = 88. Then, we can divide both sides by 4 to get n2 - 1 = 22. Finally, we can add 1 to both sides to get n2 = 23. \n\nTherefore, there are 23 terms in each arithmetic sequence. \n\nIncluding the final number 98, which is not part of either arithmetic sequence, the total number of terms in the original sequence is 23 + 23 + 1 = 47. \n\nThe final solution is 47. 
+
+N-11  S-2 Experience Accumulation: 
+
+Rollback N-15 -> N-11 :
+
+The overall reasoning process is correct and the steps follow a logical and rational progression. The approach of identifying the two arithmetic sequences and calculating the number of terms in each is a valid method for solving this problem. However, there is a mistake in the calculation in Reasoning Step 2.\n\nReasoning Step 1: The step is correct. The problem is accurately identified as a combination of two arithmetic sequences and the correct formula for finding the nth term of an arithmetic sequence is used. The equations for finding the number of terms in each sequence are correctly set up.\n\nReasoning Step 2: This step contains a mistake. While the first equation is solved correctly, there is an error in the simplification of the second equation. The correct simplification should be 7 + 4n2 - 4 = 95, which simplifies to 4n2 + 3 = 95, not 4n2 + 3 = 91. After subtracting 3 from both sides, we should get 4n2 = 92, not 4n2 = 88. Dividing both sides by 4 gives n2 = 23, not 22.\n\nReasoning Step 3: This step correctly identifies the mistake in Reasoning Step 2 and correctly calculates the number of terms in the second sequence as 22. However, as identified above, this is incorrect. The correct number of terms in the second sequence is 23, not 22. The total number of numbers in the list should be 23 + 23 = 46, not 45.\n\nSo, the final solution should be 46, not 45. The mistake in Reasoning Step 2 led to an incorrect final solution. 
+
+N-15 S-3 :
+
+Reasoning Step 3: We have found the number of terms in each of the two sequences, which are 23 each. However, there is a mistake in the second equation solution. The correct simplification for the second equation should be 4n2 + 3 = 91, not 4n2 + 3 = 95. After subtracting 3 from both sides, we get 4n2 = 88. Finally, dividing both sides by 4 gives n2 = 22, not 23. \n\nSo, the correct number of terms in the first sequence is 23 and in the second sequence is 22. \n\nThe next step is to add these two totals together to find the total number of numbers in the list. The total number of numbers in the list is n1 + n2 = 23 + 22 = 45. \n\nThe final solution is 45. 
+
+Q:
+
+Answer the question about the problem Algebra. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nQuestion: Marissa is hiking a 12-mile trail. She took 1 hour to walk the first 4 miles, then another hour to walk the next two miles. If she wants her average speed to be 4 miles per hour, what speed (in miles per hour) does she need to walk the remaining distance? \n\nAnswer: Let's think step by step. 
+
+N-11 S-2 -> N-17 S-3 Prompt: 
+
+Answer the question about the problem Counting & Probability. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nExperience containing previously made mistakes:\n\n######### The 0-th Experience with Analysis #########\n\t Experience of the rollback N-3 -> N-0 \n####################\n\n######### The 1-th Experience with Analysis #########\n\t Experience of the rollback N-10 -> N-4 \n####################\n\n######### The 2-th Experience with Analysis #########\n\t Experience of the rollback N-15 -> N-11\n####################\n\nConsider the analysis in the above experience to avoid making similar mistakes during reasoning for the question.\n\n\nQuestion: How many numbers are in the list 6,7,10,11,14,15,\ldots,94,95,98? $$ \n\nAnswer: Let's think step by step. Let's focus on carefully generating the next possible reasoning step for reasoning steps below.\n" . .
+
+Rollback N-10 -> N-4 :
+
+The overall reasoning process is correct and the steps follow a logical and rational progression. The approach of identifying the two arithmetic sequences and calculating the number of terms in each is a valid method for solving this problem. However, there is a mistake in the calculation in Reasoning Step 2.\n\nReasoning Step 1: The step is correct. The problem is accurately identified as a combination of two arithmetic sequences and the correct formula for finding the nth term of an arithmetic sequence is used. The equations for finding the number of terms in each sequence are correctly set up.\n\nReasoning Step 2: This step contains a mistake. While the first equation is solved correctly, there is an error in the simplification of the second equation. The correct simplification should be 7 + 4n2 - 4 = 95, which simplifies to 4n2 + 3 = 95, not 4n2 + 3 = 91. After subtracting 3 from both sides, we should get 4n2 = 92, not 4n2 = 88. Dividing both sides by 4 gives n2 = 23, not 22.\n\nReasoning Step 3: This step correctly identifies the mistake in Reasoning Step 2 and correctly calculates the number of terms in the second sequence as 22. However, as identified above, this is incorrect. The correct number of terms in the second sequence is 23, not 22. The total number of numbers in the list should be 23 + 23 = 46, not 45.\n\nSo, the final solution should be 46, not 45. The mistake in Reasoning Step 2 led to an incorrect final solution. 
+
+Rollback N-3 -> N-0 :
+
+The overall reasoning process is incorrect due to a mistake in Reasoning Step 1. \n\nIn Reasoning Step 1, the proposed sequence pattern is incorrect. The pattern is not an arithmetic sequence with a common difference of 4. Instead, the sequence alternates between increments of 1 and 3. This pattern is not an arithmetic sequence but rather a combination of two arithmetic sequences: one starting at 6 and increasing by 4 (6, 10, 14, ...), and another starting at 7 and increasing by 4 (7, 11, 15, ...). \n\nTherefore, the equation set up to find the total number of terms is incorrect. Instead, we should find the number of terms in each of the two sequences and add them together. \n\nThe incorrect reasoning in Step 1 leads to incorrect conclusions in Reasoning Step 2. The equation 4n + 2 = 98 is not valid because the sequence pattern was incorrectly identified. Therefore, the solution n = 24 is also incorrect. \n\nA correct reasoning process would involve identifying the two separate arithmetic sequences, finding the number of terms in each, and adding the two totals together. This would result in a correct total count of numbers in the given list. 
+
+Final solution of the reasoning path N-0 S-0 --> N-17 S-3 :
+
+\tReasoning Step 1: The sequence provided in the problem can be divided into two separate arithmetic sequences: one starting with 6 and increasing by 4 (6, 10, 14, ..., 94) and another starting with 7 and also increasing by 4 (7, 11, 15, ..., 95). \n\nNext, we need to find the total number of terms in each of these arithmetic sequences. The formula to find the nth term of an arithmetic sequence is a + (n - 1) * d, where a is the first term, n is the term number, and d is the common difference. \n\nFor the first sequence, the first term (a1) is 6, the last term is 94, and the common difference (d1) is 4. We can set up the equation 6 + (n1 - 1) * 4 = 94 to solve for n1. \n\nFor the second sequence, the first term (a2) is 7, the last term is 95, and the common difference (d2) is 4. We can set up the equation 7 + (n2 - 1) * 4 = 95 to solve for n2. \n\nThese two equations will give us the total number of terms in each sequence. \n\nWe should also remember to include the final number 98 in our count, as it is not part of either arithmetic sequence. \n\nThe total number of terms in the original sequence will then be n1 + n2 + 1. \n\tReasoning Step 2: We can solve the equations 6 + (n1 - 1) * 4 = 94 and 7 + (n2 - 1) * 4 = 95 to find the number of terms in each arithmetic sequence. \n\nFor the first equation, we can subtract 6 from both sides to get (n1 - 1) * 4 = 88. Then, we can divide both sides by 4 to get n1 - 1 = 22. Finally, we can add 1 to both sides to get n1 = 23. \n\nFor the second equation, we can subtract 7 from both sides to get (n2 - 1) * 4 = 88. Then, we can divide both sides by 4 to get n2 - 1 = 22. Finally, we can add 1 to both sides to get n2 = 23. \n\nTherefore, there are 23 terms in each arithmetic sequence. \n\nIncluding the final number 98, which is not part of either arithmetic sequence, the total number of terms in the original sequence is 23 + 23 + 1 = 47. \n\nThe final solution is 47. 
+
+Figure 10. A complex thought structure built by GPT-4 with TR for the question from MATH dataset (Hendrycks et al., 2021b). This structure contains 17 nodes, i.e. 17 thoughts and leads to K = 8 reasoning path towards 8 solutions as 8 number of rollbacks are triggered by the rollback controller with GPT-4 during reasoning. It is plotted by based on the NetworkX lib (Hagberg et al., 2008) under the “fdp” layout. 
+
+22 Toward Adaptive Reasoning in Large Language Models with Thought Rollback N-11 S-7 :
+
+The best next step is to simplify the sum of the second order partial derivatives. The terms $\frac{2xy}{(x^2+y^2)^2}$ and $\frac{-2xy}{(x^2+y^2)^2}$ cancel each other out, giving us $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2} = 0$. Therefore, the numeric of $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2}$ is 0. \n\nThe final solution is 0. 
+
+Final solution of the reasoning path N-0 S-0 --> N-11 S-7 :
+
+\tTo begin with, we need to find the first order partial derivatives of $u$ with respect to $x$ and $y$. Using the chain rule, we can write the derivative of $u$ with respect to $x$ as $\frac{\partial u}{\partial x} = \frac{1}{1+(y/x)^2} \cdot -\frac{y}{x^2}$, and the derivative of $u$ with respect to $y$ as $\frac{\partial u}{\partial y} = \frac{1}{1+(y/x)^2} \cdot \frac{1}{x}$. \n\tThe next step is to simplify these first order partial derivatives. We can simplify $\frac{\partial u}{\partial x}$ and $\frac{\partial u}{\partial y}$ by multiplying the numerator and the denominator by $x^2$ to get rid of the complex fraction. After simplifying, we have $\frac{\partial u}{\partial x} = -\frac{y}{x^2+y^2}$ and $\frac{\partial u}{\partial y} = \frac{x}{x^2+y^2}$. \n\tThe next step is to find the second order partial derivatives of $u$ with respect to $x$ and $y$. Using the chain rule again, we can write the second derivative of $u$ with respect to $x$ as $\frac{\partial^2 u}{\partial x^2}$ and the second derivative of $u$ with respect to $y$ as $\frac{\partial^2 u}{\partial y^2}$. We need to differentiate $\frac{\partial u}{\partial x} = -\frac{y}{x^2+y^2}$ with respect to $x$ and $\frac{\partial u}{\partial y} = \frac{x}{x^2+y^2}$ with respect to $y$. \n\tThe next step is to calculate the second order partial derivatives. For $\frac{\partial^2 u}{\partial x^2}$, we differentiate $-\frac{y}{x^2+y^2}$ with respect to $x$, and for $\frac{\partial^2 u}{\partial y^2}$, we differentiate $\frac{x}{x^2+y^2}$ with respect to $y$. The differentiation should be done carefully using the quotient rule and simplifying the result. \n\tThe next step is to perform the differentiation to find the second order partial derivatives. Using the quotient rule, we have:\n\nFor $\frac{\partial^2 u}{\partial x^2}$, differentiating $-\frac{y}{x^2+y^2}$ with respect to $x$ gives us $\frac{\partial^2 u}{\partial x^2} = \frac{2xy}{(x^2+y^2)^2}$.\n\nFor $\frac{\partial^2 u}{\partial y^2}$, differentiating $\frac{x}{x^2+y^2}$ with respect to $y$ gives us $\frac{\partial^2 u}{\partial y^2} = \frac{-2xy}{(x^2+y^2)^2}$.\n\nThe final step would be to add these two second order partial derivatives to find the numeric of $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2}$. \n\tThe next step is to calculate the sum of the second order partial derivatives. We add $\frac{\partial^2 u}{\partial x^2} = \frac{2xy}{(x^2+y^2)^2}$ and $\frac{\partial^2 u}{\partial y^2} = \frac{-2xy}{(x^2+y^2)^2}$ to get $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2} = \frac{2xy}{(x^2+y^2)^2} + \frac{-2xy}{(x^2+y^2)^2}$. Simplifying this expression will give us the numeric of $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2}$. \n\tThe best next step is to simplify the sum of the second order partial derivatives. The terms $\frac{2xy}{(x^2+y^2)^2}$ and $\frac{-2xy}{(x^2+y^2)^2}$ cancel each other out, giving us $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2} = 0$. Therefore, the numeric of $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2}$ is 0. \n\nThe final solution is 0. . 
+
+N-16 S-6 :
+
+The next step is to add the two second order partial derivatives $\frac{\partial^2 u}{\partial x^2}$ and $\frac{\partial^2 u}{\partial y^2}$ that we calculated in the previous step. This will give us the numeric of $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2}$.\n\nWe have $\frac{\partial^2 u}{\partial x^2} = \frac{2xy}{(x^2+y^2)^2}$ and $\frac{\partial^2 u}{\partial y^2} = -\frac{2xy}{(x^2+y^2)^2}$.\n\nAdding these two gives us $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2} = \frac{2xy}{(x^2+y^2)^2} - \frac{2xy}{(x^2+y^2)^2} = 0$.\n\nSo, the final solution is $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2} = 0$. 
+
+N-19 S-4 :
+
+The next step is to conclude the solution based on the result we obtained. The sum of the second order partial derivatives of $u$ with respect to $x$ and $y$ is zero. Therefore, the final solution is 0. 
+
+Q:
+
+Answer the question about the problem Math. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nQuestion: suppose $u=\arctan \frac{y}{x}$, what is numeric of $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2}$? \n\nAnswer: Let's think step by step. 
+
+N-28 S-6 :
+
+The final solution is $\frac{\partial^2 u}{\partial x^2} + \frac{\partial^2 u}{\partial y^2} = 0$. 
+
+N-27 S-5 :
+
+The next step is to sum the second order partial derivatives. We add $\frac{\partial^2 u}{\partial x^2} = \frac{2xy}{(x^2+y^2)^2}$ and $\frac{\partial^2 u}{\partial y^2} = \frac{-2xy}{(x^2+y^2)^2}$ to get $\frac{\partial^2 u}{\partial x^2} + \frac{\partial^2 u}{\partial y^2} = \frac{2xy -2xy}{(x^2+y^2)^2}$. This step involves basic algebraic addition and simplification. After simplifying, we find that $\frac{\partial^2 u}{\partial x^2} + \frac{\partial^2 u}{\partial y^2} = 0$. The final solution is 0. 
+
+$\frac{\partial^2 u}{\partial x^2} + \frac{\partial^2 u}{\partial y^2} = \frac{2}{x^2 + y^2}$. 
+
+N-17 S-6 :
+
+The next step is to find the numeric of $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u} {\partial y^2}$. By adding the expressions for $\frac{\partial^2 u}{\partial x^2}$ and $\frac{\partial^2 u}{\partial y^2}$, we get $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u} {\partial y^2} = \frac{2y^3}{(x^2+y^2)^2} -\frac{2x^3}{(x^2+y^2)^2}$. The final solution is then the simplification of this expression.. 
+
+Q:
+
+Answer the question about the problem Math. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nQuestion: suppose $u=\arctan \frac{y}{x}$, what is numeric of $\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2}$? \n\nAnswer: Let's think step by step. 
+
+Figure 11. A complex thought structure built by GPT-4 with TR for the question from TheoremQA dataset (Chen et al., 2023b). This structure contains 28 nodes, i.e. 28 thoughts and leads to K = 8 reasoning paths towards 8 solutions as 11 number of rollbacks are triggered by the rollback controller with GPT-4 during reasoning. 
+
+23 Toward Adaptive Reasoning in Large Language Models with Thought Rollback Final solution of the reasoning path N-0 S-0 --> N-19 S-8 :
+
+\tTo calculate the effective rate for 3% compounded monthly, we need to use the formula for the effective annual rate (EAR) which is:\n\nEAR = (1 + r/n)^(nt) - 1\n\nWhere:\nr = nominal interest rate (annual interest rate)\nn = number of compounding periods per year\nt = number of years\n\nIn this case, r = 3% or 0.03 (converted to decimal), n = 12 (as it's compounded monthly), and t = 1 (as we're calculating the effective annual rate).\n\nLet's substitute these values into the formula. \n\tThe next step is to substitute the values of r, n, and t into the formula. So, we have:\n\nEAR = (1 + 0.03/12)^(12*1) - 1\n\nThis simplifies the calculation and prepares us for the next step, which is to perform the actual computation. \n\tThe next step is to simplify and calculate the expression we obtained. Performing the operation inside the brackets first, we have:\n\nEAR = (1 + 0.0025)^12 - 1\n\nNow, we need to raise the sum to the power of 12 (according to the order of operations, exponents come before addition or subtraction). After that, we subtract 1 from the result to find the effective annual rate. \n\tThe next step is to calculate the value of (1 + 0.0025)^12 using the rules of exponents. Once we have this value, we will subtract 1 from it to get the effective annual rate. Let's perform this calculation:\n\nEAR = (1.0025)^12 - 1\n\nBy calculating this expression, we will obtain the effective annual rate for a 3% interest rate compounded monthly. It's important to note that we must be careful to avoid the calculation error made in the previous experience, where the incorrect value was used for the expression inside the brackets. This step ensures we are using the correct value of 0.0025 for the monthly interest rate, avoiding the previous error of using 0.025. \n\tThe next step is to compute the value of (1.0025)^12 using a calculator or any computational tool. After obtaining this value, subtract 1 from the result to get the EAR. The computation is as follows:\n\nEAR = (1.0025)^12 - 1\n\nAfter this step, we will have the effective annual rate expressed as a decimal. To convert it to a percentage, we will multiply the result by 100 in the next step. It's important to note that we are using the correct value of 0.0025 for the monthly interest rate, avoiding the previous error of using 0.025. \n\tThe next step is to compute the value of (1.0025)^12 and then subtract 1 from the result. Using a calculator or computational tool, we find that (1.0025)^12 is approximately 1.0304. Subtracting 1 from this result, we get:\n\nEAR = 1.0304 - 1\n\nThis gives us the effective annual rate in decimal form. To convert this to a percentage, we will need to multiply the result by 100 in the next step. It's important to note that we are using the correct value of 0.0025 for the monthly interest rate, avoiding the previous error of using 0.025. \n\tThe next step is to subtract 1 from 1.0304 to get the EAR in decimal form. After performing this operation, we have:\n\nEAR = 1.0304 - 1 = 0.0304\n\nNow, to convert this decimal to a percentage, we multiply by 100. This will give us the effective annual rate as a percentage, which is the final answer we're looking for. It's important to note that we are using the correct value of 0.0025 for the monthly interest rate, avoiding the previous error of using 0.025. \n\tThe next step is to convert the EAR from decimal form to percentage form. We do this by multiplying the decimal by 100. So, we have:\n\nEAR = 0.0304 * 100\n\nThis calculation will give us the effective annual rate as a percentage. The final solution is then the result of this multiplication. It's important to note that we are using the correct value of 0.0025 for the monthly interest rate, avoiding the previous error of using 0.025. The final solution is EAR = 3.04%. . 
+
+Q:
+
+Answer the question about the problem Finance. After getting the final solution, place it after the sentence 'The final solution is' for readability.\n\nQuestion: What is the effective rates for 3% compounded monthly? \n\nAnswer: Let's think step by step. 
+
+N-19 S-8 :
+
+The next step is to convert the EAR from decimal form to percentage form. We do this by multiplying the decimal by 100. So, we have:\n\nEAR = 0.0304 * 100\n\nThis calculation will give us the effective annual rate as a percentage. The final solution is then the result of this multiplication. It's important to note that we are using the correct value of 0.0025 for the monthly interest rate, avoiding the previous error of using 0.025. The final solution is EAR = 3.04%. 
+
+N-25 S-7 :
+
+The next step is to subtract 1 from 1.0304 to get the EAR in decimal form. After performing this operation, we have:\n\nEAR = 1.0304 - 1 = 0.0304\n\nNow, to convert this decimal to a percentage, we multiply by 100. This will give us the effective annual rate as a percentage, which is the final answer we're looking for. Let's perform this calculation:\n\nEAR = 0.0304 * 100\n\nThis calculation will give us the effective annual rate as a percentage. The final solution is then the result of this multiplication. 
+
+Figure 12. A complex thought structure built by GPT-4 with TR for the question from TheoremQA dataset (Chen et al., 2023b). This structure contains 43 nodes, i.e. 43 thoughts and leads to K = 8 reasoning paths towards 8 solutions as 15 number of rollbacks are triggered by the rollback controller with GPT-4 during reasoning. 
+
+24
