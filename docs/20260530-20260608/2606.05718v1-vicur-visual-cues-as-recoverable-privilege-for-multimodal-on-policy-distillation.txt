@@ -1,0 +1,1521 @@
+Title: ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+URL Source: https://arxiv.org/pdf/2606.05718v1
+
+Published Time: Fri, 05 Jun 2026 00:46:56 GMT
+
+Number of Pages: 25
+
+Markdown Content:
+> 2026-6-5
+
+# ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation 
+
+Kanghui Tian *1,2 , Siyuan Liu *3, Ziang Yan 1, Sheng Xia 3, Shuai Dong 2 and Yi Wang †1
+
+> 1
+
+Shanghai AI Laboratory, 2Fudan University, 3Nanjing University 
+
+On-policy distillation (OPD) improves reasoning by training a student on trajectories sampled from its own policy under supervision from a teacher. In multimodal reasoning, a common extension is to use a privileged teacher that observes training-time-only signals such as reference answers or rationales. However, such answer-side privilege creates a train-test mismatch: the teacher’s supervision may depend on signals unavailable to the student, encouraging shortcut imitation rather than visually grounded reasoning. We propose ViCuR , a visually grounded privileged-teacher distillation framework that replaces answer-side privilege with visual cues 
+
+(query-related evidence in the input). Because these cues are derived from the same visual input available at inference, their evidence is recoverable by the student. To support this, ViCuR introduces a lightweight 
+
+cue recovery module that uses dedicated sink-token cross-attention during prefill to aggregate task-relevant visual evidence into an internal representation, without changing the inference interface or requiring auxiliary cue-generation losses. Across seven benchmarks with Qwen3-VL-2B and 8B students, ViCuR consistently improves over answer-based on-policy self-distillation by +1.19 and +1.24 on overall average performance. It also extends naturally to stronger-teacher OPD, surpassing OPD baselines by +0.64 and +1.08, with consistent out-of-domain gains at the 8B scale. These results show that, in multimodal on-policy distillation, the design of teacher privilege is as important as teacher strength. 
+
+## 1. Introduction 
+
+Multimodal reasoning tasks such as geometry problem solving [ 3, 9], chart reasoning [ 26 , 39 ], and visual question answering [ 4, 7 , 34 ] require models to inte-grate vision with multi-step reasoning. Improving such capabilities through on-policy learning is appealing be-cause supervision is applied on trajectories induced by the student’s own policy, directly targeting the states and errors the model encounters at deployment. On-policy distillation (OPD) has therefore emerged as a practical way to improve reasoning: a teacher policy supervises student-sampled trajectories, helping the student learn better generation behavior under its own rollout distribution. Teacher advantage in OPD can arise from two different sources. In the standard setting, teacher and student observe the same input, and the teacher is stronger. In a more general privileged-teacher setting, the teacher is additionally conditioned on training-only information unavailable to the student at inference. This setting is common in on-policy self-distillation (OPSD), where teacher and student share the same backbone but the teacher is strengthened with extra signals such as reference answers, verified rationales, or environ-ment feedback [ 13 , 41 ]. While privileged teachers    
+
+> †Corresponding author
+> *Equal contribution Code is at
+
+https://github.com/tiankanghui/ViCuR 
+
+can provide stronger supervision, they also raise a de-sign challenge: what kind of privileged information is helpful for distillation in multimodal reasoning? 
+
+Existing multimodal OPSD methods commonly use answer- or rationale-based privilege [ 20 , 38 ]. Con-cretely, given standard inference input 𝑧 = ( 𝑥 𝑣 , 𝑥 𝑞 )
+
+consisting of visual input 𝑥 𝑣 and question 𝑥 𝑞 , the student acts as 𝜋 𝑆 (· | 𝑧 ), while the teacher is con-ditioned on additional privileged signal 𝑝 , yielding 
+
+𝜋 𝑇 (· | 𝑧, 𝑝 ). When 𝑝 contains reference answers or ra-tionales, teacher supervision depends on answer-side information that is unreachable at inference, creating a privilege-induced train-test mismatch : the student may fit answer-aware patterns rather than learning reasoning grounded in visual evidence [ 36 ]. This issue is particularly problematic in multimodal rea-soning, where correctness should be supported by evi-dence in the visuals, such as geometric relations in dia-grams, or salient events in videos. In other words, the most useful privilege for multimodal reasoning should strengthen supervision while remaining aligned with information the student can access at inference. In this work, we propose ViCuR (Vi sual Cu e
+
+Recovery), a visually grounded privileged-teacher dis-tillation framework. It replaces answer-based priv-ileges with visual cues : question-relevant evidence grounded in the input image or video. Although 
+
+> arXiv:2606.05718v1 [cs.CV] 4 Jun 2026 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+Figure 1: Conventional OPSD conditions teacher supervision on answer/rationale privilege 𝑅 , inducing a train– test mismatch. Our ViCuR instead uses visually grounded cues 𝑆 , allowing the student to recover corresponding evidence internally while preserving the standard inference interface. the cue text itself is provided only to the teacher during training, its underlying source remains ac-cessible to the student through the standard visual-question interface. This changes the role of privi-lege from revealing answer-side information to high-lighting inference-recoverable evidence, mitigating the privileged-information mismatch. In conventional answer-based distillation, the teacher policy 𝜋 𝑇 (· | 
+
+𝑧, 𝑝 ) depends on privileged variables 𝑝 that are not recoverable from the student’s input 𝑧 . By contrast, when the privilege is a visual cue 𝑐 derived from the vi-sual input and question, 𝑐 ∼ 𝑝 (𝑐 | 𝑥 𝑣 , 𝑥 𝑞 ), the teacher is conditioned on evidence whose source is already contained in 𝑧 . ViCuR thus does not eliminate privi-lege altogether, but replaces inaccessible answer privi-lege with recoverable visual privilege (§3.1). Replacing the privilege type introduces a new chal-lenge: the student does not observe cues explic-itly, so it must learn to exploit cue-relevant evidence from visual tokens. To address this, we introduce a lightweight cue recovery module . Inspired by the attention-sink mechanism [ 21 , 35 ], we equip a des-ignated sink token with dedicated cross-attention pa-rameters at selected transformer layers; during prefill, this token aggregates task-relevant information from visual tokens into an internal cue-level representation. The module is trained end-to-end under the distilla-tion objective alone, preserving the standard inference interface with no autoregressive overhead (§3.2). Though our primary focus is privileged-teacher self-distillation, teacher advantage from model scale and from privilege design are orthogonal, so ViCuR ex-tends naturally to stronger-teacher OPD. We evalu-ate on seven multimodal reasoning benchmarks using Qwen3-VL-2B and 8B students. ViCuR consistently outperforms answer-based OPSD, improving overall average performance by +1.19 and +1.24, with es-pecially strong gains on in-domain and near-domain mathematical reasoning tasks. It also extends effec-tively to stronger-teacher OPD, where it improves over OPD baselines by +0.64 and +1.08 and delivers con-sistent out-of-domain gains at the 8B scale. Our main contributions are as follows: 
+
+• We identify the bottleneck of existing multimodal OPSD: answer-based privileges induce a train-test mismatch that can encourage shortcut imitation rather than visually grounded reasoning. 
+
+• We propose ViCuR , which replaces answer-side priv-ilege with visually grounded cues and introduces a lightweight sink-token cross-attention module for internal cue recovery, without changing the infer-ence interface or requiring auxiliary objectives. 
+
+• We show that ViCuR consistently improves over answer-based OPSD across seven benchmarks and extends naturally to stronger-teacher OPD, where 
+
+> 2ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+it further benefits from teacher scaling. 
+
+## 2. Related Work 
+
+On-Policy Distillation and Self-Distillation. Knowl-edge distillation [ 10 , 15 , 32 ] transfers reasoning ca-pabilities from a large teacher to a compact student. For reasoning tasks, recent work extends distillation from offline imitation of teacher-generated traces to OPD, where the teacher supervises trajectories sam-pled from the student itself, improving alignment with the student’s inference-time distribution [ 1, 8, 16 , 22 ]. Standard OPD typically requires a stronger external teacher. OPSD removes this requirement by using a single backbone for both teacher and student, instead strengthening the teacher with privileged condition-ing such as verified reasoning traces [ 41 ] or feedback-derived supervision [ 13 , 17 ]. While OPSD avoids the cost of a separate teacher, its effectiveness depends on the design of the privileged signal, which we discuss in the context of privileged information below. 
+
+Privileged Information for Distillation. Learning with privileged information [ 33 ] augments training with signals that are unavailable at test time. In rea-soning distillation, common privilege types include gold answers, rationales, verifier scores, and environ-ment feedback [ 11 , 13 , 41 ]. Recent self-distillation work has begun exploring answer-agnostic alterna-tives, such as conciseness instructions [ 28 ], context-conditioned prompts or historical traces [ 37 ], and evidence-centered regional crops [ 38 ]. However, when privileges are answer-dependent, they can cause 
+
+privileged information leakage [ 36 ]: formally showed that the teacher’s supervision may depend on variables the student cannot access at inference time, encour-aging the student to fit answer-aware patterns rather than learn genuine reasoning. 
+
+Attention Sinks. Attention sinks refer to the phe-nomenon that special tokens such as <BOS> attract disproportionately high attention mass across trans-former layers [ 35 ], effectively serving as persistent information anchors [ 19 ]. SinkTrack [ 21 ] leverages this property by using the sink token to aggregate and retain contextual information during long-sequence generation, improving context fidelity without archi-tectural changes. 
+
+## 3. Method 
+
+We study multimodal on-policy distillation in the 
+
+privileged-teacher regime, where the teacher accesses additional training-time information unavailable to the student at inference. Our method, ViCuR , is built on a simple principle: privileged information is most useful when grounded in evidence that remains ac-cessible at test time. We first formalize the privilege-induced mismatch and explain why visual cues mit-igate it (§3.1), then present the ViCuR architecture and training objective (§3.2–§3.4). 
+
+3.1. Problem Formulation 
+
+Consider a multimodal reasoning task with visual in-put 𝐼 , question 𝑄 , and answer 𝑦 . Let 𝑋 = ( 𝐼, 𝑄 ) de-note the standard multimodal input available at both training and inference. In OPD, the student samples a trajectory ˆ𝑦 ∼ 𝑝 𝜃 (· | 𝑋 ), and the teacher provides token-level supervision on this student-generated tra-jectory. We consider the privileged-teacher setting, in which the teacher is additionally conditioned on a training-time-only variable 𝑝 , yielding 𝑝 𝑇 (𝑦 | 𝑋, 𝑝 ),while the student uses only 𝑋 . This formulation sub-sumes both standard same-input OPD, where 𝑝 = ∅,and privileged distillation settings, where 𝑝 may con-tain extra side information. In existing multimodal OPSD, this privilege is commonly answer- or rationale-based; in ours, it is instead a visually grounded cue. 
+
+Privilege-Induced Gap in Answer-Based Distilla-tion. In OPSD, the teacher is conditioned on an answer- or rationale-based privilege 𝑅 , producing 
+
+𝑝 𝑇 (𝑦 | 𝑋, 𝑅 ). Because 𝑅 is unavailable at inference time, the teacher’s next-token distribution may depend on information the student cannot access during de-ployment. Following [ 36 ], we quantify this mismatch by the conditional mutual information as 𝐼 (𝑌 𝑡 ; 𝑅 |
+
+𝑋, 𝑌 <𝑡 ). When 𝑅 contains answer-dependent infor-mation, such as a gold answer or reference rationale, this quantity is generally nonzero. Distillation then asks the student to imitate a target policy whose behav-ior is not fully determined by the input 𝑋 , creating a privilege-induced train-test mismatch. In multimodal reasoning, this mismatch is problematic because it en-courages the student to fit answer-aware supervision patterns or shortcuts rather than learning to ground its reasoning in visuals. 
+
+Visual Cues as Recoverable Privilege. We replace answer-based privilege 𝑅 with a visually grounded cue 
+
+𝑆 : a description of question-relevant evidence, such as geometric relations or key events. Although the student does not receive cue text explicitly at inference, the evidence from which 𝑆 is derived remains present in the standard input 𝑋 .For analysis, we idealize cue construction as a deter-ministic mapping 𝑆 = 𝑓 (𝑋 ), where 𝑓 extracts cue text from the inference-time input. Under this abstraction, 
+
+𝐻 (𝑆 | 𝑋 ) = 0 , so conditioning on 𝑆 introduces no additional information beyond 𝑋 :
+
+𝐼 (𝑌 𝑡 ; 𝑆 | 𝑋, 𝑌 <𝑡 ) = 0 . (1) 
+
+> 3ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+Thus, the cue-conditioned teacher distribution 
+
+𝑝 𝑇 (· | 𝑋, 𝑆, 𝑌 <𝑡 ) = 𝑝 𝑇 (· | 𝑋, 𝑓 (𝑋 ), 𝑌 <𝑡 ) (2) depends only on information determined by the inference-time multimodal input. We formalize this as Proposition 1 (Appendix F.1): under the deterministic abstraction 𝑆 =𝑓 (𝑋 ), visually grounded cues do not introduce the privilege-induced conditional information gap associated with answer-dependent variables, as the resulting teacher supervi-sion depends only on information determined by the inference-time input 𝑋 .In practice, cue text may be generated by an external model or annotator, so 𝑆 need not be strictly deter-ministic given 𝑋 , yielding 𝐻 (𝑆 | 𝑋 ) > 0. However, because visual cues describe evidence visible in the input rather than answer-dependent information, the inaccessible component of cue-based privilege is sub-stantially smaller than that of answer-based privilege. The deterministic abstraction should therefore be in-terpreted as an idealized limit: visual cues reduce the privilege gap rather than eliminating it entirely, and we show empirically that this reduction is sufficient to yield consistent gains. Proposition 1 does not require the student to recon-struct cue text explicitly. Instead, it reframes the re-maining challenge as evidence recovery : the relevant information is present in 𝑋 , but the student must learn to extract and represent it internally. 
+
+3.2. ViCuR: Sink-Based Cue Recovery 
+
+To address this challenge, we introduce ViCuR (Vi sual 
+
+Cu e Recovery), a lightweight student-side module that recovers cue-relevant evidence from visual represen-tations without changing the standard multimodal inference interface. A naive alternative would be to append cue text to the student input or require the student to generate cues before answering. However, this would alter the inference pipeline and add gen-eration overhead. We instead seek a mechanism that operates within the student’s existing architecture. Our framework uses an asymmetric teacher-student design. The teacher is conditioned on the visual input, question, and cue text, producing 𝑝 𝑇 (𝑦 | 𝐼, 𝑄, 𝑆 ). The student predicts with 𝑝 𝜃 (𝑦 | 𝐼, 𝑄 ), augmented with a cue recovery module. Let 𝑉 (0) = 𝜑 (𝐼 ) ∈ R𝑚 ×𝑑 be the visual token sequence from the visual encoder. At transformer layer ℓ, let 
+
+𝑉 (ℓ) ∈ R𝑚 ×𝑑 denote the current visual representa-tions, and let ℎ(ℓ)sink ∈ R𝑑 denote the hidden state of a designated sink token (e.g., <BOS> ). As shown in Fig. 2, at selected layers during prefill, the sink token 
+
+Figure 2: Cue recovery module at a selected trans-former layer. The sink token aggregates visual states via dedicated cross-attention during prefill, producing cue representations without autoregressive overhead. queries the visual tokens through a dedicated cross-attention branch: 
+
+𝑞 (ℓ) = ℎ(ℓ)sink 𝑊 (ℓ) 
+
+> 𝑄
+
+, 𝐾 (ℓ) = 𝑉 (ℓ)𝑊 (ℓ) 
+
+> 𝐾
+
+,𝑈 (ℓ) = 𝑉 (ℓ)𝑊 (ℓ) 
+
+> 𝑉
+
+,𝑧 (ℓ)sink = Attn (︀ 𝑞 (ℓ), 𝐾 (ℓ), 𝑈 (ℓ))︀ 𝑊 (ℓ) 
+
+> 𝑂
+
+,
+
+(3) where 𝑊 (ℓ) 
+
+> 𝑄
+
+, 𝑊 (ℓ) 
+
+> 𝐾
+
+, 𝑊 (ℓ) 
+
+> 𝑉
+
+, 𝑊 (ℓ) 
+
+> 𝑂
+
+are recovery-module-specific parameters (we use 𝑈 (ℓ) for the value pro-jection to avoid conflict with visual tokens 𝑉 (ℓ)). The aggregated evidence is added back to the sink state via a residual connection: 
+
+˜ℎ(ℓ)sink = ℎ(ℓ)sink + 𝑧 (ℓ)sink . (4) Because the sink token appears at the beginning of the sequence, its updated state is visible to all subsequent question and answer tokens through standard causal attention. We denote the resulting internal evidence representation as 
+
+ˆ𝑆 = 𝑔 (𝑉, 𝑄 ; 𝜃 sink ), (5) where 𝜃 sink collects all recovery-module parameters. The symbol ˆ𝑆 refers to an internal hidden-state rep-resentation, not generated cue text. Although the cross-attention equations above involve only ℎ(ℓ)sink and 
+
+𝑉 (ℓ), the question 𝑄 influences ˆ𝑆 implicitly through optimization: gradients from the question-dependent prediction loss guide 𝜃 sink to selectively aggregate vi-sual features from 𝑉 (ℓ) that are most relevant for an-swering 𝑄 .
+
+Why Dedicated Cross-Attention. We introduce ded-icated cross-attention parameters, which are free to learn question-relevant visual selection without inter-fering with the pretrained self-attention pathway and can absorb the implicit supervision signal from the 
+
+> 4ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+distillation objective. This differs from the original SinkTrack mechanism [ 21 ], which reuses the existing attention computation for generic context anchoring. 
+
+3.3. Training Objective 
+
+The cue recovery module is trained jointly with the student under the on-policy distillation objective, with-out any auxiliary cue-generation or text-matching loss. For a student-sampled trajectory ˆ𝑦 ∼ 𝑝 𝜃 (· | 𝑋 ), the teacher evaluates each token with 𝑝 𝑇 (ˆ 𝑦 𝑛 | 𝑋, 𝑆, ˆ𝑦 <𝑛 ),while the student assigns 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 ). Follow-ing sampled-token on-policy distillation [ 18 ], we de-fine the token-level advantage 
+
+𝐴 𝑛 (𝑋, ˆ𝑦 ) = log 𝑝 𝑇 (ˆ 𝑦 𝑛 | 𝑋, 𝑆, ˆ𝑦 <𝑛 )
+
+− log 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 ), (6) which is treated as a stop-gradient constant, as in standard policy-gradient optimization [ 14 , 22 ]. The distillation surrogate loss is 
+
+ℒd(𝜃 ) = −E𝑋 ∼𝒟 E^𝑦 ∼𝑝 𝜃 (·| 𝑋 )[︂ (7) 
+
+1
+
+|ˆ𝑦 |
+
+> |^𝑦 |
+
+∑︁ 
+
+> 𝑛 =1
+
+sg [︀ 𝐴 𝑛 (𝑋, ˆ𝑦 )]︀ × log 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 )]︂ ,
+
+where sg[ ·] denotes stop-gradient. Here we use a PPO-style policy loss [ 29 ] with importance ratios and clip-ping [ 25 ]; the expression above isolates the gradi-ent pathway through which the recovery module is trained. Since ˆ𝑆 = 𝑔 (𝑉, 𝑄 ; 𝜃 sink ), gradients reach the recovery module through 
+
+∇𝜃 sink ℒd = −E[︂ 1
+
+|ˆ𝑦 |
+
+> |^𝑦 |
+
+∑︁ 
+
+> 𝑛 =1
+
+sg[ 𝐴 𝑛 ] (8) 
+
+∇ ^𝑆 log 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 ) · ∇ 𝜃 sink 𝑔 (𝑉, 𝑄 ; 𝜃 sink )]︂ .
+
+This expression shows that the recovery module is up-dated when its representation ˆ𝑆 affects the student’s prediction on teacher-evaluated tokens. Whenever the teacher assigns higher probability than the stu-dent to the sampled token, the gradient encourages the student to move its representation in a direction that better supports teacher-aligned behavior; when the opposite holds, the gradient suppresses unhelpful representations. In this way, the distillation objec-tive implicitly encourages the sink-based module to retain task-relevant visual evidence aligned with the teacher’s cue-conditioned supervision, even though the student never observes cue text directly. A detailed analysis of these gradient dynamics is pro-vided in Appendix F.2; a full-vocabulary KL counter-part is discussed in Appendix F.3. 
+
+3.4. Implementation Details 
+
+We train the recovery module jointly with the student under the distillation objective described above. The recovery module is inserted every five transformer layers and uses the full current-layer visual token se-quence as keys and values. It runs only during prefill and adds no autoregressive decoding overhead, intro-ducing only a modest parameter overhead relative to the base model. 
+
+## 4. Experiments 
+
+We evaluate ViCuR to answer three questions: (1) Does replacing answer-based privilege with visual cues improve over conventional distillation baselines, including both same-backbone OPSD and stronger-teacher OPD? (2) Do the gains generalize across in-domain, near-domain, and out-of-domain bench-marks? (3) Which components of ViCuR matter most, and how does the method behave as teacher strength increases? 
+
+Data. We train on the Vision R1 training set [ 12 ], from which teacher-side visual cue text is con-structed. Evaluation covers three generalization lev-els: Vision R1-Test [ 12 ] (in-domain); DynaMath [ 42 ], MathVista [ 23 ], WeMath [ 27 ], and MathVerse [ 40 ](near-domain mathematical reasoning); and MMMU-Val [ 39 ] with Video-MME [ 6 ] (out-of-domain mul-timodal understanding). Geometry3K [ 24 ] is re-served for ablation studies due to its smaller scale and diagram-centric nature. 
+
+Models and Baselines. We use Qwen3-VL-2B-Instruct (2B) and Qwen3-VL-8B-Instruct (8B) [ 2] as stu-dent backbones. In OPSD [ 41 ], the teacher shares the student’s backbone; in OPD [ 22 ], the teacher is larger (Qwen3-VL-8B for 2B, Qwen3-VL-32B for 8B). We compare: base model, GRPO [ 30 ] (reward-based, no teacher), OPSD, OPSD+ViCuR, OPD, and OPD+ViCuR. Our primary comparisons are against OPSD and OPD, isolating the effect of visual-cue privi-lege and cue recovery. Details are in Appendix A. 
+
+4.1. Main Results 
+
+Tab. 1 reports results across all benchmarks for both 2B and 8B students. We compare ViCuR against the corresponding distillation baseline under the same teacher configuration, and then discuss how the gains vary across generalization regimes. 
+
+ViCuR Improves Over Answer-based OPSD. Under same-backbone self-distillation, OPSD+ViCuR raises the average by +1.19 (2B) and +1.24 (8B) over con-ventional answer-based OPSD. The gains are strongest on benchmarks with clear visual grounding demands,                                                                                                            
+
+> 5ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+> Method In-Domain Near-Domain Out-of-Domain Overall Vision R1-Test DynaMath MathVista WeMath MathVerse MMMU-Val Video-MME Avg.
+> Qwen3-VL-2B-Instruct
+> Base Model 23.90 53.23 61.0 31.43 39.09 51.11 58.2 45.42 GRPO 28.17 55.49 60.8 40.19 44.90 52.00 58.0 48.51 OPSD 25.00 52.37 61.2 30.57 37.56 49.56 57.9 44.88
+> OPSD+ViCuR 26.58 (+1.58) 51.60 (-0.77) 63.4 (+2.2) 33.90 (+3.33) 40.00 (+2.44) 49.22 (-0.34) 57.8 (-0.1) 46.07 (+1.19)
+> OPD 26.34 52.87 64.4 35.71 40.56 51.00 57.6 46.93
+> OPD+ViCuR 26.83 (+0.49) 52.38 (-0.49) 63.6 (-0.8) 36.00 (+0.29) 42.31 (+1.75) 53.30 (+2.30) 58.6 (+1.0) 47.57 (+0.64)
+> Qwen3-VL-8B-Instruct
+> Base Model 41.22 67.13 75.8 55.33 53.40 66.56 65.9 60.76 GRPO 58.75 67.44 76.6 67.05 56.22 65.56 65.8 65.35 OPSD 42.20 65.99 73.5 43.62 52.92 62.33 66.5 58.15
+> OPSD+ViCuR 45.00 (+2.80) 67.17 (+1.18) 74.1 (+0.6) 46.29 (+2.67) 53.25 (+0.33) 63.33 (+1.00) 66.6 (+0.1) 59.39 (+1.24)
+> OPD 51.09 69.22 78.1 58.38 60.05 64.33 66.0 63.88
+> OPD+ViCuR 52.07 (+0.98) 70.70 (+1.48) 76.7 (-1.4) 60.57 (+2.19) 61.55 (+1.50) 66.56 (+2.23) 66.6 (+0.6) 64.96 (+1.08)
+
+Table 1: Main results across in-domain, near-domain, and out-of-domain benchmarks. ViCuR consistently improves the overall average over the corresponding distillation baseline (OPSD or OPD) at both 2B and 8B scales. Deltas in parentheses are relative to the corresponding baseline without ViCuR. such as WeMath (+3.33 at 2B, +2.67 at 8B), support-ing our hypothesis that visually grounded cues yield more useful supervision than answer-side privilege. Notably, conventional OPSD underperforms the base model at both scales (44.88 vs. 45.42 for 2B; 58.15 vs. 60.76 for 8B), consistent with prior analyses of answer-conditioned self-distillation [ 36 ]. ViCuR miti-gates this degradation, surpassing the base model at 2B (46.07 vs. 45.42) and substantially narrowing the gap at 8B. A few benchmarks show small decreases at 2B scale (DynaMath -0.77, Video-MME -0.1), which we attribute to limited student capacity for tasks re-quiring broader numerical or temporal reasoning be-yond the geometry-heavy training distribution; these drops disappear or reverse at 8B, supporting this in-terpretation. 
+
+ViCuR Improves Stronger-Teacher OPD. ViCuR ex-tends to stronger-teacher OPD, improving the average by +0.64 at 2B and +1.08 at 8B. Gains are broadly distributed across five of seven (2B) and six of seven (8B) benchmarks. MathVista is the exception, with small drops at both scales (-0.8 and -1.4); analysis shows ViCuR improves geometry-heavy subsets but is slightly weaker on computation-dominated subsets (arithmetic reasoning, math word problems), where the bottleneck is numerical processing rather than visual grounding. 
+
+ViCuR Improves Transfer Beyond Training Domain. 
+
+The strongest out-of-domain improvements appear in the OPD setting. In particular, OPD + ViCuR im-proves MMMU-Val by +2.30 at 2B and +2.23 at 8B, and improves Video-MME at both scales. This sug-gests reducing answer-side mismatch helps stronger teachers transfer more effectively beyond the math-ematical reasoning training distribution, improving broader multimodal understanding and video reason-ing as well. 
+
+4.2. Ablation Studies 
+
+We next analyze which components of ViCuR drive the gains and how the method behaves under different teacher-student configurations. 
+
+Component Analysis. Table 2 isolates the contribu-tions of visual cues and the cue recovery module in the OPSD setting on Geometry3K. Replacing answer-based privilege with visual cues yields the largest individual improvement: +2.80 for the 2B student and +4.36 for the 8B student. This indicates that the dominant ben-efit comes from redesigning the teacher-side privilege. By contrast, adding the cue recovery module alone pro-duces limited gains (+1.17 for 2B and +0.09 for 8B), as expected, because the student-side module is still trained against answer-conditioned teacher supervi-sion in this variant. The full combination achieves the best results at both scales: +4.80 for 2B and +4.65 
+
+for 8B. This confirms that the two components are complementary: visual cues improve the quality of teacher supervision and cue recovery helps the student internalize the corresponding evidence. The recovery module adds 100.7M parameters for the 2B model (4.52%) and 536.9M for the 8B model (5.77%). Despite this, it operates only during pre-fill and introduces no autoregressive decoding over-
+
+> 6
+
+ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation 0 200 400 600 800 1000 1200                      
+
+> Step
+> 0.65
+> 0.68
+> 0.70
+> 0.72
+> 0.75
+> Teacher-student Log-prob Gap
+> 2B Student
+> OPSD
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> Accuracy
+> 0200 400 600 800 1000 1200
+> Step
+> 0.65
+> 0.70
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> Teacher-student Log-prob Gap
+> OPD (8B teacher)
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> Accuracy
+> 0200 400 600 800 1000 1200
+> Step
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> Teacher-student Log-prob Gap
+> 8B Student
+> OPSD
+> 0.45
+> 0.48
+> 0.50
+> 0.53
+> 0.55
+> 0.58
+> Accuracy
+> 0200 400 600 800 1000 1200
+> Step
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> Teacher-student Log-prob Gap
+> OPD (32B teacher)
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> Accuracy
+> baseline acc baseline gap ViCuR acc ViCuR gap
+
+(a) 0 500 1000               
+
+> Step
+> 0.70
+> 0.75
+> 0.80
+> Teacher-student Log-prob Gap
+> 2B Student
+> OPSD (Front 50%)
+> 0500 1000
+> Step
+> 0.55
+> 0.58
+> 0.60
+> 0.62
+> 0.65
+> 0.68
+> OPSD (Back 50%)
+> 0500 1000
+> Step
+> 0.80
+> 0.90
+> 1.00
+> OPD (Front 50%)
+> 0500 1000
+> Step
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> 0.75
+> OPD (Back 50%)
+> 0500 1000
+> Step
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> Teacher-student Log-prob Gap
+> 8B Student
+> OPSD (Front 50%)
+> 0500 1000
+> Step
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> OPSD (Back 50%)
+> 0500 1000
+> Step
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> 0.75
+> 0.80
+> OPD (Front 50%)
+> 0500 1000
+> Step
+> 0.40
+> 0.50
+> 0.60
+> OPD (Back 50%)
+
+baseline gap ViCuR gap (b) 
+
+Figure 3: Training dynamics of student models under different teacher configurations and distillation paradigms. (a) Overall training dynamics. (b) Stage-wise training dynamics, where student-generated sequences are split into the front 50% and back 50% of tokens. For both OPSD and OPD, we use the answer-based method as the baseline. 
+
+Method 2B Student 8B Student 
+
+Accuracy Δ Accuracy Δ
+
+Baseline 34.14 – 52.40 –w/ visual cue 36.94 +2.80 56.76 +4.36 w/ cue recovery 35.31 +1.17 52.49 +0.09 
+
+ViCuR 38.94 +4.80 57.05 +4.65 
+
+Table 2: Component analysis under the OPSD setting on Geometry3K-test. Accuracy is reported as the aver-age over the final 100 training steps. ∆ denotes the absolute improvement over the corresponding base-line. head: per-token decoding speed is unaffected, and wall-clock training time remains comparable to stan-dard OPSD (Appendix B.4 provides detailed training and inference timing). To verify that the trend is not specific to Geometry3K, we further evaluate on geom-etry subsets of MathVista and DynaMath, observing similar patterns. Detailed results are in Appendix B.1. 
+
+Scaling Behavior across Teacher-Student Config-urations. We further examine how ViCuR behaves as student capacity and teacher strength vary on Geometry3K (Fig. 5 in Appendix B.2). ViCuR im-proves all four teacher-student configurations, with gains ranging from +3.35 to +6.88. The largest gain (+6.88) occurs for the 8B student distilled from a 32B teacher, substantially exceeding the self-distillation gain (+4.65), suggesting visual-cue grounding and teacher scaling are complementary when the student is large enough. For the 2B student, the 8B teacher does not produce a larger gain than self-distillation (+3.35 vs. +4.80), indicating that once the student becomes the bottleneck, additional teacher strength is harder to exploit. 1 2 3 4 5    
+
+> Epoch
+> 0
+> 1000
+> 2000
+> 3000
+> 4000
+> Count
+> Samples with "Hint"
+> 12345
+> Epoch
+> 10 2
+> 10 3
+> 10 4
+> Count (log scale)
+> Total "Hint" occurrences
+> OPSD 2B
+> OPSD+ViCuR 2B
+> OPSD 8B
+> OPSD+ViCuR 8B
+
+Figure 4: Hint leakage under OPSD, measured by affected sample count and total “Hint” occurrences across epochs. Lower values indicate less leakage. 
+
+Token-Level Log-Probability Dynamics. To better understand training behavior, we track the teacher-student token-level log-probability gap together with student test accuracy on Geometry3K throughout training. We report both the full sequence and a stage-wise split into the front and back 50% of to-kens (Fig. 3). Fig. 3a shows that ViCuR often begins with a larger teacher-student gap than answer-based baselines, but later reaches parity or achieves a lower gap while maintaining higher test accuracy under both OPSD and OPD. This indicates that cue-conditioned supervi-sion is not easier to imitate at the outset; instead, it appears to provide better learning signals, ultimately leading to stronger student behavior. Fig. 3b further shows that both baseline methods and ViCuR have smaller gaps on the back half of the se-quence than on the front half, suggesting that student alignment is generally easier near answer-proximal to-kens. More importantly, ViCuR consistently achieves a smaller back-half gap than the answer-based baseline. This suggests that grounding the student in relevant visual evidence improves not only early reasoning but also downstream answer-stage alignment. Additional plots are provided in Appendix B.3. 
+
+7ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation 
+
+Hint Leakage in Student Rollouts. To probe priv-ilege leakage in student behavior, we count explicit occurrences of “Hint” in student rollouts. Following the teacher prompt design of prior work [ 41 ], privi-leged teacher-side content is injected using a [Hint] 
+
+format. Student-side generation of “Hint” serves as a direct diagnostic of training-only prompt-pattern reproduction. Fig. 4 shows that answer-based OPSD exhibits steadily increasing hint leakage over training, whereas ViCuR consistently reduces both the number of affected sam-ples and the total number of “Hint” occurrences. Al-though this lexical diagnostic does not capture all forms of shortcut learning, it provides direct behav-ioral evidence that visual-cue supervision reduces ex-plicit dependence on teacher-side privileged patterns. Full statistics, including the OPD setting, are provided in Appendix D. 
+
+Qualitative Evidence and Attention Visualization. 
+
+To complement the quantitative results, we provide case studies and SinkTrack cross-attention visualiza-tions in Appendix E. These examples show that Vi-CuR reduces concrete visual grounding errors induced by answer-based OPSD (e.g., incorrect label-segment binding in geometry diagrams) and that the sink-based recovery module aggregates visual tokens con-sistent with teacher-side cue evidence, supporting the claimed mechanism. 
+
+## 5. Conclusion 
+
+We presented ViCuR , which replaces answer-based privilege in multimodal on-policy distillation with vi-sually grounded cues and equips the student with a lightweight sink-based recovery module for inter-nal evidence aggregation. Across seven benchmarks and two student scales, ViCuR consistently improves over answer-based OPSD and extends effectively to stronger-teacher OPD, with the strongest gains on visually grounded reasoning tasks. Our results sug-gest that in multimodal distillation, designing privilege around inference-recoverable visual evidence is as impor-tant as teacher strength itself .
+
+## 6. Limitations 
+
+Our work focuses on improving on-policy multimodal distillation by replacing answer-based privileged infor-mation with visually grounded cues and by introduc-ing an internal cue recovery module. While this design reduces the mismatch caused by answer-based privi-lege, it still depends on the quality of the constructed visual cues during training. If the cue generator misses task-relevant evidence, introduces non-visual informa-tion, or describes the visual scene ambiguously, the teacher-side supervision may become less reliable. In addition, the cue recovery module introduces ex-tra trainable parameters and optimization complex-ity. The component analysis suggests that its ben-efit does not increase monotonically across model scales: for the 8B student on Geometry3K, full Vi-CuR performs slightly worse than the visual-cue-only variant, even though ViCuR still improves over the corresponding OPSD/OPD baselines in the main re-sults. This indicates that larger students may require more careful training of the recovery module, such as more parameter-efficient designs, staged optimization, richer cue recovery data, or additional regularization. 
+
+## Acknowledgments 
+
+We thank the Shanghai Artificial Intelligence Labora-tory for their institutional support. 
+
+## References 
+
+[1] Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier Bachem. On-policy distillation of language models: Learning from self-generated mistakes. In International Confer-ence on Learning Representations , 2024. 2 [2] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wen-bin Ge, Zhifang Guo, Qidong Huang, Jie Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhao-hai Li, Mingsheng Li, Mei Li, Kaixin Li, Zicheng Lin, Junyang Lin, Xuejing Liu, Jiawei Liu, Chen-glong Liu, Yang Liu, Dayiheng Liu, Shixuan Liu, Dunjie Lu, Ruilin Luo, Chenxu Lv, Rui Men, Lingchen Meng, Xuancheng Ren, Xingzhang Ren, Sibo Song, Yuchong Sun, Jun Tang, Jian-hong Tu, Jianqiang Wan, Peng Wang, Pengfei Wang, Qiuyue Wang, Yuxuan Wang, Tianbao Xie, Yiheng Xu, Haiyang Xu, Jin Xu, Zhibo Yang, Mingkun Yang, Jianxin Yang, An Yang, Bowen Yu, Fei Zhang, Hang Zhang, Xi Zhang, Bo Zheng, Humen Zhong, Jingren Zhou, Fan Zhou, Jing Zhou, Yuanzhi Zhu, and Ke Zhu. Qwen3-vl tech-nical report. arXiv preprint arXiv:2511.21631 ,2025. 4 [3] Jiaqi Chen, Jianheng Tang, Jinghui Qin, Xiao-dan Liang, Lingbo Liu, Eric Xing, and Liang Lin. Geoqa: A geometric question answering bench-mark towards multimodal numerical reasoning. In Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021 , 2021. 1 [4] Shuai Dong, Siyuan Wang, Xingyu Liu, Chenglin Li, Haowen Hou, and Zhongyu Wei. Interleaved 
+
+> 8ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+latent visual reasoning with selective percep-tual modeling. arXiv preprint arXiv:2512.05665 ,2025. 1 [5] Haodong Duan, Junming Yang, Yuxuan Qiao, Xinyu Fang, Lin Chen, Yuan Liu, Xiaoyi Dong, Yuhang Zang, Pan Zhang, Jiaqi Wang, et al. Vlmevalkit: An open-source toolkit for evalu-ating large multi-modality models. In Proceed-ings of the 32nd ACM International Conference on Multimedia , 2024. A.2 [6] Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, et al. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. In Proceedings of the IEEE/CVF conference on computer vision and pattern recog-nition , 2025. 4 [7] Yash Goyal, Tejas Khot, Douglas Summers-Stay, Dhruv Batra, and Devi Parikh. Making the v in vqa matter: Elevating the role of image un-derstanding in visual question answering. In 
+
+Proceedings of the IEEE/CVF conference on com-puter vision and pattern recognition , 2017. 1 [8] Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. Minillm: Knowledge distillation of large language models. In International Conference on Learning Representations , 2024. 2 [9] Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu, Zhen Leng Thai, Junhao Shen, Jinyi Hu, Xu Han, Yujie Huang, Yuxiang Zhang, Jie Liu, Lei Qi, Zhiyuan Liu, and Maosong Sun. Olympiadbench: A challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems. arXiv preprint arXiv:2402.14008 , 2024. 1 [10] Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. 
+
+arXiv preprint arXiv:1503.02531 , 2015. 2 [11] Cheng-Yu Hsieh, Chun-Liang Li, Chih-Kuan Yeh, Hootan Nakhost, Yasuhisa Fujii, Alexander Rat-ner, Ranjay Krishna, Chen-Yu Lee, and Tomas Pfister. Distilling step-by-step! outperforming larger language models with less training data and smaller model sizes. In Findings of the Asso-ciation for Computational Linguistics: ACL 2023 ,2023. 2 [12] Wenxuan Huang, Bohan Jia, Zijie Zhai, Shaosheng Cao, Zheyu Ye, Fei zhao, Zhe Xu, Xu Tang, Yao Hu, and Shaohui Lin. Vision-r1: Incentivizing reasoning capability in multimodal large language models. In International Confer-ence on Learning Representations , 2026. 4 [13] Jonas Hübotter, Frederike Lübeck, Lejs Behric, Anton Baumann, Marco Bagatella, Daniel Marta, Ido Hakimi, Idan Shenfeld, Thomas Kleine Buen-ing, Carlos Guestrin, and Andreas Krause. Re-inforcement learning via self-distillation. arXiv preprint arXiv:2601.20802 , 2026. 1, 2 [14] Woogyeol Jin, Taywon Min, Yongjin Yang, Swanand Ravindra Kadhe, Yi Zhou, Dennis Wei, Nathalie Baracaldo, and Kimin Lee. Entropy-aware on-policy distillation of language models. 
+
+arXiv preprint arXiv:2603.07079 , 2026. 3.3 [15] Minki Kang, Seanie Lee, Jinheon Baek, Kenji Kawaguchi, and Sung Ju Hwang. Knowledge-augmented reasoning distillation for small lan-guage models in knowledge-intensive tasks. In 
+
+Advances in Neural Information Processing Sys-tems , 2023. 2 [16] Jiaze Li, Hao Yin, Haoran Xu, Boshen Xu, Wen-hui Tan, Zewen He, Jianzhong Ju, Zhenbo Luo, and Jian Luan. Video-opd: Efficient post-training of multimodal large language models for temporal video grounding via on-policy dis-tillation. arXiv preprint arXiv:2602.02994 , 2026. 2[17] Yang Li, Erik Nijkamp, Semih Yavuz, and Shafiq Joty. Learning from language feedback via variational policy distillation. arXiv preprint arXiv:2605.15113 , 2026. 2 [18] Yaxuan Li, Yuxin Zuo, Bingxiang He, Jinqian Zhang, Chaojun Xiao, Cheng Qian, Tianyu Yu, Huan-ang Gao, Wenkai Yang, Zhiyuan Liu, et al. Rethinking on-policy distillation of large lan-guage models: Phenomenology, mechanism, and recipe. arXiv preprint arXiv:2604.13016 ,2026. 3.3 [19] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. Snapkv: Llm knows what you are looking for before gen-eration. In Advances in Neural Information Pro-cessing Systems , 2024. 2 [20] Hao Lin, Kunyang Lv, Xu Jiang, Jingqi Tian, Zhongjing Du, Jiayu Ding, Qiaoman Zhang, and Hongbo Jin. Visd: Enhancing video reasoning via structured self-distillation. arXiv preprint arXiv:2605.06094 , 2026. 1 [21] Xu Liu, Guikun Chen, and Wenguan Wang. Sink-track: Attention sink based context anchoring 
+
+> 9ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+for large language models. In International Con-ference on Learning Representations , 2026. 1, 2, 3.2 [22] Kevin Lu and Thinking Machines Lab. On-policy distillation. Think-ing Machines Lab: Connectionism , 2025. https://thinkingmachines.ai/blog/on-policy-distillation. 2, 3.3, 4 [23] Pan Lu, Hritik Bansal, Tony Xia, Jiacheng Liu, Chunyuan Li, Hannaneh Hajishirzi, Hao Cheng, Kai-Wei Chang, Michel Galley, and Jianfeng Gao. Mathvista: Evaluating mathematical reasoning of foundation models in visual contexts. In Inter-national Conference on Learning Representations ,2024. 4 [24] Pan Lu, Ran Gong, Shibiao Jiang, Liang Qiu, Siyuan Huang, Xiaodan Liang, and Song-Chun Zhu. Inter-gps: Interpretable geometry prob-lem solving with formal language and symbolic reasoning. In The Joint Conference of the 59th Annual Meeting of the Association for Computa-tional Linguistics and the 11th International Joint Conference on Natural Language Processing (ACL-IJCNLP 2021) , 2021. 4 [25] Feng Luo, Yu-Neng Chuang, Guanchu Wang, Zicheng Xu, Xiaotian Han, Tianyi Zhang, and Vladimir Braverman. Demystifying opd: Length inflation and stabilization strategies for large lan-guage models. arXiv preprint arXiv:2604.08527 ,2026. 3.3 [26] Ahmed Masry, Do Long, Jia Qing Tan, Shafiq Joty, and Enamul Hoque. Chartqa: A benchmark for question answering about charts with visual and logical reasoning. In Findings of the asso-ciation for computational linguistics: ACL 2022 ,2022. 1 [27] Runqi Qiao, Qiuna Tan, Guanting Dong, Min-hui Wu, Chong Sun, Xiaoshuai Song, Zhuoma GongQue, Shanglin Lei, Zhe Wei, Miaoxuan Zhang, et al. We-math: Does your large multi-modal model achieve human-like mathematical reasoning? arXiv preprint arXiv:2407.01284 ,2024. 4 [28] Hejian Sang, Yuanda Xu, Zhengze Zhou, Ran He, Zhipeng Wang, and Jiachen Sun. Crisp: Compressed reasoning via iterative self-policy distillation. arXiv preprint arXiv:2603.05433 ,2026. 2 [29] John Schulman, Filip Wolski, Prafulla Dhari-wal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. 3.3 [30] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. Deepseekmath: Pushing the limits of math-ematical reasoning in open language models. 
+
+arXiv preprint arXiv:2402.03300 , 2024. 4 [31] Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework. arXiv preprint arXiv: 2409.19256 , 2024. A [32] Fangxun Shu, Yue Liao, Le Zhuo, Chenning Xu, Lei Zhang, Guanghao Zhang, Haonan Shi, Long Chen, Tao Zhong, Wanggui He, Siming Fu, et al. Llava-mod: Making llava tiny via moe knowledge distillation. arXiv preprint arXiv:2408.15881 , 2024. 2 [33] Vladimir Vapnik and Rauf Izmailov. Learning using privileged information: similarity control and knowledge transfer. The Journal of Machine Learning Research , 2015. 2 [34] Yi Wang, Xinhao Li, Ziang Yan, Yinan He, Jiashuo Yu, Xiangyu Zeng, Chenting Wang, Changlian Ma, Haian Huang, Jianfei Gao, et al. Internvideo2. 5: Empowering video mllms with long and rich context modeling. arXiv preprint arXiv:2501.12386 , 2025. 1 [35] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In Inter-national Conference on Learning Representations ,2024. 1, 2 [36] Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weip-ing Wang, Jiaqi Wang, and Nan Duan. Self-distilled rlvr. arXiv preprint arXiv:2604.03128 ,2026. 1, 2, 3.1, 4.1, F.1 [37] Tianzhu Ye, Li Dong, Xun Wu, Shaohan Huang, and Furu Wei. On-policy context distilla-tion for language models. arXiv preprint arXiv:2602.12275 , 2026. 2 [38] Qianhao Yuan, Jie Lou, Xing Yu, Hongyu Lin, Le Sun, Xianpei Han, and Yaojie Lu. Vision-opd: Learning to see fine details for multimodal llms via on-policy self-distillation. arXiv preprint arXiv:2605.18740 , 2026. 1, 2 [39] Xiang Yue, Yuansheng Ni, Kai Zhang, Tianyu Zheng, Ruoqi Liu, Ge Zhang, Samuel Stevens, Dongfu Jiang, Weiming Ren, Yuxuan Sun, Cong Wei, Botao Yu, Ruibin Yuan, Renliang Sun, Ming 
+
+> 10 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+Yin, Boyuan Zheng, Zhenzhu Yang, Yibo Liu, Wenhao Huang, Huan Sun, Yu Su, and Wenhu Chen. Mmmu: A massive multi-discipline multi-modal understanding and reasoning benchmark for expert agi. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recog-nition , 2024. 1, 4 [40] Renrui Zhang, Dongzhi Jiang, Yichi Zhang, Haokun Lin, Ziyu Guo, Pengshuo Qiu, Aojun Zhou, Pan Lu, Kai-Wei Chang, Yu Qiao, et al. Mathverse: Does your multi-modal llm truly see the diagrams in visual math problems? In Euro-pean Conference on Computer Vision , 2024. 4 [41] Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover. Self-distilled reasoner: On-policy self-distillation for large language models. arXiv preprint arXiv:2601.18734 , 2026. 1, 2, 4, 4.2, F.3 [42] Chengke Zou, Xingang Guo, Rui Yang, Junyu Zhang, Bin Hu, and Huan Zhang. Dynamath: A dynamic visual benchmark for evaluating mathe-matical reasoning robustness of vision language models. In International Conference on Learning Representations , 2025. 4 
+
+> 11 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+## A. Training and Evaluation Details                                  
+
+> Setting Vision R1 Distillation Vision R1 GRPO Geometry3K Ablations
+> Training data Vision R1 train Vision R1 train Geometry3K train Max prompt length 2048 2048 1024 Max response length 4096 4096 2048 Train batch size 128 128 128 Learning rate 1×10 −61×10 −61×10 −6
+> Rollouts per prompt ( 𝑛 )151GPU allocation 4 student + 4 teacher 8 student 4 student + 4 teacher Training epochs 55100
+
+Table 3: Key training configurations for the main Vision R1 experiments and the controlled Geometry3K ablations. All experiments are implemented on top of the VeRL framework [ 31 ]. Unless otherwise specified, experiments are run on a single node with 8 H200 GPUs. For the main Vision R1 experiments, all compared methods are trained on the same training split and evaluated on the same benchmark suite, differing only in the learning objective and supervision source. Geometry3K is used separately for controlled ablation studies. For the Qwen3-VL model family, the first <|im_start|> token, i.e. the one preceding the system prompt, is selected as the sink token. 
+
+A.1. Training Details 
+
+Tab. 3 summarizes the key training configurations for the main Vision R1 experiments and the controlled Geometry3K ablations. Unless otherwise specified, all distillation-based experiments use the same sampled-token on-policy distil-lation framework described in the main text. Teacher-side privileged prompts are provided through the 
+
+teacher_prompt field, and images are loaded from the images field. In the distillation-based setting, roll-outs are generated with a single student sample per prompt, whereas GRPO uses 5 sampled rollouts per prompt under the same prompt/response length budget. 
+
+A.2. Evaluation Details 
+
+The models are evaluated on MathVista_MINI , MathVerse_MINI , WeMath , DynaMath , MMMU_DEV_VAL ,and Video-MME_64frame with the VLMEvalKit framework [ 5], following the default dataset definitions in VLMEvalKit. Tab. 4 summarizes the key generation and preprocessing settings during evaluation.   
+
+> Evaluation setting Value
+> System prompt
+
+You are a helpful assistant.            
+
+> Custom prompt No Temperature 0.7 Top-𝑝 0.8 Top-𝑘 20 Repetition penalty 1.0 Presence penalty 1.5 Max new tokens 4096 Min pixels 3584 Max pixels 401408 Min frames 4Max frames 512
+
+Table 4: Evaluation hyperparameters used in VLMEvalKit. 
+
+> 12 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+## B. Ablation Details 
+
+B.1. Main Component Analysis                                                            
+
+> Student Setting Method Components MathVista DynaMath Answer Visual Cue Cue Recovery Geo. Reas. Geo. Prob. Plane Geo.
+> 2B Base 66.95 69.23 50.91 OPSD
+> ✓67.36 68.75 51.82
+> ✓73.22 75.48 54.55
+> ✓✓74.48 76.92 53.77 OPD (8B teacher) 73.64 75.00 49.22
+> ✓74.06 75.48 48.96
+> ✓75.73 78.37 54.29
+> ✓✓74.06 77.40 51.30 8B Base 84.10 86.54 57.66 OPSD
+> ✓85.36 86.54 57.03
+> ✓87.03 88.46 59.35
+> ✓✓85.77 86.54 60.00
+> OPD (32B teacher) 84.94 86.54 61.43
+> ✓86.61 87.98 61.69
+> ✓88.28 90.38 61.82
+> ✓✓87.87 89.90 63.12
+
+Table 5: Additional cross-benchmark ablation results. All models are trained on Geometry3K and evaluated on geometry-related subsets of MathVista and DynaMath. We report the geometry reasoning and geometry problem solving subsets for MathVista and the plane geometry subset for DynaMath. The solid-geometry subset of DynaMath is omitted because Geometry3K contains little solid-geometry supervision. Checkmarks indicate whether each method uses answer-based privileged supervision, visual-cue-based supervision, or cue recovery. Rows without checkmarks under OPD denote the vanilla OPD setting. Bold and underlined numbers indicate the best and second-best results within each student-setting group, respectively. We provide additional ablation results under a cross-benchmark evaluation protocol. All models are trained on Geometry3K and evaluated on geometry-related subsets of MathVista and DynaMath. This setting is more challenging than the in-domain Geometry3K evaluation in Sec. 4.2 because the target benchmarks differ in problem style, annotation format, and visual distribution. As shown in Tab. 5, two findings stand out: (1) Visual-cue supervision consistently improves transfer performance over the answer-based baseline. 
+
+For example, in the 2B OPSD setting, replacing answer with visual cues improves MathVista geometry reasoning from 67.36 to 73.22, MathVista geometry problem solving from 68.75 to 75.48, and DynaMath plane geometry from 51.82 to 54.55. Similar gains are also observed under cross-scale OPD and with the 8B student. These results indicate that the benefit of visual cues is not limited to the Geometry3K test set, but also transfers to related geometry benchmarks. (2) Cue recovery shows greater sensitivity under cross-benchmark evaluation. Although cue recovery brings additional gains in several cases, such as 2B OPSD on the two MathVista subsets and 8B OPSD/OPD on DynaMath plane geometry, it does not uniformly outperform visual-cue supervision alone. One possible reason is that the recovery module introduces more extra capacity for larger students: it adds 536.9M parameters to the 8B student, accounting for 5.77% of the model, compared with 100.7M parameters and 4.52% for the 2B student. With the same amount of training data, this larger module may overfit source-domain visual-cue patterns. When target benchmarks differ in visual style, reasoning format, or cue granularity, the recovered cues can become less reliable, explaining the mixed gains of cue recovery across target subsets. 
+
+B.2. Scaling Behavior across Teacher-Student Configurations 
+
+Fig. 5 examines how ViCuR behaves as both student capacity and teacher strength vary. ViCuR improves all four configurations, with the largest gain (+6.88) for the 8B student distilled from a 32B teacher. For the 2B 
+
+> 13 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+student, the stronger 8B teacher does not outperform self-distillation (+3.35 vs. +4.80), indicating that once the student becomes the bottleneck, additional teacher strength is harder to exploit. Overall, these results suggest that ViCuR scales most favorably when both the teacher and the student are sufficiently capable. 2B-2B 8B-8B 2B-8B 8B-32B 
+
+> 30
+> 35
+> 40
+> 45
+> 50
+> 55
+> 60
+> 65
+> Accuracy (%)
+> 34.14
+> 52.40
+> 36.06
+> 52.53
+> 38.94
+> 57.05
+> 39.41
+> 59.41
+> +4.80
+> +4.65
+> +3.35
+> +6.88
+> Baseline
+> ViCuR
+> Self-distillation
+> Cross-scale distillation
+
+Figure 5: ViCuR gains across teacher–student configurations on Geometry3K. Each x-axis label denotes a student–teacher pair. Baselines are answer-based OPSD and vanilla OPD, respectively. 
+
+B.3. Token-level Log-probability Analysis Full-rollout log-probability analysis. Fig. 6 tracks the student’s accuracy on the train and test splits of Geometry3K and the teacher–student token-level log-probability gap on the full rollout trajectory during training under different teacher–student configurations. In the 2B-student/2B-teacher setting, the answer-based baseline obtains a smaller gap but much lower accuracy, suggesting that easier token-level imitation does not necessarily lead to better multimodal reasoning. By contrast, visual cues and ViCuR sometimes maintain a larger gap while achieving higher accuracy, implying that the teacher provides more challenging but more useful supervision grounded in visual evidence. These results support our hypothesis that, for multimodal reasoning, helping the student learn question-relevant visual cues is more important than simply imitating answer-conditioned trajectories. 
+
+Segment-level log-probability analysis. We further divide each student rollout into four equal segments and analyze the teacher–student token-level log-probability gap in each segment (Fig. 7). Compared with the baseline, ViCuR often obtains a comparable or smaller gap, especially in the stronger-student settings, suggesting that visual-cue-based supervision does not weaken token-level alignment. The segment-level results further show that the benefit of ViCuR is not confined to the final answer tokens. The gap of ViCuR is consistently smaller than that of the baseline across the middle two segments of the rollout, where the model typically performs visual reasoning and answer derivation. Although ViCuR can exhibit a larger gap in the early segment, this is consistent with the additional difficulty of grounding the reasoning process in question-relevant visual evidence rather than directly imitating answer-conditioned supervision. Overall, these results indicate that visual cues provide effective supervision throughout the reasoning trajectory, helping the student learn to ground its reasoning in question-relevant visual evidence rather than fitting answer-aware patterns. 
+
+B.4. Computational Overhead Analysis 
+
+The cue recovery module adds 100.7M parameters for the 2B model (4.52%) and 536.9M for the 8B model (5.77%). It operates only during prefill and introduces no autoregressive decoding overhead. We quantify the wall-clock cost below. 
+
+Training time. Tab. 6 reports the total training time on the Vision R1 dataset (5 epochs, 275 steps; single node, 8×H200). ViCuR introduces only modest overhead over the corresponding baseline at both scales, confirming that the recovery module does not substantially increase training cost. 
+
+Inference time. Tab. 7 compares inference latency with and without the cue recovery module on a single H200 GPU (bfloat16, flash attention 2, max generation 2,048 tokens). We test two input conditions representing 
+
+> 14
+
+ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation 0.25 
+
+0.30 
+
+0.35 
+
+0.40 
+
+0.45 
+
+0.50 
+
+0.55 
+
+0.60 
+
+> Train Accuracy
+
+2B Student / 2B Teacher 
+
+baseline 
+
+w/ visual cue 
+
+w/ cue recovery 
+
+ViCuR 
+
+0.23 
+
+0.25 
+
+0.28 
+
+0.30 
+
+0.33 
+
+0.35 
+
+0.38 
+
+0.40 
+
+> Test Accuracy
+
+baseline 
+
+w/ visual cue 
+
+w/ cue recovery 
+
+ViCuR 
+
+0 200 400 600 800 1000 1200 
+
+Step 
+
+0.64 
+
+0.66 
+
+0.68 
+
+0.70 
+
+0.72 
+
+0.74 
+
+0.76 
+
+> Teacher-Student Log-Prob Gap
+
+baseline 
+
+w/ visual cue 
+
+w/ cue recovery 
+
+ViCuR 
+
+0.20 
+
+0.25 
+
+0.30 
+
+0.35 
+
+0.40 
+
+0.45 
+
+0.50 
+
+0.55 
+
+0.60 
+
+> Train Accuracy
+
+2B Student / 8B Teacher 
+
+baseline 
+
+w/ answer 
+
+w/ visual cue 
+
+ViCuR 
+
+0.25 
+
+0.28 
+
+0.30 
+
+0.33 
+
+0.35 
+
+0.38 
+
+0.40 
+
+0.43 
+
+> Test Accuracy
+
+baseline 
+
+w/ answer 
+
+w/ visual cue 
+
+ViCuR 
+
+0 200 400 600 800 1000 1200 
+
+Step 
+
+0.55 
+
+0.60 
+
+0.65 
+
+0.70 
+
+0.75 
+
+0.80 
+
+0.85 
+
+0.90 
+
+> Teacher-Student Log-Prob Gap
+
+baseline 
+
+w/ answer 
+
+w/ visual cue 
+
+ViCuR 
+
+0.45 
+
+0.50 
+
+0.55 
+
+0.60 
+
+0.65 
+
+0.70 
+
+0.75 
+
+0.80 
+
+0.85 
+
+> Train Accuracy
+
+8B Student / 8B Teacher 
+
+baseline 
+
+w/ visual cue 
+
+w/ cue recovery 
+
+ViCuR 
+
+0.43 
+
+0.45 
+
+0.48 
+
+0.50 
+
+0.53 
+
+0.55 
+
+0.58 
+
+0.60 
+
+> Test Accuracy
+
+baseline 
+
+w/ visual cue 
+
+w/ cue recovery 
+
+ViCuR 
+
+0 200 400 600 800 1000 1200 
+
+Step 
+
+0.35 
+
+0.40 
+
+0.45 
+
+0.50 
+
+0.55 
+
+0.60 
+
+> Teacher-Student Log-Prob Gap
+
+baseline 
+
+w/ visual cue 
+
+w/ cue recovery 
+
+ViCuR 
+
+0.40 
+
+0.50 
+
+0.60 
+
+0.70 
+
+0.80 
+
+> Train Accuracy
+
+8B Student / 32B Teacher 
+
+baseline 
+
+w/ answer 
+
+w/ visual cue 
+
+ViCuR 
+
+0.45 
+
+0.48 
+
+0.50 
+
+0.53 
+
+0.55 
+
+0.58 
+
+0.60 
+
+0.62 
+
+> Test Accuracy
+
+baseline 
+
+w/ answer 
+
+w/ visual cue 
+
+ViCuR 
+
+0 200 400 600 800 1000 1200 
+
+Step 
+
+0.45 
+
+0.50 
+
+0.55 
+
+0.60 
+
+0.65 
+
+0.70 
+
+0.75 
+
+> Teacher-Student Log-Prob Gap
+
+baseline 
+
+w/ answer 
+
+w/ visual cue 
+
+ViCuR 
+
+Figure 6: Token-level analysis on Geometry3K during training. We report the student’s train and test accuracy and the teacher–student token-level log-probability gap under different teacher–student configurations. For OPSD, we use the answer-based method as the baseline, and for OPD, we adopt vanilla OPD without any additional input information as the baseline. 0.30 
+
+0.40 
+
+0.50 
+
+> 2B Student
+> 2B Teacher
+
+Accuracy 
+
+0.65 
+
+0.70 
+
+0.75 
+
+Full Seq. Gap 
+
+0.70 
+
+0.75 
+
+0.80 
+
+0.85 
+
+0.90 Q1 Gap 
+
+0.70 
+
+0.75 
+
+0.80 
+
+Q2 Gap 
+
+0.60 
+
+0.65 
+
+0.70 
+
+Q3 Gap 
+
+0.50 
+
+0.55 
+
+0.60 
+
+Q4 Gap 
+
+0.40 
+
+0.50 
+
+0.60 
+
+> 2B Student
+> 8B Teacher
+
+Accuracy 
+
+0.70 
+
+0.80 
+
+0.90 
+
+Full Seq. Gap 
+
+0.90 
+
+1.00 
+
+1.10 
+
+1.20 
+
+Q1 Gap 
+
+0.70 
+
+0.80 
+
+0.90 
+
+Q2 Gap 
+
+0.60 
+
+0.70 
+
+0.80 Q3 Gap 
+
+0.50 
+
+0.60 
+
+0.70 
+
+Q4 Gap 
+
+0.50 
+
+0.60 
+
+0.70 
+
+0.80 
+
+> 8B Student
+> 8B Teacher
+
+Accuracy 
+
+0.40 
+
+0.45 
+
+0.50 
+
+0.55 
+
+0.60 
+
+Full Seq. Gap 
+
+0.50 
+
+0.60 
+
+0.70 
+
+Q1 Gap 
+
+0.40 
+
+0.50 
+
+0.60 
+
+Q2 Gap 
+
+0.40 
+
+0.50 
+
+Q3 Gap 
+
+0.35 
+
+0.40 
+
+0.45 
+
+0.50 
+
+Q4 Gap 
+
+0 500 1000 
+
+Step 
+
+0.50 
+
+0.60 
+
+0.70 
+
+0.80 
+
+> 8B Student
+> 32B Teacher
+
+Accuracy 
+
+0 500 1000 
+
+Step 
+
+0.50 
+
+0.60 
+
+0.70 
+
+Full Seq. Gap 
+
+0 500 1000 
+
+Step 
+
+0.60 
+
+0.70 
+
+0.80 
+
+0.90 
+
+Q1 Gap 
+
+0 500 1000 
+
+Step 
+
+0.50 
+
+0.60 
+
+0.70 
+
+Q2 Gap 
+
+0 500 1000 
+
+Step 
+
+0.40 
+
+0.50 
+
+0.60 
+
+0.70 Q3 Gap 
+
+0 500 1000 
+
+Step 
+
+0.50 
+
+0.60 
+
+Q4 Gap 
+
+ViCuR baseline 
+
+Figure 7: Segment-level token-level analysis on Geometry3K. We compare ViCuR with the answer-based baseline in terms of validation accuracy, full-sequence teacher–student log-probability gap, and segment-wise gaps over four equal rollout segments. For both OPSD and OPD, we use the answer-based method as the baseline. 
+
+15 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation 
+
+Method 2B 8B 
+
+OPSD 6:37:03 9:13:53 OPSD + ViCuR 6:47:52 8:18:38 OPD 6:53:41 9:07:18 OPD + ViCuR 6:57:21 8:43:16 
+
+Table 6: Total wall-clock training time (hh:mm:ss) on Vision R1 (5 epochs, 275 steps; 8 ×H200). typical low- and high-resolution multimodal inputs: a small-image input (88 tokens total, 64 visual tokens) and a large-image input (1,821 tokens total, 1,782 visual tokens). All measurements are averaged over 10 runs after 3 warmup iterations.                                                            
+
+> Input Model Input len Vis. tokens Prefill (ms) Decoding (ms/tok) Avg output len Total gen (ms)
+> Small image 2B baseline 88 64 30.64 18.31 633 11,625 2B + ViCuR 88 64 38.14 (+24.5%) 16.78 207 3,506 8B baseline 88 64 36.92 24.14 165 4,019 8B + ViCuR 88 64 44.06 (+19.3%) 21.47 211 4,583 Large image 2B baseline 1,821 1,782 68.79 18.18 369 6,778 2B + ViCuR 1,821 1,782 73.60 (+7.0%) 16.68 428 7,213 8B baseline 1,821 1,782 129.20 23.36 255 6,078 8B + ViCuR 1,821 1,782 134.71 (+4.3%) 21.55 446 9,745
+
+Table 7: Inference latency on a single H200 GPU. We report prefill time, per-token decoding time, average output length, and total generation time under small-image (88 tokens, 64 visual) and large-image (1,821 tokens, 1,782 visual) inputs. Total generation time varies primarily due to different output lengths across runs; per-token decoding time is the comparable metric. Two observations support the computational efficiency of ViCuR. First, per-token decoding time is unaffected by the recovery module, as it is inactive during autoregressive generation. Across all configurations, the per-token decoding time remains comparable between baseline and ViCuR (differences are within run-to-run variance due to different generated content lengths). Since decoding dominates total inference time—for example, in the 2B large-image case, decoding accounts for >98% of total generation time—the recovery module has negligible impact on end-to-end inference cost. Second, the prefill overhead introduced by the recovery module scales sub-linearly with visual token count. On the small-image input (64 visual tokens), the relative overhead is ∼20%; on the large-image input (1,782 visual tokens), it drops to 4–7%. This is because the cross-attention computation in the recovery module uses a single query (the sink token) against visual keys/values, yielding 
+
+𝑂 (𝑚 ) cost where 𝑚 is the number of visual tokens—a negligible addition compared to the 𝑂 (𝑛 2) self-attention over the full sequence during prefill. In the high-resolution settings common in multimodal reasoning, this overhead becomes increasingly marginal. 
+
+## C. Qualitative Comparison of Teacher-Side Hints 
+
+Fig. 8 compares two forms of teacher-side privileged hints given the same student-facing query: one is the reasoning hint that directly exposes the key theorem or solving idea, and the other is the visual cue hint that describes only the question-relevant visual structure grounded in the image. 
+
+## D. Hint Leakage Statistics in Student Rollouts 
+
+We report the complete hint-leakage statistics in Tab. 8. The statistics are computed from student rollout outputs only: we scan the output field, match the complete word “Hint” case-insensitively, and aggregate both the number of samples containing at least one match and the total number of matches. Each epoch contains 55 rollout steps. In OPSD, the baseline teacher is conditioned on answer-side privileged hints, whereas ViCuR replaces these with visual cues. In OPD, the baseline does not use privileged hints, while OPD + ViCuR adds teacher-side visual cues. Thus, student-side occurrences of “Hint” should be interpreted as a lexical proxy for explicit reproduction of privileged prompt formats, with the OPD baseline serving as a no-privilege reference. 
+
+> 16 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+Case 1: Intersecting chords 
+
+Question: Find 𝑥 .
+
+Answer: 3
+
+Reasoning hint 
+
+[Hint]: The problem is solved by applying the Intersecting Chords Theorem, which equates the product of the segment lengths of one chord ( 𝑥 · 8) to the product of the segment lengths of the other chord ( 4 · 6). 
+
+Visual cue hint (ours) 
+
+[Hint]: The diagram shows a circle with two intersecting chords. One chord is divided into segments labeled 𝑥 and 
+
+> 8
+
+, while the other chord is divided into segments labeled 4
+
+and 6. The intersection lies inside the circle, forming four chord segments with the given lengths. 
+
+Case 2: Trigonometry in isosceles triangles 
+
+Question: Find 
+
+𝑥 . Round to the nearest tenth. 
+
+Answer: 44 .0
+
+Reasoning hint 
+
+[Hint]: The problem involves an isosceles triangle where the altitude creates a right triangle with a known hypotenuse (due to congruent sides) and a known base angle, allowing the use of the sine ratio (︁ sin = opp hyp )︁ to solve for the height 𝑥 .
+
+Visual cue hint (ours) 
+
+[Hint]: The diagram shows an isosceles triangle with congruent legs marked by tick marks, each labeled as 46 . Avertical altitude is drawn from the apex to the base, forming a right angle at the base and splitting the triangle into two right triangles. On the left right triangle, the hypotenuse is 46 , one angle is labeled 73 ∘, and the altitude is labeled 
+
+> 𝑥
+
+, representing the side opposite the 73 ∘ angle. 
+
+Figure 8: Qualitative comparison of teacher-side privileged hints under the same student-facing query. Reason-ing hints directly expose the key theorem or solving idea, whereas the visual cue hints used in our framework describe only the question-relevant visual structure grounded in the image. The OPSD baselines show a sharp increase in explicit hint reproduction, especially in later epochs, indicating that answer-side privileged hints can be copied into student rollouts. ViCuR substantially reduces this effect under OPSD at both student scales. The OPD baseline remains low, as expected, because it does not include privileged hints. More importantly, OPD + ViCuR also stays at a low absolute level despite using teacher-side visual cues; even when its lexical count is slightly higher than OPD, the magnitude is far below the leakage observed in answer-based OPSD. This suggests that visual-cue privilege does not induce the same large-scale explicit hint reproduction as answer-based self-distillation. 
+
+## E. Qualitative Case Studies and Attention Visualization 
+
+We provide qualitative case studies and SinkTrack cross-attention visualizations using the checkpoints from the main experiments. This appendix complements the main results by examining the central mechanism 
+
+> 17 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+Student & Method Epoch 1 2 3 4 52B Student 
+
+OPSD 107/120 747/4,768 3,021/31,143 3,845/37,951 4,054/38,151 OPSD + ViCuR 88/101 243/331 1,198/8,164 2,758/20,533 3,264/25,861 OPD (8B teacher) 61/74 56/63 60/65 56/63 39/46 OPD + ViCuR (8B teacher) 56/60 81/85 123/140 172/192 247/316 
+
+8B Student 
+
+OPSD 38/42 183/610 2,447/29,576 3,628/45,629 3,743/44,453 OPSD + ViCuR 28/34 39/40 103/134 1,125/10,462 2,424/17,976 OPD (32B teacher) 26/29 22/22 14/15 16/16 16/16 OPD + ViCuR (32B teacher) 25/27 40/45 38/38 32/32 44/47 
+
+Table 8: Complete hint-leakage statistics in student rollout outputs. Each cell reports samples / total occur-rences . All configurations are trained with Steps = 55 per epoch. 1 2 3 4 5
+
+> Epoch
+> 50
+> 100
+> 150
+> 200
+> 250
+> Count
+
+Samples with "Hint"     
+
+> 12345
+> Epoch
+> 0
+> 100
+> 200
+> 300
+> Count
+
+Total "Hint" occurrences 
+
+> OPD 2B (8B teacher)
+> OPD+ViCuR 2B (8B teacher)
+> OPD 8B (32B teacher)
+> OPD+ViCuR 8B (32B teacher)
+
+Figure 9: Hint leakage in student rollout outputs under OPD. The OPD baseline does not use teacher-side privileged hints, while OPD + ViCuR introduces teacher-side visual cues. The counts remain low in both settings, showing that visual-cue privilege does not induce the large-scale explicit hint reproduction observed in answer-based OPSD. underlying by ViCuR: replacing answer-side privilege with visually grounded cues is useful only if the student can internally recover cue-level evidence from the image at inference time. We therefore ask whether ViCuR reduces the concrete grounding errors induced by answer-based OPSD, and whether the sink-based recovery module aggregates visual tokens consistent with the teacher-side cue evidence. We use two representative examples—one from Geometry3K and one from MathVista—because they stress different forms of recoverable visual evidence: local relation binding in a geometry diagram and query-conditioned evidence selection in a chart. 
+
+E.1. Case 1: Geometry3K — Intersecting Chords Theorem Quantitative stability. We evaluate each model on this Geometry3K example across 10 repeated runs with identical input. The base Qwen3-VL-2B-Instruct model produces the correct answer in only 5/10 runs, and the answer-based OPSD baseline improves to 7/10, while OPSD + ViCuR answers correctly in all 10/10 runs. This example isolates the intended role of visual cue recovery because the error is not about theorem recall: all models invoke the intersecting chords theorem. The decisive variable is whether the student recovers the visual cue that the diagram contains two intersecting chords, with 𝑥 paired with 8 on one chord and 4 paired with 6
+
+on the other. The incorrect runs instead bind 4 and 𝑥 as if they were on the same chord, yielding 4 × 𝑥 = 6 × 8
+
+and 𝑥 = 12 . ViCuR recovers the cue-level relation needed for the theorem, giving 4 × 6 = 𝑥 × 8 and 𝑥 = 3 .Thus, the improvement is better interpreted as recovery of inference-accessible visual structure rather than 
+
+> 18
+
+ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation 
+
+Q: Find 𝑥 . A: 3
+
+(a) Case 1: Geometry3K 
+
+Q: Which model has the highest Acc score when Pretrain Loss = 1.80? 
+
+A: RFT U13B 
+
+(b) Case 2: MathVista 
+
+Figure 10: Overview of the two cases used in the qualitative study. exposure to an answer or a reasoning shortcut. 
+
+Model reasoning outputs. Below we compare the reasoning traces of the three models. The base model and OPSD baseline produce plausible-looking derivations, but the derivations are anchored to the wrong recovered cue: they place 4 and 𝑥 on the same chord. ViCuR changes the critical grounding step before any algebra is performed. Its trace matches the teacher-side visual cue format used in our framework—a description of visible segment relations—rather than a direct answer-bearing rationale, and the subsequent computation follows the correct diagram structure. 
+
+Base Qwen3-VL-2B-Instruct (incorrect, 𝑥 = 12 )
+
+Based on the provided image, we can solve for 𝑥 using the **Intersecting Chords Theorem**. This theorem states that when two chords intersect inside a circle, the product of the lengths of the segments of one chord is equal to the product of the lengths of the segments of the other chord. In the diagram, the two chords intersect at a point inside the circle. The segments are: - One chord is divided into segments of lengths 4 and 𝑥 . - The other chord is divided into segments of lengths 6 and 8. The theorem gives us the equation: 
+
+4 × 𝑥 = 6 × 8
+
+Now, we solve for 𝑥 :
+
+4𝑥 = 48 
+
+𝑥 = 48 4
+
+𝑥 = 12 
+
+Therefore, the value of 𝑥 is 12. 
+
+OPSD baseline (incorrect, 𝑥 = 12 )
+
+To find the value of 𝑥 , we can use **the Intersecting Chords Theorem**. This theorem states that if two chords intersect inside a circle, the products of the lengths of the segments of each chord are equal. In the given diagram, the two chords intersect at a point inside the circle. The chords are: - One chord is divided into segments of lengths 4 and 𝑥 . - The other chord is divided into segments of lengths 6 and 8.According to the theorem: 
+
+(4)( 𝑥 ) = (6)(8) 
+
+Now, let’s solve for 𝑥 :
+
+4𝑥 = 48 
+
+𝑥 = 48 4
+
+𝑥 = 12 
+
+So, the value of 𝑥 is 12 .
+
+OPSD + ViCuR (ours) (correct, 𝑥 = 3 )
+
+To find the value of 𝑥 , we can use the **Intersecting Chords Theorem**. This theorem states that if two chords intersect inside a circle, the products of the lengths of the segments of one chord are equal to the products of the lengths of the segments of the other chord. In this case, the two chords intersect at a point inside the circle. The chords are: - One chord is divided into segments of length 4 and 
+
+19 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation 6. - The other chord is divided into segments of length 𝑥 and 8. According to the Intersecting Chords Theorem: 
+
+(4)(6) = ( 𝑥 )(8) 
+
+Now, solve for 𝑥 :
+
+24 = 8 𝑥 𝑥 = 24 8 = 3 
+
+So, the value of 𝑥 is 3 .
+
+E.2. Case 2: MathVista — Generalization Beyond Geometry Qualitative observations. This example from MathVista examines whether cue recovery extends beyond structured geometry diagrams to chart-reading tasks. As shown in Fig. 10, the question asks which model achieves the highest accuracy at a given pretrain loss value. The recoverable evidence is no longer a small set of local geometric labels; it is a query-conditioned evidence set consisting of the 𝑥 -axis slice at Pretrain Loss = 1 .80 ,the identities of multiple chart series, and their relative vertical positions. The base model and OPSD baseline both answer LLaMA-2-70B, suggesting that answer-based supervision does not prevent the student from relying on an incomplete or misread subset of curves. In contrast, ViCuR treats the problem as a visual comparison over the relevant slice and identifies RFT U13B as the highest. This pattern is consistent with the quantitative improvements on MathVista (e.g., +2.2 for OPSD + ViCuR at 2B scale, Tab. 1), while illustrating that the recovered cue evidence need not be geometry-specific. 
+
+Model reasoning outputs. Below we compare the full reasoning traces. The base model and OPSD baseline list confident numerical estimates, but their comparison omits or mispositions the series that should dominate at the queried loss value. ViCuR’s trace is more faithful to the visual cue that a teacher would provide for this task: locate the specified 𝑥 -coordinate, compare the series at that slice, and select the highest curve. The case therefore probes whether ViCuR recovers a task-conditioned evidence set, not merely whether it memorizes a chart answer. 
+
+Base Qwen3-VL-2B-Instruct (incorrect: LLaMA-2-70B) 
+
+Based on the provided chart, we can determine which model has the highest accuracy (Acc) at a Pretrain Loss of 1.80 by examining the data points on the graph. 1. **Locate the Pretrain Loss:** Find the value ‘1.80‘ on the horizontal axis (x-axis), labeled "Pretrain Loss". 2. **Identify the corresponding Acc scores:** Look at the vertical axis (y-axis), labeled "Acc", to see the accuracy for each model at this point. 3. **Compare the values:** The chart shows the following accuracy values at ‘Pretrain Loss = 1.80‘: - **LLaMA-7B:** Accuracy is approximately 37.5 - **LLaMA-13B:** Accuracy is approximately 42.5 - **LLaMA-2-7B:** Accuracy is approximately 45.5 -**LLaMA-2-13B:** Accuracy is approximately 47.5 - **LLaMA-2-70B:** Accuracy is approximately 61.5 - **RFT k=100:** Accuracy is approximately 40.5 - **RFT k=25:** Accuracy is approximately 41.5 - **RFT k=6:** Accuracy is approximately 42.5 - **RFT U13B:** Accuracy is approximately 48.5 The highest accuracy score among these models is **61.5**, which corresponds to the **LLaMA-2-70B** model. Therefore, the model with the highest Acc score when Pretrain Loss is equal to 1.80 is **LLaMA-2-70B**. 
+
+OPSD baseline (incorrect: LLaMA-2-70B) 
+
+Based on the provided chart, we can determine which model has the highest Accuracy (Acc) score at a Pretrain Loss of 1.80 by examining the data points on the graph. 1. **Locate the Pretrain Loss:** Find the value 1.80 on the horizontal axis (Pretrain Loss). 2. **Identify the corresponding Accuracy:** Look at the vertical positions of the data points on the chart for each model at this specific Pretrain Loss value. 3. **Compare the scores:** The chart shows the following accuracy values at Pretrain Loss = 1.80: - **LLaMA-7B:** The data point is at approximately 39.0 Acc. - **LLaMA-13B:** The data point is at approximately 43.0 Acc. - **LLaMA-2-7B:** The data point is at approximately 45.0 Acc. - **LLaMA-2-13B:** The data point is at approximately 47.0 Acc. - **LLaMA-2-65B:** The data point is at approximately 50.0 Acc. - **LLaMA-2-70B:** The data point is at approximately 54.0 Acc. The model with the highest accuracy at a Pretrain Loss of 1.80 is **LLaMA-2-70B**. 
+
+OPSD + ViCuR (ours) (correct: RFT U13B) 
+
+Based on the provided chart, we can determine which model has the highest accuracy (Acc) at a pretrain loss of 1.80 by following these steps: 1. **Locate the Pretrain Loss value:** Find the value ‘1.80‘ on the horizontal axis (x-axis), labeled "Pretrain Loss". 2. **Identify the corresponding accuracy:** Look at the vertical position (y-axis, labeled "Acc") for each model’s line at this specific point. 3. **Compare the values:** The y-axis represents accuracy, with higher values indicating better performance. Let’s examine the data points for the models at ‘Pretrain Loss = 1.80‘: - **ICL (black line):** The data point is at approximately ‘40.0‘ Acc. - **SFT (blue line):** The data point is at approximately ‘35.0‘ Acc. - **SFT 1/2 (dotted blue line):** The data point 
+
+20 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation is at approximately ‘37.0‘ Acc. - **SFT 1/4 (dotted light blue line):** The data point is at approximately ‘25.0‘ Acc. - **SFT 1/8 (dotted light purple line):** The data point is at approximately ‘18.0‘ Acc. - **RFT k=100 (dark green line):** The data point is at approximately ‘42.0‘ Acc. - **RFT k=25 (dotted light green line):** The data point is at approximately ‘40.0‘ Acc. - **RFT k=6 (dotted light grey line):** The data point is at approximately ‘40.0‘ Acc. - **RFT U13B (teal line):** The data point is at approximately ‘50.0‘ Acc. The highest accuracy value among all models at ‘Pretrain Loss = 1.80‘ is ‘50.0‘, which corresponds to the **RFT U13B** model. 
+
+Figure 11: SinkTrack cross-attention visualizations for both qualitative cases. (a)–(c) Geometry3K (Case 1): first SinkTrack layer, mean over all 6 layers, and full layer-by-layer progression. (d)–(f) MathVista (Case 2): same three views. Best viewed in color. 
+
+SinkTrack attention visualization. Fig. 11 presents the SinkTrack cross-attention heatmaps for both cases in a unified view. These heatmaps visualize the dedicated cross-attention from the sink token to visual tokens, i.e., the pathway through which the recovery module forms the internal representation ˆ𝑆 . They therefore test a more specific question than ordinary saliency visualization: whether the module aggregates visual evidence compatible with the teacher-side cues, despite receiving no cue text or cue-generation loss. Panels (a)–(c) correspond to the Geometry3K example (Case 1): (a) the first SinkTrack layer, (b) the mean attention over all 6 SinkTrack layers, and (c) the full layer-by-layer progression. Panels (d)–(f) show the same three views for the MathVista example (Case 2). For Case 1, the visual cue to be recovered is the chord-pairing structure: the labels 𝑥 and 8 belong to one chord, while 4 and 6 belong to the other. In both the first-layer map and the layer-averaged map, high-attention regions overlap with the numerical labels, the intersection area, and the chord segments adjacent to these labels. The layer-by-layer views in panel (c) further show repeated coverage of the relevant label and chord regions across SinkTrack layers, rather than a single-layer spike. This is consistent with the behavioral trace: ViCuR does not need a teacher hint that states the theorem or the answer, but it must recover the visible segment relation that makes the theorem usable. For Case 2, the attention pattern is naturally less localized. Chart reading requires a query-conditioned aggregation over several visual elements: the 𝑥 -axis value, the legends or series identities, and the vertical positions of multiple curves. Accordingly, panels (d)–(f) show distributed, structured responses across the visual-token sequence rather than a compact hotspot over a single region. This should not be over-interpreted as proof that the model isolated the exact RFT U13B curve at every layer. A more defensible interpretation is that SinkTrack preserves multi-region chart context needed for the final comparison, which is precisely the kind of internal cue evidence that ViCuR is designed to recover. 
+
+Summary. Across both cases, the main advantage of ViCuR is not a change in the final reasoning template, but 
+
+> 21 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+a more reliable conversion of inference-accessible visual cue supervision into student-side internal evidence recovery. In the geometry example, this recovery appears as correct binding between labels and chord segments; in the chart example, it appears as preserving enough multi-region context to compare series at the queried loss value. The SinkTrack visualizations do not constitute causal proof, but they provide mechanism-consistent evidence that the dedicated sink cross-attention aggregates the kind of visual information described by teacher-side cues. These qualitative observations complement the theory and main experiments by showing how ViCuR can reduce answer-privilege-induced grounding failures in concrete model outputs. 
+
+## F. Additional Theoretical Details 
+
+F.1. Derivation and Analysis of Proposition 1 (Recoverable Privilege) Proposition 1 (Recoverable Privilege). Under the deterministic abstraction 𝑆 = 𝑓 (𝑋 ), visually grounded cues do not introduce the privilege-induced conditional information gap associated with answer-dependent variables. The resulting teacher supervision is conditioned only on information determined by the inference-time input 𝑋 .
+
+In this appendix, we provide additional details on the theoretical motivation in Section 3.1. The goal is not to claim that the student can perfectly reconstruct visual cue text, but to clarify why image-grounded cues differ from answer-dependent privileges: under an ideal deterministic abstraction, the cue does not introduce information beyond the inference-time input 𝑋 .
+
+Setup. Let 𝑋 = ( 𝐼, 𝑄 ) denote the multimodal input available at inference time, and let 𝑆 denote the teacher-side visual cue text. We consider a decoding step 𝑡 with prefix 𝑌 <𝑡 . The cue-conditioned teacher distribution is 
+
+𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑆, 𝑌 <𝑡 ), (9) and the student distribution is 
+
+𝑝 𝜃 (𝑌 𝑡 | 𝑋, 𝑌 <𝑡 ). (10) For comparison, we define the teacher’s marginal distribution over 𝑆 as 
+
+𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑌 <𝑡 ) = E𝑆 ∼𝑝 (𝑆 |𝑋 ) [𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑆, 𝑌 <𝑡 )] . (11) We analyze the expected token-level KL objective 
+
+ℒKL (𝜃 ) = E𝑋,𝑆,𝑌 <𝑡 [︁ 𝐷 KL (︁ 𝑝 𝑇 (· | 𝑋, 𝑆, 𝑌 <𝑡 ) ‖ 𝑝 𝜃 (· | 𝑋, 𝑌 <𝑡 ))︁]︁ . (12) 
+
+Step 1: Expanding the KL Objective. Following the decomposition framework of [ 36 ], we expand the KL divergence as 
+
+ℒKL (𝜃 ) = E𝑋,𝑆,𝑌 <𝑡 ,𝑌 𝑡 [log 𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑆, 𝑌 <𝑡 ) − log 𝑝 𝜃 (𝑌 𝑡 | 𝑋, 𝑌 <𝑡 )] , (13) where 𝑌 𝑡 is sampled from 𝑝 𝑇 (· | 𝑋, 𝑆, 𝑌 <𝑡 ). Adding and subtracting log 𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑌 <𝑡 ), we obtain 
+
+ℒKL (𝜃 ) = E𝑋,𝑆,𝑌 <𝑡 ,𝑌 𝑡 [︂ log 𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑆, 𝑌 <𝑡 )
+
+𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑌 <𝑡 )]︂ 
+
++ E𝑋,𝑆,𝑌 <𝑡 ,𝑌 𝑡 [︂ log 𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑌 <𝑡 )
+
+𝑝 𝜃 (𝑌 𝑡 | 𝑋, 𝑌 <𝑡 )]︂ .
+
+(14) 
+
+Step 2: Information-Theoretic Decomposition. The first term in Eq. (14) is the conditional mutual information between the teacher’s next token and the cue: 
+
+𝐼 𝑇 (𝑌 𝑡 ; 𝑆 | 𝑋, 𝑌 <𝑡 ), (15) where the subscript 𝑇 emphasizes that 𝑌 𝑡 is drawn from the cue-conditioned teacher distribution. The second term equals 
+
+E𝑋,𝑆,𝑌 <𝑡 [︂ E𝑌 𝑡 ∼𝑝 𝑇 (·| 𝑋,𝑆,𝑌 <𝑡 )[︂ log 𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑌 <𝑡 )
+
+𝑝 𝜃 (𝑌 𝑡 | 𝑋, 𝑌 <𝑡 )]︂]︂ . (16) 
+
+> 22 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+Note that in general this is not the same as 𝐷 KL (𝑝 𝑇 (· | 𝑋, 𝑌 <𝑡 )‖𝑝 𝜃 (· | 𝑋, 𝑌 <𝑡 )) , because 𝑌 𝑡 is sampled from the cue-conditioned distribution 𝑝 𝑇 (· | 𝑋, 𝑆, 𝑌 <𝑡 ) rather than the marginal 𝑝 𝑇 (· | 𝑋, 𝑌 <𝑡 ). However, under the deterministic cue abstraction 𝑆 = 𝑓 (𝑋 ) introduced in Step 3 below, these two distributions coincide, and the second term reduces to the standard KL between the teacher’s marginal and the student: 
+
+ℒ*(𝜃 ) := E𝑋,𝑌 <𝑡 [︁ 𝐷 KL (︁ 𝑝 𝑇 (· | 𝑋, 𝑌 <𝑡 ) ‖ 𝑝 𝜃 (· | 𝑋, 𝑌 <𝑡 ))︁]︁ . (17) Under this abstraction, we therefore obtain 
+
+ℒKL (𝜃 ) = ℒ*(𝜃 ) + 𝐼 𝑇 (𝑌 𝑡 ; 𝑆 | 𝑋, 𝑌 <𝑡 ). (18) 
+
+Step 3: Deterministic Cue Abstraction. For the purpose of theoretical analysis, we idealize the cue construction process as a deterministic mapping 
+
+𝑆 = 𝑓 (𝑋 ). (19) Under this abstraction, 𝐻 (𝑆 | 𝑋 ) = 0 . Since 𝑆 is already determined once 𝑋 is given, conditioning additionally on 𝑌 <𝑡 or 𝑌 𝑡 cannot introduce uncertainty about 𝑆 :
+
+𝐻 (𝑆 | 𝑋, 𝑌 <𝑡 ) = 𝐻 (𝑆 | 𝑋, 𝑌 <𝑡 , 𝑌 𝑡 ) = 0 . (20) Therefore, 
+
+𝐼 𝑇 (𝑌 𝑡 ; 𝑆 | 𝑋, 𝑌 <𝑡 ) = 𝐻 (𝑆 | 𝑋, 𝑌 <𝑡 ) − 𝐻 (𝑆 | 𝑋, 𝑌 <𝑡 , 𝑌 𝑡 ) = 0 . (21) In this idealized case, cue-conditioned supervision does not introduce an additional conditional information gap beyond 𝑋 , and Eq. (18) reduces to 
+
+ℒKL (𝜃 ) = ℒ*(𝜃 ). (22) 
+
+Discussion: Information Availability vs. Recoverability. The above result should be interpreted carefully. It does not imply that the student directly observes 𝑆 , nor that a standard model can perfectly reconstruct the cue text. It only shows that, under the deterministic cue abstraction, the teacher’s additional conditioning variable is determined by the inference-time input. This differs from answer-dependent privileges, where the teacher may rely on variables not recoverable from 𝑋 .Thus, replacing answer-based privilege with visual cues reframes the problem. The remaining challenge is not that the teacher uses information absent at test time, but that the student must learn to extract and represent the relevant visual evidence effectively. This motivates our attention-sink-based recovery module, which provides an internal pathway for aggregating cue-level evidence from visual tokens. 
+
+Remark on Stochastic Cue Construction. As discussed in Section 3.1, the deterministic abstraction 𝑆 = 𝑓 (𝑋 )
+
+is an idealized limit. In practice, cue text may be produced by an LLM-based pipeline with sampling, yielding 
+
+𝐻 (𝑆 | 𝑋 ) > 0. In that case, the conditional information term does not vanish exactly, and the decomposition in Eq. (18) retains a nonzero 𝐼 𝑇 (𝑌 𝑡 ; 𝑆 | 𝑋, 𝑌 <𝑡 ) component. However, because visual cues describe evidence visible in 𝑋 rather than answer-dependent information, this residual term is expected to be substantially smaller than for answer-based privileges where 𝐻 (𝑅 | 𝑋 ) can be large. Our method does not require token-level reconstruction of 𝑆 ; it uses the teacher’s cue-conditioned behavior to shape the student’s internal visual representation, making it less sensitive to superficial linguistic variation in the cue text. 
+
+F.2. Gradient Analysis of Proposition 2 (Task-Driven Implicit Alignment) Proposition 2 (Task-Driven Implicit Alignment). Under the advantage-weighted on-policy distillation objective, the recovery module receives nonzero gradients to the extent that its internal visual evidence representation affects student predictions on teacher-evaluated tokens. Specifically, when the advantage 𝐴 𝑛 > 0 (teacher assigns higher probability than the student), gradients reinforce the current evidence representation; when 𝐴 𝑛 < 0, gradients push the representation away from its current state. The distillation objective therefore implicitly encourages the sink-based representation to retain task-relevant visual evidence aligned with the teacher’s visual cues, without requiring explicit cue-text generation or text-level matching. 
+
+In this section, we analyze how the on-policy distillation objective provides an implicit task-driven alignment signal for the attention-sink-based recovery module. The analysis uses a simplified unclipped policy-gradient 
+
+> 23 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+surrogate for clarity. Our implementation follows a PPO-style objective with old log-probabilities, importance ratios, and clipping, but the key gradient pathway into the recovery module is the same. 
+
+Setup. Let 𝑋 = ( 𝐼, 𝑄 ) denote the inference-time input. We denote the internal cue-level evidence representation induced by the recovery module as ˆ𝑆 = 𝑔 (𝑉, 𝑄 ; 𝜃 sink ), (23) where 𝑉 represents the layer-wise visual token states and 𝜃 sink denotes the recovery-module parameters. The student distribution is written as 
+
+𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 ), (24) and the cue-conditioned teacher distribution is 
+
+𝑝 𝑇 (ˆ 𝑦 𝑛 | 𝑋, 𝑆, ˆ𝑦 <𝑛 ). (25) For a sampled student trajectory ˆ𝑦 ∼ 𝑝 𝜃 (· | 𝑋 ), we define the teacher-shaped token advantage as 
+
+𝐴 𝑛 (𝑋, ˆ𝑦 ) = log 𝑝 𝑇 (ˆ 𝑦 𝑛 | 𝑋, 𝑆, ˆ𝑦 <𝑛 ) − log 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 ). (26) During policy-gradient optimization, this advantage is treated as a stop-gradient quantity. 
+
+Step 1: Basic Policy-Gradient Surrogate. The simplified distillation surrogate is 
+
+ℒdistill (𝜃 ) = −E𝑋 ∼𝒟 E^𝑦 ∼𝑝 𝜃 
+
+⎡⎣ 1
+
+|ˆ𝑦 |
+
+> |^𝑦 |
+
+∑︁ 
+
+> 𝑛 =1
+
+sg[ 𝐴 𝑛 (𝑋, ˆ𝑦 )] log 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 )
+
+⎤⎦ , (27) where sg[ ·] denotes stop-gradient. Therefore, 
+
+∇𝜃 sink ℒdistill = −E
+
+⎡⎣ 1
+
+|ˆ𝑦 |
+
+> |^𝑦 |
+
+∑︁ 
+
+> 𝑛 =1
+
+sg[ 𝐴 𝑛 (𝑋, ˆ𝑦 )] ∇𝜃 sink log 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 )
+
+⎤⎦ . (28) 
+
+Step 2: Chain Rule Through the Recovery Module. Since the recovery parameters influence the student distribution through ˆ𝑆 = 𝑔 (𝑉, 𝑄 ; 𝜃 sink ), we have 
+
+∇𝜃 sink log 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 ) = ∇ ^𝑆 log 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 ) · ∇ 𝜃 sink 𝑔 (𝑉, 𝑄 ; 𝜃 sink ). (29) Substituting this into Eq. (28) yields 
+
+∇𝜃 sink ℒdistill = −E[︃ 1
+
+|ˆ𝑦 |
+
+> |^𝑦 |
+
+∑︁ 
+
+> 𝑛 =1
+
+sg[ 𝐴 𝑛 (𝑋, ˆ𝑦 )] ∇ ^𝑆 log 𝑝 𝜃 (ˆ 𝑦 𝑛 | 𝑋, ˆ𝑆, ˆ𝑦 <𝑛 ) · ∇ 𝜃 sink 𝑔 (𝑉, 𝑄 ; 𝜃 sink )]︃ . (30) 
+
+Interpretation. Equation (30) shows that the gradient flowing into the recovery module is modulated by the teacher-student token-level discrepancy. Specifically, when 𝐴 𝑛 > 0 (the cue-conditioned teacher assigns higher probability than the student to the sampled token), the gradient reinforces the current evidence representation, encouraging the module to retain and strengthen whatever visual evidence contributed to the student’s prediction. When 𝐴 𝑛 < 0, the gradient pushes the representation away from its current state, discouraging evidence patterns that led to predictions the teacher did not favor. This provides an implicit task-driven alignment signal. Instead of forcing the student to reconstruct the cue text 𝑆 token by token, the objective shapes ˆ𝑆 only through its effect on downstream predictions. As a result, the recovery module is encouraged to encode visual evidence that matters for matching the teacher’s cue-conditioned behavior, while avoiding unnecessary capacity spent on superficial or task-irrelevant linguistic details of the cue text. 
+
+Limitations of the analysis. The gradient derivation above uses a simplified unclipped surrogate. In practice, PPO-style clipping limits the magnitude of updates when the importance ratio deviates significantly from 1, which can dampen the alignment signal for tokens with very large advantage magnitudes. Additionally, the analysis treats ˆ𝑆 as a single vector for clarity, whereas in practice the recovery module updates the sink token at multiple layers, and the gradient pathway involves interactions across layers. These simplifications do not affect the qualitative conclusion—that the distillation objective provides a task-driven signal for the recovery module—but the precise dynamics may differ from the idealized single-vector picture. 
+
+> 24 ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation
+
+F.3. Analytical Counterpart: The Full-Vocabulary KL Objective 
+
+Although our implementation optimizes a sampled-token on-policy objective, it is useful to consider the full-vocabulary forward KL objective as an analytical counterpart. This is the same divergence direction (𝐷 KL (𝑝 𝑇 ‖𝑝 𝜃 )) used in OPSD [ 41 ], where the teacher’s token-wise distribution serves as the reference. Analyzing this objective connects our method with standard knowledge distillation and clarifies how cue-conditioned teacher distributions can shape the student’s internal visual evidence representation. 
+
+Setup. Let 𝑋 = ( 𝐼, 𝑄 ) denote the inference-time input and 𝑆 the teacher-side visual cue text. Let 
+
+ˆ𝑆 = 𝑔 (𝑉, 𝑄 ; 𝜃 sink ) (31) be the internal representation induced by the recovery module. We write the student distribution as 𝑝 𝜃 (𝑌 𝑡 |
+
+𝑋, ˆ𝑆, 𝑌 <𝑡 ), and the cue-conditioned teacher distribution as 𝑝 𝑇 (𝑌 𝑡 | 𝑋, 𝑆, 𝑌 <𝑡 ).Consider the full-vocabulary distillation objective 
+
+ℒKL (𝜃 ) = E𝑋,𝑆,𝑌 <𝑡 [︁ 𝐷 KL (︁ 𝑝 𝑇 (· | 𝑋, 𝑆, 𝑌 <𝑡 ) ‖ 𝑝 𝜃 (· | 𝑋, ˆ𝑆, 𝑌 <𝑡 ))︁]︁ . (32) 
+
+Step 1: Expanding the KL Objective. Expanding over the vocabulary 𝒱 gives 
+
+ℒKL (𝜃 ) = E𝑋,𝑆,𝑌 <𝑡 [︃∑︁ 𝑣 ∈𝒱 
+
+𝑝 𝑇 (𝑣 | 𝑋, 𝑆, 𝑌 <𝑡 ) log 𝑝 𝑇 (𝑣 | 𝑋, 𝑆, 𝑌 <𝑡 )
+
+𝑝 𝜃 (𝑣 | 𝑋, ˆ𝑆, 𝑌 <𝑡 )]︃ 
+
+= 𝐶 − E𝑋,𝑆,𝑌 <𝑡 [︃∑︁ 𝑣 ∈𝒱 
+
+𝑝 𝑇 (𝑣 | 𝑋, 𝑆, 𝑌 <𝑡 ) log 𝑝 𝜃 (𝑣 | 𝑋, ˆ𝑆, 𝑌 <𝑡 )]︃ .
+
+(33) where 𝐶 = E𝑋,𝑆,𝑌 <𝑡 [∑︀ 𝑣 𝑝 𝑇 (𝑣 | 𝑋, 𝑆, 𝑌 <𝑡 ) log 𝑝 𝑇 (𝑣 | 𝑋, 𝑆, 𝑌 <𝑡 )] denotes the teacher’s conditional entropy and is constant with respect to the student parameters 𝜃 (assuming 𝑌 <𝑡 is held fixed for the purpose of this per-step analysis). 
+
+Step 2: Gradient Flow into the Internal Representation. Differentiating with respect to ˆ𝑆 gives 
+
+∇ ^𝑆 ℒKL = −E𝑋,𝑆,𝑌 <𝑡 [︃∑︁ 𝑣 ∈𝒱 
+
+𝑝 𝑇 (𝑣 | 𝑋, 𝑆, 𝑌 <𝑡 )∇ ^𝑆 log 𝑝 𝜃 (𝑣 | 𝑋, ˆ𝑆, 𝑌 <𝑡 )]︃ . (34) 
+
+Step 3: Chain Rule to Recovery Parameters. Applying the chain rule through ˆ𝑆 = 𝑔 (𝑉, 𝑄 ; 𝜃 sink ), we obtain 
+
+∇𝜃 sink ℒKL = −E𝑋,𝑆,𝑌 <𝑡 [︃∑︁ 𝑣 ∈𝒱 
+
+𝑝 𝑇 (𝑣 | 𝑋, 𝑆, 𝑌 <𝑡 )∇ ^𝑆 log 𝑝 𝜃 (𝑣 | 𝑋, ˆ𝑆, 𝑌 <𝑡 ) · ∇ 𝜃 sink 𝑔 (𝑉, 𝑄 ; 𝜃 sink )]︃ . (35) 
+
+Interpretation. Equation (35) shows that the recovery module is updated according to a teacher-weighted combination of student score gradients. Tokens that the cue-conditioned teacher considers more likely contribute more strongly to the gradient. Therefore, the teacher distribution acts as a behavioral guide for shaping the internal representation ˆ𝑆 . This provides an implicit alignment signal: the student is not asked to reproduce the cue text itself, but to adjust its internal visual evidence representation so that its predictions better match the cue-conditioned teacher behavior.
