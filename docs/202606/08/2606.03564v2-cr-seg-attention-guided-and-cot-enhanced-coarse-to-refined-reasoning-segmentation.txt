@@ -1,0 +1,971 @@
+Title: CR-Seg: Attention-Guided and CoT-Enhanced Coarse-to-Refined Reasoning Segmentation
+
+URL Source: https://arxiv.org/pdf/2606.03564v2
+
+Published Time: Thu, 04 Jun 2026 00:31:41 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+## CR-S EG : Attention-Guided and CoT-Enhanced Coarse-to-Refined Reasoning Segmentation 
+
+Yifan Cao, Xiaocui Yang *, Faxian Wan, Shi Feng, Daling Wang, Yifei Zhang 
+
+School of Computer Science and Engineering, Northeastern University Shenyang 110819, China 
+
+{caoyifan, wanfaxian}@mails.neu.edu.cn {yangxiaocui, fengshi, wangdaling, zhangyifei}@cse.neu.edu.cn 
+
+Abstract 
+
+Reasoning segmentation aims to segment target objects described by complex language through joint visual-textual reasoning. Existing meth-ods typically rely on either learned semantic tokens to bridge Multimodal Large Language Models (MLLMs) and segmentation models, suffering from difficult cross-modal alignment, or explicit spatial prompts such as bounding boxes, which may lose holistic response seman-tics. To address these limitations, we propose Attention-Guided and CoT-Enhanced Coarse-to-Refined Reasoning Seg mentation, termed CR-S EG , a two-stage framework for coarse-to-refined reasoning segmentation. Specifi-cally, we design an Extract Attention Maps and Points (EAP) module to extract attention maps for coarse target localization and select infor-mative points, both of which are fed into SAM for mask refinement. To alleviate reasoning– answer inconsistency, we further introduce Global-to-Local Chain-of-Thought (GLCoT), which guides the model to reason progressively from global scene context to local target details. Extensive experiments on reasoning segmenta-tion benchmarks demonstrate the effectiveness of CR-S EG .
+
+1 Introduction 
+
+Reasoning segmentation (Lai et al., 2024) extends referring segmentation (Kazemzadeh et al., 2014; Rasheed et al., 2024; Zhang et al., 2024) from ex-plicit referring expressions to complex textual de-scriptions, requiring models to jointly understand visual–textual inputs and perform fine-grained rea-soning. With Multimodal Large Language Mod-els (MLLMs) (Liu et al., 2023; Bai et al., 2025b) showing strong multimodal understanding and the Segment Anything Model (SAM) family (Kirillov et al., 2023; Ravi et al., 2025; Carion et al., 2025) providing accurate mask generation, integrating 
+
+> *
+
+Corresponding author. MLLM  SAM                         
+
+> Align easy Semantic completeness
+> Image Prompt
+> Semantic completeness
+> ERS
+> methods
+> MLLM
+> Semantic completeness
+> CR -Seg
+> Align easy
+> Align easy
+> Image Prompt
+> Image Prompt
+> Response Segment
+> CoT and
+> Answer
+> MLLM
+> Response Segment
+> SAM
+> Response
+> GLCoT
+> and
+> Answer
+> SAM
+> Segment
+> Attention
+> map
+> Box
+> Point
+> Special
+> Tokens
+> CoT Answer
+> (a) Differences between our method and existing mainstream methods.
+> What object in the picture
+> should be used with water to
+> create foam and effectively
+> remove oil and dirt when your
+> hands are very dirty?
+> .</think>< The question asks … this purpose are soa
+> p… The soap … is … washing hands . The grater …kit
+> chen tool and not related to hand washing .</think><
+> answer >[{ \"bbox_2d \": [628,190,786,368] … }, { \"
+> bbox_2d \": [10,197,192,422], …]</ answer>
+> <thinking>Overall analysis … shows … a soap ... Step
+> 1: ... The entire scene … Step 2: ... Focusing on the
+> basin, … a soap dish... Step 3:... The
+> soap ….</thinking><answer>The object is:soap . The
+> bounding box is:[677, 172, 967, 478] \\n</answer>",
+> (b) GLCoT (below) guides the model to progressively reason about objects in the image.
+> Loss Forward Backw ard Trainable Guidance info.
+> IRS
+> methods
+
+Figure 1: Difference between CR-S EG and existing methods. 
+
+MLLMs with SAM has become a widely adopted paradigm (Wu et al., 2024; Liu et al., 2025). As shown in Figure 1(a), existing methods for bridging MLLMs and segmentation models can be roughly grouped into two paradigms, i.e., Internal-Representation-Based Reasoning Segmen-tation (IRS) and Explicit-Prompt-Based Reason-ing Segmentation (ERS). IRS methods use hidden states of MLLM response tokens as the interface to segmentation models (Xia et al., 2024; Lai et al., 2024). These hidden states can aggregate holistic response semantics (Qian et al., 2025; Zhu et al., 2026), but they lack explicit spatial supervision and are optimized mainly through the final mask loss, making cross-modal alignment difficult. ERS meth-ods (Liu et al., 2025, 2026) instead train MLLMs to produce explicit grounding cues, such as bounding boxes, which are then fed into segmentation mod-els. Although this avoids latent alignment training, it compresses the full reasoning process into sparse spatial prompts. As a result, CoT reasoning does 
+
+> arXiv:2606.03564v2 [cs.CV] 3 Jun 2026
+
+not directly guide mask generation, and segmenta-tion quality becomes highly dependent on ground-ing accuracy. In practice, we observe that existing models are prone to reasoning–answer inconsis-tency. When distractors appear in later reasoning steps, the model may produce incorrect grounding predictions and thus erroneous masks, as illustrated in Figure 1(b). These limitations suggest the need for a spatial– semantic bridge that is grounded in the MLLM response, explicitly supervisable, and compatible with SAM refinement. Recent studies on visual grounding (Kang et al., 2025; Zhou et al., 2026) show that attention maps encode token-level spa-tial semantics. Compared with IRS hidden states, attention maps expose dense spatial distributions that can be supervised at the mask level; com-pared with ERS prompts, they preserve richer re-sponse semantics instead of relying on a single discrete grounding output. Therefore, attention-derived priors can reduce the alignment difficulty of IRS while alleviating the semantic compression problem of ERS. Based on this insight, we pro-pose Attention-Guided and CoT-Enhanced Coarse-to-Refined Reasoning Seg mentation, termed CR-SEG . As illustrated in Figure 1(a), CR-S EG is a two-stage framework that uses MLLM attention maps as coarse segmentation priors and refines them into final masks with the Segment Anything Model (SAM). We propose an Extract Attention Maps and Points (EAP) module to extract atten-tion maps and derive informative point prompts, providing lightweight spatial-semantic priors for target localization. In the first stage, these attention-derived priors are aligned with segmentation masks, allowing SAM to focus on boundary refinement. In the second stage, we further introduce Global-to-Local Chain-of-Thought (GLCoT), a three-step reasoning strategy that guides the model to survey the global scene, identify candidate objects, and lo-cate the target by excluding distractors. To evaluate fine-grained discrimination among same-category objects, we further construct FReasonSeg as an auxiliary benchmark. As shown in Figure 2, CR-SEG achieves strong performance with reduced alignment overhead. Our main contributions are summarized as follows: • We propose CR-S EG , an attention-guided coarse-to-refined reasoning segmentation framework that transfers MLLM spatial–semantic knowl-edge to SAM through mask-supervised attention LISA  LENS  CR -Seg        
+
+> 800K
+> 240K 52.9
+> 63.1 61.2
+> #training data size
+> (low)
+> 3.1M
+> 800K
+> 250K 52.9 63.1
+> 70.8
+> 61.2
+> 75
+> 79.9
+> #ReasonSeg val
+> (high)
+> #FReasonSeg Avg.
+> (high)
+> LISA LENS CR -Seg
+> Figure 2: Compared to other IRS methods, such as LISA (Lai et al., 2024) and LENS (Zhu et al., 2026), CR-Seg (ours) achieves better performance on ReasonSeg (Lai et al., 2024) and FReasonSeg with less aligned training data(epochs ×dataset size).
+
+priors, preserving holistic response semantics while reducing alignment difficulty. • We introduce GLCoT, a global-to-local reasoning strategy that filters distractors before final target localization, mitigating reasoning–answer incon-sistency and improving segmentation accuracy. • We construct FReasonSeg, an auxiliary bench-mark for fine-grained target discrimination. Ex-tensive experiments demonstrate the effective-ness and robustness of CR-S EG .
+
+2 Related Work 
+
+2.1 Internal-Representation-Based Reasoning Segmentation (IRS) 
+
+IRS methods, such as LISA (Lai et al., 2024), GSVA (Xia et al., 2024), and PixeLM (Ren et al., 2024), use semantic tokens, e.g., [SEG] tokens, to guide segmentation. Prior work (Qian et al., 2025) has shown that [SEG] tokens can produce similar-ity maps aligned with target regions. Since [SEG] tokens cannot be directly supervised, they are op-timized only through the final masks. However, this indirect supervision typically incurs substan-tial alignment costs. Moreover, requiring MLLMs to explicitly emit [SEG] tokens constrains genera-tion flexibility. LENS (Zhu et al., 2026) partially addresses this constraint via a dedicated context module that extracts semantic information without explicit [SEG] tokens, and shows that such seman-tic tokens can rectify certain grounding errors and recover correct masks. Nevertheless, it does not explicitly address reasoning–answer inconsistency and still requires considerable alignment training. To this end, we use directly supervisable attention maps as the information bridge. This design pre-serves holistic semantic information from the full MLLM response while simplifying alignment. The resulting attention maps also serve as coarse seg-mentation priors, allowing the segmentation model to focus on fine-grained boundary refinement. 
+
+2.2 Explicit-Prompt-Based Reasoning Segmentation (ERS) 
+
+ERS methods decouple reasoning and segmenta-tion into two independent stages, thereby avoiding complex alignment training. Representative works, such as SegZero (Liu et al., 2025) and VisionRea-soner (Liu et al., 2026), train MLLMs to produce accurate grounding outputs (e.g., bounding boxes or points), which are then passed to a standalone segmentation model. Building on this paradigm, Dr. Seg (Sun et al., 2026), PixelThink (Wang et al., 2025), and DR 2Seg (He et al., 2026) pursue further gains through advances in reinforcement learning algorithms, training pipelines, and reward func-tion design. More recently, training-free multi-step reasoning segmentation models, exemplified by SAM3-Agent (Carion et al., 2025) and Evol-SAM3 (Ye et al., 2025), improve performance via multi-step reasoning strategies, albeit at the cost of higher inference latency. However, a fundamental limitation of this paradigm, is that only the final grounding outputs are utilized for segmentation, while the semantic information embedded in the CoT reasoning is discarded. Consequently, any er-rors in grounding can directly propagate to the final segmentation mask. 
+
+3 Method 
+
+To overcome the above limitations, we propose CR-S EG , an attention-guided coarse-to-refined rea-soning segmentation framework with a two-stage training paradigm, as illustrated in Figure 3. Given an image and a question, the MLLM produces rea-soning and answers, while learnable queries extract attention maps that are converted by the EAP mod-ule into SAM-compatible mask prior and points. 
+
+3.1 CR-S EG Framework Reasoning Model. We use the open-source MLLM, Qwen3-VL-4B (Bai et al., 2025a), as our reasoning model. Given an image I, a prompt P,and a question Q, the MLLM generates a struc-tured response, i.e., <thinking> R </thinking> <answer> A </answer> , where A contains the pre-dicted labels Alabel and their corresponding bound-ary boxes Abox .
+
+R, A = M LLM (I, P, Q). (1) 
+
+Attention Extraction. To extract the semantic information from the reasoning model’s outputs, we append learnable queries LQ ∈ RN ×D to the end of the response, where N is the number of learnable queries and D is the hidden dimension of the MLLM. The concatenated sequence is then fed into the MLLM backbone for a forward pass. 
+
+L′ 
+
+> Q
+
+= M LLM backbone (I, P, Q, R, A, LQ). (2) Here, L′ 
+
+> Q
+
+∈ RN ×D denotes the output embeddings of the learnable queries. Afterward, the attention maps (Vaswani et al., 2017) corresponding to the learnable queries are extracted. However, with a large number of tokens, the Softmax normalization tends to produce overly flattened attention distri-butions, reducing the dynamic range of attention scores and weakening gradient signals propagated to SAM. To address this, we bypass the Softmax layer and directly employ the raw query-key affin-ity matrix as the attention map, thereby preserving cross-modal alignment while avoiding the infor-mation degradation caused by Softmax normal-ization. We denote the resulting attention map as AL′ 
+
+> Q
+
+∈ RL×K×K , where L is the number of MLLM layers and K is the total number of tokens. 
+
+AL′ 
+
+> Q
+
+= QK T
+
+√d . (3) 
+
+Extract Attention Maps and Points (EAP). The raw attention map AL′ 
+
+> Q
+
+captures cross-modal re-lationships among all tokens, but it is not directly compatible with SAM’s mask prompt format. To bridge this gap, we introduce the Extract Attention Maps and Points (EAP) module. As illustrated on the right of Figure 3, the EAP module transforms 
+
+AL′ 
+
+> Q
+
+into a mask prior that is spatially aligned with SAM’s input space. We also select positive and negative points as explicit location cues, enabling the model to produce more precise segmentation results. 
+
+1) Attention aggregation. From the attention map AL′ 
+
+> Q
+
+, which encodes both textual and visual information, we retain only the visual-token en-tries, yielding A′L′
+
+> Q
+
+∈ RL×V ×N , where L, V , and 
+
+N denote the number of Transformer layers, visual tokens, and learnable queries, respectively. To ob-tain a stable prior, we aggregate across the layer EAP        
+
+> Pretraining Alignment
+> Forward Image Encoder
+> Prompt Encoder
+> Mask Decoder
+> SAM MLLM Backbone LoRA
+> Extract Attention Maps and Points(EAP)
+> Select point
+> Att. Connector
+> Resize
+> Point Mask prior “Please output the bounding box of … <answer> The object is… The bounding… </answer>
+> Supervised Fine-Tuning
+> <thinking> The image shows Step 1:.… Step 2: … Step 3:… </thinking> <answer> …</answer>
+> Prompt Dataset GLCOT Dataset
+> Prompt Question
+> Image
+> MLLM Backbone LoRA
+> Forward EAP SAM
+> Attention map
+> Trainable Frozen Visual token Text token Learnable query Stage 2 Stage 1
+> Reasoning Model
+> Coarse seg. Mask refinement
+
+Figure 3: Overview of the two-stage training pipeline of CR-S EG . Stage 1: the image, question, and answer are fed jointly to train learnable query attention. Stage 2: the model is jointly trained on generation and segmentation using a GLCoT dataset distilled from a larger teacher model.Tokens enclosed by dashed boxes denote the tokens used for loss computation or subsequent processing. 
+
+and query dimensions via averaging. We denote the resulting map as Att ∈ RH×W , which is then resized to SAM’s input resolution (H, W ), e.g., 
+
+H = W = 1008 for SAM 3. The aggregated at-tention map Att is supervised by the ground-truth mask Mgt as a coarse segmentation prior, which SAM later refines into a precise mask. 
+
+2) Point sampling. Let S denote all H × W
+
+spatial locations in Att . We construct two ordered sequences Sfg and Sbg by sorting S in descending and ascending order of attention values. We define the total attention mass as 
+
+Matt =
+
+HX
+
+i=1 
+
+WX
+
+j=1 
+
+σ(Att ij ), (4) The foreground region F is the minimal prefix of Sfg whose cumulative attention mass exceeds 
+
+αfg Matt . The background region B is defined sim-ilarly from Sbg with threshold αbg .
+
+F = min 
+
+Sfg : X
+
+p∈S fg 
+
+σ(Att p) ≥ αfg Matt 
+
+ ,
+
+(5) 
+
+B = min 
+
+Sbg : X
+
+p∈S bg 
+
+σ(Att p) ≥ αbg Matt 
+
+ .
+
+(6) Where αfg , α bg are preset hyperparameters. From these regions, we construct the positive point set 
+
+Ppos by selecting the location with the maximum attention in F, plus four additional points sampled with probability proportional to their attention val-ues. The negative point set Pneg consists of five points uniformly sampled from B.
+
+3) Mask prior. Since the magnitude of Att dif-fers from the feature scale expected by SAM, we apply a lightweight connector of four convolutional layers to project Att into SAM’s input space, pro-ducing the mask prior MP . The overall EAP mod-ule is summarized as: 
+
+MP , P pos , P neg = EAP(A L′ 
+
+> Q
+
+). (7) Further details are provided in Appendix B.1. 
+
+Segmentation Model. SAM3 (Carion et al., 2025) is a mainstream segmentation model capable of generating precise segmentation masks conditioned on various prompts, including text, points, and bounding boxes. To achieve accurate segmentation, we feed MP , Ppos , and Pneg obtained from the EAP module into SAM as prompts. These prompts pro-vide both mask prior and spatial information, while SAM is responsible for refining the segmentation boundaries to produce the final prediction Mpred .
+
+3.2 Pretraining Alignment Stage 
+
+As shown at the top of Figure 3, this stage estab-lishes the connection between the MLLM and SAM without optimizing the model’s generative capabil-ity. To this end, we directly impose a loss on the attention map Att , enabling rapid alignment be-tween MLLM attention priors and segmentation masks. To further accelerate training, we apply LoRA (Hu et al., 2022) fine-tuning to the MLLM to facilitate faster adaptation of Att . Meanwhile, to map Att into the input space of SAM, we unfreeze the Prompt Encoder and Mask Decoder of SAM. To jointly optimize the alignment of the atten-tion maps Att and the segmentation performance, we employ a cosine similarity loss Lcos (Wojke and Bewley, 2018) and a segmentation loss Lseg .The overall training objective Lali is formulated as a weighted sum of these two terms, where the balance is controlled by λ1 and λ2:
+
+Lali = λ1Lcos + λ2 Lseg (8) where Lseg denotes the segmentation loss, which consists of DICE loss (Milletari et al., 2016), binary cross-entropy(BCE) loss, and Boundary loss : 
+
+Lseg = λdice LDICE (Mpred , M gt )+ λbce LBCE (Mpred , M gt )+ λbound LBoundary (Mpred , M gt ),
+
+(9) where, following prior edge-aware methods (Math-ieu et al., 2016; Chen et al., 2019), we define a boundary loss by extracting Sobel edge maps and enforcing their L1 consistency between predictions and ground truth. 
+
+Kx =
+
+
+
+1 0 −12 0 −21 0 −1
+
+ , Ky = KTx , (10) 
+
+Epred = |Mpred ∗ Kx| + |Mpred ∗ Ky| , (11) 
+
+Egt = |Mgt ∗ Kx| + |Mgt ∗ Ky| , (12) 
+
+Lboundary = 1
+
+HW 
+
+> H
+
+X
+
+> i=1
+> W
+
+X
+
+> j=1
+
+E(i,j ) 
+
+> pred
+
+− E(i,j ) 
+
+> gt
+
+. (13) 
+
+3.3 Supervised Fine-Tuning Stage 
+
+In this stage, we jointly train the model’s gener-ative and segmentation capabilities. To reduce reasoning–answer inconsistency, we enforce an ex-plicit three-step target localization process termed GLCoT, which begins with a global scene analy-sis, then progressively refines target localization at finer scales to produce the final answer. As illus-trated in the lower-left part of Figure 3, we adopt a CoT distillation strategy (Hsieh et al., 2023; Li et al., 2023) to equip the model with this capability. A larger teacher model, Qwen3-VL-235B-A22B-Instruct, first generates GLCoT reasoning annota-tions, which are then stored in a GLCoT dataset. Further details are provided in Appendix C.2. We then use the GLCoT dataset to train the generation capability of the MLLM. Specifically, the SFT loss Lsft on GLCoT reasoning and the alignment loss Lali on segmentation masks are op-timized simultaneously, ensuring the model learns structured reasoning without sacrificing mask qual-ity. The segmentation pipeline follows the same at-tention extraction and EAP procedure as in Stage 1. Since smaller target objects appear in this dataset, we restrict the positive point set Ppos to a single point, i.e., the location with the highest attention value within the grounding box of the target object. In this stage, we use the SFT loss and the alignment loss as the total loss. 
+
+L = λsft LSF T + λali Lali ,
+
+LSFT = −
+
+> T
+
+X
+
+> t=1
+
+log Pθ (yt | y<t , x ) , (14) where Lali represents the alignment loss introduced in the Pretraining Alignment Stage, and λsft and 
+
+λali are the corresponding balancing coefficients. In LSFT , Pθ denotes the model parameterized by θ,
+
+x is the input instruction, yt is the t-th token of the target response, y<t denotes the preceding tokens before position t, and T is the total length of the response sequence. 
+
+4 Experiments 
+
+4.1 Experiment Setup Training data. We use the RefCOCO series (Mao et al., 2016; Yu et al., 2016) as the training set for Stage 1. In Stage 2, we construct training set from the ReasonSeg (Lai et al., 2024) training split, with GLCoT data generated by Qwen3-VL-235B-A22B-Instruct. 
+
+Benchmarks. We adopt both ReasonSeg (Lai et al., 2024) and our proposed FReasonSeg, which serves as a complementary benchmark. ReasonSeg height-ens the difficulty of textual reasoning, yet most images lack visually similar distractors, allowing models to localize targets through textual reasoning Method Train L1 L2 L3 Overall                                                                                                                       
+
+> gIoU cIoU gIoU cIoU gIoU cIoU gIoU cIoU
+> Explicit-Prompt-Based Reasoning Segmentation (ERS)
+> Seg-Zero-7B (Liu et al., 2025) RL/Full FT 59.22 47.38 77.22 73.85 77.86 75.03 76.00 69.78 VisionReasoner (Liu et al., 2026) RL/Full FT 55.48 44.24 72.92 68.93 76.84 73.15 73.29 66.23 SAM3-Agent (Carion et al., 2025) Agent 56.65 44.97 64.47 63.45 51.92 46.27 57.86 54.49 SAM3-Agent †(Carion et al., 2025) Agent 51.02 42.54 72.96 68.54 66.46 66.54 68.02 63.34 Evol-SAM3 (Ye et al., 2025) Agent 54.46 52.52 74.72 73.13 68.05 64.69 69.84 66.96 Evol-SAM3 †(Ye et al., 2025) Agent 58.00 50.32 65.43 60.22 51.91 40.23 58.40 50.44 Dr. Seg (Sun et al., 2026) RL/Full FT 55.64 45.46 78.93 74.79 78.01 76.94 76.51 70.73 Dr. Seg †(Sun et al., 2026) RL/LoRA 61.04 58.74 76.37 73.53 80.06 77.08 76.82 72.09
+> Internal-Representation-Based Reasoning Segmentation (IRS)
+> LENS (Zhu et al., 2026) RL/Full FT 59.80 51.51 79.05 78.67 74.01 73.41 75.03 72.66 LISA-7B (Lai et al., 2024) SFT/LoRA 44.1 48.17 54.6 47.49 70.33 70.98 61.16 55.72 GSVA (Xia et al., 2024) SFT/LoRA 59.25 55.96 72.82 70.75 63.44 55.10 67.23 62.84
+> CR-Seg (ours) SFT/LoRA 61.55 51.69 82.70 79.74 80.48 78.54 79.85 74.56
+
+Table 1: Performance on FReasonSeg, evaluated using gIoU and cIoU. Bold and underline indicate the best and second-best performance, respectively. † denotes results reproduced on Qwen3-VL-4B and SAM3. 
+
+without fine-grained visual discrimination. To fill this gap and evaluate the robustness of CR-S EG 
+
+against attention interference from same-category objects, we construct FReasonSeg from existing RefCOCOm (Wang et al., 2024) dataset. FReason-Seg is explicitly designed to stress-test robustness against same-category distractors in a zero-shot setting and comprises three progressively harder subsets—L1, L2, and L3—with L3 containing the highest proportion of same-category objects. Con-struction details are provided in Appendix C.1. 
+
+Evaluation Metrics. For evaluation, following prior work (Liu et al., 2025, 2026; Sun et al., 2026), we report generalized IoU (gIoU), the per-image average IoU, and cumulative IoU (cIoU), the IoU between accumulated predictions and ground truths over the entire dataset. 
+
+Implementation Details. We adopt DeepSpeed (Rajbhandari et al., 2020) and conduct all experi-ments on 2 NVIDIA A6000 GPUs. For the Pre-training Alignment Stage, we set the batch size to 2, use a learning rate of 3e-5, and train for 2 epochs. For the SFT stage, we set the batch size to 1, use a learning rate of 1e-5, and train for 10 epochs. More detailed information is in Appendix D. 
+
+4.2 Baselines 
+
+We compare two categories of baselines: (1) ERS methods , including Seg-Zero (Liu et al., 2025), VisionReasoner (Liu et al., 2026), Dr. Seg (Sun et al., 2026), SAM3-Agent (Carion et al., 2025), and Evol-SAM3 (Ye et al., 2025), where SAM3-Agent and Evol-SAM3 employ multi-step reason-ing frameworks; and (2) IRS methods , including 32 
+
+> 67.5
+> 77.89
+
+52.9  63.1 
+
+70.8 
+
+61.2 
+
+75 
+
+79.9      
+
+> #ReasonSeg val
+> (high)
+> #FReasonSeg Avg.
+> (high)
+> ReasonSeg
+> val
+> ReasonSeg
+> test FReasonSeg
+> 64.7
+> 67.5
+> #ReasonSeg
+> val
+> #FReasonSeg Avg.
+> (high)
+> 32
+> 70.8
+> 69.1
+> 66.3
+> 64.7
+> 64.8 65.1
+> 64.2
+> #ReasonSeg
+> test
+> 77.89
+> 79.85
+> 79.73
+> 78.68
+> #FReasonSeg
+> 64 128 256
+
+Figure 4: Comparison of different numbers of learnable queries on ReasonSeg and FReasonSeg. 
+
+LISA (Lai et al., 2024), GSVA (Xia et al., 2024), and LENS (Zhu et al., 2026). 
+
+4.3 Main Results 
+
+As shown in Table 1, on the FReasonSeg dataset, CR-S EG (ours) surpasses existing reasoning seg-mentation methods, achieving state-of-the-art per-formance. Notably, its strong performance on the L2 and L3 subsets demonstrates that the attention-based prior remains robust even under interference from same-category objects. This suggests that CR-SEG can effectively preserve target-specific spatial semantics even under interference from visually similar instances. In contrast, multi-step reasoning frameworks, such as SAM3-Agent and Evol-SAM3 (implemented with Qwen2.5-VL-7B and Qwen3-VL-4B), do not achieve comparable performance. We attribute this limitation to their stronger re-liance on text-guided segmentation, which is more vulnerable to ambiguity in same-category scenar-ios. Although Evol-SAM3 additionally incorpo-Method ReasonSeg-Val ReasonSeg-Test AVG 
+
+gIoU cIoU gIoU cIoU gIoU cIoU 
+
+Explicit-Prompt-Based Reasoning Segmentation (ERS) 
+
+Seg-Zero-7B (Liu et al., 2025) 62.6 62.0 57.5 52.0 60.1 57.0 RSVP (Lu et al., 2025) 64.7 63.1 60.3 60.0 62.5 61.6 VisionReasoner ∗ (Liu et al., 2026) 65.8 55.0 62.8 55.1 64.2 55.1 Dr. Seg ∗ (Sun et al., 2026) 68.4 61.2 65.6 58.0 67.0 59.6 Dr. Seg † (Sun et al., 2026) 67.6 58.3 64.5 58.0 66.1 58.2 
+
+Internal-Representation-Based Reasoning Segmentation (IRS) 
+
+LISA-7B (Lai et al., 2024) 52.9 54.0 47.3 48.4 50.1 51.2 HyperSeg (Wei et al., 2025) 59.2 56.7 - - - -X-SAM (Wang et al., 2026) 56.6 32.9 57.8 41.0 57.2 37 LENS ∗ (Zhu et al., 2026) 63.1 62.6 56.6 54.9 59.9 58.8 
+
+CR-Seg (ours) 70.8 66.8 64.8 62.6 67.8 64.7 
+
+Table 2: Performance on ReasonSeg. Bold and underline indicate the best and second-best performance, respectively.  
+
+> ∗
+
+denotes results obtained from our independent experiments under the same experimental conditions. − indicates unreported results. † denotes results reproduced by us using LoRA fine-tuning on Qwen3-VL-4B and SAM3.                  
+
+> Method Words gIoU ↑RAI ↓
+> VisionReasoner 79 65.8 11.5 Dr. Seg 153 68.4 9.7
+> CR-Seg w/o GLCoT 93 69.1 8.2
+> CR-Seg 139 70.8 2.6
+
+Table 3: Ablation study of GLCoT on the ReasonSeg validation set. RAI refers to Reasoning–Answer Incon-sistency. 
+
+rates grounding outputs, its iterative optimization process primarily focuses on refining text prompts, limiting the benefits of multi-step reasoning for precise grounding-based segmentation. As shown in Table 2, under identical experimen-tal conditions, our model achieves competitive per-formance on ReasonSeg, surpassing the previous single-step state-of-the-art by 2.4% on the valida-tion set and attaining the best average results across validation and test splits. Notably, these results are attained with LoRA fine-tuning on a limited set of samples, while still maintaining competitive per-formance across both datasets. We attribute this performance to two key factors (1) attention maps serve as strong and stable priors for segmentation; (2) GLCoT mitigates the inconsistency between reasoning and final answers. 
+
+4.4 Ablation Study Ablation on the Number of Learnable Queries. 
+
+We investigate the impact of the number of learn-able queries on model performance. As shown in Figure 4, the model achieves optimal performance Points Pretraining Stage SFT Stage gIoU MLLM Conn. SAM                               
+
+> ✓✓✓✓✓70.8
+> ×✓✓✓✓68.5
+> ✓×✓✓✓67.4
+> ✓✓✓×✓64.9
+> ✓---✓55.9
+> ✓✓✓✓-57.2
+
+Table 4: Ablation study on the training stages and components of CR-S EG on ReasonSeg Val. − denotes that the corresponding stage is skipped entirely. 
+
+when the number of learnable queries is set to 64. However, as the number of learnable queries in-creases beyond this point, performance begins to degrade. We hypothesize that an excessive num-ber of queries intensifies competition among them, which in turn hinders the model’s ability to effec-tively capture salient region information. 
+
+Ablation on GLCoT. To assess the contribu-tion of GLCoT, we generate a variant CoT dataset containing only standard reasoning text (without three-step reasoning strategy) and retrain under the same SFT setting. We evaluate results on the Rea-sonSeg validation set using the modified CoT data. In addition, we adopt Qwen3.5-Plus (Qwen Team, 2026) as the evaluator (every sample flagged as in-consistent was subsequently manually verified) and introduce a new metric, RAI (Reasoning–Answer Inconsistency), 
+
+RAI = Ninconsistent 
+
+Ntotal 
+
+(15) What is most 
+
+needed on 
+
+rainy day s?            
+
+> <think> …,there is a frog holding an umbrella , …,The
+> umbrella is... The swan statue does not serve
+> a...</think><answer >[{"bbox_2d":… "point_2d": …},
+> {"bbox_2d": …, "point_2d“…}]</ answer>
+> VisionReasoner
+> CR -Seg CR -Seg
+> VisionReasoner ’s
+> incorrect
+> response
+> Extract
+> Attention
+> <thinking>Overall analysis of the image first. The image
+> shows two cartoon -style statues —a green frog and a
+> white swan —placed on a wooden deck in an outdoor se
+> tting with a grassy field and a distant wind turbine.
+> Step 1: Coarse -grained localization summary. The entir
+> e scene is outdoors, with natural elements and man -ma
+> de structures, indicating that weather protection is rel
+> evant.
+> Step 2: Medium -grained localization summary. The fro
+> g statue is the central figure, and its posture and grip
+> on the object suggest intentional use.
+> Step 3: Fine -grained localization summary. The object i
+> s a black umbrella, held open by the frog, directly impl
+> ying its purpose is to shield from rain. </thinking>
+> <answer>The object is : umbrella. The bounding box is:
+> [233, 128, 490, 463]</answer>
+> VisionReasoner
+
+Figure 5: Case study of a question where CR-S EG answers correctly while VisionReasoner fails (Reasoning: umbrella; Answer: umbrella and swan). 
+
+where Ninconsistent counts samples whose reason-ing contradicts the final answer. As shown in Ta-ble 3, without GLCoT, RAI is on par with the Vi-sionReasoner and Dr. Seg baselines. Incorporat-ing GLCoT increases gIoU by 1.7%, while reduc-ing RAI by 5.6%, demonstrating that GLCoT im-proves CR-S EG performance while mitigating rea-soning–answer inconsistency. Notably, CR-S EG 
+
+does not produce the longest outputs among the compared methods, confirming that its lower RAI is not achieved through longer responses. 
+
+Ablation on Components. Table 4 reports the ablation results on the ReasonSeg validation set. "Points" denotes the attention-map points extracted by the EAP module. MLLM, Conn., and SAM indicate whether each component is unfrozen dur-ing Stage 1, where Conn. refers to the connection module (learnable queries and the Att. Connec-tor) between the MLLM and SAM. The results show that introducing points helps the model focus on key regions and improves overall performance. Both the pretraining alignment and SFT stages are important. The pretraining alignment stage enables learnable queries to attend to salient regions and align attention maps with the SAM input space, while the SFT stage further encourages a global-to-local reasoning process, leading to significant performance gains. 
+
+5 Case Study 
+
+We present a qualitative example in Figure 5 to illustrate the robustness of CR-S EG . With GLCoT, CR-S EG maintains reasoning–answer consistency, correctly focusing on the target object despite the presence of distractors. To further stress-test this robustness, we provide the EAP module in CR-SEG with erroneous reasoning outputs generated by VisionReasoner, together with learnable queries. While this erroneous output leads VisionReasoner to produce an incorrect segmentation mask, CR-SEG still attends to the correct region and produces an accurate segmentation mask. This demonstrates that the attention-based bridge inherently captures correct visual semantics from the full MLLM re-sponse, making mask generation substantially more resilient to reasoning errors. More visualizations are provided in Appendix F 
+
+6 Conclusion 
+
+We revisit reasoning segmentation and identify two key limitations in existing methods, where IRS methods struggle with semantic alignment while ERS methods fail to preserve holistic response semantics. To address both limitations, we pro-pose CR-S EG , which uses attention maps as ex-plicit and supervisable spatial priors to reduce the alignment difficulty of IRS methods with minimal alignment training overhead while preserving holis-tic semantics in MLLM outputs. Meanwhile, we introduce GLCoT to mitigate reasoning–answer inconsistency. Experiments show that CR-S EG 
+
+achieves strong performance on reasoning segmen-tation tasks. Using MLLMs intrinsic capabilities more effectively for visual perception remains an open challenge. We hope this work serves as a use-ful foundation for future research in this direction. Ethical Considerations 
+
+Our work uses publicly available datasets and pre-trained models strictly for academic research pur-poses. We ensure that all utilized data do not contain personally identifiable information or sen-sitive social information. Potential risks mainly stem from biases inherited from pretrained MLLMs and possible misuse in surveillance-related appli-cations. 
+
+Limitations 
+
+Despite its effectiveness, CR-S EG remains depen-dent on SAM, and the attention maps supplied to SAM diverge from its native mask input format, limiting further gains. The framework also relies on the MLLM’s internal attention mechanism and still requires additional training. Future work will therefore pursue two directions. One is to explore simpler refinement strategies for segmentation. The other is to move toward methods that require less additional training of the attention pathway. 
+
+References 
+
+Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wenbin Ge, Zhi-fang Guo, Qidong Huang, Jie Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhaohai Li, Mingsheng Li, and 45 others. 2025a. Qwen3-vl technical report. 
+
+Preprint , arXiv:2511.21631. Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wen-bin Ge, Sibo Song, Kai Dang, Peng Wang, Shi-jie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, and 8 oth-ers. 2025b. Qwen2.5-vl technical report. Preprint ,arXiv:2502.13923. Nicolas Carion, Laura Gustafson, Yuan-Ting Hu, Shoub-hik Debnath, Ronghang Hu, Didac Suris, Chaitanya Ryali, Kalyan Vasudev Alwala, Haitham Khedr, An-drew Huang, Jie Lei, Tengyu Ma, Baishan Guo, Arpit Kalla, Markus Marks, Joseph Greer, Meng Wang, Peize Sun, Roman Rädle, and 19 others. 2025. Sam 3: Segment anything with concepts. Preprint ,arXiv:2511.16719. Xi Chen, Donglian Qi, and Jianxin Shen. 2019. Boundary-aware network for fast and high-accuracy portrait segmentation. Preprint , arXiv:1901.03814. Yulin He, Wei Chen, Zhikang Jian, Tianhang Guo, Wen-juan Zhou, Minglong Li, Shaowu Yang, and Wenjing Yang. 2026. Dr 2seg: Decomposed two-stage rollouts for efficient reasoning segmentation in multimodal large language models. Preprint , arXiv:2601.09981. Cheng-Yu Hsieh, Chun-Liang Li, Chih-kuan Yeh, Hootan Nakhost, Yasuhisa Fujii, Alex Ratner, Ranjay Krishna, Chen-Yu Lee, and Tomas Pfister. 2023. Dis-tilling step-by-step! outperforming larger language models with less training data and smaller model sizes. In Findings of the Association for Compu-tational Linguistics: ACL 2023 , pages 8003–8017, Toronto, Canada. Association for Computational Lin-guistics. Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. 2022. LoRA: Low-rank adaptation of large language models. In International Conference on Learning Representations .Seil Kang, Jinyeong Kim, Junhyeok Kim, and Seong Jae Hwang. 2025. Your large vision-language model only needs a few attention heads for visual ground-ing. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,pages 9339–9350. Sahar Kazemzadeh, Vicente Ordonez, Mark Matten, and Tamara Berg. 2014. Referitgame: Referring to objects in photographs of natural scenes. In Proceed-ings of the 2014 conference on empirical methods in natural language processing (EMNLP) , pages 787– 798. Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, Chloe Rolland, Laura Gustafson, Tete Xiao, Spencer Whitehead, Alexander C. Berg, Wan-Yen Lo, Piotr Dollar, and Ross Girshick. 2023. Segment anything. In Proceedings of the IEEE/CVF Interna-tional Conference on Computer Vision (ICCV) , pages 4015–4026. Xin Lai, Zhuotao Tian, Yukang Chen, Yanwei Li, Yuhui Yuan, Shu Liu, and Jiaya Jia. 2024. Lisa: Reasoning segmentation via large language model. In Proceed-ings of the IEEE/CVF conference on computer vision and pattern recognition , pages 9579–9589. Liunian Harold Li, Jack Hessel, Youngjae Yu, Xiang Ren, Kai-Wei Chang, and Yejin Choi. 2023. Sym-bolic chain-of-thought distillation: Small models can also “think” step-by-step. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 2665– 2679, Toronto, Canada. Association for Computa-tional Linguistics. Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 2023. Visual instruction tuning. In Advances in Neural Information Processing Systems , volume 36, pages 34892–34916. Curran Associates, Inc. Yuqi Liu, Bohao Peng, Zhisheng Zhong, Zihao Yue, Fanbin Lu, Bei Yu, and Jiaya Jia. 2025. Seg-zero: Reasoning-chain guided segmentation via cognitive reinforcement. Preprint , arXiv:2503.06520. Yuqi Liu, Tianyuan Qu, Zhisheng Zhong, Bohao Peng, Shu Liu, Bei Yu, and Jiaya Jia. 2026. Visionreasoner: Unified reasoning-integrated visual perception via reinforcement learning. Preprint , arXiv:2505.12081. Yi Lu, Jiawang Cao, Yongliang Wu, Bozheng Li, Licheng Tang, Yangguang Ji, Chong Wu, Jay Wu, and Wenbo Zhu. 2025. RSVP: Reasoning segmenta-tion via visual prompting and multi-modal chain-of-thought. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) , pages 14699–14716, Vienna, Austria. Association for Computational Linguistics. Junhua Mao, Jonathan Huang, Alexander Toshev, Oana Camburu, Alan L Yuille, and Kevin Murphy. 2016. Generation and comprehension of unambiguous ob-ject descriptions. In Proceedings of the IEEE con-ference on computer vision and pattern recognition ,pages 11–20. Michaël Mathieu, Camille Couprie, and Yann LeCun. 2016. Deep multi-scale video prediction beyond mean square error. In 4th International Conference on Learning Representations, ICLR 2016, San Juan, Puerto Rico, May 2-4, 2016, Conference Track Pro-ceedings .Fausto Milletari, Nassir Navab, and Seyed-Ahmad Ah-madi. 2016. V-net: Fully convolutional neural net-works for volumetric medical image segmentation. In 2016 Fourth International Conference on 3D Vi-sion (3DV) , pages 565–571. Rui Qian, Xin Yin, and Dejing Dou. 2025. Reason-ing to attend: Try to understand how< seg> token works. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition .Qwen Team. 2026. Qwen3.5: Towards native multi-modal agents. Samyam Rajbhandari, Jeff Rasley, Olatunji Ruwase, and Yuxiong He. 2020. Zero: Memory optimizations toward training trillion parameter models. In SC20: international conference for high performance com-puting, networking, storage and analysis , pages 1–16. IEEE. Hanoona Rasheed, Muhammad Maaz, Sahal Shaji, Ab-delrahman Shaker, Salman Khan, Hisham Cholakkal, Rao M. Anwer, Eric Xing, Ming-Hsuan Yang, and Fahad S. Khan. 2024. Glamm: Pixel grounding large multimodal model. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recog-nition (CVPR) , pages 13009–13018. Nikhila Ravi, Valentin Gabeur, Yuan-Ting Hu, Rong-hang Hu, Chaitanya Ryali, Tengyu Ma, Haitham Khedr, Roman Rädle, Chloe Rolland, Laura Gustafson, and 1 others. 2025. Sam 2: Segment anything in images and videos. In International Con-ference on Learning Representations , volume 2025, pages 28085–28128. Zhongwei Ren, Zhicheng Huang, Yunchao Wei, Yao Zhao, Dongmei Fu, Jiashi Feng, and Xiaojie Jin. 2024. Pixellm: Pixel reasoning with large multi-modal model. In Proceedings of the IEEE/CVF Con-ference on Computer Vision and Pattern Recognition ,pages 26374–26383. Haoxiang Sun, Tao Wang, Chenwei Tang, Li Yuan, and Jiancheng Lv. 2026. Dr. seg: Revisiting grpo training for visual large language models through perception-oriented design. arXiv preprint arXiv:2603.00152 .Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Ł ukasz Kaiser, and Illia Polosukhin. 2017. Attention is all you need. In Advances in Neural Information Pro-cessing Systems , volume 30. Curran Associates, Inc. Hao Wang, Limeng Qiao, Zequn Jie, Zhijian Huang, Chengjian Feng, Qingfang Zheng, Lin Ma, Xi-angyuan Lan, and Xiaodan Liang. 2026. X-SAM: from segment anything to any segmentation. In 
+
+Fortieth AAAI Conference on Artificial Intelligence, Thirty-Eighth Conference on Innovative Applications of Artificial Intelligence, Sixteenth Symposium on Ed-ucational Advances in Artificial Intelligence, AAAI 2026, Singapore, January 20-27, 2026 , pages 26187– 26196. AAAI Press. Song Wang, Gongfan Fang, Lingdong Kong, Xiang-tai Li, Jianyun Xu, Sheng Yang, Qiang Li, Jianke Zhu, and Xinchao Wang. 2025. Pixelthink: To-wards efficient chain-of-pixel reasoning. Preprint ,arXiv:2505.23727. Wenxuan Wang, Tongtian Yue, Yisi Zhang, Longteng Guo, Xingjian He, Xinlong Wang, and Jing Liu. 2024. Unveiling parts beyond objects: Towards finer-granularity referring expression segmentation. In 
+
+Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition (CVPR) , pages 12998–13008. Cong Wei, Yujie Zhong, Haoxian Tan, Yong Liu, Jie Hu, Dengjie Li, Zheng Zhao, and Yujiu Yang. 2025. Hyperseg: Hybrid segmentation assistant with fine-grained visual perceiver. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pat-tern Recognition (CVPR) , pages 8931–8941. Nicolai Wojke and Alex Bewley. 2018. Deep cosine metric learning for person re-identification. In 2018 IEEE Winter Conference on Applications of Com-puter Vision (WACV) , pages 748–756. Tsung-Han Wu, Giscard Biamby, David Chan, Lisa Dunlap, Ritwik Gupta, Xudong Wang, Joseph E. Gonzalez, and Trevor Darrell. 2024. See say and segment: Teaching lmms to overcome false premises. In Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition (CVPR) , pages 13459–13469. Zhuofan Xia, Dongchen Han, Yizeng Han, Xuran Pan, Shiji Song, and Gao Huang. 2024. Gsva: Gener-alized segmentation via multimodal large language models. In Proceedings of the IEEE/CVF Confer-ence on Computer Vision and Pattern Recognition (CVPR) , pages 3858–3869. Kai Ye, Xiaotong You, Jianghang Lin, Jiayi Ji, Pingyang Dai, and Liujuan Cao. 2025. Evolving, not training: Zero-shot reasoning segmentation via evolutionary prompting. Preprint , arXiv:2512.24702. Licheng Yu, Patrick Poirson, Shan Yang, Alexander C Berg, and Tamara L Berg. 2016. Modeling context in referring expressions. In European conference on computer vision , pages 69–85. Springer. Tao Zhang, Xiangtai Li, Hao Fei, Haobo Yuan, Shengqiong Wu, Shunping Ji, Chen Change Loy, and Shuicheng Yan. 2024. Omg-llava: Bridging image-level, object-level, pixel-level reasoning and under-standing. Advances in neural information processing systems , 37:71737–71767. Shijie Zhou, Viet Dac Lai, Hao Tan, Jihyung Kil, Wan-rong Zhu, Changyou Chen, and Ruiyi Zhang. 2026. Gui-aima: Aligning intrinsic multimodal attention with a context anchor for gui grounding. Preprint ,arXiv:2511.00810. Lianghui Zhu, Bin Ouyang, Yuxuan Zhang, Tianheng Cheng, Rui Hu, Haocheng Shen, Longjin Ran, Xi-aoxin Chen, Li Yu, Wenyu Liu, and Xinggang Wang. 2026. LENS: learning to segment anything with unified reinforced reasoning. In Fortieth AAAI Con-ference on Artificial Intelligence, Thirty-Eighth Con-ference on Innovative Applications of Artificial Intel-ligence, Sixteenth Symposium on Educational Ad-vances in Artificial Intelligence, AAAI 2026, Sin-gapore, January 20-27, 2026 , pages 13952–13960. AAAI Press. 
+
+A Reasoning Segmentation Task 
+
+Reasoning segmentation aims to segment target ob-jects in an image according to complex language instructions that require visual-textual reasoning. Given an image and a reasoning-oriented query (e.g., “the equipment for sweeping away rain on rainy days.”), the model is required to identify the target object through compositional reasoning, and then output its corresponding segmentation mask. Compared with referring expression segmentation, where the language expression usually directly specifies the target object, reasoning segmentation involves more implicit and complex instructions that require the model to jointly understand both visual context and textual semantics to infer the correct target. 
+
+B Detailed Algorithm and Formulations 
+
+B.1 EAP Module Workflow 
+
+Algorithm 1 outlines the EAP procedure. (i) In Steps 1–3, we extract the columns corresponding to the N learnable queries from the attention map 
+
+AL′ 
+
+> Q
+
+and retain the rows associated with image patches. We then aggregate the N query channels by averaging and resize the result to the resolu-tion of the SAM input image Isam , yielding the final attention map Att ∈ RH×W . The attention 
+
+Algorithm 1 Extract Attention Maps and Points (EAP) 
+
+Require: Attention logits AL′ 
+
+> Q
+
+∈ RL×K×K ; num-ber of learnable queries N ; number of image patches Ip; SAM image Isam ∈ RH×W ; con-nector network Connector ; ratios ρf p , ρ bp ∈
+
+(0 , 1) ; point numbers Npos , N neg 
+
+Ensure:  
+
+> 1:
+
+A′L′
+
+> Q
+
+= 1
+
+> L
+
+PLl=1 AL′ 
+
+> Q
+
+[l, : Ip, −N :]  
+
+> 2:
+
+Att ← Resize (A ′L′
+
+> Q
+
+, (H, W ))  
+
+> 3:
+
+MP = Connector (Att ) 
+
+> 4:
+
+p ← flatten( σ(Att ))  
+
+> 5:
+
+(v, index ) ← SortDesc( p) 
+
+> 6:
+
+Mtotal ← PH×Wt=1 vt, Ck ← Pkt=1 vt 
+
+> 7:
+
+kf g = min {k | Ck ≥ ρf p · Mtotal } 
+
+> 8:
+
+kf g = max( kf g , N pos ) 
+
+> 9:
+
+If g ← { index 1, . . . , index kf g } 
+
+> 10:
+
+Ppos = {vmax } ∪ exp   vi
+
+> τ
+
+ , v i ∈ I f g  
+
+> 11:
+
+kbg = min {k | Pki=1 vHW −i+1 ≥ ρbp ·
+
+Mtotal } 
+
+> 12:
+
+kbg = min( kbg , N neg ) 
+
+> 13:
+
+Ibg ← { index HW −kbg +1 , . . . , index HW } 
+
+> 14:
+
+Pneg ← RandomSample (Ibg , N neg ) 
+
+> 15:
+
+return MP , P pos , P neg 
+
+map is used to generate two types of SAM inputs: a mask prior and point prompts. The mask prior 
+
+MP is obtained by passing Att through a four-layer convolutional connector that preserves the input-output dimensionality. (ii) In Steps 4–6, we sort all values in Att in descending order, compute the total attention mass Mtotal , and compute the cumulative sum Ck of the top-k values. (iii) In Steps 7–10, we select the top-k largest points to form the foreground region, where k is the smallest value such that Ck exceeds ρf p · Mtotal while en-suring that k is no smaller than Npos . The positive point set Ppos includes the maximum-value point 
+
+vmax = arg max v, and the remaining Npos − 1
+
+points are sampled according to attention-based probabilities. (iv) The selection process for nega-tive points is analogous. In Steps 11–14, a back-ground region is determined based on the cumula-tive value ρbp · Mtotal . Unlike positive points, neg-ative points are not sampled according to attention probabilities; instead, Nneg points are uniformly sampled from this background region. C Data Generation Process 
+
+C.1 FReasonSeg 
+
+Unlike ReasonSeg benchmarks, most images in FReasonSeg contain two or more visually similar target objects, requiring the model not only to rea-son but also to localize the correct instance based on fine-grained attribute descriptions, such as dis-tance and size. We use Qwen3-VL-235B-A22B-Instruct to con-struct the FReasonSeg dataset. We categorize the difficulty of each question based on the number of same-category objects in an image, and design different prompts accordingly to guide the model in generating questions. The detailed prompts are shown in Figures 11, 12, 13, and 14. Our construction process is divided into three stages, as shown in Figure 6. (1) Reasoning-level annotation. For each sam-ple (image, category, target box) in RefCOCOm, we use Qwen3-VL-235B-A22B-Instruct to ana-lyze the image and estimate the number of same-category objects. We then categorize reasoning difficulty into L1 (only one valid same-category ob-ject), L2 (two same-category objects, distinguish-able by a single feature), and L3 (three or more same-category objects requiring multi-attribute composition). (2) Question generation. We generate one ques-tion per sample conditioned on the assigned level, covering semantic reasoning for L1, single-feature relational discrimination for L2, and multi-feature compositional reasoning for L3. (3) Hunman check. After data construction, we perform a multi-stage human check process to ensure the quality and usability of the dataset: 1. Candidate filtering: We first remove all non-interrogative sentences. For the remaining samples, we further check whether each ques-tion is complete and well-formed. 2. Correctness filtering: After the initial screen-ing, we verify the consistency between each question and its corresponding label to prevent erroneous annotations from affecting evalua-tion results. 3. Quality inspection: Finally, we assess whether each question satisfies the require-ments of its designated difficulty level. Sam-ples that fail to satisfy the intended reasoning difficulty are re-annotated to ensure consis-tency, producing the final benchmark. After filtering, the final FReasonSeg benchmark contains 283 samples in total, including L1 = 24, L2 = 125, and L3 = 134. The relatively small num-ber of L1 samples is due to the fact that L1 does not contain same-category objects and therefore does not directly evaluate the model’s ability to distin-guish visually similar instances. We include only a limited number of L1 cases for completeness and to maintain distributional coverage, while priori-tizing L2 and L3, which focus on same-category discrimination. This benchmark evaluates the visual understand-ing ability of reasoning-based segmentation mod-els. Given an image and a question, most images contain same-category objects, and the model is re-quired to distinguish them based on attributes such as color and spatial location. Unlike ReasonSeg, which relies heavily on strong textual reasoning ability, this benchmark places greater emphasis on joint visual-language understanding before per-forming reasoning-based segmentation. We also provide overall statistics, as illustrated in the exam-ples in Figure 7. Furthermore, to provide a more intuitive illustra-tion of the characteristics of our dataset, we visual-ize several examples from the FReasonSeg dataset, as shown in Figure 10. 
+
+C.2 GLCoT data 
+
+We construct our training data based on the Reason-Seg Train dataset, where Qwen3-VL-235B-A22B-Instruct is employed as the teacher model to gen-erate reasoning chains. The detailed prompts used for data generation are presented in Figure 15 and 16. Since a single image in the ReasonSeg Train set may correspond to multiple questions, we select up to three questions for each image to increase the diversity and richness of the training data. During the data generation process, each sample consists of an original image paired with a corre-sponding question. To further improve the accuracy and reliability of the generated reasoning chains, we additionally provide the teacher model with the segmentation mask overlaid on the original image, enabling the model to better perceive the target region and produce more precise reasoning trajec-tories. Multi -feature reasoning 
+
+blue bus 
+
+Image  Category 
+
+[146,194, 
+
+299,330] 
+
+Bounding 
+
+box 
+
+Step1 ：Judgment reasoning level 
+
+Raw data 
+
+blue bus 
+
+> Level Judgment criteria
+> only one target category
+> in the image.
+> --------------------------------
+
+L1 
+
+> Two target category in
+> the image.
+> Multiple target category
+> in the image.
+
+L2 
+
+L3     
+
+> "_analysis" : {
+> "same_class_count ":2,
+> "reasoning_level ":2,
+> “reasoning” :“There are
+> two buses in the image …
+> "distinguishing_features ": [
+> "color" ,
+> "horizontal_position "
+> ]
+> },
+> "_ reasoning_level ":2
+
+Multi -feature reasoning 
+
+Step2 ：Question generation  
+
+> Step1 output
+> Raw data
+> Level Question
+> Category
+> L1
+> L2
+> L3
+> Semantic reasoning
+> Single feature with
+> relational reasoning
+
+_________________ 
+
+_________________ 
+
+_________________ 
+
+> Multi -feature
+> reasoning
+
+____ 
+
+____ 
+
+____ 
+
+____ 
+
+Step 3：Human check 
+
+> Which bus is
+> positioned to
+> the right of the
+> blue bus?
+
+Figure 6: Overview of the construction of FReasonSeg. 
+
+Figure 7: Word cloud visualization of the Top-220 most frequent words in FReasonSeg. 
+
+D More Implementation Details 
+
+All experiments were conducted on 2 NVIDIA A6000 GPUs. We adopted Qwen3-VL-4B as the reasoning model and SAM3 as the segmentation model. We employ DeepSpeed(Rajbhandari et al., 2020) to reduce GPU memory consumption during training. The total computational cost is approxi-mately 56 GPU hours. 
+
+Pretraining Alignment Stage. The objective of this stage is to train the model to extract attention maps and align them with the input space of the segmentation model. The main experimental set-tings are summarized in Table 5. During this stage, the training data are derived from the RefCOCO series (Yu et al., 2016; Mao et al., 2016). The loss curve over the entire training process is illus-trated in Figure 8. Training already converges at 3k steps, achieving gIoU scores of 70.2 and 63.1 
+
+Table 5: Pretraining alignment stage experimental set-tings. 
+
+config 
+
+epochs 2batch size 2gradient accumulation steps 4learning rate 3 × 10 −5
+
+scheduler Cosine deepspeed Zero-2 number of query 64 lora r 16 lora alpha 32 target modules q, k, v, o total training parameters 16M 
+
+λ1, λ2 1, 1 
+
+λdice , λbce , λbound 1, 2, 1 on ReasonSeg Val and Test, respectively. To obtain better overall performance, we still adopt the final checkpoint for second stage training. 
+
+SFT Stage. During this stage, we distill the reason-ing trajectories (GLCoT) from Qwen3-VL-235B-A22B-Instruct to guide the model’s reasoning pro-cess. Detailed experimental configurations are pre-sented in Table 6. 
+
+Evaluation Details. All experiments were con-ducted on 1 NVIDIA A6000 GPU. For FReason-Seg, all evaluated models use their publicly re-leased checkpoints. For ReasonSeg, results marked with ∗ are obtained by evaluating the publicly re-0 4k  8k 12k 16k 
+
+> 4
+> 2
+> Step:700 Step:3000 Figure 8: Loss dynamics throughout the pretraining alignment process. Table 6: SFT stage experimental settings.
+
+config 
+
+epochs 10 batch size 1gradient accumulation steps 4learning rate 1 × 10 −5
+
+scheduler Cosine deepspeed Zero-2 number of query 64 lora r 16 lora alpha 32 target modules q, k, v, o, gate, up, down total training parameters 37M 
+
+λsft 1
+
+λ1, λ2 2, 1 
+
+λdice , λbce , λbound 1, 2, 1 leased checkpoints under the same experimental settings on all samples with available masks in the ReasonSeg val and test splits. For LENS, we adopt the version equipped with CoT reasoning. 
+
+E Additional Experiments 
+
+As shown in Table 7, we scale the reasoning model from 4B to 8B. The results show improvements on two datasets, demonstrating the model’s scaling                
+
+> Model ReasonSeg FReasonSeg
+> Val Test
+> Qwen3-VL-4B+SAM3 70.8 64.8 79.85 Qwen3-VL-8B+SAM3 69.2 64.9 81.42
+> Qwen3.5-4B+SAM3 72.0 68.0 76.30 Qwen3-VL-4B+SAM2 70.8 65.3 79.23
+> Table 7: Experiments on different model scaling and segmentation backbone.
+
+capability. Substituting the base MLLM with Qwen3.5-4B (Qwen Team, 2026), which uses Hybrid Attention, further reveals that restricting attention extraction to only the eight full-attention layers produces more concentrated attention maps. This benefits Reason-Seg (where same-category discrimination is unnec-essary) but degrades performance on FReasonSeg, which requires distinguishing visually similar ob-jects. Finally, replacing SAM3 with SAM2 results in a 0.62% drop on FReasonSeg and a 0.5% gain on ReasonSeg-Test. Overall, the impact remains relatively small. 
+
+F Additional Visualizations 
+
+F.1 Additional Case Study 
+
+To further demonstrate the practical effectiveness of our framework in both reasoning and segmen-tation, we present two representative real-world examples in Figure 17. These cases highlight both the segmentation accuracy of CR-S EG and the co-herence of its progressively refined reasoning pro-cess. The visualizations show that CR-S EG can perform fine-grained perceptual understanding and step-by-step reasoning, enabling accurate target lo-calization under complex visual conditions. 
+
+F.2 Progressive Attention Evolution in GLCoT 
+
+To verify that GLCoT drives progressive visual reasoning, we visualize the attention associated with the corresponding “Step 1”, “Step 2”, and “Step 3” tokens generated within the <thinking> 
+
+reasoning block. As shown in Figure 9, attention systematically narrows from global scene regions in early steps to focused target boundaries in later steps, confirming that GLCoT induces a consistent coarse-to-fine visual grounding trajectory. This Image  Step1  Step2  Step3  Learnable 
+
+> queries
+
+Figure 9: Visualization of progressive attention refinement in GLCoT. We extract attention from the corresponding "step" tokens during reasoning, and from the learnable queries after the full response is generated. 
+
+demonstrates that GLCoT guides the model to first observe the object globally and then progressively determine the final target. Level : L1  
+
+> Question : What food
+> item, sliced into
+> triangular portions and
+> covered in cheese and
+> vegetables, occupies
+> the upper right area of
+> the image?
+> Level : L2
+> Question : Which
+> cake is the darker
+> brown swirled piece?
+> Level : L2
+> Question : Which
+> car is positioned
+> directly behind the
+> person sitting on
+> the snowboard?
+> Level : L3
+> Question : Which
+> bird is the leftmost
+> one?
+> Level : L2
+> Question : Which
+> bear is standing
+> further back near
+> the rocky bank?
+> Level : L3
+> Question : Which
+> toothbrush is
+> situated in the
+> immediate
+> foreground?
+
+Figure 10: Visualization of examples from the FReasonSeg dataset. 
+
+Please analyze this image, focusing on objects of category: {target_category} .The target object has bounding box coordinates (normalized to 0-1000): {normalized_bbox} .Please answer the following: 1. How many {target_category} objects are in the image? (count only complete, clearly visible ones) 2. If only one, set reasoning_level to 1.3. If two, set reasoning_level to 2, and describe what single feature can distinguish them (e.g., color, left/right position, size). 4. If three or more, set reasoning_level to 3, and describe what combination of features is needed to distinguish the target. 
+
+Output JSON format: 
+
+{"same_class_count": number, "reasoning_level": 1/2/3, "reasoning": "explanation", "distinguishing_features": ["feature1", "feature2"] }
+
+Output JSON only, no other text. 
+
+Figure 11: Judgment reasoning level prompt 
+
+Generate a complex question for this target. Target category: {category_name} .Target location: bounding box (normalized to 0-1000) {normalized_bbox} 
+
+Requirements: 1. Must be a question ending with a question mark 2.The target object indicated by the question must be {category_name} 
+
+3. Output only the question itself Example: "What object in the picture can help humans eat?","Which part of the picture represents the waste discharged by the factory?" Question: {question} 
+
+Figure 12: Generate Question Prompt(leval-1) Generate a distinguishing question for this target. Target category: {category_name} .Target location: bounding box (normalized to 0-1000) {normalized_bbox} 
+
+There are 2 {category_name} objects in the image, need to distinguish using a single feature. Available features: {features_str} 
+
+Requirements: 1. Must be a question ending with a question mark 2. Use a single feature (e.g., left, red, large) to distinguish, but try to make it more complex(e.g., distance, relative to the position of other objects) 3. Output only the question itself Example: "Which hot is on the left?","Which one is the hat closest to the person" Question: {question} 
+
+> Figure 13: Generate Question Prompt(2)
+
+Generate a complex reasoning question for this target. Target category: {category_name} .Target location: bounding box (normalized to 0-1000) {normalized_bbox} 
+
+There are 3 or more {category_name} objects in the image, need multiple features to distinguish. Available features: {features_str} 
+
+Requirements: 1. Must be a question ending with a question mark 2. Use multiple feature combinations (e.g., white one on the left, largest in the middle) to precisely locate 3. Description should require multi-step reasoning 4. Output only the question itself Example: "What is the white hot on the left?" Question: {question} 
+
+> Figure 14: Generate Question Prompt(leval-3)
+
+Note: I have highlighted the correct area in the image with a green overlay and green contour. Use this visual cue to guide your reasoning and accurately generate all bounding boxes. However, in your reasoning chain (COT and step_cot), do NOT mention that you saw a highlighted region, green overlay, or green contour. Instead, describe your reasoning as if you identified the object purely from visual analysis. Structure: 
+
+1. First, provide an overall analysis of the entire image (NOT labeled as a step) 2. Then provide Step 1: Coarse-grained localization – summarize the general area 3. Then provide Step 2: Medium-grained localization – narrow down the region 4. Then provide Step 3: Fine-grained localization – pinpoint the exact object 5. Finally, provide the answer with bounding boxes 
+
+IMPORTANT: The COT (Chain of Thought) must be concise, logical, and within 500 words. Focus on key observations and direct reasoning. Avoid unnecessary elaboration. Example Query: What is the object that the person in the picture is holding onto, while taking his or her dog for a walk? {"chain_of_thought": "Let 's analyze... I notice... Step1: ... Step2: ... Step3: ... This is clearly a leash...", "reasoning_steps": [ {"step": 1, "observation":"Person walking with dog in outdoor scene", "inference":"This is a dog walking scenario" }, {"step": 2, "observation":"Linear object visible from hand to dog", "inference":"Most likely a leash given the context" }, {"step": 3, "observation":"Object connects to dog 's collar area", "inference":"Confirmed as leash -- a tether connecting handler to dog" }], "final_answer": "leash" }COT Output Format <thinking> The image shows a person walking a dog in an outdoor park setting. The person is holding something that connects to the dog. Step 1: Coarse-grained localization summary. The coarse scene shows a typical dog walking scenario in a park. Step 2: Medium-grained localization summary. Focusing on the connection between the person 's hand and the dogs reveals two linear objects. Step 3: Fine-grained localization summary. This object extends from the hand to the two dogs ' collar, clearly identifying it as two leashes used for walking the dog. </thinking> <answer> The object is: leashes. The bounding box is: [43, 32, 178, 109], [352, 324, 747, 790] </answer> 
+
+Figure 15: Generating GLCoT Data Prompt(1). Note: In the example above, there are two objects related to the problem. If there is only one object, the following format should be output: <answer> The object is: object_name. The bounding box is: [x_min, y_min, x_max, y_max] </answer> Required JSON Format {"chain_of_thought": "Overall image analysis. Step 1: Coarse summary. Step 2: Medium summary. Step 3: Fine summary.", "reasoning_steps": [ {"step": 1, "observation": "...", "inference": "..." }, {"step": 2, "observation": "...", "inference": "..." }, {"step": 3, "observation": "...", "inference": "..." }], "final_answer": "object_name", "cot": "<thinking>\n Overall analysis of the image first. Then Step 1: Coarse-grained localization summary. Step 2: Medium-grained localization summary. Step 3: Fine-grained localization summary.\n </thinking>\n <answer>\n The object is: object_name.The bounding box is: [x_min, y_min, x_max, y_max]\n </answer>" }REMEMBER: 
+
+1. First analyze the entire image (overall context, not a step) 2. Then provide Step 1, Step 2, and Step 3 as summaries of the reasoning_steps 3. Keep the COT concise (under 500 words), logical, and focused on key observations only 4. Output the bounding boxes of all objects that satisfy the problem as required 5. CRITICAL: The COT and step_cot MUST NOT mention any ´highlighted region ´, ´marked areaór similar phrases. Describe your reasoning purely based on visual analysis of the image. 
+
+Figure 16: Generating GLCoT Data Prompt(2). Which cup is the closest to 
+
+you? 
+
+<thinking> 
+
+Overall analysis of the image first. The image shows 
+
+a tabletop with two cups and their respective saucers, 
+
+along with a small plate holding a pastry. The cup in 
+
+the foreground is centrally positioned and visually 
+
+dominant, indicating it is the closest to the viewer. 
+
+Step 1: Coarse -grained localization summary. The 
+
+entire scene is set on a wooden surface with scattered 
+
+items, including two cups and one plate. Step 2: 
+
+Medium -grained localization summary. The cup in 
+
+the foreground is on a blue saucer , accompanied by a 
+
+spoon and a small rectangular card. 
+
+Step 3: Fine -grained localization summary. The cup 
+
+is the most prominent object in the frame, with no 
+
+other objects partially obscuring it, confirming its 
+
+proximity to the viewer. 
+
+</thinking> 
+
+<answer> 
+
+The object is : cup . The bounding box is:[450, 246, 
+
+812, 639] 
+
+</answer> 
+
+Which object was dropped 
+
+by the cat? 
+
+<thinking >
+
+The image shows a domestic scene with a cat on 
+
+a chair, and a pile of fabric items on the floor . The 
+
+cat’s posture and proximity to the pile suggest it 
+
+may have interacted with them. Step 1: Coarse -
+
+grained localization summary. The central area of 
+
+interest is the floor near the chair, where a
+
+disorganized heap of textiles lies . Step 2: Medium -
+
+grained localization summary. Within this heap, 
+
+one item appears distinctly folded and slightly 
+
+elevated compared to others , indicating recent 
+
+handling or placement. 
+
+Step 3: Fine -grained localization summary. This 
+
+item’s shape, fold lines, and position relative to 
+
+the cat confirm it is the object dropped by the 
+
+cat — likely a blanket or towel .
+
+</ thinking >
+
+<answer >
+
+The object is : blanket . The bounding box is:[389, 
+
+434, 760, 746 ]
+
+</ answer> Figure 17: Visualization of reasoning segmentation. The MLLM first generates a GLCoT, from which the learnable queries extract attention maps. After being processed by the EAP module, the segmentation model produces the final segmentation results.

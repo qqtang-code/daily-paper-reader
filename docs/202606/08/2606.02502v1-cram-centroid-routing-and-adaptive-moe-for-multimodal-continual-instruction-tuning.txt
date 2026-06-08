@@ -1,0 +1,880 @@
+Title: CRAM: Centroid-Routing and Adaptive MoE for Multimodal Continual Instruction Tuning
+
+URL Source: https://arxiv.org/pdf/2606.02502v1
+
+Published Time: Tue, 02 Jun 2026 03:07:11 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# CRAM : Centroid-Routing and Adaptive MoE for Multimodal Continual Instruction Tuning 
+
+Jun-Tao Tang * 2 , Zhen-Hao Xie * 1,2 , Yu-Cheng Shi 2, Da-Wei Zhou 1,2,† 
+
+1 School of Artificial Intelligence, Nanjing University, China 
+
+2 State Key Laboratory of Novel Software Technology, Nanjing University, China 
+
+* Equal contribution † Corresponding Author 
+
+{juntao.tang, 231250034}@smail.nju.edu.cn, {wenzh,zhoudw}@lamda.nju.edu.cn 
+
+Abstract 
+
+Multimodal Large Language Models (MLLMs) unify heterogeneous vision-language tasks un-der a shared generative framework via instruc-tion tuning, yet real-world deployment de-mands continuous capability expansion, mak-ing Multimodal Continual Instruction Tuning (MCIT) essential. Existing methods either up-date all tasks with a shared parameter set or allocate dedicated modules for each new task. Shared updates force heterogeneous tasks to compete, causing forgetting of learned capabil-ities. Conversely, isolated expansion prevents interference but severely limits parameter effi-ciency over long task streams. To address this dilemma, we propose C RAM ( Centroid Routing A daptive M oE). Specifically, by isolating task-specific patterns into independent modules, CRAM mitigates catastrophic forgetting across tasks. To further boost parameter efficiency, we utilize adaptive-rank instantiation to iden-tify the capability gap between existing expert capability and new task demands, and dynam-ically allocate only the necessary parameters. To ensure stable reuse among tasks, centroid-guided routing recognizes and activates exist-ing experts’ capabilities, while an orthogonality penalty confines new updates to task-specific directions, preventing re-learning general ca-pability. Extensive experiments across diverse benchmarks consistently demonstrate its supe-riority over existing methods. 
+
+1 Introduction 
+
+Recently, multimodal Large Language Models (MLLMs) (Bai et al., 2023; Liu et al., 2023; Zhu et al., 2023) have achieved remarkable capabili-ties through multimodal instruction tuning (Zhang et al., 2023a; Tong et al., 2025; Che et al., 2026). By reformulating heterogeneous vision-language problems into a unified generative framework, in-struction tuning enables MLLMs to generalize across diverse downstream applications (Tu et al., Letter Text Short Yes/No             
+
+> Test format
+> Letter
+> Text
+> Short
+> Yes/No
+> Train format  +36.3 -8.2 -15.4 -50.9
+> -51.9 +19.5 +0.2 -50.2
+> -3.8 +5.0 +29.0 -8.6
+> -16.7 +9.3 -12.5 +25.8
+> Change vs. zero-shot
+> 50
+> 25
+> 0
+> 25
+> 50
+> accuracy vs. zero-shot (pp)
+
+(a) Change vs. Zero-shot Letter Text Short Yes/No              
+
+> Test format
+> Letter
+> Text
+> Short
+> Yes/No
+> Train format  0.0 0.1 28.4 31.0
+> 68.8 6.8 9.0 78.6
+> 36.2 4.3 0.7 19.1
+> 8.3 20.1 41.2 0.0
+> Format-wrong ratio
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Format-wrong ratio (%)
+
+(b) Format-wrong ratio 
+
+Figure 1: Format-level interference. (a) Accuracy change relative to zero-shot for each train-test format-pair. (b) Ratio of format wrong but semantically correct responses among errors. 2 4 10 20 30 40 
+
+> Training progress (/k samples)
+> 40
+> 45
+> 50
+> 55
+> 60
+> Score on Flickr30k (%)
+> Zero-shot 41.44
+> Flickr30k-only 57.51
+> General visual
+> capability reuse
+> (+10.0)
+> Task-specific visual
+> knowledge gap
+> (-6.1)
+> During VizWiz training
+
+Figure 2: Transfer on Flickr30k during VizWiz training. 
+
+2025; Guo et al., 2025c; Kim et al., 2026), from vi-sual reasoning to document understanding. While standard MLLM optimization relies on a static multitask regime that assumes joint data availabil-ity (Liu et al., 2023; Jiang et al., 2026), real-world deployment rarely satisfies this premise: tasks ar-rive sequentially, inherently introducing distribu-tion shifts across both instructional formats and visual domains. As a result, a practically useful MLLM must continually acquire new capabilities, yet sequential adaptation inherently risks catas-trophic forgetting (Zhou et al., 2024a; Kirkpatrick et al., 2017; Rebuffi et al., 2017; Ge et al., 2025), where gradient updates for new tasks overwrite established representations and degrade historical performance. To enable continuous capability ac-quisition while mitigating this degradation, multi-modal continual instruction tuning (MCIT) (Chen et al., 2024; Huo and Tang, 2025; Qiao et al., 2024) 1
+
+> arXiv:2606.02502v1 [cs.CL] 1 Jun 2026
+
+has emerged as a critical paradigm. Existing MCIT methods mainly consider shared adaptation or parameter isolation. Shared ap-proaches (Chen et al., 2025; Marouf et al., 2025; Wang et al., 2025c) update all tasks within a sin-gle parameter set, causing new updates to over-write learned patterns. Conversely, isolation meth-ods (Guo et al., 2025b; Jia et al., 2025) assign sepa-rate modules to each task, leading to unbounded pa-rameter growth and preventing general ability from being shared across tasks. Nevertheless, they over-look a key balance: task-specific patterns must be isolated to avoid interference, while general knowl-edge should be preserved for reuse. To identify what requires isolation and what can be shared, we design controlled experiments that fix one modality while varying the other. First, to isolate the impact of instruction formats, we use the ArxivQA (Li et al., 2024) dataset to generate four response variants by altering the instruction-response convention. For example, we convert a multiple-choice question into a short-answer for-mat by extracting the correct option’s content and adjusting the prompt accordingly (see Appendix B for details). We then fine-tune the model on one variant and evaluate it across the others. As shown in Fig. 1a, training on any single format severely degrades performance on the rest: the model gen-erates semantically accurate answers but fails to adhere to the required output conventions (Fig. 1b). This confirms that heterogeneous instruction for-mats inherently trigger severe interference, acting as a primary factor of catastrophic forgetting in shared-parameter regimes. We further examine how visual representations behave across distinct domains. Specifically, we se-lect two datasets with the same answer format but non-overlapping visual content: VizWiz (Gurari et al., 2018) and Flickr30k (Plummer et al., 2015). Throughout the training process on VizWiz, we monitor the model’s performance on Flickr30k. As shown in Fig. 2, the accuracy stabilizes above the zero-shot baseline but remains below direct fine-tuning on Flickr30k. These results confirm that vi-sual capabilities are partly transferable across tasks, while task-specific ability learning remains neces-sary. Critically, this reveals a fundamental limi-tation of isolation methods: by segregating tasks into independent modules, it inherently blocks the reuse of transferable capabilities, forcing redundant learning and limiting parameter efficiency. Collectively, these findings demonstrate that instruction conventions are highly sensitive pat-terns requiring isolation, whereas visual capabil-ities are partially transferable and thus can be reused. Guided by this insight, we propose C RAM 
+
+(Centroid Routing Adaptive MoE). It groups in-structions by similarity into separate clusters, iso-lating conflicting updates to prevent format inter-ference. Within each cluster, adaptive-rank instan-tiation filters out directions already mastered by historical experts, allocating parameters strictly to unmet capability gaps, naturally bounding model growth. Centroid-guided routing further stabilizes expert reuse by directing inputs to experts with aligned capabilities, while an orthogonality penalty confines new updates to missing patterns, prevent-ing them from overwriting historical knowledge. Together, C RAM achieves state-of-the-art perfor-mance by balancing format isolation with visual reuse, without compromising parameter efficiency. 
+
+2 Related Work 
+
+Continual instruction tuning (Chen et al., 2024; Roth et al., 2024; Jin et al., 2025) is essential for de-ploying MLLMs in open-world settings (Liu et al., 2025b). Existing methods predominantly adopt one of two structural paradigms: shared adapta-tion consolidates trainable parameters into a unified subspace (e.g., LoRA/MoE-LoRA) to maximize plasticity, often supplemented by replay (Li et al., 2025; Lee et al., 2025; Yu et al., 2025) or regu-larization (Zeng et al., 2025; Liu et al., 2025a), yet inevitably entangles heterogeneous instruction patterns and triggers gradient interference (Wang et al., 2023; Cao et al., 2024); parameter isolation 
+
+mitigates interference by allocating task-dedicated modules (Huai et al., 2025; Wang et al., 2025a; Yu et al., 2025), preserving stability but fractur-ing reusable visual competencies and incurring linear parameter growth. Despite their divergent implementations, both paradigms frame sharing and isolation as mutually exclusive. This over-looks the heterogeneous structure of multimodal knowledge (Marouf et al., 2025), where some in-structional patterns require isolation while transfer-able visual representations should be systematically reused (Zhao et al., 2025; Wang et al., 2025b). 
+
+3 Preliminaries 
+
+Multimodal Continual Instruction Tuning (MCIT). We consider an MLLM (Liu et al., 2023) comprising a vision encoder ϕ(·), a multimodal 2Text      
+
+> Encoder
+> Cluster
+> Cluster
+> Cluster
+> Consine Similarity Select
+> Update Cluster
+> Stage 1: Spectral Threshold
+
+## …
+
+Semantic Group Routing     
+
+> Routed to this group
+> Buffer Expert1 Expert2
+
+Adaptive -Rank Instantiation            
+
+> SVD
+> Span
+> New Expert
+> Add to expert pool
+> Visual
+> Encoder
+> Gaussian RBF Routing
+> Capability Space
+> Cram Orthogonal guidance
+> New Expert
+> Past Expert
+> Aggregation
+> Stage 2: Orthogonality Filtering
+
+Centroid -Guided Orthogonal Learning 
+
+> No overwrite
+
+Figure 3: Overview of C RAM . C RAM decouples via (i) Semantic Group Routing that group instructions with semantic similarity to protect output conventions, (ii) Adaptive-Rank Instantiation that allocates parameters exclusively to capability gaps via orthogonality filtering, and (iii) Centroid-Guided Orthogonal Learning to stabilize expert activation while confining new updates to orthogonal subspaces. 
+
+projector π(·), and an LLM backbone f (·). To en-able continual adaptation (Chen et al., 2024; Wang et al., 2025a), we inject lightweight modules into the LLM (Zhu et al., 2025), with trainable parame-ters denoted as θ. Let {D t}Tt=1 denote a sequential task stream, where Dt = {(vi, q i, y i)}nt 
+
+> i=1
+
+contains images vi, instructions qi, and response sequences 
+
+yi = ( yi, 1, . . . , y i,L i ). Each input is encoded as 
+
+zi = [ π(ϕ(vi)); Emb (qi)] , where Emb (·) is the to-ken embedding layer of f . The model generates responses autoregressively, factorizing the condi-tional probability as pθ(yi | zi) = QLi 
+
+> j=1
+
+pθ(yi,j |
+
+zi, y i,<j ). The negative log-likelihood loss is de-fined as: 
+
+LNLL = −
+
+> Li
+
+X
+
+> j=1
+
+log pθ(yi,j | zi, y i,<j ). (1) The learning objective at task t is formulated as: 
+
+θ∗ 
+
+> t
+
+= arg min  
+
+> θ
+
+E(vi,q i,y i)∼D ≤t
+
+LNLL (θ; zi, y i),
+
+where D≤t = Stk=1 Dk denotes all data observed up to task t. In rehearsal-free MCIT setting (Chen et al., 2024; Xie et al., 2026), we can only access Dt
+
+when learning task t. This mismatch between the global cumulative objective and the locally avail-able data inherently drives catastrophic forgetting. 
+
+MoE with LoRA Experts. In conventional MoE-LoRA designs, the backbone remains frozen while a pool of trainable LoRA experts is injected into specific modules (Liu et al., 2025b; Zhu et al., 2025). Let W0 denote the frozen weight and 
+
+∆Wi = BiAi be the low-rank update for the i-th expert. Given an input h ∈ Rd at a layer, the layer output is computed as: 
+
+h′ = W0h+
+
+> N
+
+X
+
+> i=1
+
+ωi∆Wih = W0h+
+
+> N
+
+X
+
+> i=1
+
+ωiBiAih, 
+
+where ωi = Softmax τ (WGh)i denotes the rout-ing weight for expert i. Here, WG ∈ RN ×d is the linear gating matrix and τ is the temperature. 
+
+Discussion. While effective in static environments, the linear gating degrades under continual instruc-tion tuning with multiple tasks, since a single router is forced to simultaneously satisfy conflicting for-mat isolation and visual reuse objectives. 
+
+4 Method 
+
+To address the isolation-sharing dilemma, we fol-low a straightforward intuition: by isolating con-flicting instruction formats first, we can safely reuse general ability and focus parameter allocation solely on the specific gaps that truly need them. 
+
+4.1 Group-Isolated Semantic Routing 
+
+In a continual instruction stream, tasks arrive se-quentially with heterogeneous formats. Under the shared adaptation paradigm, unified optimization entangles gradient flows, triggering instruction-level interference. Resolving this requires grouping instructions by semantic intent, isolating conflict-ing updates to prevent cross-format interference. 3To implement this, we employ a frozen CLIP (Radford et al., 2021) text encoder ψ(·) to extract instruction embeddings, yielding normal-ized vectors e(q) = ψ(q)/∥ψ(q)∥2. We maintain a cluster center cg for each semantic group by av-eraging the instruction embeddings e(q) routed to it, while tracking the corresponding sample count 
+
+ng. Semantic affinity to that group is subsequently measured via cosine similarity sg(q) = c⊤   
+
+> ge(q)
+> ∥cg∥2
+
+.Absolute similarity scores fluctuate unpre-dictably under distribution shifts. We instead adopt a relative confidence margin. Let s(1) (q) and 
+
+s(2) (q) denote the highest and second-highest co-sine similarities. The assignment margin is: 
+
+∆( q) = s(1) (q) − s(2) (q). (2) If ∆( q) > θ , q is confidently assigned to the best-matching cluster g∗ = g(1) ; otherwise, we instanti-ate a new center cnew ← e(q). Then, the matched cluster’s center is updated via: 
+
+cg∗ ← ng∗ cg∗ + e(q)
+
+ng∗ + 1 , ng∗ ← ng∗ + 1 . (3) This applies a diminishing step size that naturally attenuates transient noise as clusters expand, en-suring routing boundaries evolve smoothly. By grouping instructions with semantic similarity, we protect output conventions, enabling the ability to be safely reused within groups. 
+
+4.2 Adaptive-Rank Expert Instantiation 
+
+As new tasks arrive continuously, allocating fixed-size experts for each task induces unbounded pa-rameter expansion, whereas allocating no addi-tional experts causes existing parameters to be over-written, triggering catastrophic forgetting. Fig. 2 re-veals that most visual capabilities required by new tasks are largely covered by existing experts, leav-ing only a small capability gap. Motivated by this, we argue that parameter allocation should exclu-sively target this gap, reframing the core challenge as dynamically determining the minimal capacity required to encode incremental task knowledge. To probe the capability gaps, we introduce a warm-up phase that accumulates initial gradient updates into a temporary LoRA buffer WB. As the raw update ∆WB mixes task-specific signals with shared gradient components, we apply Sin-gular Value Decomposition to isolate the principal directions that capture the unmet capability gaps: 
+
+∆WB =
+
+> P
+
+X
+
+> p=1
+
+σpupv⊤ 
+
+> p
+
+, σ1 ≥ · · · ≥ σP . (4) This spectral representation explicitly ranks direc-tional components by geometric significance. To identify the novel correction signals, we implement a two-stage geometric filtering pipeline: (1) Spectral Thresholding : Directions with σp ≤
+
+τalloc are discarded to filter optimization noise, yielding the candidate set C.(2) Historical Subspace Orthogonality Filtering :In group g∗, to prevent allocating parameters to al-ready mastered subspaces, we quantify each candi-date’s novelty against the expert pool Eg∗ . Since the rows of each down-projection matrix Ai span the input directions actively modified by expert i, we horizontally concatenate their transposes to charac-terize the union of previously optimized subspaces, yielding the unified historical representation: 
+
+Mhist = A⊤ 
+
+> 1
+
+, . . . , A⊤|E g∗ |
+
+ ∈ Rd×Rhist , (5) where Rhist = P|E g∗ | 
+
+> i=1
+
+rank( Ai). We then extract an orthonormal basis Q for col( Mhist ) via QR de-composition (Ye and Li, 2005). Geometrically, 
+
+QQ ⊤ acts as an orthogonal projector onto the his-torical subspace. By applying the complementary operator (I − QQ ⊤) to each candidate direction 
+
+vp ∈ C , we isolate the component orthogonal to established directions. The magnitude of this resid-ual quantifies geometric independence, reflecting the novel optimization capacity vp introduces. To eliminate scale dependence, we normalize this by 
+
+∥vp∥2, yielding a bounded orthogonality score: 
+
+αp = ∥(I − QQ ⊤)vp∥2
+
+∥vp∥2
+
+. (6) Only directions satisfying αp > τ orth are retained in S to reconstruct the final expert parameters: 
+
+At = Σ1/2 
+
+> S
+
+˜V⊤S , Bt = US Σ1/2 
+
+> S
+
+, (7) where US and ˜VS denote the retained singular vectors, and ΣS their corresponding singular val-ues. By filtering out directions already covered by historical experts, we only allocate parameters to capability gaps, bounding model growth while preserving established representations. 44.3 Centroid-Guided Orthogonal Learning 
+
+With experts instantiated, another problem arises: how to achieve stable intra-group reuse? Unlike conventional MoE with a static expert pool, MCIT must continuously expand the pool as tasks arrive. This introduces two bottlenecks: First, continuous updates to routing matrices induce boundary drift, creating a training-inference mismatch in expert activation. Second, optimization of subsequent ex-perts within a shared parameter space compounds overlapping feature directions. As the pool ex-pands, repeated updates inflate the magnitude of these directions, skewing MoE aggregation and suppressing novel corrections. To address these challenges, we assign a dedi-cated learnable centroid wk ∈ Rdv to each expert, collectively forming W = {wk}. These centroids act as geometric anchors that directly govern ex-pert activation. Upon task completion, each cen-troid is permanently frozen to lock its decision boundary against future shifts. For an incoming visual input vi, we extract its aggregated repre-sentation via the MLLM’s frozen vision encoder 
+
+ϕ(·) as ξi = MeanPool( ϕ(vi)) ∈ Rdv . The rout-ing function ρ then computes a proximity score 
+
+ρi,k = ρ(ξi, wk) for every centroid. Within group 
+
+g∗, these scores are normalized across the expert pool Kg∗ to yield the routing weights: 
+
+ωi,k = ρi,k 
+
+P 
+
+> j∈K g∗
+
+ρi,j 
+
+, ∀k ∈ K g∗ . (8) Balancing historical reuse with novel learning re-quires the routing function to maintain high ac-tivation for queries near known centroids while smoothly decaying for distant ones. We achieve this via a Gaussian radial basis kernel: 
+
+ρ(ξi, wk) = exp 
+
+
+
+− ∥ξi − wk∥22
+
+2σ2
+
+
+
+, (9) where σ controls the bandwidth. Besides the routing function, proper initializa-tion is also critical. Naive random or zero initializa-tion places centroids off the data manifold, trigger-ing routing collapse. Instead, for a centroid wk, we anchor it within the local data distribution: during the warm-up phase (Sec. 4.2), wk is initialized as the mean of its corresponding accumulated queries 
+
+ξ. After the warm-up, the centroid is updated via backpropagation for continuous adaptation. Despite stabilized routing, a structural imbal-ance persists in expert aggregation. As new experts are instantiated, their updates inherently contain directions shared with historical experts. While new experts learn to cooperate with the existing expert pool during training, historical experts have never adapted to co-activate with future ones. Dur-ing inference, when an input simultaneously acti-vates both historical and new experts, their outputs along shared directions sum without coordination, causing the effective magnitude of these redundant components to accumulate disproportionately. In contrast, task-specific directions are encoded by a single expert and remain comparatively small. This magnitude imbalance skews the aggregated MoE output toward redundant features, suppress-ing novel correction signals. To restore balance, new updates must exclusively target unrepresented residuals. We thus constrain ∆W new to the orthog-onal complement of historical subspaces. Using the precomputed Q (Sec. 4.2), we enforce this via an orthogonality penalty for a batch of size B:
+
+Ldec = 1
+
+B
+
+> B
+
+X
+
+> i=1
+
+γi · ∆Wnew (QQ ⊤hi) 22, (10) where γi = P 
+
+> k∈K g∗
+
+ωi,k measures reliance on his-torical experts, and hi denotes input hidden states. 
+
+Discussion. By routing via visual affinity to sta-ble centroids, we stabilize expert reuse, while an orthogonality penalty guides new updates to un-learned directions, ensuring clean aggregation and learning only what is truly needed. 
+
+4.4 Summary of C RAM 
+
+For each task, C RAM executes a pipeline: a warm-up phase first accumulates visual queries to ini-tialize centroids W and extract the historical ba-sis Q, guiding data-driven expert instantiation (Eq. 7). During optimization, centroid-guided rout-ing (Eqs. 8– 9) stabilizes capability reuse, while a penalty (Eq. 10) constrains new updates to or-thogonal subspaces. Building upon the standard generation loss (Eq. 1), the joint objective is: 
+
+L = LNLL + Ldec . (11) Upon convergence, historical experts and centroids are frozen before starting the next task. During inference, routing weights are computed directly via Eq. 8. The algorithm is detailed in Appendix A. 5Table 1: Performance on UCIT. The best and second-best results are highlighted in bold and underline , respectively.                                                                               
+
+> Methods ImageNet-R ArxivQA Vizcap IconQA CLEVR Flickr30k Average Zero-shot (Liu et al., 2023) 18.88 52.62 38.75 21.25 21.12 41.44 32.34 FT-LoRA (Hu et al., 2022) 29.33 55.30 45.51 26.13 13.07 58.07 37.90 MoE-LoRA (Chen et al., 2024) 58.43 77.57 44.83 68.90 56.73 58.27 60.79 Replay-LoRA 76.93 87.07 54.31 56.43 36.40 55.94 61.18 CL-MoE (Huai et al., 2025) 64.12 78.38 44.83 62.00 50.75 58.06 59.69 HiDe-LLaVA (Guo et al., 2025a) 87.62 91.12 42.68 57.62 31.00 50.41 60.08 ModalPrompt (Zeng et al., 2025) 80.50 90.62 60.13 63.50 55.75 57.09 67.93 DISCO (Guo et al., 2025b) 88.88 94.25 47.52 69.50 60.75 56.32 69.54 SAME (Xie et al., 2026) 89.91 91.40 55.33 77.51 68.85 55.43 73.07
+> CRAM (Ours) 87.23 92.17 60.55 80.43 70.67 57.35 74.73
+
+Table 2: Performance on TriGap. The best and second-best results are highlighted in bold and underline , respectively.                                                                                                                           
+
+> Methods PMCVQA DocVQA ChartQA IconQA InfographicVQA ArxivQA Roadside ChemVQA FloodNetVQA CLEVR Average Zero-shot (Liu et al., 2023) 35.40 12.68 9.36 19.27 5.06 53.77 7.40 5.30 47.41 20.37 21.60 FT-LoRA (Hu et al., 2022) 34.20 23.32 9.84 37.07 23.53 83.83 7.00 12.70 80.31 60.27 37.21 Replay-LoRA 33.70 33.95 14.00 46.67 28.97 75.57 9.40 15.90 73.81 58.80 39.08 MoE-LoRA (Chen et al., 2024) 39.03 37.49 12.44 43.43 35.17 90.90 7.93 20.70 90.41 67.00 44.45 HiDe-LLaVA (Guo et al., 2025a) 37.00 33.20 10.52 41.97 24.09 79.20 7.73 11.17 57.39 23.00 32.53 ModalPrompt (Zeng et al., 2025) 38.23 38.23 11.92 44.73 37.37 84.47 10.13 12.43 71.52 52.50 40.15 CL-MoE (Huai et al., 2025) 40.53 36.79 13.72 52.70 32.27 93.00 7.77 18.33 80.09 65.90 44.11 SAME (Xie et al., 2026) 41.60 43.87 17.56 64.03 39.57 90.46 10.83 21.77 81.09 54.50 46.53 DISCO (Guo et al., 2025b) 42.03 43.50 18.01 63.13 38.23 91.27 11.02 22.13 80.25 55.87 46.54
+> CRAM (Ours) 43.60 44.33 16.92 66.00 39.17 91.83 12.83 24.27 79.49 59.53 47.79
+
+5 Experiment 
+
+5.1 Implementation Details Datasets. We evaluate C RAM on two widely used benchmarks. UCIT (Guo et al., 2025a) comprises six tasks: ArxivQA (Li et al., 2024), CLEVR-Math (Lindström and Abraham, 2022), IconQA (Lu et al., 2021), ImageNet-R (Hendrycks et al., 2021), VizWiz-Caption (Gu-rari et al., 2018), and Flickr30k (Plummer et al., 2015). TriGap (Xie et al., 2026) encompasses ten tasks: PMCVQA (Zhang et al., 2023b), DocVQA (Mathew et al., 2021), ChartQA (Masry et al., 2022), IconQA (Lu et al., 2021), In-fographicVQA (Mathew et al., 2022), Arx-ivQA (Li et al., 2024), Roadside (Guan et al., 2026), ChemVQA (Sabando et al., 2020), Flood-NetVQA (Rahnemoonfar et al., 2021), and CLEVR-Math (Lindström and Abraham, 2022). 
+
+Compared Methods. We compare C RAM with state-of-the-art MCIT approaches, encompassing two representative structural paradigms: (1) Shared adaptation : including FT-LoRA, Replay-LoRA, MoE-LoRA (Chen et al., 2024), CLMoE (Huai et al., 2025), and SAME (Xie et al., 2026); and (2) 
+
+Parameter isolation : including HiDe-LLaVA (Guo et al., 2025a), DISCO (Guo et al., 2025b), and ModalPrompt (Zeng et al., 2025). We additionally report Zero-shot (Liu et al., 2023) performance as a lower-bound reference. To ensure a fair com-parison, all methods adhere to identical backbone architectures and data protocols. 
+
+Training Details. All experiments are conducted on 4 NVIDIA RTX 5090 GPUs. We follow Prism (Tang et al., 2026) to conduct all experiments. We use LLaVA-v1.5-7B (Liu et al., 2023) as the backbone MLLM and employ the text tower of CLIP-L/14-336 (Radford et al., 2021) to extract in-struction embeddings for semantic routing. We in-ject LoRA adapters into the attention projections of the LLM. Each task is trained for 1 epoch using the AdamW optimizer with a learning rate of 2 × 10 −4
+
+and a linear warm-up ratio of 0.03 . A batch size of 8 is used across all benchmarks. For C RAM , hy-perparameters are configured as follows: semantic routing margin θ = 0 .1, RBF kernel bandwidth 
+
+σ = 2 , spectral allocation threshold τalloc = 0 .08 ,and orthogonality filtering threshold τorth = 0 .99 .For the warm-up stage in Sec. 4.2, we allocate 0.05 
+
+of training steps and initialize the rank of the tem-porary buffer WB to 48. All other implementation details are provided in Appendix C. 
+
+Evaluation Metrics. Following Zhou et al. (2024b); Chen et al. (2024), we report average final performance ¯A = 1
+
+T
+
+PTs=1 As,T , where As,T de-notes accuracy on task s after learning all T tasks. 
+
+5.2 Main Results. 
+
+We evaluate C RAM on the UCIT and TriGap (Tabs. 1, 2). On the 10-task TriGap benchmark, CRAM achieves an average accuracy of 47.79%, surpassing the strongest baseline DISCO by 1.25%. The consistent improvements across heterogeneous domains (e.g., 2.14% on ChemVQA) reveal that as the task stream lengthens, adaptive-rank in-stantiation effectively curbs parameter redundancy by allocating capacity only to unmet capability gaps, while orthogonality filtering ensures new ex-6Table 3: Component-wise Ablation. 
+
+Variant Avg. Acc (%) 
+
+Baseline 53.31 w/ Group 66.38 w/ Group + Adaptive 68.92 w/ Group + Adaptive + Centroid (C RAM ) 74.73 
+
+Table 4: Ablation on design choices. 
+
+Variant Avg. Acc (%) CRAM (Full) 74.73 
+
+Gaussian RBF → cosine similarity 55.29 warm-up centroid init → zero init 57.29 
+
+perts complement rather than overwrite established knowledge. On UCIT, C RAM attains 74.73%, sub-stantially outperforming shared-adaptation base-lines like MoE-LoRA by 13.94%. This directly validates the necessity of isolating instruction for-mats: by clustering semantically similar prompts, our routing mechanism neutralizes the gradient in-terference that typically degrades performance in unified parameter spaces. 
+
+5.3 Ablation Study 
+
+We conduct an ablation study on the UCIT bench-mark. For variants without adaptive-rank instantia-tion, the rank is fixed to the average rank of the full CRAM to ensure parameter-aligned evaluation. 
+
+Component-wise Ablation. Tab. 3 details step-wise gains. Baseline denotes MoE-LoRA with a fixed expert rank of r = 8 , deliberately aligned with C RAM ’s average rank on UCIT ( 7.94 ) for parameter-equivalent comparison (In Tab. 1 MoE-LoRA use r = 16 ). Group-isolated routing 
+
+(+13.07%) neutralizes format interference via se-mantic clustering. Adaptive-rank instantiation 
+
+(+2.54%) targets capability gaps through orthog-onality filtering, improving parameter efficiency. 
+
+Centroid-guided learning (+5.81%) stabilizes ex-pert activation and resolves aggregation imbalance via RBF routing and orthogonal constraints. 
+
+Design Choices. Tab. 4 validates key components via substitution with simpler alternatives. Replac-ing Gaussian RBF scoring with cosine similarity re-duces accuracy by 19.44%, confirming that RBF’s distance-decay property is essential for stable ex-pert activation. Replacing warm-up centroid initial-ization with zero initialization reduces performance by 17.44% due to off-manifold instability. 
+
+5.4 Further Analysis Clustering Analysis. We visualize instruction em-beddings using t-SNE (Van der Maaten and Hinton, 2008) to examine whether the learned groups re-1 
+
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> (a) TriGap 1
+> 2
+> 3
+> 4
+> 5
+> 6(b) UCIT
+
+Figure 4: Visualization of instruction embeddings on TriGap (a) and UCIT (b). Circled regions indicate in-structions assigned to the same group. q k v o q k v o q k v o q k v o q k v o q k v o q k v o q k v o q k v o q k v o          
+
+> 0
+> 4
+> 8
+> 12
+> 16
+> 20
+> 24
+> 28
+> Layer
+> Task 1 Task 2 Task 3 Task 4 Task 5 Task 6 Task 7 Task 8 Task 9 Task 10
+> 4
+> 6
+> 8
+> 10
+> SVD rank r qkvo
+> 0
+> 4
+> 8
+> 12
+> 16
+> 20
+> 24
+> 28
+> Task 5
+> 2
+> 1
+> 0
+> r (after  before) (a) SVD rank distribution (b) r change
+
+Figure 5: Adaptive rank allocation analysis. (a) Rank distribution across tasks, layers, and modules. (b) Effect of orthogonality filtering: rank allocation for task 5 before/after projecting out historical subspaces. 
+
+flect meaningful instruction structures. As shown in Fig. 4, clear clusters emerge across both bench-marks: PMCVQA and ArxivQA (multiple-choice) form tight groups, confirming effective grouping. On TriGap, IconQA exhibits diffuse boundaries due to heterogeneous templates, where our relative-confidence margin prevents hard assignment in am-biguous cases, avoiding cross-format interference. This ensures shared adaptation occurs only for un-ambiguously aligned instructions. 
+
+Rank Allocation Analysis. To analyze how our method dynamically distributes parameter budgets, we examine the rank allocation across tasks and at-tention modules, as shown in Fig. 5(a). The results reveal three systematic patterns: (1) Complexity-driven scaling , where capacity correlates with task difficulty (e.g., Roadside receives high ranks, while InfographicVQA requires minimal parameters); (2) 
+
+Asymmetric module demands , exhibiting a consis-tent K > Q > O > V hierarchy across atten-tion projections aligned with their functional roles; and (3) Intra-cluster reuse , where tasks within the same semantic cluster receive progressively lower ranks (e.g., Task 5 vs. Task 2), directly evidenc-ing efficient knowledge transfer. This efficiency stems from the orthogonality filtering, which au-tomatically discards parameter directions already mastered by historical experts. As illustrated in 7MoE-LoRA CL-MoE SAME DISCO HiDe-LLaVA Cram      
+
+> 0
+> 50
+> 100
+> 150
+> 200
+> Parameters (M)
+> 122.13 122.13 122.13 116.60
+> 199.89
+> 76.55
+> 0.25M centroid
+> LoRA Router Centroid / other
+
+Figure 6: Parameter comparison on TriGap. Table 5: Hyperparameter sensitivity on UCIT.                      
+
+> Param. θσwarm-up Value 0.08 0.10 0.15 1.0 2.0 3.0 0.03 0.05 0.10
+> Acc (%) 72.4 74.7 73.7 72.6 74.7 71.4 70.2 74.7 73.2
+
+Fig. 5(b), the filtering predominantly prunes redun-dant components in lower-layer V /O projections, confirming that historical subspace overlap concen-trates on input-proximal visual features. Conse-quently, C RAM preserves foundational representa-tions while dedicating newly allocated capacity to higher-level reasoning pathways. 
+
+Parameter Efficiency. As shown in Fig. 6, by allocating parameters exclusively to capability gaps, C RAM achieves SOTA performance using the fewest parameters. 
+
+Hyperparameter Sensitivity. Achieving SOTA on both UCIT and TriGap with identical hyperparame-ters demonstrates strong cross-benchmark stability. Tab. 5 further shows that varying hyperparameters on UCIT yields only moderate fluctuations, con-firming C RAM is robust to hyperparameter choices. 
+
+Format Interference and Instruction-Following Dynamics. To further probe how format het-erogeneity interferes with sequential adaptation, we extend the single-step analysis from Fig. 1a into a multi-step continual setting, as shown in Fig. 7. (1) Different instruction formats exhibit varying susceptibility Strongly constrained con-ventions (e.g., McqLetter and Yes/No ) degrade sharply when followed by heterogeneous tasks, whereas flexible formats (e.g., Short ) show greater resilience. (2) Does the model merely overfit to answer formats? Evidence suggests otherwise. For tasks with aligned instruction understanding, such as MCQLetter and MCQText , they fundamentally share the core capability to extract correct answers. Consequently, training on MCQLetter effectively enhances instruction-following capability on Mc-qText , significantly mitigating performance forget-ting. However, this transfer pattern is inherently 
+
+asymmetric : training on more permissive formats (e.g., MCQText ) severely disrupts strict boundaries (e.g., MCQLetter ), rather than yielding positive 0 1 2 3 4      
+
+> Step
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Acc. (%)
+> Seq. 1
+> Seq. 2
+> Seq. 3
+> Seq. 4
+> Strict accuracy
+> Format-only errors
+> (a) Baseline 01234
+> Step
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Acc. (%)
+> Seq. 1
+> Seq. 2
+> Seq. 3
+> Seq. 4
+> Strict accuracy
+> Format-only errors (b) C RAM (Ours)
+
+Figure 7: Sequential format adaptation. We construct four instruction-response conventions ( A=MCQLetter (letter answer), B=MCQText (text answer), C=Short, 
+
+D=Yes/No) from sampled data of ArxivQA by varying only the instruction-response format. For each training order (Seq. 1–4: ABCD/BCDA/CDAB/DABC), we evaluate the model on the first trained format after every step. Strict accuracy requires both format adherence and content correctness; content-correct ceiling counts format-violating but semantically correct responses. 
+
+(a) Before 0 
+
+> 20
+> 40
+> Overlap (%)
+
+(b) After 
+
+Figure 8: Overlap between ∆W and a historical expert before and after orthogonality filtering. Each column of 
+
+∆W is colored by its projection ratio onto the column space of a reference historical expert. 
+
+transfer. This confirms that while the model is gen-uinely acquiring instruction-following capabilities, its output behavior remains highly sensitive to sur-face format conventions. Rigid syntactic templates are thus highly vulnerable to relaxation-induced drift , which C RAM effectively mitigates by isolat-ing format subspaces to sustain stable performance. 
+
+Overlap Analysis. Fig. 8 visualizes the column-wise subspace overlap between ∆W and a histori-cal expert before and after orthogonality filtering. The average overlap drops from 36 .5% to 18 .1% ,confirming that C RAM successfully removes com-ponents aligned with historical subspaces. 
+
+6 Conclusion 
+
+We propose C RAM , which mitigates catastrophic forgetting in MCIT by decoupling instruction iso-lation from visual adaptation. Through seman-tic grouping, adaptive instantiation, and centroid-routing, C RAM achieves superior retention and pa-rameter efficiency on diverse benchmarks, offering a scalable solution for rehearsal-free MCIT. 8Limitations 
+
+While C RAM demonstrates strong performance on current benchmarks, it has not yet been validated on significantly longer task sequences. Extending eval-uation to larger-scale continual streams remains an important direction for future work. 
+
+References 
+
+Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang Zhou, and Jingren Zhou. 2023. Qwen-vl: A versatile vision-language model for understanding, localiza-tion, text reading, and beyond. arXiv preprint arXiv:2308.12966 .Meng Cao, Yuyang Liu, Yingfei Liu, Tiancai Wang, Jiahua Dong, Henghui Ding, Xiangyu Zhang, Ian Reid, and Xiaodan Liang. 2024. Continual llava: Continual instruction tuning in large vision-language models. arXiv preprint arXiv:2411.02564 .Chang Che, Ziqi Wang, Pengwan Yang, Cheems Wang, Hui Ma, and Zenglin Shi. 2026. Lora in lora: To-wards parameter-efficient architecture expansion for continual visual instruction tuning. In Proceedings of the AAAI Conference on Artificial Intelligence , pages 19978–19986. Cheng Chen, Junchen Zhu, Xu Luo, Heng T Shen, Jingkuan Song, and Lianli Gao. 2024. Coin: A bench-mark of continual instruction tuning for multimodel large language models. Advances in Neural Informa-tion Processing Systems , pages 57817–57840. Jinpeng Chen, Runmin Cong, Yuzhi Zhao, Hongzheng Yang, Guangneng Hu, Horace Ip, and Sam Kwong. 2025. SEFE: Superficial and essential forgetting eliminator for multimodal continual instruction tun-ing. In International Conference on Machine Learn-ing , pages 7982–8001. Chendi Ge, Xin Wang, Zeyang Zhang, Hong Chen, Jia-pei Fan, Longtao Huang, Hui Xue, and Wenwu Zhu. 2025. Dynamic mixture of curriculum lora experts for continual multimodal instruction tuning. arXiv preprint arXiv:2506.11672 .Runwei Guan, Rongsheng Hu, Shangshu Chen, Ningyuan Xiao, Xue Xia, Jiayang Liu, Beibei Chen, Ziren Tang, Ningwei Ouyang, Shaofeng Liang, and 1 others. 2026. Roadscenevqa: Benchmarking visual question answering in roadside perception systems for intelligent transportation system. In Proceedings of the AAAI Conference on Artificial Intelligence ,pages 4366–4375. Haiyang Guo, Fanhu Zeng, Ziwei Xiang, Fei Zhu, Da-Han Wang, Xu-Yao Zhang, and Cheng-Lin Liu. 2025a. Hide-llava: Hierarchical decoupling for con-tinual instruction tuning of multimodal large lan-guage model. In ACL , pages 13572–13586. Haiyang Guo, Fanhu Zeng, Fei Zhu, Wenzhuo Liu, Da-Han Wang, Jian Xu, Xu-Yao Zhang, and Cheng-Lin Liu. 2025b. Federated continual instruction tuning. In Proceedings of the IEEE international conference on computer vision , pages 1325–1335. Haiyang Guo, Fei Zhu, Hongbo Zhao, Fanhu Zeng, Wenzhuo Liu, Shijie Ma, Da-Han Wang, and Xu-Yao Zhang. 2025c. Mcitlib: Multimodal continual instruction tuning library and benchmark. arXiv preprint arXiv:2508.07307 .Danna Gurari, Qing Li, Abigale J Stangl, Anhong Guo, Chi Lin, Kristen Grauman, Jiebo Luo, and Jeffrey P Bigham. 2018. Vizwiz grand challenge: Answering visual questions from blind people. In Proceedings of the IEEE/CVF Computer Vision and Pattern Recog-nition Conference , pages 3608–3617. Dan Hendrycks, Steven Basart, Norman Mu, Saurav Kadavath, Frank Wang, Evan Dorundo, Rahul De-sai, Tyler Zhu, Samyak Parajuli, Mike Guo, and 1 others. 2021. The many faces of robustness: A criti-cal analysis of out-of-distribution generalization. In 
+
+Proceedings of the IEEE international conference on computer vision , pages 8340–8349. Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, and 1 others. 2022. Lora: Low-rank adaptation of large language models. ICLR , 1(2):3. Tianyu Huai, Jie Zhou, Xingjiao Wu, Qin Chen, Qingchun Bai, Ze Zhou, and Liang He. 2025. Cl-moe: Enhancing multimodal large language model with dual momentum mixture-of-experts for contin-ual visual question answering. In Proceedings of the IEEE/CVF Computer Vision and Pattern Recognition Conference , pages 19608–19617. Yukang Huo and Hao Tang. 2025. When continue learn-ing meets multimodal large language model: A sur-vey. arXiv preprint arXiv:2503.01887 .Ziqi Jia, Anmin Wang, Xiaoyang Qu, Xiaowen Yang, and Jianzong Wang. 2025. Hierarchical-task-aware multi-modal mixture of incremental lora experts for embodied continual learning. In Proceedings of the Annual Meeting of the Association for Computational Linguistics , pages 28415–28427. Kailin Jiang, Yuntao Du, Yukai Ding, Yuchen Ren, Ning Jiang, Zhi Gao, Zilong Zheng, Lei Liu, Bin Li, and Qing Li. 2026. When large multimodal models con-front evolving knowledge: Challenges and explo-rations. In International Conference on Learning Representations .Hyundong Jin, Hyung Jin Chang, and Eunwoo Kim. 2025. Instruction-grounded visual projectors for con-tinual learning of generative vision-language models. In Proceedings of the IEEE/CVF International Con-ference on Computer Vision , pages 3466–3476. Dongjun Kim, Seohyeon Cha, Huancheng Chen, Chi-aning Wang, and Haris Vikalo. 2026. Quantized 
+
+9gradient projection for memory-efficient continual learning. In International Conference on Learning Representations .James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A Rusu, Kieran Milan, John Quan, Tiago Ramalho, Ag-nieszka Grabska-Barwinska, and 1 others. 2017. Overcoming catastrophic forgetting in neural net-works. PNAS , 114(13):3521–3526. Minjae Lee, Minhyuk Seo, Tingyu Qu, Tinne Tuytelaars, and Jonghyun Choi. 2025. Oasis: Online sample se-lection for continual visual instruction tuning. arXiv preprint arXiv:2506.02011 .Lei Li, Yuqi Wang, Runxin Xu, Peiyi Wang, Xiachong Feng, Lingpeng Kong, and Qi Liu. 2024. Multimodal arxiv: A dataset for improving scientific comprehen-sion of large vision-language models. In Proceedings of the Annual Meeting of the Association for Compu-tational Linguistics , pages 14369–14387. Songze Li, Mingyu Gao, Tonghua Su, Xu-Yao Zhang, and Zhongjie Wang. 2025. Multimodal continual instruction tuning with dynamic gradient guidance. 
+
+arXiv preprint arXiv:2511.15164 .Adam Dahlgren Lindström and Savitha Sam Abraham. 2022. Clevr-math: A dataset for compositional lan-guage, visual and mathematical reasoning. arXiv preprint arXiv:2208.05358 .Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 2023. Visual instruction tuning. In Advances in Neural Information Processing Systems , pages 34892–34916. Wenzhuo Liu, Fei Zhu, Haiyang Guo, Longhui Wei, and Cheng-Lin Liu. 2025a. Llava-c: Continual im-proved visual instruction tuning. arXiv preprint arXiv:2506.08666 .Yuyang Liu, Qiuhe Hong, Linlan Huang, Alexandra Gomez-Villa, Dipam Goswami, Xialei Liu, Joost van de Weijer, and Yonghong Tian. 2025b. Continual learning for vlms: A survey and taxonomy beyond forgetting. arXiv preprint arXiv:2508.04227 .Pan Lu, Liang Qiu, Jiaqi Chen, Tony Xia, Yizhou Zhao, Wei Zhang, Zhou Yu, Xiaodan Liang, and Song-Chun Zhu. 2021. Iconqa: A new benchmark for abstract di-agram understanding and visual language reasoning. 
+
+arXiv preprint arXiv:2110.13214 .Imad Eddine Marouf, Enzo Tartaglione, Stéphane Lath-uilière, and Joost Van De Weijer. 2025. Ask and remember: A questions-only replay strategy for con-tinual visual question answering. In Proceedings of the IEEE/CVF International Conference on Com-puter Vision , pages 18078–18089. Ahmed Masry, Xuan Long Do, Jia Qing Tan, Shafiq Joty, and Enamul Hoque. 2022. Chartqa: A benchmark for question answering about charts with visual and logical reasoning. In Findings of the association for computational linguistics , pages 2263–2279. Minesh Mathew, Viraj Bagal, Rubèn Tito, Dimosthe-nis Karatzas, Ernest Valveny, and CV Jawahar. 2022. Infographicvqa. In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vi-sion , pages 1697–1706. Minesh Mathew, Dimosthenis Karatzas, and CV Jawa-har. 2021. Docvqa: A dataset for vqa on document images. In Proceedings of the IEEE/CVF winter con-ference on applications of computer vision , pages 2200–2209. Bryan A Plummer, Liwei Wang, Chris M Cervantes, Juan C Caicedo, Julia Hockenmaier, and Svetlana Lazebnik. 2015. Flickr30k entities: Collecting region-to-phrase correspondences for richer image-to-sentence models. In Proceedings of the IEEE international conference on computer vision , pages 2641–2649. Jingyang Qiao, Zhizhong Zhang, Xin Tan, Yanyun Qu, Shouhong Ding, and Yuan Xie. 2024. Large continual instruction assistant. arXiv preprint arXiv:2410.10868 .Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sas-try, Amanda Askell, Pamela Mishkin, Jack Clark, and 1 others. 2021. Learning transferable visual models from natural language supervision. In International Conference on Machine Learning , pages 8748–8763. Maryam Rahnemoonfar, Tashnim Chowdhury, Argho Sarkar, Debvrat Varshney, Masoud Yari, and Robin Roberson Murphy. 2021. Floodnet: A high resolution aerial imagery dataset for post flood scene understanding. IEEE Access , 9:89644–89654. Sylvestre-Alvise Rebuffi, Alexander Kolesnikov, Georg Sperl, and Christoph H Lampert. 2017. icarl: In-cremental classifier and representation learning. In 
+
+Proceedings of the IEEE/CVF Computer Vision and Pattern Recognition Conference , pages 2001–2010. Karsten Roth, Vishaal Udandarao, Sebastian Dziadzio, Ameya Prabhu, Mehdi Cherti, Oriol Vinyals, Olivier Hénaff, Samuel Albanie, Matthias Bethge, and Zeynep Akata. 2024. A practitioner’s guide to continual multimodal pretraining. arXiv preprint arXiv:2408.14471 .María Virginia Sabando, Pavol Ulbrich, Matías Selzer, Jan Byška, Jan Miˇ can, Ignacio Ponzoni, Axel J Soto, María Luján Ganuza, and Barbora Kozlíková. 2020. Chemva: interactive visual analysis of chemical com-pound similarity in virtual screening. IEEE Trans-actions on Visualization and Computer Graphics ,27(2):891–901. Jun-Tao Tang, Yu-Cheng Shi, Zhen-Hao Xie, and Da-Wei Zhou. 2026. Prism: A plug-in reproducible infrastructure for scalable multimodal continual in-struction tuning. arXiv preprint arXiv:2605.26110 .Shengbang Tong, David Fan, Jiachen Li, Yunyang Xiong, Xinlei Chen, Koustuv Sinha, Michael Rabbat, 
+
+10 Yann LeCun, Saining Xie, and Zhuang Liu. 2025. Metamorph: Multimodal understanding and gener-ation via instruction tuning. In Proceedings of the IEEE international conference on computer vision ,pages 17001–17012. Jianhong Tu, Zhuohao Ni, Nicholas Crispino, Zihao Yu, Michael Bendersky, Beliz Gunel, Ruoxi Jia, Xin Liu, Lingjuan Lyu, Dawn Song, and 1 others. 2025. Mlan: Language-based instruction tuning preserves and transfers knowledge in multimodal language models. In Proceedings of the Workshop on Towards Knowl-edgeable Foundation Models (KnowFM) , pages 59– 74. Laurens Van der Maaten and Geoffrey Hinton. 2008. Visualizing data using t-sne. Journal of machine learning research , 9(11). Runyu Wang, Peng Ping, Zhengyu Guo, Xiaoye Zhang, Quan Shi, Liting Zhou, and Tianbo Ji. 2025a. Loki: Low-damage knowledge implanting of large lan-guage models. arXiv preprint arXiv:2505.22120 .Xiao Wang, Tianze Chen, Qiming Ge, Han Xia, Rong Bao, Rui Zheng, Qi Zhang, Tao Gui, and Xuan-Jing Huang. 2023. Orthogonal subspace learning for lan-guage model continual learning. In Findings of the Association for Computational Linguistics: EMNLP ,pages 10658–10671. Ziqi Wang, Chang Che, Qi Wang, Yangyang Li, Zenglin Shi, and Meng Wang. 2025b. Smolora: Exploring and defying dual catastrophic forgetting in continual visual instruction tuning. In Proceedings of the IEEE international conference on computer vision , pages 177–186. Ziqi Wang, Chang Che, Qi Wang, Hui Ma, Zenglin Shi, Cees GM Snoek, and Meng Wang. 2025c. Har-monious parameter adaptation in continual visual instruction tuning for safety-aligned mllms. arXiv preprint arXiv:2511.20158 .Zhen-Hao Xie, Jun-Tao Tang, Yu-Cheng Shi, Han-Jia Ye, De-Chuan Zhan, and Da-Wei Zhou. 2026. Same: Stabilized mixture-of-experts for multi-modal continual instruction tuning. arXiv preprint arXiv:2602.01990 .Jieping Ye and Qi Li. 2005. A two-stage linear discrim-inant analysis via qr-decomposition. IEEE Transac-tions on Pattern Analysis and Machine Intelligence ,27(6):929–941. Yahan Yu, Duzhen Zhang, Yong Ren, Xuanle Zhao, Xiuyi Chen, and Chenhui Chu. 2025. Progressive lora for multimodal continual instruction tuning. In 
+
+ACL , pages 2779–2796. Xiang Yue, Yuansheng Ni, Kai Zhang, Tianyu Zheng, Ruoqi Liu, Ge Zhang, Samuel Stevens, Dongfu Jiang, Weiming Ren, Yuxuan Sun, and 1 others. 2024. Mmmu: A massive multi-discipline multimodal un-derstanding and reasoning benchmark for expert agi. In Proceedings of the IEEE/CVF conference on com-puter vision and pattern recognition , pages 9556– 9567. Fanhu Zeng, Fei Zhu, Haiyang Guo, Xu-Yao Zhang, and Cheng-Lin Liu. 2025. Modalprompt: Towards efficient multimodal continual instruction tuning with dual-modality guided prompt. In Proceedings of the Conference on Empirical Methods in Natural Language Processing , pages 12137–12152. Shengyu Zhang, Linfeng Dong, Xiaoya Li, Sen Zhang, Xiaofei Sun, Shuhe Wang, Jiwei Li, Runyi Hu, Tian-wei Zhang, Guoyin Wang, and 1 others. 2023a. In-struction tuning for large language models: A survey. 
+
+ACM Computing Surveys .Xiaoman Zhang, Chaoyi Wu, Ziheng Zhao, Weix-iong Lin, Ya Zhang, Yanfeng Wang, and Weidi Xie. 2023b. Pmc-vqa: Visual instruction tuning for medical visual question answering. arXiv preprint arXiv:2305.10415 .Hengyuan Zhao, Ziqin Wang, Qixin Sun, Kaiyou Song, Yilin Li, Xiaolin Hu, Qingpei Guo, and Si Liu. 2025. Llava-cmoe: Towards continual mixture of experts for large vision-language models. arXiv preprint arXiv:2503.21227 .Da-Wei Zhou, Hai-Long Sun, Jingyi Ning, Han-Jia Ye, and De-Chuan Zhan. 2024a. Continual learning with pre-trained models: a survey. In IJCAI , pages 8363– 8371. Da-Wei Zhou, Qi-Wei Wang, Zhi-Hong Qi, Han-Jia Ye, De-Chuan Zhan, and Ziwei Liu. 2024b. Class-incremental learning: A survey. IEEE Transac-tions on Pattern Analysis and Machine Intelligence ,46(12):9851–9873. Deyao Zhu, Jun Chen, Xiaoqian Shen, Xiang Li, and Mohamed Elhoseiny. 2023. Minigpt-4: Enhancing vision-language understanding with advanced large language models. arXiv preprint arXiv:2304.10592 .Zhen Zhu, Yiming Gong, Yao Xiao, Yaoyao Liu, and Derek Hoiem. 2025. How to teach large multimodal models new skills. arXiv preprint arXiv:2510.08564 .
+
+11 A Pseudocode 
+
+Algorithm 1 CRAM Training (per task t)                                                                           
+
+> Require: Dt; frozen (ϕ, π, f, ψ ); groups {cg}, pools {K g}
+> Ensure: New expert (At,Bt)and centroid wt
+> 1: Level-1 routing. e←ψ(q)/∥ψ(q)∥2; assign g∗by Eq. (2)–(3) 2: Allocate expert slot ktin Kg∗; init buffer WB
+> 3: Warm-up. Train WBwith LNLL (Eq. (1) ); accumulate
+> ξ= MeanPool( ϕ(v)) to init wkt
+> 4: Instantiation (SVD-Filter).
+> 5: Perform SVD: ∆WB=UΣV ⊤▷Eq. (4) 6: Keep singular values σp> τ alloc
+> 7: Build Qfrom [A⊤
+> 1,A⊤
+> 2, . . . ]; filter by αp(Eq. (6)) 8: Reconstruct (Akt,Bkt)via Eq. (7) 9: Stable training.
+> 10: ωi,k from Eqs. (8)–(9); forward 11: Minimize L=LNLL +Ldec (Eqs. (1), (10), (11)) 12: Freeze (Akt,Bkt,wkt); reset WB
+
+Algorithm 2 CRAM Inference                                          
+
+> Require: Sample (v, q );frozen {cg},{K g},experts
+> {(Ak,Bk)}, centroids {wk}
+> Ensure: Response ˆy
+> 1: e(q)←ψ(q)/∥ψ(q)∥2;g∗←arg max g
+> c⊤
+> ge(q)
+> ∥cg∥2
+> 2: ξ←MeanPool( ϕ(v))
+> 3: ωk←ρ(ξ,wk)/P
+> j∈K g∗ρ(ξ,wj)▷Eqs. (9)–(8) 4: z←[π(ϕ(v)); Emb( q)] ; decode ˆy
+
+B Experimental Details of Format Interference 
+
+To isolate the impact of instruction format hetero-geneity, we design a controlled experiment using the ArxivQA (Li et al., 2024) dataset. The goal is to test whether training on a single output convention degrades performance on other conventions despite identical visual and semantic content. 
+
+B.1 Data Construction 
+
+The original ArxivQA samples are multiple-choice questions with four options. We start from the 
+
+Letter format (the original format), where the model answers with a single letter. From this source, we generate three derived formats by pro-grammatically converting the instruction and an-swer fields while keeping the image and the seman-tic correct answer unchanged. 
+
+Letter (McqLetter): The model outputs the op-tion letter. Instruction ends with: “Answer with the option’s letter from the given choices directly.” Answer: a sin-gle letter, e.g., “B”. 
+
+Text (McqText): The model outputs the full text of the chosen option. Options are rewritten as “A. ...” , “B. ...” , etc. Instruction: 
+
+“Choose the correct answer and reply with the full text of that choice, exactly as written among the options. Do not use the option letter.” Answer: the full option text, e.g., 10 −1 Mpc −1.
+
+Short (Short): The model outputs a short answer (one or two words). Options are removed; the instruction asks for a concise answer. To control the difficulty and avoid overly long or complex answers, we retain only samples where the correct option text contains ≤ 2 to-kens. Instruction: “Answer with the exact wording of the correct choice. The correct answer must be one or two words only; reply with those words only, no letters, punctuation, or extra explanation.” Answer: the short text, e.g., “0.48”. 
+
+Yes/No (YesNo): The model outputs “yes” or 
+
+“no” . Two numbered statements (the cor-rect option and a distractor) are presented, exactly one of which is correct. The order is randomly shuffled per sample. To con-trol the difficulty and align with the seman-tic complexity of the other three formats, we avoid simple true/false questions that directly ask whether a single claim is correct. In-stead, this two-statement comparison design requires the model to identify the correct op-tion, ensuring that format conventions rather than answer triviality remain the primary con-trolled variable. Instruction: “Two numbered statements are given about the same question. Exactly one is correct. If statement (1) is correct, reply with exactly: yes. If statement (2) is correct, reply with exactly: no.” An-swer: “yes” or “no” .After conversion, we align the training and test set sizes across all four formats. For the Short for-mat, the token-length filter (only retaining samples where the correct option text contains at most two tokens) inevitably reduces the number of usable samples. Therefore, we take the intersection of samples that survive this filter and the correspond-ing samples in the other three formats, ensuring 12 that all four variants are evaluated on exactly the same set of underlying questions. 
+
+B.2 Training and Evaluation Protocol 
+
+For each format f ∈ { Letter , Text , Short , Yes/No },we perform parameter-efficient fine-tuning (PEFT) by inserting LoRA adapters of rank r = 8 into the attention layers (i.e., q_proj , v_proj , k_proj ,
+
+o_proj ) of LLaVA-v1.5-7B. During training, only the LoRA parameters are learnable; the backbone MLLM remains frozen. The model is trained on the training set of that format for one epoch using the standard language modeling loss. After training, we evaluate the model on the test sets of all four 
+
+formats, yielding a 4×4 accuracy matrix. The zero-shot baseline (LLaVA-v1.5-7B without fine-tuning) is also evaluated on all four test sets. 
+
+B.3 Error Analysis: Format-Wrong Content-Correct (FWCC) 
+
+To distinguish semantic forgetting from pure for-mat violation, we define a sample as format-wrong but content-correct (FWCC) if the predicted an-swer is semantically equivalent to the ground truth but does not adhere to the required output conven-tion of the test format. For each test format, we use a dedicated evaluator that first checks format compliance (e.g., single letter for Letter, exactly “yes”/“no” for Yes/No) and, if violated, attempts to extract the semantic content using rules (e.g., mapping option letters to option texts, normalizing case). The FWCC ratio is the proportion of incor-rect predictions that are semantically correct but format-violating. 
+
+B.4 Correspondence with Main Paper Figures 
+
+The results are summarised in Fig. 1 in the main paper. Fig. 1(a) shows the accuracy change relative to zero-shot for each train–test format pair. The diagonal entries (training and testing on the same format) all achieve high accuracy, confirming that each format is learnable in isolation. However, the off-diagonal entries reveal severe degradation: training on any single format leads to a substantial drop in accuracy when testing on other formats, even though the underlying visual and semantic content remain identical. This indicates that the model learns format-specific surface patterns that do not transfer across conventions. Fig. 1(b) further reports the FWCC (Format-Wrong Content-Correct) ratio among errors. Ahigh FWCC ratio indicates that the model still 
+
+Table 6: Implementation details.                                  
+
+> Method Insertion Epoch Config. (UCIT/TriGap)
+> FT-LoRA Attn+FFN 196/80 (rank) Replay-LoRA Attn+FFN 196/80 (rank) HiDe-LLaVA Attn+FFN ( Nexp.) 116/8 (rank) CL-MoE FFN ( Nexp.) 116/8 (rank) DiSCO FFN ( Nexp.) 116/8 (rank) ModalPrompt Soft prompts ( ℓ= 10 )410 (prefix) MoE-LoRA FFN ( Nexp.) 116/8 (rank)
+> CRAM (Ours) Attn ( Nexp.) 17.94/7.63 (rank)
+
+retrieves the correct semantic answer but fails to adhere to the required output convention of the test format. Together, these two panels con-firm that heterogeneous instruction formats inher-ently trigger severe interference, acting as a pri-mary driver of catastrophic forgetting in shared-parameter regimes. Importantly, this interference stems from format-surface misalignment rather than loss of task semantics. 
+
+C Implementation details 
+
+For MoE-based baselines (HiDe-LLaVA, CL-MoE, DiSCO, MoELoRA), the reported rank is the per-expert average: total rank r is divided by the num-ber of tasks N (UCIT: N = 6 , TriGap: N = 10 ). For CRAM, the adaptive allocation mechanism dy-namically determines the per-expert rank, resulting in the reported average values (7.94 for UCIT, 7.63 for TriGap). All methods inject adapters into the attention (Attn) or feed-forward network (FFN) lay-ers as indicated. ModalPrompt uses soft prompts of length ℓ = 10 instead of low-rank adapters. 
+
+D Geometric Properties of the Orthogonality Score 
+
+Let Q be an orthonormal basis for the historical subspace Vhist = col( Mhist ), so Q⊤Q = IRhist .Define 
+
+P = QQ ⊤ (onto Vhist ),
+
+P⊥ = I − QQ ⊤ (onto V⊥
+
+> hist
+
+).
+
+Both are symmetric, idempotent, and satisfy 
+
+PP ⊥ = 0.For a candidate SVD direction vp ∈ Rd, the orthogonality score is 
+
+αp = ∥P⊥vp∥2
+
+∥vp∥2
+
+= ∥(I − QQ ⊤)vp∥2
+
+∥vp∥2
+
+. (12) 
+
+Proposition 1 (Bounds and Energy Interpretation) .
+
+αp ∈ [0 , 1] . αp = 0 iff vp ∈ V hist (fully redun-dant); αp = 1 iff vp ⊥ V hist (fully novel). More-over, α2 
+
+> p
+
+equals the fraction of ∥vp∥22 lying in V⊥
+
+> hist
+
+.
+
+13 Proof. Decompose vp = Pv p +P⊥vp = v∥ 
+
+> p
+
++v⊥ 
+
+> p
+
+.Since ⟨v∥
+
+> p
+
+, v⊥ 
+
+> p
+
+⟩ = 0 ,
+
+∥vp∥22 = ∥v∥
+
+> p
+
+∥22 + ∥v⊥ 
+
+> p
+
+∥22. (13) Dividing by ∥vp∥22̸ = 0 yields 1 = ∥v∥
+
+> p
+
+∥22/∥vp∥22 +
+
+α2
+
+> p
+
+, hence 0 ≤ αp ≤ 1. Boundary cases: αp = 0 
+
+iff v⊥ 
+
+> p
+
+= 0, i.e. vp ∈ col( Q); αp = 1 iff v∥ 
+
+> p
+
+= 0,i.e. vp ⊥ col( Q). Finally, α2 
+
+> p
+
+= ∥v⊥ 
+
+> p
+
+∥22/∥vp∥22
+
+measures the energy fraction in V⊥
+
+> hist
+
+. Thresholding by τorth retains only directions with αp > τ orth ,so at least τ 2orth of their energy lies outside the historical subspace. 
+
+E Gradient Dynamics of the Decoupling Loss 
+
+The decoupling loss penalizes the new expert’s re-sponse to historical input directions: 
+
+Ldec = 1
+
+B
+
+> B
+
+X
+
+> i=1
+
+γi ∆Wnew (QQ ⊤hi) 22, (14) where γi = P 
+
+> k∈K g∗
+
+ωi,k measures reliance on historical experts and hi ∈ Rd are the input hidden states. Let ˜hi = QQ ⊤hi, so Ldec =
+
+> 1
+> B
+
+PBi=1 γi ∥∆Wnew ˜hi∥22.
+
+Proposition 2 (Gradient Structure) . The gradient 
+
+∇∆Wnew Ldec is right-multiplied by QQ ⊤, so gra-dient descent suppresses ∆Wnew on historical in-put directions. Proof. From ∂∂X ∥Xy ∥22 = 2 Xyy ⊤,
+
+∂Ldec 
+
+∂∆Wnew 
+
+= 2
+
+B
+
+> B
+
+X
+
+> i=1
+
+γi (∆ Wnew ˜hi)˜h⊤
+
+> i
+
+= 2
+
+B
+
+> B
+
+X
+
+> i=1
+
+γi (∆ Wnew QQ ⊤hi)h⊤ 
+
+> i
+
+QQ ⊤.
+
+(15) Thus, the gradient takes the form G QQ ⊤ with 
+
+G ∈ Rm×d. The gradient descent update 
+
+∆Wnew ← ∆Wnew − η G QQ ⊤ modifies only the components of ∆Wnew that map inputs from the historical subspace col( Q). Minimizing Ldec 
+
+drives ∆Wnew Q → 0, forcing near-zero outputs for historical directions. Ldec acts as a soft regular-izer alongside LNLL , penalizing redundant activa-tions without enforcing hard orthogonality. 
+
+Table 7: Task-order robustness of CRAM on UCIT .We report average accuracy (%) under three task se-quences: Original (benchmark-default order), Reverse 
+
+(fully inverted order), and Random (fixed permutation for reproducibility).        
+
+> CRAM (Ours) Original Reverse Random
+> Avg. Accuracy (%) 74.73 73.06 72.89
+
+Table 8: Task-order robustness of CRAM on TriGap .Settings follow Tab. 7: Original , Reverse , and Random 
+
+denote the same task-order configurations.        
+
+> CRAM (Ours) Original Reverse Random
+> Avg. Accuracy (%) 47.79 46.97 48.01
+
+F Robustness to Task Order 
+
+While Fig. 7b demonstrates C RAM ’s stability under different sequential format adaptation, we further evaluate its robustness to task ordering on both UCIT and TriGap benchmarks. Specifically, for each benchmark we report results under three dis-tinct task sequences: • Original : the canonical task order as defined in the benchmark protocol; • Reverse : the exact reverse of the original se-quence (last task becomes first); • Random : a randomly shuffled order. For re-producibility, we fix the random permutation to the following sequences: 
+
+UCIT : Flickr30k → CLEVER → ArxivQA →
+
+ImageNet-R → IconQA → Vizcap 
+
+TriGap : ChemVQA → CLEVR → PMCVQA →
+
+InfographicVQA → Roadside → DocVQA → Arx-ivQA → FloodNetVQA → ChartQA → IconQA As shown in Tabs. 7 and 8, C RAM exhibits strong robustness to task ordering: performance fluctua-tions remain marginal across all sequences. This stability stems from two key designs: (1) group-isolated routing decouples format-level interfer-ence at the semantic level, making expert activation insensitive to the chronological arrival of tasks; and (2) centroid-guided orthogonal learning confines new updates to subspaces orthogonal to historical knowledge, preventing order-dependent accumula-tion of redundant directions. Notably, the minimal degradation under perturbed orders suggests that CRAM does not rely on a favorable task curricu-lum, making it suitable for realistic open-world deployment. 14 Table 9: OOD Generalization evaluated on MMMU.            
+
+> Method Art Bus. Sci. H&M Hum. T&E Avg
+> Zero-Shot 43.85 25.35 23.74 32.93 48.47 28.16 33.75
+> CRAM (Ours) 44.51 26.19 25.93 33.76 47.34 33.96 35.28
+
+G OOD Generalization. 
+
+Tab. 9 evaluates cross-benchmark transfer by test-ing UCIT-trained models on MMMU (Yue et al., 2024), a diverse benchmark covering six domains: Art, Business, Science, Health & Medicine, Hu-manities, and Tech & Engineering. C RAM achieves higher average accuracy (+1.53% over zero-shot), outperforming the baseline in 5 out of 6 domains and matching it in the remaining one (Humani-ties). This consistent improvement suggests that CRAM not only mitigates catastrophic forgetting on the original tasks but also preserves task-agnostic visual representations that generalize to unseen do-mains. The most notable gains appear in Tech & Engi-neering (+5.80%) and Science (+2.19%), which demand structured reasoning and domain-specific visual understanding. These tasks require the model to interpret technical diagrams, charts, and scientific figures, capabilities that are particularly vulnerable to overfitting under standard continual learning. By neutralizing format interference via semantic grouping and confining updates to orthog-onal subspaces via orthogonal filtering, C RAM pre-vents the model from over-specializing to the UCIT training distribution. In contrast, domains with smaller gains (e.g., Business, +0.84%) or slight degradation (Humanities, -1.13%) rely more on general world knowledge or linguistic reasoning, where the baseline already maintains reasonable zero-shot performance and the room for improve-ment is limited. These results demonstrate that C RAM ’s design, including group-isolated routing, adaptive-rank in-stantiation, and centroid-guided orthogonal learn-ing, effectively preserves transferable visual com-petencies while acquiring task-specific knowledge. The model does not simply memorize UCIT pat-terns but learns representations that generalize ro-bustly to out-of-distribution benchmarks. 
+
+H Training Efficiency Analysis 
+
+Fig. 9 compares the training time of C RAM against the MoE-LoRA baseline across the six tasks of UCIT. While C RAM introduces additional compu-tations due to warm-up SVD decomposition and or-Task 1 Task 2 Task 3 Task 4 Task 5 Task 6  
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> Training time (min)
+> Baseline Cram (Ours)
+
+Figure 9: Training time comparison between Baseline (MoE-LoRA) and C RAM on UCIT. Table 10: UCIT benchmark.                
+
+> Dataset Domain Train Test
+> ImageNet-R Artistic 24,000 3,000 ArxivQA Academic figures 40,000 3,000 VizWiz Visual assistance 40,000 3,000 IconQA Icons 30,000 3,000 CLEVR-Math Synthetic reasoning 40,000 3,000 Flickr30k Captioning 40,000 3,000
+
+thogonal filtering, the training time increases only marginally compared to the baseline, incurring a modest overhead. This slight increase is well justi-fied by substantial performance gains and enhanced parameter efficiency. Moreover, the overhead per task remains stable, as the adaptive-rank mecha-nism only activates during expert instantiation and does not accumulate across tasks. These results demonstrate that C RAM achieves superior contin-ual instruction tuning performance with only a neg-ligible training time penalty. 
+
+I Dataset Details 
+
+Tables 10 and 11 summarise the dataset splits for the UCIT and TriGap benchmarks. For each task, we report the training set size, test set size, and a brief domain description to illustrate the diversity of visual domains and instruction formats encoun-tered during continual learning. 
+
+J Comprehensive Study on MCIT Methods 
+
+In this section, we provide details of the methods compared in the main paper. The specifics of each compared method are outlined as follows: • Replay-LoRA : A rehearsal-based baseline that integrates a fixed-size episodic memory buffer with LoRA fine-tuning. During each 15 Table 11: TriGap benchmark.                       
+
+> Dataset Domain Train Test
+> PMCVQA Medical 40,000 3,000 DocVQA Documents 30,000 3,000 ChartQA Charts 25,000 3,000 IconQA Icons 10,000 3,000 InfographicVQA Infographics 20,000 3,000 ArxivQA Academic figures 10,000 3,000 Roadside Autonomous driving 40,000 3,000 ChemVQA Molecules 40,000 3,000 FloodNetVQA Disaster scenes 10,000 3,000 CLEVR Synthetic reasoning 10,000 3,000
+
+incremental task, it stores a representative sub-set of historical multimodal instructions and jointly optimizes the low-rank adapters using both current and replayed samples. This ex-plicit data rehearsal strategy effectively con-strains parameter drift and mitigates catas-trophic forgetting while preserving parameter efficiency. • MoELoRA : This method extends LoRA-based fine-tuning to a Mixture-of-Experts architecture for continual instruction tun-ing, where each task activates a subset of LoRA experts via a learnable router, enabling parameter-efficient adaptation across sequen-tial tasks without rehearsal. However, it re-mains vulnerable to router drift and expert drift as tasks accumulate. • HiDe-LLaVA : Based on CKA similarity anal-ysis revealing distinct representation patterns between top and lower transformer layers, this method hierarchically decouples model adap-tation: the top layer undergoes task-specific LoRA expansion with dual-modality anchor matching for expert selection, while lower lay-ers fuse LoRAs across tasks to preserve gen-eral knowledge without router training. • ModalPrompt : A prompt-based framework that constructs task-specific prompts and lever-ages dual-modality guidance for two pur-poses: prompt fusion during training to trans-fer knowledge from semantically similar tasks, and prompt selection during inference to con-trol computational complexity. The method maintains inference efficiency by selecting only k relevant prompts from a shared pool regardless of task count. • CL-MoE : A dual momentum Mixture-of-Experts framework designed for contin-ual MLLM adaptation. It introduces aDual-Router MoE (RMoE) that jointly em-ploys task-level and instance-level routers to robustly allocate global and local ex-perts. Coupled with a Dynamic Momen-tum MoE (MMoE), it categorizes experts into task-shared and task-specific types and dynamically updates their parameters via a momentum-based interpolation between his-torical and current knowledge. This mecha-nism effectively alleviates catastrophic forget-ting and enhances both forward and backward transfer without relying on replay buffers. • SAME : SAME stabilizes MoE adaptation via spectral-aware routing (decomposing router updates into task-relevant and history-preserving subspaces) and curvature-aware scaling (regulating expert updates using histor-ical input covariance). It also introduces adap-tive expert activation to freeze selected ex-perts during training, reducing redundant com-putation and cross-task interference. SAME achieves strong performance on MCIT bench-marks and serves as a direct point of compari-son for our C RAM framework. • DISCO : A federated continual learning frame-work for LMMs that employs dynamic knowl-edge organization (DKO) to store task-specific parameters in a global cache using identity token matching, and subspace selective acti-vation (SSA) to filter irrelevant outputs during inference. While originally designed for fed-erated settings, its continual learning compo-nents are applicable to centralized MCIT and are included for comparison. 16

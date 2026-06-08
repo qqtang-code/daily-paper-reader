@@ -6,83 +6,92 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-30 ~ 2026-06-08
-- 运行时间：2026-06-08 06:23:51 UTC
+- 最新运行日期：2026-06-08
+- 运行时间：2026-06-08 22:14:18 UTC
 - 运行状态：成功
-- 本次总论文数：21
-- 精读区：10
-- 速读区：11
+- 本次总论文数：24
+- 精读区：12
+- 速读区：12
 
 ### 今日简报（AI）
-今日聚焦多模态大模型推理优化与视觉推理基准，精读两篇高分论文。最值得关注方向：注意力引导微调提升链式推理（9.0分）、多跳视觉推理基准VistaHop（9.0分）。建议普通读者优先精读这两篇，拓展对多模态推理原理与评估的理解。
-- 详情：[/20260530-20260608/README](/20260530-20260608/README)
+今日日报聚焦24篇论文，精读聚焦LLM经济性推理框架与多模态注意力微调，速读涵盖模态交互、神经符号蒸馏及轻量推理。最值得关注的是两篇9分精读：《Thinking Economically》的层次化自适应复杂度推理框架，以及《Attention-guided Fine-tuning》提升多模态LLM思维链推理的方法。建议优先精读这两篇掌握前沿推理技术，同时关注速读中的模态交互理解与轻量级推理方案，便于实际应用。
+- 详情：[/202606/08/README](/202606/08/README)
 
 ### 精读区论文标签
-1. [Attention-guided Fine-tuning of Multimodal Large Language Models Improves Chain-of-Thought Reasoning](/20260530-20260608/2606.01558v1-attention-guided-fine-tuning-of-multimodal-large-language-models-improves-chain-of-thought-reasoning)  
-   标签：评分：9.0/10、query:mm-chain
-   evidence：改进多模态大语言模型的链式思维推理
-2. [VistaHop: Benchmarking Multi-hop Visual Reasoning for Visual DeepSearch](/20260530-20260608/2606.03273v1-vistahop-benchmarking-multi-hop-visual-reasoning-for-visual-deepsearch)  
-   标签：评分：9.0/10、query:mm-chain
-   evidence：面向多跳视觉推理和长推理链的基准
-3. [ThoughtFold: Folding Reasoning Chains via Introspective Preference Learning](/20260530-20260608/2606.03503v1-thoughtfold-folding-reasoning-chains-via-introspective-preference-learning)  
-   标签：评分：9.0/10、query:mm-chain
-   evidence：通过内省偏好学习折叠推理链
-4. [HybridThinker: Efficient Chain-of-Thought Reasoning via Compressed Memory and Transient Thought Steps](/20260530-20260608/2606.03768v1-hybridthinker-efficient-chain-of-thought-reasoning-via-compressed-memory-and-transient-thought-steps)  
-   标签：评分：9.0/10、query:mm-chain
-   evidence：链式思维推理的高效化，采用压缩记忆与临时思维步骤
-5. [Value-Aware Stochastic KV Cache Eviction for Reasoning Models](/20260530-20260608/2606.03928v1-value-aware-stochastic-kv-cache-eviction-for-reasoning-models)  
+1. [Thinking Economically: A Hierarchical Framework for Adaptive-Complexity Reasoning in LLMs](/202606/08/2606.01168v1-thinking-economically-a-hierarchical-framework-for-adaptive-complexity-reasoning-in-llms)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：思维链推理的自适应预算分配
+2. [Attention-guided Fine-tuning of Multimodal Large Language Models Improves Chain-of-Thought Reasoning](/202606/08/2606.01558v1-attention-guided-fine-tuning-of-multimodal-large-language-models-improves-chain-of-thought-reasoning)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：注意力引导微调提升多模态大语言模型的链式思维推理
+3. [Adaptive Latent Agentic Reasoning](/202606/08/2606.02871v1-adaptive-latent-agentic-reasoning)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：双模式框架，结合潜在推理和选择性CoT升级
+4. [VistaHop: Benchmarking Multi-hop Visual Reasoning for Visual DeepSearch](/202606/08/2606.03273v1-vistahop-benchmarking-multi-hop-visual-reasoning-for-visual-deepsearch)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：面向长链的多跳视觉推理基准
+5. [CR-Seg: Attention-Guided and CoT-Enhanced Coarse-to-Refined Reasoning Segmentation](/202606/08/2606.03564v2-cr-seg-attention-guided-and-cot-enhanced-coarse-to-refined-reasoning-segmentation)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：思维链增强的多模态分割
+6. [Agentic Chain-of-Thought Steering for Efficient and Controllable LLM Reasoning](/202606/08/2606.03965v1-agentic-chain-of-thought-steering-for-efficient-and-controllable-llm-reasoning)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：提出代理链式推理引导方法ACTS，自适应控制推理步数与预算，实现高效LLM推理。
+7. [VTI-CoT: Visual-Textual Interleaved Chain of Thought for Video Reasoning](/202606/08/2606.05736v1-vti-cot-visual-textual-interleaved-chain-of-thought-for-video-reasoning)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：面向视频推理的视觉-文本交错思维链
+8. [MARDoc: A Memory-Aware Refinement Agent Framework for Multimodal Long Document QA](/202606/08/2606.05749v1-mardoc-a-memory-aware-refinement-agent-framework-for-multimodal-long-document-qa)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：多模态长文档问答中的迭代检索推理智能体
+9. [MPCoT: Reward-Guided Multi-Path Latent Reasoning for Test-Time Scalable Vision-Language-Action](/202606/08/2606.06245v1-mpcot-reward-guided-multi-path-latent-reasoning-for-test-time-scalable-vision-language-action)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：奖励引导的多路径潜在推理用于视觉-语言-行动
+10. [VideoSEG-O3: A Multi-turn Reinforcement Learning Framework for Reasoning Video Object Segmentation](/202606/08/2606.06819v1-videoseg-o3-a-multi-turn-reinforcement-learning-framework-for-reasoning-video-object-segmentation)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：提出基于多轮强化学习和时空链式推理的视频对象分割框架。
+11. [Dreaming when Necessary: Advancing World Action Models with Adaptive Multi-Modal Reasoning](/202606/08/2606.07089v1-dreaming-when-necessary-advancing-world-action-models-with-adaptive-multi-modal-reasoning)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：面向长时域任务的 adaptive 多模态推理
+12. [Towards Tight Bounds for Streaming Attention](/202606/08/2606.07205v1-towards-tight-bounds-for-streaming-attention)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：针对长链式思维推理模型的KV缓存驱逐方法
-6. [Imaginative Perception Tokens Enhance Spatial Reasoning in Multimodal Language Models](/20260530-20260608/2606.03988v1-imaginative-perception-tokens-enhance-spatial-reasoning-in-multimodal-language-models)  
-   标签：评分：9.0/10、query:mm-chain
-   evidence：多模态空间推理与想象感知标记
-7. [ViCuR: Visual Cues as Recoverable Privilege for Multimodal On-Policy Distillation](/20260530-20260608/2606.05718v1-vicur-visual-cues-as-recoverable-privilege-for-multimodal-on-policy-distillation)  
-   标签：评分：9.0/10、query:mm-chain
-   evidence：利用视觉线索作为可恢复特权的多模态同策略蒸馏
-8. [VTI-CoT: Visual-Textual Interleaved Chain of Thought for Video Reasoning](/20260530-20260608/2606.05736v1-vti-cot-visual-textual-interleaved-chain-of-thought-for-video-reasoning)  
-   标签：评分：9.0/10、query:mm-chain
-   evidence：用于视频推理的视觉-文本交错思维链
-9. [MARDoc: A Memory-Aware Refinement Agent Framework for Multimodal Long Document QA](/20260530-20260608/2606.05749v1-mardoc-a-memory-aware-refinement-agent-framework-for-multimodal-long-document-qa)  
-   标签：评分：9.0/10、query:mm-chain
-   evidence：多模态长文档问答中的迭代多跳推理代理
-10. [MPCoT: Reward-Guided Multi-Path Latent Reasoning for Test-Time Scalable Vision-Language-Action](/20260530-20260608/2606.06245v1-mpcot-reward-guided-multi-path-latent-reasoning-for-test-time-scalable-vision-language-action)  
-   标签：评分：9.0/10、query:mm-chain
-   evidence：面向视觉-语言-动作的奖励引导多路径潜在推理与思维链
+   evidence：流注意力紧界形式化KV缓存压缩
 
 ### 速读区论文标签
-1. [Towards Understanding Modality Interaction in Multimodal Language Models via Partial Information Decomposition](/20260530-20260608/2606.00959v1-towards-understanding-modality-interaction-in-multimodal-language-models-via-partial-information-decomposition)  
-   标签：评分：8.0/10、query:mm-chain
-   evidence：使用部分信息分解分析多模态推理中的模态交互
-2. [Distilling Neuro-Symbolic Programs into 3D Multi-modal LLMs](/20260530-20260608/2606.01215v1-distilling-neuro-symbolic-programs-into-3d-multi-modal-llms)  
-   标签：评分：8.0/10、query:mm-chain
-   evidence：通过链式思维将神经符号程序蒸馏到3D多模态大语言模型中
-3. [Spectral-Progressive Thought Flow for Lightweight Multimodal Reasoning](/20260530-20260608/2606.02842v1-spectral-progressive-thought-flow-for-lightweight-multimodal-reasoning)  
-   标签：评分：8.0/10、query:mm-chain
-   evidence：受DCT启发的渐进式思维流用于轻量级多模态推理
-4. [Adaptive Latent Agentic Reasoning](/20260530-20260608/2606.02871v1-adaptive-latent-agentic-reasoning)  
-   标签：评分：8.0/10、query:mm-chain
-   evidence：自适应隐式和显式思维链推理
-5. [Beyond Visual Memory: Mechanistic Diagnostics of Latent Visual Reasoning](/20260530-20260608/2606.01287v1-beyond-visual-memory-mechanistic-diagnostics-of-latent-visual-reasoning)  
-   标签：评分：7.0/10、query:mm-chain
-   evidence：多模态模型中潜在视觉推理的分析
-6. [MetaForge: A Self-Evolving Multimodal Agent that Retrieves, Adapts, and Forges Tools On Demand](/20260530-20260608/2606.01801v1-metaforge-a-self-evolving-multimodal-agent-that-retrieves-adapts-and-forges-tools-on-demand)  
-   标签：评分：7.0/10、query:mm-chain
-   evidence：自我进化的多模态代理用于推理任务
-7. [eMoT: evolving Memory-of-Thought via Symbolic Anchoring and Memory Corrosion](/20260530-20260608/2606.02054v1-emot-evolving-memory-of-thought-via-symbolic-anchoring-and-memory-corrosion)  
-   标签：评分：7.0/10、query:mm-chain
-   evidence：提出演变记忆思维以稳定多步推理
-8. [MASER: Modality-Adaptive Specialist Routing for Embodied 3D Spatial Intelligence](/20260530-20260608/2606.02463v1-maser-modality-adaptive-specialist-routing-for-embodied-3d-spatial-intelligence)  
-   标签：评分：7.0/10、query:mm-chain
-   evidence：面向3D多模态推理的模态自适应路由
-9. [SPADER: Step-wise Peer Advantage with Diversity-Aware Exploration Rewards for Multi-Answer Question Answering](/20260530-20260608/2606.00593v1-spader-step-wise-peer-advantage-with-diversity-aware-exploration-rewards-for-multi-answer-question-answering)  
-   标签：评分：6.0/10、query:mm-chain
-   evidence：长视界工具使用推理与逐步信用分配
-10. [Unlocking the Black Box of Latent Reasoning: An Interpretability-Guided Approach to Intervention](/20260530-20260608/2606.01243v1-unlocking-the-black-box-of-latent-reasoning-an-interpretability-guided-approach-to-intervention)  
-   标签：评分：6.0/10、query:mm-chain
-   evidence：对潜在推理进行可解释性分析与干预，与思维链相关
-11. [HMPO: Hybrid Median-length Policy Optimization for Chain-of-Thought Compression](/20260530-20260608/2606.01934v1-hmpo-hybrid-median-length-policy-optimization-for-chain-of-thought-compression)  
-   标签：评分：6.0/10、query:mm-chain
-   evidence：压缩长链式思维推理以提高效率
+1. [Towards Understanding Modality Interaction in Multimodal Language Models via Partial Information Decomposition](/202606/08/2606.00959v1-towards-understanding-modality-interaction-in-multimodal-language-models-via-partial-information-decomposition)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多模态大模型中模态交互理解
+2. [Distilling Neuro-Symbolic Programs into 3D Multi-modal LLMs](/202606/08/2606.01215v1-distilling-neuro-symbolic-programs-into-3d-multi-modal-llms)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：将符号推理模式以自然语言思维链蒸馏到多模态大模型中
+3. [Spectral-Progressive Thought Flow for Lightweight Multimodal Reasoning](/202606/08/2606.02842v1-spectral-progressive-thought-flow-for-lightweight-multimodal-reasoning)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：基于频谱渐进思想流的轻量多模态推理
+4. [Distilling Answer-Set Programming Rules from LLMs for Neurosymbolic Visual Question Answering](/202606/08/2606.03269v1-distilling-answer-set-programming-rules-from-llms-for-neurosymbolic-visual-question-answering)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：利用LLM蒸馏规则进行神经符号VQA
+5. [Temporal Evidence Routing with Structured Visual Evidence for TimeLogicQA](/202606/08/2606.01106v1-temporal-evidence-routing-with-structured-visual-evidence-for-timelogicqa)  
+   标签：评分：7.0/10、query:mm-cot
+   evidence：多跳视觉推理与时序链
+6. [Unlocking the Black Box of Latent Reasoning: An Interpretability-Guided Approach to Intervention](/202606/08/2606.01243v1-unlocking-the-black-box-of-latent-reasoning-an-interpretability-guided-approach-to-intervention)  
+   标签：评分：7.0/10、query:mm-cot
+   evidence：基于可解释性指导潜在推理向量干预
+7. [Agent Skills Should Go Beyond Text: The Case for Visual Skills](/202606/08/2606.01414v1-agent-skills-should-go-beyond-text-the-case-for-visual-skills)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：多模态技能范式结合文本和视觉
+8. [MUSE: A Unified Agentic Harness for MLLMs](/202606/08/2606.03005v1-muse-a-unified-agentic-harness-for-mllms)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：面向MLLM能力的统一框架
+9. [HypothesisMed: Inference-Time Answer Fusion and Structured Hypothesis-Space Reporting for Biomedical Question Answering](/202606/08/2606.00971v1-hypothesismed-inference-time-answer-fusion-and-structured-hypothesis-space-reporting-for-biomedical-question-answering)  
+   标签：评分：6.0/10、query:mm-cot
+   evidence：使用链式思维提示和答案融合提升可靠性
+10. [Geometric Latent Reasoning Induces Shorter Generations in LLMs](/202606/08/2606.02248v1-geometric-latent-reasoning-induces-shorter-generations-in-llms)  
+   标签：评分：6.0/10、query:mm-cot
+   evidence：使用链式思考轨迹进行潜在推理
+11. [MASER: Modality-Adaptive Specialist Routing for Embodied 3D Spatial Intelligence](/202606/08/2606.02463v1-maser-modality-adaptive-specialist-routing-for-embodied-3d-spatial-intelligence)  
+   标签：评分：6.0/10、query:mm-cot
+   evidence：面向多模态的3D空间推理的模态自适应路由
+12. [CRAM: Centroid-Routing and Adaptive MoE for Multimodal Continual Instruction Tuning](/202606/08/2606.02502v1-cram-centroid-routing-and-adaptive-moe-for-multimodal-continual-instruction-tuning)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：提出质心路由与自适应MoE方法，实现高效的多模态连续指令调优，防止灾难性遗忘。
 
 
 <div class="dpr-home-promo-card">
