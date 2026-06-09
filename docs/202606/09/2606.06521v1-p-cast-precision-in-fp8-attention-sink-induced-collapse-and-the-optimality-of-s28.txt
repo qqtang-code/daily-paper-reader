@@ -1,0 +1,725 @@
+Title: P-Cast Precision in FP8 Attention: Sink-Induced Collapse and the Optimality of S=2^8
+
+URL Source: https://arxiv.org/pdf/2606.06521v1
+
+Published Time: Mon, 08 Jun 2026 00:01:00 GMT
+
+Number of Pages: 8
+
+Markdown Content:
+# P-Cast Precision in FP8 Attention: Sink-Induced Collapse and the Optimality of S = 2 8
+
+Reed Lau 
+
+Tencent 
+
+reedlauliu@tencent.com 
+
+# Abstract 
+
+FP8 (E4M3) acceleration for attention computation offers significant throughput gains, but the 3-bit mantissa introduces precision challenges when the softmax probability matrix P is cast to FP8 before the P ·V matrix multiplication. We analyze two implementation choices that affect output precision under the Attention Sink phenomenon: (1) the KV block iteration order, and (2) the static scaling factor applied to P before casting. We show that forward KV iteration causes P-collapse —to leading order a fraction Φ(∆ + δk − 6.93 − ln S) of non-sink 
+
+P values underflow to zero, where the small shift δk ≈ 1 (for 
+
+ksink =4 ) is the expected within-sink-block score maximum— and that reverse iteration removes it, with a zero-underflow guarantee when reverse is combined with S=256 . We further give a constructive characterization of S = 256 = 2 8 as the static scale that simultaneously satisfies (i) bit-exact IEEE 754 scaling, (ii) the lower envelope of a sawtooth function 
+
+dp (S) over the E4M3 number line ( dp = 2 −4, the minimum worst-case quantization step), and (iii) the maximum normal-range coverage among bit-exact ( 2k) scales (a non-bit-exact scale such as 448 attains slightly higher coverage; §5). Both optimizations are already deployed in FlashAttention-3/4 on engineering grounds; our contribution is a quantitative account of why these choices are good and a closed-form threshold 
+
+∆c = 6 .93 + ln S − δk for predicting kernel-level precision loss. Kernel-faithful experiments ( Q, K, V in FP32 to isolate the P-cast effect) show 3–10 × MSE improvement at moderate sink strengths, and paired tests confirm both fixes saturate to the same precision floor when combined—which motivated updating the hpc-ops kernel from S=1 to S=256 .
+
+# 1 Introduction 
+
+1.1 Motivation 
+
+The relentless scaling of large language models has made low-precision arithmetic essential for both training and in-ference throughput. Modern GPU architectures (NVIDIA Hopper, Blackwell; AMD MI300) now provide native FP8 tensor core support, operating on two formats: E4M3 (4-bit exponent, 3-bit mantissa) for forward computation and E5M2 for gradients [5]. FlashAttention-3 [ 6] exploits this by casting the softmax output matrix P to E4M3 before the P · V matmul, while keeping the output accumulator in FP32. This design creates a 
+
+precision bottleneck at the P-cast step : E4M3’s 3-bit mantissa provides only 8 representable values per binade, giving a relative precision of just 12 .5% —roughly 16 × worse than BF16. In this regime, two implementation “details” that are in-consequential in higher precision become first-order precision determinants: 1. KV block iteration order : whether the online softmax processes KV blocks forward ( 0 → N ) or reverse ( N →
+
+0). 2. P-scaling factor : the constant S by which P is multiplied before the E4M3 cast (and divided back in the epilogue). 
+
+1.2 The Attention Sink Problem 
+
+The Attention Sink [ 8] phenomenon—where initial tokens receive disproportionately large attention weights—interacts destructively with FP8 quantization. Under forward itera-tion, the sink’s high logit score inflates the running softmax maximum m, forcing all subsequent P values below E4M3’s representable range. This P-collapse is a threshold effect: it activates around sink strength ∆ ≈ 6–7, where the cast zeroes the majority of non-sink P values while those positions still carry roughly half of the total probability mass. 
+
+1.3 Contributions 
+
+This paper provides a quantitative account of both implemen-tation choices: 1. P-collapse quantification (§3): We derive a closed-form expression F (∆ , S ) = Φ(∆ + δk − 6.93 − ln S) (with 
+
+δk a small within-sink extreme-value correction) for the fraction of non-sink P values that underflow, and a leading-order MSE estimate showing the effect peaks in a narrow transition region. 2. Reverse iteration sufficiency (§4): We show that reverse iteration (rigorously, combined with S=256 ) keeps all P values representable for any practical sequence length, with an explicit probabilistic guarantee. 3. S = 256 characterization (§5): We introduce the dp (S)
+
+function—the normalized maximum quantization step— and show it forms a sawtooth with power-of-two values on its lower envelope. This yields a constructive charac-terization of S = 256 via three jointly imposed conditions 
+
+> arXiv:2606.06521v1 [cs.AR] 2 Jun 2026
+
+(bit-exactness, minimum quantization step, maximum nor-mal coverage). 4. Kernel-faithful validation (§6): Using a simulation that exactly matches production kernel semantics (gSum from FP32 pre-cast P), we measure 3–10 × MSE improvement and observe saturation when both fixes are applied. 
+
+1.4 Positioning 
+
+Both optimizations are already deployed in FlashAttention-3/4 [ 6] on engineering grounds (register savings, range utiliza-tion). This paper is therefore not a proposal of new techniques, but a quantitative explanation of why those choices work and a closed-form diagnostic ( ∆c = 6 .93 + ln S − δk) that practi-tioners can apply to predict P-cast failure regimes. The same analysis motivated updating the hpc-ops kernel from S = 1 
+
+to S = 256 and could inform corresponding changes in Flash-Infer ( S = 448 ) and TensorRT-LLM XQA ( S = 448 ). 
+
+# 2 Background and Related Work 
+
+2.1 FP8 E4M3 Number Format 
+
+The E4M3 format [ 5] allocates 1 sign bit, 4 exponent bits (bias b = 7 ), and 3 mantissa bits. The complete positive representable set contains 126 values: 
+
+Subnormals (exponent field E = 0 , 7 values): 
+
+v = 2 1−b · M
+
+23 = 2 −6 · M
+
+8 , M ∈ { 1, . . . , 7} (1) spanning [2 −9, 7 · 2−9] = [0 .00195 , 0.01367] .
+
+Normals (exponent field E = 1 , . . . , 15 ; 119 values): 
+
+v = 2 E−b ·
+
+
+
+1 + M
+
+23
+
+
+
+, M ∈ { 0, . . . , 7} (2) with E = 15 , M = 7 reserved as NaN, giving max = 448 = 1.75 × 28.
+
+Key thresholds for P quantization :          
+
+> Quantity Value Significance Max representable 448 Overflow/saturation Min normal 2−6Below: subnormal Min subnormal 2−9Smallest nonzero Round-to-zero 2−10 Below: casts to 0
+
+Within any normal binade [2 n, 2n+1 ), the spacing (LSB) is 2n−3, yielding exactly 8 uniformly spaced representable values. The subnormal region has uniform spacing 2−9 with only 7 values—much coarser relative precision. 
+
+2.2 Online Softmax and FP8 FlashAttention 
+
+FlashAttention [ 2 , 3] computes exact attention via tiled online softmax. Algorithm 1 shows the FP8 variant, highlighting the P-cast step and the critical separation between ℓ (FP32 pre-cast) and O (from cast P). The key design: ℓ (line 8) uses exact FP32 probabilities, while 
+
+O (line 10) uses the cast E4M3 values. This means normal-ization is always exact ; precision loss appears only in the numerator. 
+
+Algorithm 1 FP8 Online Softmax Attention (single query row) 
+
+Require: Q ∈ R1×d, K, V ∈ RN ×d (FP8), scale S, block size B 
+
+> 1:
+
+m ← −∞ , ℓ ← 0, O ← 0 ∈ R1×d ▷ FP32  
+
+> 2:
+
+for j ∈ BlockOrder do ▷ Forward: 0..N/B ; Reverse: N/B.. 0 
+
+> 3:
+
+Z ← Q · KTj /√dk ▷ FP8 ×FP8 →FP32 accumulator (scores)  
+
+> 4:
+
+mloc ← max( Z) 
+
+> 5:
+
+mnew ← max( m, m loc ) 
+
+> 6:
+
+α ← exp( m − mnew ) ▷ FP32 correction  
+
+> 7:
+
+P ← exp( Z − mnew ) ▷ FP32 local prob.  
+
+> 8:
+
+ℓ ← α · ℓ + sum (P ) ▷ FP32 pre-cast P  
+
+> 9:
+
+Pfp8 ← cast_E4M3 (P · S) ▷
+
+P-cast; ×S is FP32, bit-exact for S=2 k 
+
+> 10:
+
+O ← α · O + Pfp8 · Vj ▷ FP8 ×FP8 →FP32 accum.  
+
+> 11:
+
+end for  
+
+> 12:
+
+return O/ (S · ℓ) ▷ Epilogue: unscale + normalize 
+
+2.3 Attention Sink 
+
+Multiple studies (see, e.g., [ 1 , 4, 7, 8]) document that pre-trained LLMs allocate disproportionate attention to initial tokens (“sink tokens”), with sink-vs-normal logit gap ∆ typi-cally reported in the range [6 , 13] at context lengths of several thousand. Training-side mitigations exist (learnable sink to-kens, clipped softmax), but we focus on kernel-level solutions applicable to already-trained models. 
+
+2.4 Related Work 
+
+FP8 attention kernels. FlashAttention-3 [ 6] introduced E4M3 P-casting with S = 256 and reverse iteration on Hop-per (SM90); FlashAttention-4 extends the same choices to Blackwell (SM100). FlashInfer adopts S = 448 (match-ing max E4M3 ). SageAttention2 [ 9] uses per-block S = 448 ;SageAttention2++ [ 10 ] constrains S = 112 for FP16 accumu-lation. 
+
+FP8 quantization theory. Micikevicius et al. [5] intro-duced the E4M3/E5M2 split. Per-tensor vs. per-channel scal-ing is well studied for weights/activations, but the specific structure of post-softmax P ∈ [0 , 1] quantization has not received formal treatment. 
+
+Attention sink analysis. Xiao et al. [8] identified the phe-nomenon; Sun et al. [7] linked it to massive activations; Gu et al. [4] empirically measured sink strength distributions. None analyzed the interaction with FP8 P-casting. 
+
+# 3 P-Collapse Under Attention Sink 
+
+3.1 Setup and Notation 
+
+We consider a single attention head with query length q, KV length N , and head dimension d. KV blocks have size B
+
+(typically 64 or 128). The first ksink positions are sink tokens with logit scores ∆ above the mean. Non-sink scores follow 
+
+s ∼ N (0 , 1) (standard for well-trained transformers with 
+
+1/√dk scaling). 23.2 Forward Iteration Failure Mode 
+
+In forward iteration, block 0 contains the sink tokens. After processing block 0, the running maximum is set by the largest sink-token logit. Writing the sink scores as ∆ plus the same 
+
+N (0 , 1) fluctuation carried by other tokens, 
+
+mglobal = ∆ + δk, δk ≜ E max i≤ksink si
+
+, (3) where δk is the expected maximum of ksink standard Gaus-sians ( δ4 ≈ 1.03 ; the asymptotic √2 ln ksink ≈ 1.67 badly 
+
+over estimates δk at the small ksink of interest, and we use the exact value). For all subsequent blocks j > 0, the local probability values are: 
+
+Pj (i) = exp  si − mglobal 
+
+ = exp  si − ∆ − δk
+
+. (4) 
+
+Proposition 1 (P-underflow condition) . A P value p under-flows to zero in E4M3 (with scale S) iff: 
+
+p · S < 2−10 (5) 
+
+For Pj (i) = exp( si − ∆ − δk) with scale S, this occurs when: 
+
+si < ∆ + δk − 10 ln 2 − ln S = ∆ + δk − 6.93 − ln S (6) 
+
+3.3 Underflow Fraction: Closed Form 
+
+For s ∼ N (0 , 1) :
+
+Corollary 2 (P-collapse fraction) . To leading order, the frac-tion of non-sink P values that underflow to zero under forward iteration with scale S is: 
+
+F (∆ , S ) = Φ  ∆ + δk − 6.93 − ln S (7) 
+
+where Φ is the standard normal CDF, 6.93 = 10 ln 2 , and δk
+
+is the within-sink extreme-value shift of §3 (the naive δk = 0 
+
+form is a lower bound on the realized collapse). Proof. By Proposition 1, Pj (i) underflows iff si < ∆ + δk −
+
+10 ln 2 − ln S. For si ∼ N (0 , 1) , Pr[ si < x ] = Φ( x), hence the underflow fraction equals Φ(∆ + δk − 6.93 − ln S) (using 
+
+10 ln 2 = 6 .9315 ). This treats the per-row mglobal as the fixed mean ∆ + δk; since mglobal has nonzero spread across query rows and Φ is convex in its lower tail, the realized fraction is slightly higher than this mean-shift estimate. Table 1 therefore reports the exact simulated values, which Eq. (7) reproduces to within a few percentage points. Table 1 evaluates this for S = 1 (direct cast) and S = 256 :The effective information loss (non-sink mass × fraction zeroed) peaks at ∆ ≈ 6–7 (∼40%), where positions carrying roughly half to three-quarters of the probability mass have most of their P values zeroed. 
+
+3.4 Output MSE Bound 
+
+Proposition 3 (MSE from P-collapse) . Let Z be the set of po-sitions whose P values underflow. Assume Vj are zero-mean 
+
+Table 1: P-collapse analysis ( N = 4096 , ksink = 4 , block size 64). Both the S=1 and S=256 “frac. zeroed” columns are measured from the same kernel-faithful forward simulation (averaged over 12 seeds), so they share one mglobal = ∆ + 
+
+δk convention. The measured shift is δ4 ≈ 1.0, consistent with E[max of 4 N (0 , 1)] ≈ 1.03 (and not the asymptotic √2 ln 4 ≈ 1.67 ). “Eff. info loss” is non-sink mass × frac. zeroed ( S=1 ). The closed form (7) reproduces these columns to within a few points; the residual is the per-row spread of 
+
+mglobal (Corollary 2 proof).                                   
+
+> ∆Frac. zeroed F(∆ , S )Non-sink mass Eff. info loss S=1 S=256
+> 522.3% 0% 88.0% 19.6% 651.6% 0% 74.0% 38.2% 782.0% 0% 51.7% 42.4%
+> 894.8% 0.3% 32.2% 30.5% 999.5% 2.3% 13.9% 13.9% 10 ≈100% 11.7% 5.8% 5.8% 12 ≈100% 67.9% 0.8% 0.8%
+
+random vectors with E[Vj V Tj ] = σ2 
+
+> V
+
+Id and pairwise uncorre-lated across positions. Then the expected per-dimension MSE of the kernel output vs. exact FP32 reference satisfies: 
+
+E[∥ε∥2/d ] = σ2
+
+> V
+
+ℓ2
+
+X
+
+> j∈Z
+
+P 2 
+
+> j
+
++ 1
+
+dℓ 2
+
+X 
+
+> j̸=k∈Z
+
+Pj Pk tr E[Vj V Tk ],
+
+(8) 
+
+where ℓ = P 
+
+> all
+
+Pj is the (exact, FP32) running sum. Under the pairwise-uncorrelated assumption the cross term vanishes, yielding 
+
+MSE collapse = σ2
+
+> V
+
+ℓ2
+
+X
+
+> j∈Z
+
+P 2 
+
+> j
+
+. (9) 
+
+Proof. The output error vector is ε = 1
+
+> ℓ
+
+P 
+
+> j∈Z
+
+Pj Vj (the “missing” contribution). Expanding the squared norm and taking expectations: 
+
+E[∥ε∥2] = 1
+
+ℓ2
+
+X
+
+> j,k ∈Z
+
+Pj Pk E[V Tj Vk]. (10) With E[V Tj Vj ] = dσ 2 
+
+> V
+
+and the pairwise-uncorrelated assump-tion E[V Tj Vk] = 0 for j̸ = k, dividing by d gives the stated equality. 
+
+Remark 1. The pairwise-uncorrelated assumption is a stan-dard idealization; real Vj are correlated across positions and channel-wise non-isotropic. The bound thus captures the leading O(σ2 
+
+> V
+
+) scaling and the P 
+
+> j∈Z
+
+P 2 
+
+> j
+
+dependence, but its absolute constant can shift by an O(1) factor (calibrated empirically; §6 confirms the shape and threshold). 
+
+Remark 2. This MSE is maximized when |Z| is large and P P 2 
+
+> j
+
+/ℓ 2 is non-negligible—which holds only in the transi-tion region ∆ ∈ [5 , 9] . At very large ∆ the non-sink mass vanishes, so even total P-collapse barely affects the output, making [5 , 9] the regime where this analysis matters most. 34 Optimization 1: Reverse KV Itera-tion 
+
+4.1 Mechanism 
+
+Reversing the iteration order to (N −1, N −2, . . . , 0) defers the sink block to the last iteration. During all preceding iterations, only non-sink tokens contribute to the running maximum: 
+
+mpre-sink ≤ N −ksink 
+
+max  
+
+> i=1
+
+si ≈ p2 ln( N − ksink ) (11) by extreme value theory for Gaussian order statistics. The P values during these iterations are: 
+
+Pj (i) = exp( si − mpre-sink ) ∈  exp( −mpre-sink − 3σ), 1
+
+(12) with high probability, where σ = 1 is the per-token score standard deviation and the lower endpoint uses the standard 
+
+3σ tail bound (violated with probability Φ( −3) ≈ 1.3 ×
+
+10 −3). For N = 8192 , √2 ln N ≈ 4.25 , giving Pmin ≈
+
+exp( −7.25) ≈ 7 × 10 −4—comfortably above the S=256 
+
+round-to-zero boundary 2−10 /256 = 2 −18 ≈ 3.8 × 10 −6,and only marginally below the bare 2−10 boundary (which is why S=256 adds a safety margin over reverse alone). 
+
+4.2 Formal Sufficiency Condition 
+
+Theorem 4 (Zero-underflow guarantee for reverse +
+
+S = 256 ). In reverse iteration with S = 256 , a P value 
+
+p = exp( s − m) survives the E4M3 cast (i.e., p · 256 ≥ 2−10 )whenever: 
+
+s > m − 18 ln 2 = m − 12 .48 (13) 
+
+For m ≤ √2 ln N + O(1) (pre-sink) with score s ∼ N (0 , 1) :
+
+Pr[ underflow ] = Φ( m − 12 .48) < Φ( −7.2) < 10 −12 (14) 
+
+for N ≤ 10 6. Effectively zero P values underflow. Proof. The cast-to-zero condition is p · S < 2−10 , i.e., 
+
+exp( s − m) · 256 < 2−10 . Taking logs: s − m + 8 ln 2 <
+
+−10 ln 2 , hence s < m − 18 ln 2 . Numerically, 18 ln 2 = 12 .4766 (equivalently 10 ln 2 + ln 256 = 6 .9315 + 5 .5452 = 12 .4766 ), giving the threshold s < m −12 .48 . Before the sink block, m ≤ √2 ln N + O(1) . For N = 10 6: m ≤ 5.3, so the threshold is s < 5.3 − 12 .48 = −7.18 . For s ∼ N (0 , 1) :
+
+Φ( −7.18) ≈ 3.5 × 10 −13 < 10 −12 .
+
+4.3 The Final α-Correction 
+
+When the sink block is finally processed (last in reverse), the correction factor is: 
+
+α = exp( mpre-sink − mnew ) ≈ exp  √2 ln N − ∆ (15) For ∆ = 7 , N = 4096 : α ≈ exp(4 .1 − 7) ≈ 0.055 , which multiplies the FP32 accumulator (23-bit mantissa) with negli-gible precision loss. A paired t-test (Appendix B) confirms forward+ S=256 and reverse+ S=256 are indistinguishable where P-collapse dominates ( ∆ ≤ 9); at ∆ ≥ 10 reverse is marginally—and inconsequentially—better ( ∼ 10 −8 vs. MSE of 10 −5–10 −6). 
+
+# 5 Optimization 2: Scale Factor S =256 
+
+The complete P-quantization pipeline is: 
+
+˜P = Round E4M3 (P · S)
+
+S , O = ˜P · Vℓ (16) where Round E4M3 denotes round-to-nearest in E4M3. The choice of S controls the fidelity of ˜P as an approximation to 
+
+P .
+
+5.1 Condition 1: Bit-Exact Scaling 
+
+Proposition 5 (Power-of-two bit-exactness) . For S = 2 k
+
+and any IEEE 754 FP32 value x (with result in representable range), both x × S and x × (1 /S ) are exact —no rounding occurs. Proof. In IEEE 754 binary32, 2k has exponent = 127 + k
+
+and zero mantissa. Multiplication by 2k adds k to the re-sult exponent without modifying the 23-bit mantissa. Since 
+
+1/2k = 2 −k is also exactly representable, the reciprocal mul-tiplication is likewise exponent-only. For non-power-of-two S (e.g., 448): 1/448 = 0 .002232 . . . 
+
+is not exactly representable in IEEE 754. Every ×(1 /448) 
+
+introduces ∼ 2−24 rounding per element. Over the d-dimensional output, this accumulates to an error of O(d ·
+
+2−48 )—negligible individually, but a systematic precision disadvantage nonetheless. 
+
+5.2 Condition 2: The dp (S) Sawtooth 
+
+Definition 1 (Normalized quantization step) . For scale factor 
+
+S ∈ (0 , 448] :
+
+dp (S) ≜ max x∈[0 , S ] LSB E4M3 (x)
+
+S (17) where LSB E4M3 (x) is the spacing between consecutive rep-resentable E4M3 values in the binade containing x. For 
+
+S > 448 , the cast saturates at 448 and we extend the def-inition to also include the (one-sided) saturation step, see Remark 3. 
+
+dp (S) represents the worst-case quantization step for any 
+
+P ∈ [0 , 1] through the pipeline (16) ; the maximum pointwise error is dp (S)/2.
+
+Remark 3 (Overflow extension of dp ). For S > 448 the value P · S = S at P = 1 is clipped to 448 , producing a one-sided error |1 − 448 /S |. Converting this saturation error to an equivalent step (by the standard error-equals-step /2
+
+correspondence) gives 2(1 − 448 /S ). The effective worst-case step for S > 448 is therefore 
+
+dp (S) = max   32  
+
+> S
+
+, 2(1 − 448 /S ), (18) where 32 /S is the contribution of the largest-LSB binade 
+
+[256 , 512) that lies inside [0 , 448] . We use this extended form only in Theorem 6(iii); for S ∈ (0 , 448] the original definition applies unchanged. 40 100 200 300 400 500                                
+
+> Scale factor S
+> 0.000
+> 0.025
+> 0.050
+> 0.075
+> 0.100
+> 0.125
+> 0.150
+> 0.175
+> 0.200
+> dp (S) = max quantization step /  S Overflow
+> (S> 448 )
+> dp (S)sawtooth for FP8 E4M3: S= 2 kachieves minimum dp = 2 4
+> dp (S)(sawtooth)
+> Lower envelope dp = 2 4
+> S= 2 k(k= 1. . 7 ): valley at 24
+> S = 256 (optimal, dp = 2 4)
+> S= 448 (dp 0.071 > 2 4)
+> S= 256
+> dp = 2 4
+> S= 448
+> dp = 0.071
+
+Figure 1: The normalized quantization step dp (S) for E4M3. All 2k values (blue) sit on the lower envelope at dp = 2 −4.
+
+S = 256 (green star) is the rightmost before overflow. S =448 (red) sits 14% above the envelope. 
+
+Theorem 6 (dp (S) structure) . (i) For all S = 2 k with in-teger k ∈ { 0, 1, . . . , 8} (i.e. S ∈ { 1, 2, 4, . . . , 256 }): 
+
+dp (2 k) = 2 −4.(ii) For all S ∈ [2 −6, 448] with S̸ = 2 k: dp (S) > 2−4.(iii) For S > 448 (using the extended form of Remark 3): 
+
+dp (S) > 2−4.Proof. (i) For S = 2 k with k ∈ { 0, . . . , 8}, we have S ≤
+
+256 < 448 , so S itself is exactly representable in E4M3. The mapped range [0 , S ] = [0 , 2k] has its highest binade 
+
+[2 k−1, 2k) entirely in the normal region (since k − 1 ≥ − 1 >
+
+−6), with LSB = 2 k−4. Thus dp (2 k) = 2 k−4/2k = 2 −4.
+
+(ii) Let n = ⌊log 2 S⌋, so S ∈ [2 n, 2n+1 ) with S̸ = 2 n
+
+(since S is not a power of two). Because S ≥ 2−6, the binade 
+
+[2 n, 2n+1 ) lies in the normal region, so it has LSB = 2 n−3.The range [0 , S ] overlaps with this binade, hence dp (S) = 2n−3/S . Since S < 2n+1 , dp (S) > 2n−3/2n+1 = 2 −4.1
+
+(iii) For S > 448 , both terms in max(32 /S, 2(1 − 448 /S )) 
+
+exceed 2−4 over disjoint sub-ranges: 32 /S > 2−4 for S < 
+
+512 , and 2(1 − 448 /S ) > 2−4 for S > 448 · 11−2−5 ≈ 462 .5;the two intervals overlap on (448 , 512) , covering the full 
+
+S > 448 regime. Figure 1 shows dp (S) computed by exact enumeration of all 126 positive E4M3 values, confirming the sawtooth structure and power-of-two lower envelope. 
+
+5.3 Condition 3: Maximum Normal Coverage 
+
+Among the power-of-two candidates satisfying S ≤ 448 (i.e., 
+
+S ∈ { 1, 2, 4, . . . , 256 }), larger S is better because the E4M3 
+
+normal-region lower bound in the P-domain scales as 2−6/S :                    
+
+> 1Equivalently, dp (S) = 2 n−3/S < 2n−3/2n= 2 −3, so dp (S)∈
+> (2 −4,2−3)for non-power-of-two S∈[2 −6,448] . The range S < 2−6
+> (entirely subnormal) is excluded for cleanliness; the conclusion still holds there since the uniform subnormal LSB 2−9gives dp (S) = 2 −9/S > 2−3,but the practical scope of this paper is S≥1.
+
+Scale P normal threshold Coverage 
+
+S = 64 2−6/64 = 2 −12 ≈ 2.4 × 10 −4 Baseline 
+
+S = 128 2−6/128 = 2 −13 ≈ 1.2 × 10 −4 2× better 
+
+S = 256 2−6/256 = 2 −14 ≈ 6.1 × 10 −5 4× better 
+
+S = 512 Overflow (exceeds 448) 
+
+This monotonicity does not stop at 256 : a non-power-of-two scale such as S = 448 pushes the normal threshold down further to 2−6/448 ≈ 3.5 × 10 −5, i.e. strictly better coverage than S = 256 (6.1 × 10 −5). Coverage alone therefore favors 
+
+448 ; 256 wins only once we additionally require bit-exactness (C1) and the minimum quantization step (C2), both of which 
+
+448 fails. The 256 -vs-448 choice is thus a genuine trade-off (smaller worst-case step vs. slightly better deep-tail coverage), resolved empirically in §6—not a clean domination. 
+
+5.4 Characterization of S = 256 
+
+Theorem 7 (Characterization of S = 256 ). Restricted to scales S ≥ 1 (so that the cast expands the dynamic range of 
+
+P ∈ [0 , 1] rather than contracting it), S = 256 = 2 8 is the unique value satisfying all three of: 
+
+(C1) S = 2 k (bit-exact scaling; Proposition 5) 
+
+(C2) dp (S) = 2 −4 (minimum quantization step; Theo-rem 6) 
+
+(C3) S = max {2k : 2 k ≤ 448 } (maximum normal cover-age among 2k scales )Proof. By (C1), S = 2 k for some integer k ≥ 0 (using the standing S ≥ 1 assumption). By Theorem 6, the set 
+
+{2k : k ≥ 0} partitions into {20, . . . , 28} where dp = 2 −4
+
+and {2k : k ≥ 9} where dp > 2−4 (Theorem 6(iii)). Thus (C2) admits exactly the nine candidates {1, 2, 4, . . . , 256 }.(C3) selects the maximum element of this set, k = 8 , giving 
+
+S = 256 .
+
+Remark 4 (Discriminating power of the conditions) . Of the three conditions, (C3) alone—“pick the largest 2k ≤ 448 ”— uniquely identifies S = 256 among power-of-two scales. (C1) and (C2) jointly leave nine candidates and merely articulate 
+
+why non-2k scales and 2k with k ≥ 9 are dominated. The value of (C2) is therefore explanatory rather than discriminat-ing: it makes the lower-envelope structure of the dp sawtooth (Figure 1) explicit, and shows that the bit-exactness preference (C1) does not come at the cost of quantization-step optimal-ity. Finally, (C3) is a within-2k statement: if bit-exactness is dropped, S = 448 achieves strictly larger normal coverage (§5). The optimality claimed here is thus for the bit-exact family, and the practical 256 -vs-448 gap is the empirical dp 
+
+(worst-case step) effect, not a coverage advantage. 
+
+Comparison: S = 256 vs S = 448 . dp (448) = 32 /448 ≈
+
+0.0714 exceeds dp (256) = 0 .0625 by 14% . In MSE terms: 
+
+(0 .0714 /0.0625) 2 ≈ 1.30 , predicting ∼30% higher MSE for S = 448 . Our experiments (§6) measure 10–15% MSE difference, consistent with the bound (the bound is worst-case; average-case is milder, and 448 ’s better deep-tail coverage partly offsets its larger worst-case step). 56 Experimental Validation 
+
+6.1 Kernel-Faithful Simulation 
+
+We simulate the FP8 attention kernel with seman-tics matched to production code (specifically, the 
+
+attention_with_kvcache_prefill_fp8 ker-nel in hpc-ops and FlashAttention-3’s Hopper/Blackwell backend): • ℓ (running sum): FP32, from pre-cast P (line 8 of Alg. 1). • O (output): FP32 accumulator, from post-cast Pfp8 × V .• P-cast: round-to-nearest E4M3 (values below 2−10 → 0). • Epilogue: Ofinal = O/ (S · ℓ).To isolate the P-cast effect, we keep Q, K, V in FP32. The QKV FP8 quantization is an orthogonal concern (handled by separate qscale/kscale/vscale) and does not interact with the P-cast precision loss. 
+
+6.2 Configurations 
+
+We compare five configurations spanning the design space: 
+
+Label Parameters Matches Forward, S=1 fwd, no scale hpc-ops (prior) Reverse, S=1 rev, no scale —Forward, S=448 fwd, max_normal FlashInfer/TRT Forward, S=256 fwd, 28 This work 
+
+Reverse, S=256 rev, 28 FA3/4 
+
+6.3 Experiment 1: Sink Strength Sweep 
+
+We sweep ∆ ∈ [4 , 13] with N = 4096 , d = 128 , qlen = 32 ,
+
+B = 64 , ksink = 4 , over 20 seeds. Figure 2 shows both the MSE results and the underlying physics (P-zeroing fraction and mass at risk). 
+
+Key findings: 
+
+1. Forward+S=1 is 3.4× worse than optimized configurations at ∆ = 7 .2. Both reverse (any S) and S = 256 (any direction) inde-pendently fix the issue. 3. S = 256 gives ∼10–15% lower MSE than S = 448 ,consistent with the dp ratio. 4. At ∆ ≥ 11 , all configurations converge (non-sink mass 
+
+< 2% ). 
+
+6.4 Experiment 2: Sequence Length Sweep 
+
+At ∆ = 7 , we sweep N ∈ [512 , 16384] . As N grows, the non-sink probability mass increases, amplifying the P-collapse effect. Figure 3 shows the results. 
+
+6.5 Numerical Results 
+
+Table 2 reports exact MSE values for key operating points: 4 5 6 7 8 9 10 11 12 13             
+
+> Sink strength
+> 10 6
+> 10 5
+> MSE vs FP32 reference
+> FP8 P-cast MSE under Attention Sink ( N= 4096 , kernel-faithful)
+> Forward, S=1
+> Reverse, S=1
+> Forward, S=448
+> Forward, S=256
+> Reverse, S=256
+> 45678910 11 12 13
+> 0
+> 50
+> 100
+> %
+> Probability mass at risk vs. P-zeroing fraction
+> P zeroed by S=256 (%)
+> Non-sink prob. mass (%)
+> P zeroed by S=1 (%)
+
+Figure 2: Top: MSE vs. sink strength. Forward+S=1 exhibits a peak at ∆ = 7 –8 (the transition region). All other con-figurations remain at the quantization-noise floor. Bottom: 
+
+Diagnostic—non-sink probability mass (blue bars) and frac-tion of P values zeroed by S=1 cast (red bars) vs. S=256 cast (green line). Table 2: MSE ( ×10 −5) at selected configurations. 
+
+Configuration ∆=7 ∆=7 ∆=7 
+
+N =4096 N =8192 N =16384 
+
+Forward, S=1 5.65 4.40 2.94 Reverse, S=1 1.70 0.83 0.32 Forward, S=448 1.81 0.90 0.32 Forward, S=256 1.64 0.80 0.28 Reverse, S=256 1.64 0.81 0.28 Ratio (Fwd S=1 / best) 3.4× 5.5× 10 .5×
+
+6.6 Comparison with Mainstream Implemen-tations 
+
+Table 3 positions the implementations in terms of both design choices. Based on this analysis, we have adopted S = 256 in the hpc-ops codebase. FlashAttention-3/4 and the updated hpc-ops both satisfy the optimality conditions; FlashInfer and TensorRT-LLM XQA could gain an additional 10–15% preci-sion improvement by switching from S = 448 to S = 256 .
+
+# 7 Discussion 
+
+7.1 Saturation: Same Mechanism, Same Floor 
+
+Both optimizations address the identical failure mode: P val-ues falling below E4M3’s representable range. Once either fix is applied, P-collapse is eliminated and the residual MSE is set by the inherent E4M3 quantization noise on representable 6512 1024 2048 4096 8192 16384    
+
+> Sequence length N
+> 10 5
+> MSE vs FP32 reference
+> FP8 P-cast MSE vs sequence length ( = 7 , kernel-faithful)
+> Forward, S=1
+> Reverse, S=1
+> Forward, S=448
+> Forward, S=256
+> Reverse, S=256
+
+Figure 3: MSE vs. sequence length at ∆ = 7 . The improve-ment of Forward+S=256 over Forward+S=1 grows from 1.3×
+
+(N =512 ) to 10 × (N =16384 ) as non-sink probability mass increases. Table 3: Design choices in production FP8 attention kernels. “Optimal” denotes joint satisfaction of (C1)–(C3) of Theo-rem 7 and reverse iteration (which is redundant given S=256 
+
+but offers belt-and-suspenders robustness against multi-sink patterns). “Near-optimal” denotes one fix applied (here, re-verse iteration eliminates P-collapse) but a non-power-of-two scale incurs the dp (448) /dp (256) = 1 .14 residual penalty (§5). “Suboptimal scale” denotes the same scale issue without 
+
+the iteration-order safety net. 
+
+Implementation Order S 2k ? Status FlashAttention-3/4 Rev 256 ✓ Optimal hpc-ops (updated) Fwd 256 ✓ Optimal hpc-ops (prior) Fwd 1 ✓ S=1 baseline FlashInfer Rev 448 × Near-optimal TensorRT-LLM XQA Fwd 448 × Suboptimal scale SageAttention2 Fwd 448 × Suboptimal scale 
+
+values. Paired t-tests over 100 instances confirm that For-ward+S=256 and Reverse+S=256 are statistically indistin-guishable wherever P-collapse is active ( ∆ ≤ 9); for ∆ ≥ 10 
+
+the residuals diverge with reverse marginally better, but the absolute gap is ∼ 10 −8, three orders of magnitude below the MSE itself, so the practical conclusion is unchanged (Ap-pendix B). This has a practical implication: either optimization alone suffices . The choice between them should be driven by engi-neering constraints (reverse may simplify causal mask han-dling; forward may offer better memory access patterns). 
+
+7.2 Structural Interpretation 
+
+The role of S = 2k admits a simple geometric reading: every E4M3 normal binade [2 n, 2n+1 ) contains 8 equis-paced points, differing only in absolute scale. The quan-tity dp (S) = LSB( S)/S measures the normalized granu-larity; at S = 2 k, both numerator and denominator double simultaneously, locking their ratio at 2−4. Non-power-of-two scales break this alignment, leaving dp (S) on the rising por-tion of the sawtooth (Figure 1). The P-collapse threshold 
+
+∆c = 6 .93 + ln S − δk corresponds to the sink strength at which the median non-sink P value falls below the round-to-zero boundary 2−10 /S ; below this threshold the cast is well-conditioned, above it most of the non-sink mass is silently zeroed. 
+
+7.3 Practical Recommendations 
+
+1. For forward-order kernels (e.g., TRT-LLM XQA): Add 
+
+S = 256 P-scaling. Implementation: multiply P by 256 before cast; divide output by 256 in epilogue. Both oper-ations are bit-exact (§5) and add only two FMAs whose latency is negligible against the tensor-core matmul. We have applied this change to the hpc-ops kernel. 2. For kernels already using S = 448 (FlashInfer, SageAt-tention2): Switch to S = 256 for 10–15% MSE reduction at negligible cost. 3. For kernels already using reverse + S = 256 (FA3/4): 
+
+No change needed—this is already optimal among static-scale strategies. 
+
+7.4 Limitations and Future Work 
+
+Worst-case vs. average-case. The dp (S) analysis provides the minimax-optimal scale assuming P uniformly spans 
+
+[0 , 1] . In practice, the post-softmax distribution is highly non-uniform (a few large values, many small). A dynamic per-block scale (still constrained to 2k for bit-exactness) could yield better average-case precision by adapting to the per-block P distribution. Even so, for typical small P (∼0.01– 0.05) the static S = 256 maps into mid-range binades with competitive relative precision, and its no-underflow guarantee remains the main advantage. 
+
+Interaction with QKV quantization. We isolated the P-cast effect by keeping Q, K, V in FP32. In production, these are also in FP8, contributing an additive noise floor. Since both reference and kernel use identical dequantized QKV values, the P-cast MSE signal is preserved, but the relative 
+
+improvement ratio is compressed at high delta where QKV noise dominates. 
+
+No end-to-end metric. All our numbers are isolated output MSE against an FP32 reference; we report no perplexity or task-accuracy. The 3–10 × figures show the P-cast error is real and removable, but not that removing it shifts a downstream metric—where the FP8 QKV floor dominates, the end-to-end benefit may be small. We thus frame the S=256 switch as zero-cost and strictly-no-worse rather than a guaranteed quality win, to be confirmed per model. 
+
+Scope of the dp (S) analysis. The dp (S) construction as-sumes (a) a bounded range (here P ∈ [0 , 1] ), (b) one static scale per cast, and (c) a bit-exactness requirement. These break down elsewhere: MXFP4’s E8M0 block exponent already forces scales to 2k (removing the freedom dp (S)
+
+addresses), and outlier-heavy activations need per-channel smoothing first. We thus make no claims beyond E4M3 P-cast. 7Multi-sink patterns. Our analysis assumes a single sink cluster at position 0. Some models exhibit distributed sink patterns across the sequence; the P-collapse analysis gener-alizes straightforwardly by replacing ∆ with the per-block maximum gap. 
+
+# 8 Conclusion 
+
+We have analyzed two implementation-level precision con-siderations for FP8 E4M3 attention: (1) P-collapse under Attention Sink is a quantifiable threshold effect—activating around ∆ ≈ 6–7 with leading-order underflow fraction 
+
+F = Φ(∆ + δk − 6.93 − ln S), where δk is the within-sink extreme-value shift—that both reverse iteration and S = 256 
+
+scaling independently eliminate; (2) the dp (S) sawtooth, de-fined over the E4M3 number line, characterizes S = 256 
+
+via three conditions—bit-exact arithmetic, the lower-envelope minimum step ( dp = 2 −4), and the largest normal-range cov-erage among 2k scales. Kernel-faithful experiments measure 
+
+3–10 × MSE improvement at the critical transition region (∆ = 5 –9, N = 4096 –16384 ), and paired statistical tests show that both optimizations reach the same precision floor when combined. For practitioners, the actionable recommendation is simple: for any FP8 attention kernel currently using S = 1 (direct cast) or S = 448 (max-normal), switching to S = 256 is a single-constant, bit-exact change that removes P-collapse and is never worse on P-cast MSE; whether it moves an end-to-end metric should be confirmed per model (§7). We make no transfer claims to other formats (MXFP4, FP4) or per-channel quantization, where the preconditions differ (§7). 
+
+# References 
+
+[1] Federico Barbero, Álvaro Arroyo, Xiangming Gu, Christos Perivolaropoulos, Michael Bronstein, Petar Veliˇ ckovi´ c, and Razvan Pascanu. Why do LLMs attend to the first token? 
+
+arXiv preprint arXiv:2504.02732 , 2025. [2] Tri Dao. FlashAttention-2: Faster attention with better par-allelism and work partitioning. International Conference on Learning Representations , 2024. [3] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christo-pher Ré. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. Advances in Neural Information Processing Systems , 35, 2022. [4] Xiangming Gu, Tianyu Pang, Chao Du, Qian Liu, Fengzhuo Zhang, Cunxiao Du, Ye Wang, and Min Lin. When attention sink emerges in language models: An empirical view. arXiv preprint arXiv:2410.10781 , 2024. [5] Paulius Micikevicius, Dusan Stosic, Neil Burgess, Marius Cornea, Pradeep Dubey, Richard Grisenthwaite, Sangwon Ha, Alexander Heinecke, Patrick Judd, John Kamalu, et al. FP8 formats for deep learning. arXiv preprint arXiv:2209.05433 ,2022. [6] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. FlashAttention-3: Fast and accurate attention with asynchrony and low-precision. arXiv preprint arXiv:2407.08608 , 2024. [7] Mingjie Sun, Xinlei Chen, J. Zico Kolter, and Zhuang Liu. Massive activations in large language models. arXiv preprint arXiv:2402.17762 , 2024. [8] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with atten-tion sinks. International Conference on Learning Representa-tions , 2024. [9] Jintao Zhang, Haofeng Huang, Pengle Zhang, Jia Wei, Jun Zhu, and Jianfei Chen. SageAttention2: Efficient attention with thorough outlier smoothing and per-thread INT4 quantization. 
+
+arXiv preprint arXiv:2411.10958 , 2024. [10] Jintao Zhang, Xiaoming Xu, Jia Wei, Haofeng Huang, Pengle Zhang, Chendong Xiang, Jun Zhu, and Jianfei Chen. SageAt-tention2++: A more efficient implementation of SageAtten-tion2. arXiv preprint arXiv:2505.21136 , 2025. 
+
+# A Complete dp (S) Verification 
+
+We verify Theorem 6 by exhaustive computation over all 126 positive E4M3 values: for each S, take the binade with maximum LSB overlapping [0 , S ] and compute dp (S) = 
+
+LSB max /S .
+
+Power-of-two scales (k = 0 , 1, . . . , 8): all give dp = 2 −4 =0.0625 exactly. Top binade is [2 k−1, 2k) with LSB = 2 k−4.For k = 9 (S = 512 ): overflow, dp = 0 .25 .
+
+Non-power-of-two scales : dp (3) = 0.083 ,
+
+dp (100) = 0 .080 , dp (250) = 0 .064 , dp (300) = 0 .107 ,
+
+dp (448) = 0.071 . All strictly exceed 2−4. See 
+
+experiments/proof_mathematical.py for full enumeration. 
+
+# B Saturation Statistical Verification 
+
+We test H0: MSE(Fwd+ S=256 ) = MSE(Rev+ S=256 ) via paired t-test (100 instances per condition).                     
+
+> ∆NMean diff tSig? 74k −7×10 −9−1.0No 716k −3×10 −9−1.1No 10 16k −2×10 −8−4.4Yes ∗
+> 12 16k −1×10 −8−3.6Yes ∗
+> ∗
+
+Where significant, reverse is marginally better (not worse). All differences are ∼ 10 −8, negligible vs. MSE values of 
+
+10 −5–10 −6, confirming algorithmic equivalence. 8
