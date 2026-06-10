@@ -6,97 +6,95 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-09
-- 运行时间：2026-06-09 22:16:07 UTC
+- 最新运行日期：2026-06-10
+- 运行时间：2026-06-10 22:52:27 UTC
 - 运行状态：成功
 - 本次总论文数：25
 - 精读区：13
 - 速读区：12
 
 ### 今日简报（AI）
-1) 今日精读2篇、速读3篇，聚焦多模态推理与视觉搜索前沿。
-2) 最值得关注《Spectral-Progressive Thought Flow》轻量多模态推理和《VistaHop》多跳视觉推理基准。
-3) 建议尝试在项目中将这两种方法结合，提升检索与推理效率。
-- 详情：[/202606/09/README](/202606/09/README)
+今日收录25篇论文，精读13篇，其中2篇9分高分聚焦长上下文模型稀疏注意力优化；速读3篇8分论文覆盖多模态推理和子图增强推理。最值得关注的方向是长上下文模型中稀疏注意力机制（如Oracle-Guided Sparse Prefill和Sparse Rollout），能显著提升效率与稳定性。建议普通读者优先阅读这两篇9分精读论文，了解当前长上下文中注意力瓶颈的突破方法。
+- 详情：[/202606/10/README](/202606/10/README)
 
 ### 精读区论文标签
-1. [Spectral-Progressive Thought Flow for Lightweight Multimodal Reasoning](/202606/09/2606.02842v1-spectral-progressive-thought-flow-for-lightweight-multimodal-reasoning)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：使用频谱表示的轻量级多模态链式推理
-2. [VistaHop: Benchmarking Multi-hop Visual Reasoning for Visual DeepSearch](/202606/09/2606.03273v1-vistahop-benchmarking-multi-hop-visual-reasoning-for-visual-deepsearch)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：多跳视觉推理基准，用于视觉深度搜索
-3. [Imaginative Perception Tokens Enhance Spatial Reasoning in Multimodal Language Models](/202606/09/2606.03988v1-imaginative-perception-tokens-enhance-spatial-reasoning-in-multimodal-language-models)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：想象感知标记用于视觉语言模型的空间推理，直接涉及多模态推理
-4. [VTI-CoT: Visual-Textual Interleaved Chain of Thought for Video Reasoning](/202606/09/2606.05736v1-vti-cot-visual-textual-interleaved-chain-of-thought-for-video-reasoning)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：面向视频推理的视觉-文本交织思维链
-5. [MPCoT: Reward-Guided Multi-Path Latent Reasoning for Test-Time Scalable Vision-Language-Action](/202606/09/2606.06245v1-mpcot-reward-guided-multi-path-latent-reasoning-for-test-time-scalable-vision-language-action)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：多模态潜在推理与多路径思维链
-6. [Still: Amortized KV Cache Compaction in a Single Forward Pass](/202606/09/2606.07878v1-still-amortized-kv-cache-compaction-in-a-single-forward-pass)  
+1. [How Much Dense Attention is Necessary? Oracle-Guided Sparse Prefill for Full/GQA Layers in Hybrid Long-Context Models](/202606/10/2606.07703v1-how-much-dense-attention-is-necessary-oracle-guided-sparse-prefill-for-fullgqa-layers-in-hybrid-long-context-models)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：KV缓存压缩方法
-7. [DyCo-RL: Dynamic Cross-Modal Coordination for Visual Reasoning](/202606/09/2606.08035v1-dyco-rl-dynamic-cross-modal-coordination-for-visual-reasoning)  
+   evidence：研究长上下文模型中基于oracle引导的top-k稀疏预填充
+2. [Sparrow: Sparse Rollout for Stable and Efficient Long-context RL of Large Language Models](/202606/10/2606.08446v1-sparrow-sparse-rollout-for-stable-and-efficient-long-context-rl-of-large-language-models)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：稀疏注意力用于强化学习中的高效长上下文生成
+3. [Look Less, Reason More: Block-wise Attention Skipping for Efficient Multimodal LLMs](/202606/10/2606.08511v1-look-less-reason-more-block-wise-attention-skipping-for-efficient-multimodal-llms)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：块级注意力跳过多模态LLM
+4. [PRPO: Perception-Reinforced Policy Optimization via Token-Level Dynamic Advantage Reshaping](/202606/10/2606.08708v1-prpo-perception-reinforced-policy-optimization-via-token-level-dynamic-advantage-reshaping)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：解决多模态思维链推理中的跨模态协调失败问题
-8. [HACK++: Towards More Effective Head-Aware Key-Value Compression for Efficient Visual Autoregressive Modeling](/202606/09/2606.08302v1-hack-towards-more-effective-head-aware-key-value-compression-for-efficient-visual-autoregressive-modeling)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：面向高效视觉自回归建模的头感知键值压缩
-9. [STAR-KV: Low-Rank KV Cache Compression via Soft Thresholding for Adaptive Rank Control](/202606/09/2606.08382v1-star-kv-low-rank-kv-cache-compression-via-soft-thresholding-for-adaptive-rank-control)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：通过软阈值实现自适应低秩KV缓存压缩
-10. [TVI-CoT: Text-Visual Interleaved Chain-of-Thought Reasoning for Multimodal Understanding](/202606/09/2606.08464v1-tvi-cot-text-visual-interleaved-chain-of-thought-reasoning-for-multimodal-understanding)  
+   evidence：token级优势重塑以强化多模态推理中的感知token
+5. [CRANE: Knowledge Editing for Reasoning MLLMs](/202606/10/2606.09033v1-crane-knowledge-editing-for-reasoning-mllms)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：提出文本-视觉交织的思维链用于多模态理解
-11. [FlashMemory-DeepSeek-V4: Lightning Index Ultra-Long Context via Lookahead Sparse Attention](/202606/09/2606.09079v1-flashmemory-deepseek-v4-lightning-index-ultra-long-context-via-lookahead-sparse-attention)  
+   evidence：面向使用思维链的推理多模态大语言模型的知识编辑
+6. [FlashMemory-DeepSeek-V4: Lightning Index Ultra-Long Context via Lookahead Sparse Attention](/202606/10/2606.09079v2-flashmemory-deepseek-v4-lightning-index-ultra-long-context-via-lookahead-sparse-attention)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：提出前瞻稀疏注意力和神经记忆索引器实现KV缓存压缩
-12. [Symbolic and Abstractive Reasoning with Complex Visual Queries](/202606/09/2606.09195v1-symbolic-and-abstractive-reasoning-with-complex-visual-queries)  
+   evidence：提出向前稀疏注意力机制用于超长上下文，减少KV缓存内存占用
+7. [Late-Layer Fusion is Enough: Dual-Path Vision Token Routing for Multimodal Large Language Models under Visual Saturation](/202606/10/2606.09131v1-late-layer-fusion-is-enough-dual-path-vision-token-routing-for-multimodal-large-language-models-under-visual-saturation)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：块级注意力跳过多模态LLM
+8. [Optical Reasoning: Rethinking Images as an Expressive Reasoning Medium Beyond Text](/202606/10/2606.09585v1-optical-reasoning-rethinking-images-as-an-expressive-reasoning-medium-beyond-text)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：使用复杂视觉查询进行符号和抽象推理的多模态大模型研究
-13. [From Rigid to Dynamic: Entropy-Guided Adaptive Inference for Long-Context LLMs](/202606/09/2606.09508v1-from-rigid-to-dynamic-entropy-guided-adaptive-inference-for-long-context-llms)  
+   evidence：提出将图像作为独立的思维链推理媒介
+9. [Parallel Causal Associative Fields: Gated Sparse Memory for Long-Context Language Modeling](/202606/10/2606.10435v1-parallel-causal-associative-fields-gated-sparse-memory-for-long-context-language-modeling)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：熵引导的自适应推理，直接解决稀疏注意力与KV缓存压缩
+   evidence：带门控稀疏记忆的并行因果关联场用于长上下文语言建模
+10. [Dynamic Linear Attention](/202606/10/2606.10650v1-dynamic-linear-attention)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：动态线性注意力实现高效长上下文建模
+11. [FadeMem: Distance-Aware Memory Consolidation for Autoregressive Video Diffusion](/202606/10/2606.10671v1-fademem-distance-aware-memory-consolidation-for-autoregressive-video-diffusion)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：距离感知的KV缓存整合用于视频扩散
+12. [miniReranker: Efficient Multimodal Reranking through Visual Cache Reuse and Interaction Sparsity](/202606/10/2606.10759v1-minireranker-efficient-multimodal-reranking-through-visual-cache-reuse-and-interaction-sparsity)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：通过视觉缓存复用和交互稀疏性实现高效多模态重排序
+13. [ReasonAlloc: Hierarchical Decoding-Time KV Cache Budget Allocation for Reasoning Models](/202606/10/2606.11164v1-reasonalloc-hierarchical-decoding-time-kv-cache-budget-allocation-for-reasoning-models)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：分层解码时KV缓存预算分配，解决长链推理中的缓存增长瓶颈
 
 ### 速读区论文标签
-1. [ThoughtFold: Folding Reasoning Chains via Introspective Preference Learning](/202606/09/2606.03503v1-thoughtfold-folding-reasoning-chains-via-introspective-preference-learning)  
+1. [VistaHop: Benchmarking Multi-hop Visual Reasoning for Visual DeepSearch](/202606/10/2606.03273v1-vistahop-benchmarking-multi-hop-visual-reasoning-for-visual-deepsearch)  
    标签：评分：8.0/10、query:mm-cot
-   evidence：通过偏好学习减少长链推理中的冗余探索
-2. [Imaginative Perception Tokens Enhance Spatial Reasoning in Multimodal Language Models](/202606/09/2606.03988v2-imaginative-perception-tokens-enhance-spatial-reasoning-in-multimodal-language-models)  
+   evidence：多跳视觉推理、视觉深度搜索、基准
+2. [Eliciting Complex Spatial Reasoning in MLLMs through Wide-Baseline Matching](/202606/10/2606.03577v1-eliciting-complex-spatial-reasoning-in-mllms-through-wide-baseline-matching)  
    标签：评分：8.0/10、query:mm-cot
-   evidence：多模态模型中用于空间推理的想象感知标记
-3. [Imbuing Large Language Models with Bidirectional Logic for Robust Chain Repair](/202606/09/2606.05030v1-imbuing-large-language-models-with-bidirectional-logic-for-robust-chain-repair)  
+   evidence：多模态空间推理与评估基准
+3. [Stepwise Reasoning Enhancement for LLMs via External Subgraph Generation](/202606/10/2606.04454v1-stepwise-reasoning-enhancement-for-llms-via-external-subgraph-generation)  
    标签：评分：8.0/10、query:mm-cot
-   evidence：目标条件桥梁机制用于鲁棒的思维链修复
-4. [LoRi: Low-Rank Distillation for Implicit Reasoning](/202606/09/2606.05315v1-lori-low-rank-distillation-for-implicit-reasoning)  
+   evidence：利用知识子图增强逐步推理
+4. [Entity Binding Failures in Speech LLM Reasoning: Diagnosis and Chain-of-Thought Intervention](/202606/10/2606.04474v1-entity-binding-failures-in-speech-llm-reasoning-diagnosis-and-chain-of-thought-intervention)  
    标签：评分：8.0/10、query:mm-cot
-   evidence：低秩蒸馏用于隐式链式思维推理
-5. [Self-Improving Small Object Grounding in LVLMs](/202606/09/2606.01612v1-self-improving-small-object-grounding-in-lvlms)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：基于注意力候选选择的小目标接地，涉及多模态理解
-6. [Improving Visual Token Reduction via Rectifying Distortions for Efficient Multimodal LLM Inference](/202606/09/2606.01711v1-improving-visual-token-reduction-via-rectifying-distortions-for-efficient-multimodal-llm-inference)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：视觉令牌减少提升多模态大模型推理效率
-7. [Visual Graph Scaffolds for Structural Reasoning in Large Language Models](/202606/09/2606.02673v1-visual-graph-scaffolds-for-structural-reasoning-in-large-language-models)  
+   evidence：实体感知链式思维用于语音LLM推理
+5. [Perceive Before Reasoning: A Pre-Reasoning Perception Framework for Efficient and Reliable Proactive Mobile Agents](/202606/10/2606.03236v1-perceive-before-reasoning-a-pre-reasoning-perception-framework-for-efficient-and-reliable-proactive-mobile-agents)  
    标签：评分：7.0/10、query:mm-cot
-   evidence：使用教师提供的推理轨迹构建图思维导图来引导学生模型，类似思维链提示
-8. [PhotoCraft: Agentic Reasoning with Hierarchical Self-Evolving Memory for Deep Image Search](/202606/09/2606.03099v1-photocraft-agentic-reasoning-with-hierarchical-self-evolving-memory-for-deep-image-search)  
+   evidence：用于多模态逐步推理的预推理感知框架
+6. [ThoughtFold: Folding Reasoning Chains via Introspective Preference Learning](/202606/10/2606.03503v1-thoughtfold-folding-reasoning-chains-via-introspective-preference-learning)  
    标签：评分：7.0/10、query:mm-cot
-   evidence：提出面向MLLM照片搜索智能体的层次记忆系统，支持多步推理
-9. [Synthetic Contrastive Reasoning for Multi-Table Q&A](/202606/09/2606.05382v1-synthetic-contrastive-reasoning-for-multi-table-qa)  
+   evidence：通过细粒度偏好学习解决长链思维中的过度思考问题
+7. [Characterize Then Distill: Mechanistic Reasoning in Large Output Spaces](/202606/10/2606.06840v1-characterize-then-distill-mechanistic-reasoning-in-large-output-spaces)  
+   标签：评分：7.0/10、query:mm-cot
+   evidence：两阶段推理刻画与蒸馏
+8. [Gated Bidirectional Linear Attention for Generative Retrieval](/202606/10/2606.07317v2-gated-bidirectional-linear-attention-for-generative-retrieval)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：线性时间双向注意力用于高效Transformer
+9. [MUSE: A Unified Agentic Harness for MLLMs](/202606/10/2606.03005v1-muse-a-unified-agentic-harness-for-mllms)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：多模态大语言模型的统一智能体执行框架，提升多模态推理能力
+10. [PAR3D: A Unified 3D-MLLM with Part-Aware Representation for Scene Understanding](/202606/10/2606.06485v1-par3d-a-unified-3d-mllm-with-part-aware-representation-for-scene-understanding)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：3D多模态场景理解、部件感知表示、统一多模态大模型
+11. [CRAFT: A Unified Counterfactual Reasoning Framework for Tabular Question Answering and Fact Verification](/202606/10/2606.06842v1-craft-a-unified-counterfactual-reasoning-framework-for-tabular-question-answering-and-fact-verification)  
    标签：评分：6.0/10、query:mm-cot
-   evidence：生成合成推理轨迹用于多表问答，增强链式推理
-10. [LongSpace: Exploring Long-Horizon Spatial Memory from Perception to Recall in Video](/202606/09/2606.05677v1-longspace-exploring-long-horizon-spatial-memory-from-perception-to-recall-in-video)  
+   evidence：反事实推理框架用于表格上的多步推理
+12. [Beyond Matching: Category-Guided Latent Intent Reasoning for Generative Retrieval in E-Commerce](/202606/10/2606.07075v1-beyond-matching-category-guided-latent-intent-reasoning-for-generative-retrieval-in-e-commerce)  
    标签：评分：6.0/10、query:mm-cot
-   evidence：提出LongSpace记忆框架，用于长视频逐步空间推理
-11. [P-Cast Precision in FP8 Attention: Sink-Induced Collapse and the Optimality of S=2^8](/202606/09/2606.06521v1-p-cast-precision-in-fp8-attention-sink-induced-collapse-and-the-optimality-of-s28)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：分析FP8注意力计算精度和KV块迭代顺序，与高效transformer注意力相关
-12. [M$^3$Exam: Benchmarking Multimodal Memory for Realistic User-Agent Interactions](/202606/09/2606.07402v1-m3exam-benchmarking-multimodal-memory-for-realistic-user-agent-interactions)  
-   标签：评分：6.0/10、query:mm-cot
-   evidence：多模态记忆基准，评估跨模态推理与推断
+   evidence：关注通过潜在意图推理生成推理链
 
 
 <div class="dpr-home-promo-card">
