@@ -1,0 +1,283 @@
+Title: Gated Bidirectional Linear Attention for Generative Retrieval
+
+URL Source: https://arxiv.org/pdf/2606.07317v1
+
+Published Time: Mon, 08 Jun 2026 00:58:41 GMT
+
+Number of Pages: 5
+
+Markdown Content:
+# Gated Bidirectional Linear Attention for Generative Retrieval 
+
+# Artem Matveev 
+
+matfu21@yandex.ru Yandex Moscow, Russia 
+
+# Vladislav Tytskiy 
+
+vladtytskiy@gmail.com Yandex Moscow, Russia 
+
+# Sergei Makeev 
+
+neuralsrg@gmail.com Yandex Moscow, Russia 
+
+# Sergei Liamaev 
+
+liamaev.sergei@gmail.com Yandex Moscow, Russia 
+
+## Abstract 
+
+In recommender systems, generative retrieval typically uses an encoder–decoder setup: an encoder processes a user interaction his-tory, and an autoregressive decoder then generates recommended items. In large-scale streaming services, active users accumulate very long histories over time. As histories grow, the encoder be-comes a major latency bottleneck because softmax attention scales quadratically with sequence length. In our experiments, using bidi-rectional attention in the encoder substantially improves quality. However, most sub-quadratic attention methods focus on causal attention. We propose Gated Bidirectional Linear Attention (GBLA), a linear-time bidirectional attention layer that extends kernelized linear attention with three lightweight components: local causal mixing (Conv1D), sequence-level key gating for soft forgetting, and a gated RMSNorm output. On a large-scale Yandex Music dataset, a hybrid encoder that interleaves self-attention (SA) and GBLA in a 1:2 ratio (one SA block followed by two GBLA blocks) matches bidi-rectional self-attention quality. On H100 GPUs, GBLA reaches up to an 8.2× single-layer speedup at a history length of 32768, compared to FlashAttention-v3. Finally, we show that the same hybrid design generalizes beyond our proprietary setting, consistently preserving self-attention retrieval quality on public Amazon benchmarks. 
+
+## CCS Concepts 
+
+• Information systems → Information retrieval ; Recommender systems ; • Computing methodologies → Neural networks .
+
+## Keywords 
+
+generative retrieval, linear attention, bidirectional attention, long-sequence modeling, candidate generation, recommender systems 
+
+ACM Reference Format: 
+
+Artem Matveev, Vladislav Tytskiy, Sergei Makeev, and Sergei Liamaev. 2026. Gated Bidirectional Linear Attention for Generative Retrieval. In 
+
+Proceedings of the 49th International ACM SIGIR Conference on Research and Development in Information Retrieval (SIGIR ’26), July 20–24, 2026, Melbourne, VIC, Australia. ACM, New York, NY, USA, 5 pages. https://doi.org/10.1145/ 3805712.3808495  
+
+> This work is licensed under a Creative Commons Attribution 4.0 International License.
+> SIGIR ’26, Melbourne, VIC, Australia
+> ©2026 Copyright held by the owner/author(s). ACM ISBN 979-8-4007-2599-9/2026/07 https://doi.org/10.1145/3805712.3808495
+
+## 1 Introduction 
+
+Sequential modeling in recommendation learns from an ordered user interaction history to predict future actions. Transformer models are widely used for sequential modeling in large-scale rec-ommendation systems at Google [ 12 ], Pinterest [ 11 ], Yandex [ 9], ByteDance [ 2], and others. In particular, generative retrieval mod-els often adopt an encoder-decoder architecture, where the encoder processes a user interaction sequence and the decoder generates recommended items. Due to their efficiency in end-to-end recom-mendation generation, such generative retrieval models have been deployed at major streaming services, including YouTube [ 14 ] and KuaiShou [3]. In sequential modeling, the user interaction sequence is the in-put to the transformer, and increasing the number of interactions is known to improve recommendation quality [ 9, 17 ]. However, transformer architectures rely on self-attention, whose time and memory cost scales quadratically with sequence length. As histo-ries grow, this quadratic complexity can make latency prohibitive for online services. Existing solutions either compress the input sequence [ 2], or rely on systems-level optimizations such as con-text parallelism [ 4 ] and hierarchical history pathways [ 18 ]. Albeit effective, sequence compression can discard information that is important for retrieval quality, and systems-level methods do not remove the quadratic dependence of attention on sequence length. In large language models, where input lengths can reach millions of tokens, the quadratic cost of attention makes training and infer-ence very expensive. To address this limitation, Katharopoulos et al .[7] proposed kernelized linear attention, which rewrites attention as a dot-product in a kernel feature space and reduces complex-ity from O( 𝑛 2) to O( 𝑛 ). Subsequent work, such as Mamba [ 5 ] and delta-rule variants with improved hardware efficiency [ 16 ], further advanced long-context modeling. However, most of these methods focus on causal attention. In generative retrieval, by contrast, the encoder accounts for most of the computational cost and empiri-cally benefits from bidirectional masking [ 12 ]. Scalable bidirectional linear attention is therefore important but remains underexplored. Existing bidirectional linear attention frameworks, such as LION [ 1 ], achieve linear complexity only at inference time, while training still relies on quadratic attention. We introduce Gated Bidirectional Linear Attention (GBLA), a linear-time bidirectional attention mechanism designed for long-context generative retrieval. GBLA reduces training and inference latency relative to optimized quadratic attention implementations  
+
+> arXiv:2606.07317v1 [cs.IR] 5 Jun 2026 SIGIR ’26, July 20–24, 2026, Melbourne, VIC, Australia Artem Matveev, Vladislav Tytskiy, Sergei Makeev, and Sergei Liamaev
+
+such as FlashAttention-v3 [ 13 ], while maintaining near-parity re-trieval quality. We evaluate GBLA on both in-house and public benchmarks, and release our code at § matfu-pixel/GRID. 
+
+## 2 Method 
+
+We study generative retrieval with an encoder-decoder transformer in a setting similar to OneRec [ 3 ]. Given a user-item interaction se-quence 𝑥 𝑢 = (𝑖 𝑢  
+
+> 1
+
+, 𝑖 𝑢  
+
+> 2
+
+, . . . , 𝑖 𝑢 𝐿 ), generative retrieval aims to generate a sequence of items for user 𝑢 to interact with next. In many services, the recommendation system returns ranked items in batches; as the user consumes one batch, the system serves the next, naturally splitting sequence of interactions into batches. We treat the inter-actions from a single batch as target items and train the model to generate them given the sequence of previous interactions. To embed item 𝑖 𝑢 𝑘 , we use the multi-hash technique [ 15 ]: the item ID is mapped by different hash functions to several entries in a shared embedding table, the obtained embeddings are con-catenated, and the resulting vector is projected with a linear layer. The sequence of embedded items is then passed through a bidirec-tional transformer encoder. The decoder conditions on the output of the encoder using cross-attention and autoregressively generates semantic IDs [12] of candidate items. 
+
+Bidirectional softmax attention. Let X ∈ R𝐿 ×𝑑 be an embedded sequence of user interactions. For a single attention head with head dimension 𝑑 ℎ , let Q = XW 𝑄 , K = XW 𝐾 , V = XW 𝑉 , where 
+
+W𝑄 , W𝐾 , W𝑉 ∈ R𝑑 ×𝑑 ℎ . Standard bidirectional self-attention has quadratic complexity in the input sequence length 𝐿 and for a single query q𝑖 is given by 
+
+Attn (q𝑖 , K, V) =
+
+Í𝐿 𝑗 =1 exp 
+
+
+
+q⊤ 
+
+> 𝑖
+
+k𝑗 /√𝑑 ℎ
+
+
+
+v⊤
+
+> 𝑗
+
+Í𝐿 𝑗 =1 exp 
+
+
+
+q⊤ 
+
+> 𝑖
+
+k𝑗 /√𝑑 ℎ
+
+ .
+
+Bidirectional Linear Attention. In linear attention [ 8 ], exponential similarity score sim (q, k) = exp (q⊤k/√𝑑 ℎ ) is replaced by dot prod-uct in a kernel feature space: sim (q, k) = 𝜙 (q)⊤𝜙 (k), where 𝜙 is an element-wise non-negative feature map, e.g., 𝜙 (𝑥 ) = elu (𝑥 ) + 1.Namely, 
+
+Attn BLA (q𝑖 , K, V) = 𝜙 (q𝑖 )⊤ Í𝐿 𝑗 =1 𝜙 (k𝑗 )v⊤
+
+> 𝑗
+
+𝜙 (q𝑖 )⊤ Í𝐿 𝑗 =1 𝜙 (k𝑗 ) ,
+
+and in matrix form 
+
+Attn BLA (Q, K, V) =  𝜙 (Q)( 𝜙 (K)⊤V) ⊘  𝜙 (Q)( 𝜙 (K)⊤1). (1) Here 1 ∈ R𝐿 is an all-ones vector, and ⊘ denotes element-wise divi-sion with broadcasting. This formula avoids explicit 𝐿 × 𝐿 attention matrix and reduces complexity from O( 𝐿 2𝑑 ℎ ) to O( 𝐿𝑑 2 
+
+> ℎ
+
+).
+
+## 2.1 Gated Bidirectional Linear Attention. 
+
+We introduce Gated Bidirectional Linear Attention (GBLA) (Fig-ure 1), which augments Equation 1 with three inexpensive compo-nents while preserving linear complexity: (1) Conv1D. We apply a 1D convolution on input embeddings to improve short-range pattern extraction. We compute QKV-projections after the convolution: 
+
+eX = Conv1D (X), Q = eXW 𝑄 , K = eXW 𝐾 , V = eXW 𝑉 .Linear  Linear  Linear 
+
+> Conv1d
+> RMSNorm
+> Linear
+> Linear
+> Linear
+
+Figure 1: Gated Bidirectional Linear Attention architecture. 
+
+(2) Key gating. We learn a per-token scalar gate for keys, which acts as a soft forgetting mechanism, weighting history events according to their importance: 
+
+Attn GBLA (q𝑖 , K, V) = 𝜙 (q𝑖 )⊤ Í𝐿 𝑗 =1 𝑔 𝑗 𝜙 (k𝑗 )v⊤
+
+> 𝑗
+
+𝜙 (q𝑖 )⊤ Í𝐿 𝑗 =1 𝑔 𝑗 𝜙 (k𝑗 ) ,
+
+where 𝑔 = softmax (eXw 𝑔 ) and w𝑔 ∈ R𝑑 . In matrix form: 
+
+Attn GBLA (Q, K, V) =  bQ  bK⊤V ⊘  bQ  bK⊤1 ,
+
+where we adopt the notation bQ = 𝜙 (Q), bK = 𝑔 ⊙ 𝜙 (K), and 
+
+⊙ denotes element-wise product with broadcasting. (3) RMSNorm with gating. Following common long-context designs [16], we apply gated normalization to the attention output O = Attn GBLA (Q, K, V) ∈ R𝐿 ×𝑑 ℎ :
+
+RmsNormGated (O) = RmsNorm (O) ⊙ SiLU (eXW 𝑅 ),
+
+where W𝑅 ∈ R𝑑 ×𝑑 ℎ .As in standard attention, we use multiple attention heads. For each head ℎ, separate matrices Wℎ𝑄 , Wℎ𝐾 , Wℎ𝑉 , wℎ𝑔 , Wℎ𝑅 are used to obtain head-specific projections. 
+
+## 3 Experiments 
+
+In practice, replacing self-attention (SA) with linear attention (LA) is rarely optimal [ 10 ]. We therefore use a hybrid encoder that inter-leaves SA and LA in 1 : 2 pattern with [SA, LA, LA] ordering. For BLA, we use a fused Triton kernel, while GBLA is optimized with 
+
+torch.compile . We run all experiments on NVIDIA H100 GPUs rented via a third-party compute provider. 
+
+## 3.1 Industrial Setup 
+
+We compare the self-attention encoder with the hybrid encoder on a large-scale production dataset from Yandex Music streaming platform. Training uses 7 consecutive days of interactions, and the training data is consumed in chronological order. Evaluation uses Gated Bidirectional Linear Attention for Generative Retrieval SIGIR ’26, July 20–24, 2026, Melbourne, VIC, Australia 
+
+Table 1: Comparison of causal and bidirectional encoder at-tention mask at length 2048.          
+
+> Model Recall@10 Recall@100 Recall@1000 Bidirectional SA mask 0.2800 0.6150 0.8667 Causal SA mask 0.1878 0.5130 0.8353
+
+Table 2: Comparison of hybrid and fully GBLA architecture at length 2048.           
+
+> Model Recall@10 Recall@100 Recall@1000 Hybrid [SA, LA, LA] 0.2780 0.6143 0.8668 Fully GBLA 0.2607 0.5940 0.8586
+
+the following day. The training set contains a subsample of 400M training samples. We find that our setting benefits from shifting most model ca-pacity to the encoder. Specifically, the encoder has 9 bidirectional transformer layers with hidden size 𝑑 =1024 and 16 attention heads, a subset of which can be replaced with GBLA layers, while the decoder is a single causal layer with both self-attention and cross-attention. For GBLA we set the Conv1D kernel size to 4. Since the encoder dominates the computation, we incorporate linear atten-tion into the encoder. We use a linear learning rate schedule with warmup: the learning rate increases from 10 −5 to 𝑥 over the first 3000 iterations and is then linearly decayed to 0.1𝑥 . Notably, the optimal peak learning rate depends on the architecture: for the full self-attention, we use 𝑥 =7×10 −4, while for the hybrid encoder, we use 𝑥 =5×10 −4. All experiments use the same effective batch size. We report retrieval quality as Recall@ {10 , 100 , 1000 }. Unless stated otherwise, we fix the maximum history length to 𝐿 = 2048 for the main ablations and separately study scaling to longer histories. 
+
+## 3.2 Results 
+
+We focus on Recall@ 1000 since our production pipeline performs retrieval and forwards the top-1000 candidates to the downstream ranker. In this regime, even a 1% absolute drop in Recall@ 1000 is significant. 
+
+Bidirectionality is critical. Table 1 highlights the importance of using a bidirectional attention mask in the encoder for generative retrieval. 
+
+Hybrid encoder helps. Table 2 shows that fully removing self-attention is typically suboptimal; our best models use a hybrid stack with a 2 :1 ratio of linear attention to self-attention and ordering 
+
+[SA, LA, LA] .
+
+Quality preservation with increasing sequence length. Table 3 shows that, as measured by Recall@ 1000 , GBLA performs slightly better at sequence lengths 𝐿 ∈ { 512 , 2048 , 4096 }, while at 𝐿 =8192 it incurs only a tiny drop. 
+
+Table 3: Comparison of bidirectional self-attention and linear attention for different sequence lengths.                                 
+
+> SeqLen Method Recall@10 Recall@100 Recall@1000 512 Bidirectional SA 0.2089 0.5072 0.8182 Hybrid GBLA 0.2102 0.5099 0.8198
+> 2048 Bidirectional SA 0.2800 0.6150 0.8667 Hybrid GBLA 0.2780 0.6143 0.8668
+> 4096 Bidirectional SA 0.2935 0.6385 0.8784 Hybrid GBLA 0.2897 0.6368 0.8790
+> 8192 Bidirectional SA 0.3013 0.6517 0.8854
+> Hybrid GBLA 0.2948 0.6462 0.8842
+
+Table 4: Ablations at history length 2048.                          
+
+> Model Recall@10 Recall@100 Recall@1000
+> GBLA 0.2780 0.6143 0.8668
+> W/o Key gating 0.2776 0.6131 0.8661 W/o Conv1D 0.2747 0.6110 0.8652 W/o Gated RMSNorm 0.2726 0.6080 0.8641 W/o all (=BLA) 0.2675 0.6021 0.8620 256 512 1024 2048 4096 8192 16384 32768
+> Sequence Length
+> 1
+> 5
+> 10
+> 20
+> 50
+> Latency (ms)
+> 0.9x
+> 1.5x
+> 2.5x
+> 4.3x
+> 8.2x
+> Self Attention (FA3)
+> Linear Attention
+
+Figure 2: Encoder latency for different sequence lengths. 
+
+## 3.3 Ablation 
+
+Table 4 presents the ablation of individual GBLA components. Each component contributes incrementally to quality: removing Key gat-ing, Conv1D, or gated RMSNorm slightly degrades recall, while removing all add-ons produces the largest drop, especially in Re-call@10. 
+
+## 3.4 Performance Benchmarks 
+
+Inference latency of a single layer. We compare inference latency of a single GBLA layer against FlashAttention-v3 on H100 GPUs with batch size 8. We report the average latency over 10 runs. Ta-ble 5 shows that GBLA becomes faster starting at 𝐿 =4096 , and the speedup grows to 8.2× at 𝐿 =32768 . Importantly, for shorter SIGIR ’26, July 20–24, 2026, Melbourne, VIC, Australia Artem Matveev, Vladislav Tytskiy, Sergei Makeev, and Sergei Liamaev 
+
+Table 5: Per-layer latency on NVIDIA H100 (batch=8).                   
+
+> SeqLen Self-Attn (ms) GBLA (ms) Speedup (SA/GBLA) 2048 0.585 0.618 0.95 ×
+> 4096 1.706 1.141 1.50 ×
+> 8192 5.419 2.199 2.46 ×
+> 16384 18.353 4.266 4.30 ×
+> 32768 67.542 8.217 8.22 ×
+
+Table 6: Training step time on NVIDIA H100: hybrid vs. fully self-attention (batch=32 for L=2048, batch=8 for L=8192).                 
+
+> Method 𝐿 =2048 (ms) Speedup 𝐿 =8192 (ms) Speedup SA 3000 1.00 ×5400 1.00 ×
+> BLA 2800 1.07 ×3800 1.42 ×
+> GBLA 3100 0.95 ×4200 1.29 ×
+
+histories ( 𝐿 ≤ 2048 ), self-attention accounts for substantially less than 25% of the end-to-end inference time, so the small per-layer slowdown has a negligible impact on overall latency. As 𝐿 grows, the self-attention blocks become the dominant bottleneck, making it critical to accelerate attention specifically in the long-context regime. See Figure 2 for a more fine-grained comparison. 
+
+Training speedup of the full hybrid model. Table 6 reports end-to-end training step time on H100 GPUs, averaged over 10 runs. Replacing a part of the encoder self-attention blocks with a plain bidirectional linear-attention (i.e. removing all GBLA add-ons such as key gating, Conv1D mixing and gated RMSNorm) reduces step time from 3000 ms to 2800 ms at 𝐿 =2048 (1.07 × speedup) and batch size 32 , and from 5400 ms to 3800 ms at 𝐿 =8192 (1.42 × speedup) and batch size 8. The GBLA hybrid variant shows only a negligible slowdown at 𝐿 =2048 , since at this length the FlashAttention-based self-attention blocks account for a small fraction of end-to-end step time. 
+
+## 3.5 Academic Setup. 
+
+To benchmark GBLA on public data, we adopt the experimental pro-tocol of the GRID framework [ 6]. We use our fork of the official im-plementation, extended with support for evaluating linear-attention variants, available at § matfu-pixel/GRID. Following GRID, we evaluate on the 5-core filtered Amazon 
+
+Beauty , Sports , and Toys datasets, using the last item of each user sequence for test, the second-to-last for validation, and the remaining interactions for training. We use the same item text fields (Title, Categories, Description, Price) and extract semantic item embeddings by mean pooling the final hidden states of Flan-T5 ( Large/XL/XXL ). For semantic ID tokenization, we follow GRID and consider RK-Means, using the same tokenizer training recipe (8 GPUs, per-device batch size 2048). GRID implements Tiger [ 12 ] generative model. For that model, we match GRID’s training setup (Adam, learning rate 5×10 −4, weight decay 10 −6, batch size 256) and data sampling/selection strategy (sliding-window sampling and early stopping based on validation NDCG@10). We keep the GRID backbone (8 transformer layers 
+
+Table 7: Comparison of Tiger and Tiger+GBLA on Amazon datasets, averaged over 5 runs with different seeds.                             
+
+> Model Recall@5 Recall@10 NDCG@5 NDCG@10
+> Beauty
+> Tiger 0.0439 0.0641 0.0289 0.0355
+> Tiger+GBLA 0.0410 0.0611 0.0273 0.0338
+> Toys
+> Tiger 0.0402 0.0584 0.0274 0.0333
+> Tiger+GBLA 0.0384 0.0579 0.0249 0.0311
+> Sports
+> Tiger 0.0229 0.0345 0.0150 0.0188
+> Tiger+GBLA 0.0218 0.0329 0.0144 0.0180
+
+total for encoder-decoder variants, 6 attention heads, embedding size 128, and MLP hidden size 1024) and change only the encoder attention operator: we replace a subset of encoder self-attention layers with GBLA, following our hybrid architecture design. We set the Conv1D kernel size to 4. We report Recall@K and NDCG@K for 
+
+𝐾 ∈ { 5, 10 } on the test set, selecting the checkpoint with the best validation Recall@10, and average results over 5 runs, consistent with GRID. Table 7 shows that Tiger and Tiger+GBLA achieve very simi-lar results across all three Amazon datasets. Consistent with the variability observed in GRID’s reported results and ablations, these small deltas are typically not considered significant. Since the user histories are short (at most 128 items), self-attention does not cor-respond to a major bottleneck. We therefore do not benchmark the performance efficiency in the academic setup. 
+
+## 4 Conclusion 
+
+We introduced Gated Bidirectional Linear Attention (GBLA), a linear-time bidirectional attention layer for long-history generative retrieval. In our experiments, a hybrid encoder that interleaves self-attention and GBLA matches the bidirectional self-attention quality on a large-scale Yandex Music dataset and preserves similar retrieval metrics on public Amazon benchmarks. We also show that bidirectional masking is crucial: switching the encoder to a causal mask causes a large drop in recall. GBLA is most useful for long sequences. On H100 GPUs, it be-comes faster than FlashAttention-v3 starting at length 4096, and the speedup grows with history length, reaching up to 8.2× per-layer speedup at length 32768. Overall, GBLA provides a practical way to scale generative retrieval to longer user histories without sacrificing retrieval quality. 
+
+## Author Bio 
+
+Artem Matveev is an MSc student in Applied Mathematics and Computer Science at Higher School of Economics and a senior deep learning engineer at Yandex, working on generative recommenda-tion approaches for large-scale recommender systems. Gated Bidirectional Linear Attention for Generative Retrieval SIGIR ’26, July 20–24, 2026, Melbourne, VIC, Australia 
+
+## References 
+
+[1] Arshia Afzal, Elias Abad Rocamora, Leyla Naz Candogan, Pol Puigdemont, Francesco Tonin, Yongtao Wu, Mahsa Shoaran, and Volkan Cevher. 2025. Lin-ear Attention for Efficient Bidirectional Sequence Modeling. arXiv preprint arXiv:2502.16249 (2025). arXiv:2502.16249 [cs.LG] [2] Zheng Chai, Qin Ren, Xijun Xiao, Huizhi Yang, Bo Han, Sijun Zhang, Di Chen, Hui Lu, Wenlin Zhao, Lele Yu, et al . 2025. Longer: Scaling up long sequence modeling in industrial recommenders. In Proceedings of the Nineteenth ACM Conference on Recommender Systems . 247–256. [3] Jiaxin Deng, Shiyao Wang, Kuo Cai, Lejian Ren, Qigen Hu, Weifeng Ding, Qiang Luo, and Guorui Zhou. 2025. OneRec: Unifying Retrieve and Rank with Generative Recommender and Iterative Preference Alignment. arXiv preprint arXiv:2502.18965 (2025). arXiv:2502.18965 [cs.IR] [4] Yue Dong, Han Li, Shen Li, Nikhil Patel, Xing Liu, Xiaodong Wang, and Chuanhao Zhuge. 2025. Scaling Generative Recommendations with Context Parallelism on Hierarchical Sequential Transducers. arXiv preprint arXiv:2508.04711 (2025). arXiv:2508.04711 [cs.IR] [5] Albert Gu and Tri Dao. 2023. Mamba: Linear-Time Sequence Modeling with Selec-tive State Spaces. arXiv preprint arXiv:2312.00752 (2023). arXiv:2312.00752 [cs.LG] [6] Clark Mingxuan Ju, Liam Collins, Leonardo Neves, Bhuvesh Kumar, Louis Yufeng Wang, Tong Zhao, and Neil Shah. 2025. Generative Recommendation with Semantic IDs: A Practitioner’s Handbook. arXiv preprint arXiv:2507.22224 (2025). arXiv:2507.22224 [cs.IR] [7] Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret. 2020. Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention. arXiv preprint arXiv:2006.16236 (2020). arXiv:2006.16236 [cs.LG] [8] Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret. 2020. Transformers are rnns: Fast autoregressive transformers with linear atten-tion. In International conference on machine learning . PMLR, 5156–5165. [9] Kirill Khrylchenko, Artem Matveev, Sergei Makeev, and Vladimir Baikalov. 2025. Scaling Recommender Transformers to One Billion Parameters. arXiv preprint arXiv:2507.15994 (2025). arXiv:2507.15994 [cs.IR] [10] Kimi Team, Yu Zhang, Zongyu Lin, Xingcheng Yao, Jiaxi Hu, Fanqing Meng, Chengyin Liu, Xin Men, Songlin Yang, Zhiyuan Li, Wentao Li, Enzhe Lu, Weizhou Liu, Yanru Chen, Weixin Xu, Longhui Yu, Yejie Wang, Yu Fan, Longguang Zhong, Enming Yuan, Dehao Zhang, Yizhi Zhang, T. Y. Liu, Haiming Wang, Shengjun Fang, Weiran He, Shaowei Liu, Yiwei Li, Jianlin Su, Jiezhong Qiu, Bo Pang, Junjie Yan, Zhejun Jiang, Weixiao Huang, Bohong Yin, Jiacheng You, Chu Wei, Zhengtao Wang, Chao Hong, Yutian Chen, Guanduo Chen, Yucheng Wang, Huabin Zheng, Feng Wang, Yibo Liu, Mengnan Dong, Zheng Zhang, Siyuan Pan, Wenhao Wu, Yuhao Wu, Longyu Guan, Jiawen Tao, Guohong Fu, Xinran Xu, Yuzhi Wang, Guokun Lai, Yuxin Wu, Xinyu Zhou, Zhilin Yang, and Yulun Du. 2025. Kimi Linear: An Expressive, Efficient Attention Architecture. arXiv preprint arXiv:2510.26692 
+
+(2025). arXiv:2510.26692 [cs.CL] [11] Nikil Pancha, Andrew Zhai, Jure Leskovec, and Charles Rosenberg. 2022. Pinner-Former: Sequence Modeling for User Representation at Pinterest. arXiv preprint arXiv:2205.04507 (2022). arXiv:2205.04507 [cs.LG] doi:10.48550/arXiv.2205.04507 [12] Shashank Rajput et al . 2023. Recommender Systems with Generative Retrieval. 
+
+arXiv preprint arXiv:2305.05065 (2023). arXiv:2305.05065 [cs.IR] [13] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. 2024. FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision. arXiv preprint arXiv:2407.08608 (2024). arXiv:2407.08608 [cs.LG] doi:10.48550/arXiv.2407.08608 [14] Anima Singh, Trung Vu, Nikhil Mehta, Raghunandan Keshavan, Maheswaran Sathiamoorthy, Yilin Zheng, Lichan Hong, Lukasz Heldt, Li Wei, Devansh Tandon, et al . 2024. Better generalization with semantic ids: A case study in ranking for recommendations. In Proceedings of the 18th ACM Conference on Recommender Systems . 1039–1044. [15] Dan Tito Svenstrup, Jonas Hansen, and Ole Winther. 2017. Hash embeddings for efficient word representations. Advances in neural information processing systems 
+
+30 (2017). [16] Songlin Yang, Jan Kautz, and Ali Hatamizadeh. 2024. Gated Delta Networks: Improving Mamba2 with Delta Rule. arXiv preprint arXiv:2412.06464 (2024). arXiv:2412.06464 [cs.LG] [17] Jun Zhai et al . 2024. Actions Speak Louder than Words: Trillion-Parameter Sequential Transducers for Generative Recommendations. arXiv preprint arXiv:2402.17152 (2024). arXiv:2402.17152 [cs.IR] [18] Guorui Zhou et al . 2025. OneRec Technical Report. arXiv preprint arXiv:2506.13695 
+
+(2025). arXiv:2506.13695 [cs.IR]

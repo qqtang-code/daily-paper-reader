@@ -1,0 +1,636 @@
+Title: SinkRec: Mitigating Semantic State Sink in Long Sequence Recommendation with Memory-Conditioned Gated Delta Networks
+
+URL Source: https://arxiv.org/pdf/2606.09888v1
+
+Published Time: Wed, 10 Jun 2026 00:02:09 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# SinkRec: Mitigating Semantic State Sink in Long Sequence Recommendation with Memory-Conditioned Gated Delta Networks 
+
+Zhuang Zhuang 1, Zhipeng Wei 1, Ji Dai 2, Jie Chen 1∗
+
+, Fei Pan 1∗
+
+, Peng Jiang 1, Kun Gai 3
+
+> 1
+
+Kuaishou Technology, Beijing, China 
+
+> 2
+
+Beijing University of Posts and Telecommunications, Beijing, China 
+
+> 3
+
+Independent Researcher 
+
+{zhuangzhuang,weizhipeng,chenjie20,panfei05,jiangpeng}@kuaishou.com daiji@bupt.edu.cn , gai.kun@qq.com 
+
+## Abstract 
+
+Linear attention provides an efficient backbone for long-sequence recommenda-tion by avoiding the quadratic cost of standard Transformers, but its compressed recurrent state can be dominated by repetitive behavior patterns. We identify this phenomenon as semantic state sink , where recurring semantics over-occupy the recurrent state and bias subsequent readouts. To mitigate semantic state sink, we propose SinkRec , a hybrid memory-transition looped architecture that decou-ples collaborative behavioral pattern storage from dynamic transition modeling. SinkRec externalizes recurring local patterns into a learnable conditional memory through residual vector quantization, reinjects the retrieved codes, and exposes memory key-value pairs to the attention block. It further introduces Temporal-Aware State-Relation Differential Gated DeltaNet (TDGD), which uses memory to purify recurrent writing and reading by suppressing memory-covered updates and removing memory-aligned readout responses. This design turns recurring semantics from state-competing signals into memory-retrievable patterns, allowing the recurrent state to focus on dynamic transitions and alleviating semantic state sink with linear-time efficiency. Experiments on public and industrial datasets demonstrate the effectiveness and efficiency of SinkRec. 
+
+## 1 Introduction 
+
+Sequential recommendation is fundamental to personalized services, such as streaming media and e-commerce platforms, as it models users’ historical behavior sequences to capture personalized interests and deliver relevant content to users [ 35 , 36 , 26 ]. As such, sequential modeling has become a fundamental approach for capturing evolving user interests. Early recommendation architectures adopted temporal models such as Markov chains, RNNs, and Transformers, but were mostly applied to short sequences (lengths of 10 2–10 3). In contrast, full long sequences (length> 10 3) reveal long-term preferences, recurring interests, and delayed dependencies, improving recommendation accuracy and helping mitigate the information cocoon effect. This makes scalable long-sequence modeling a critical step toward more comprehensive and less myopic user preference modeling. Existing long-sequence recommendation methods often trade off efficiency and completeness. Search-based methods [ 31 , 32 , 21 , 3 ] reduce computation by retrieving partial histories, but introduce two-stage serving complexity and incomplete interest estimation. End-to-end models [ 29 ] retain richer 
+
+> ∗Corresponding author. Preprint.
+> arXiv:2606.09888v1 [cs.LG] 3 Jun 2026
+
+historical signals but incur rapidly increasing computation. This motivates efficient backbones such as linear attention, which scale to long histories while preserving sequence perception. Although linear attention offers an efficient backbone for long-sequence recommendation, its recurrent-state formulation creates a new bottleneck for long-history modeling. It compresses the whole history into a finite state matrix, where each behavior writes its key-value information into the state used for future prediction. This avoids quadratic attention cost, but also couples recurring semantic storage with dynamic transition modeling. In long histories, recurring behaviors provide useful preference regularities, whereas sparse transitions reflect changes in current intent. When both share the same compressed state, repetitive semantics can be repeatedly reinforced and interfere with transition signals needed for the current prediction. This motivates a central question: 
+
+How can recurrent linear attention exploit long user histories without allowing repetitive seman-tics to dominate the recurrent state? 
+
+To answer this question, we analyze how Gated DeltaNet-style recurrent attention carries historical behaviors into the current prediction. Figure 1 illustrates a case where early food-related behaviors match the actual next item, while recent repetitive travel-related behaviors are target-irrelevant but receive disproportionately high historical influence scores (detailed in Appendix C) in vanilla Gated DeltaNet. This indicates that the current prediction is dominated by sink-like travel semantics rather than target-relevant food signals. This exposes a key challenge: the compressed recurrent state is required to serve simultaneously as semantic memory and transition operator, making it vulnerable to semantic state sink when repetitive patterns are over-retained and dominate subsequent readouts. 
+
+Figure 1: Motivating example of repetitive semantic state sink. The y-axis measures each past behavior’s contri-bution to the current prediction through the recurrent state; higher values indicate stronger occupation of the predictive state. Vanilla recurrent states are dominated by repeated irrelevant semantics, while SinkRec suppresses this sink and preserves target-relevant signals. To address the challenges introduced by the semantic state sink phenomenon, we propose SinkRec , a memory-transition decoupled framework for efficient long-sequence recommendation through alooped hybrid architecture. The key insight is to separate collaborative se-mantic storage from dynamic transition modeling: recurring local behavior pat-terns are externalized into conditional memory, while the recurrent state is re-served for memory-unexplained transi-tions. Specifically, SinkRec consists of two complementary components: (i) Con-ditional Memory Module compresses lo-cal behavior windows into learnable resid-ual vector-quantized (VQ) codes, rein-jects the retrieved codes into the sequence, and exposes memory key–value pairs to the downstream attention block. (ii) 
+
+Temporal-Aware State-Relation Differen-tial Gated DeltaNet (TDGD) performs time-aware recurrent modeling and uses the memory pairs to purify state writing and reading: memory-covered updates are suppressed before being written, and memory-aligned responses are removed during readout. In this way, SinkRec leverages shared behavioral patterns without repeatedly accumulating them in the recurrent state, mitigating semantic state sink while preserving the efficiency of recurrent linear attention. Moreover, parameter sharing across hybrid architecture blocks keeps SinkRec compact while maintaining strong recommendation performance. Our contributions are summarized as follows: • We identify the semantic state sink phenomenon in Gated DeltaNet-style long-sequence recommendation, where semantically repetitive patterns can over-occupy the compressed recurrent state and bias subsequent readouts. • We propose SinkRec , a memory-transition decoupled framework that externalizes recurring local patterns into conditional memory and uses Temporal-Aware State-Relation Differential 2Gated DeltaNet (TDGD) to purify recurrent writing and reading from memory-covered semantics. • We conduct extensive experiments on two public datasets and one industrial dataset. The results show that SinkRec consistently outperforms strong baselines with fewer parameters, demonstrating both effectiveness and efficiency for long-sequence recommendation. 
+
+## 2 Related Work 
+
+Long Sequential Recommendation Architectures. Scaling long-sequence user interaction histories has been increasingly explored as an effective means of improving recommender model perfor-mance [ 14 ]. Existing methods commonly rely on attention mechanisms to capture complex user transition patterns and facilitate personalized recommendation, while continuously seeking to exploit the information gain brought by long histories under manageable computational costs. Early studies such as DIN [ 31 ] and SIM [ 21 ] adopt search-based mechanisms to retrieve valuable subsets from historical interaction sequences, inspiring subsequent methods such as VISTA [ 5], which caches user histories into a few hundred compact tokens to jointly support prediction. Later, HSTU [ 29 ]reframes recommendation as a sequential transduction task and customizes attention mechanisms for large-scale, non-stationary recommendation data. More recently, LONGER[ 2], HiSAC [ 28 ], and GEMs [ 33 ] further exploit Transformer-based architectures to model relevance-driven inter-actions. However, the quadratic complexity of Transformer-based attention limits its scalability to ultra-long user histories, motivating the emergence of linear-complexity alternatives. Methods such as RankMixer [ 34 ] and UniMixer [ 10 ] enhance the expressive capacity of mixing modules to improve interaction modeling. BlossomRec [ 19 ] employs sparse attention to capture both long- and short-term user interests, while FuXi-Linear [ 27 ] integrates linear attention with temporal features for efficient long-sequence modeling. Nevertheless, these methods inherently lack a knowledge lookup mechanism, forcing them to approximate transition relations purely through continuous computation rather than retrieving collaborative semantic patterns from external or structured memory. 
+
+Memory-Augmented Model Scaling. Recent studies [ 1, 6] have shown that incorporating memory modules into model backbones can enhance model capacity and improve scaling behavior. In the field of large language models [ 30 ], LongMem [ 23 ] introduces a long-term memory and retrieval mechanism to efficiently leverage ultra-long contexts. UltraMem [ 11 ] and UltraMemV2 [ 12 ] replace sparsely activated experts with efficient memory layers, thereby reducing memory-access overhead. Engram [ 6] further proposes conditional memory as a complementary sparse dimension for scaling the capacity of LLMs. In recommender systems, early work such as MIMN [ 20 ] captures evolving user interests for long-sequence modeling. More recently, MSN [ 24 ] and related methods [ 18 , 17 , 4]retrieve personalized representations from large parameterized memories and aggregate them into downstream feature-interaction modules. However, existing recommender models primarily exploit the retrieval capability of memory modules, while largely overlooking their potential to complement and collaborate with sequential modeling modules within a unified architecture. 
+
+## 3 Preliminaries 
+
+3.1 Gated Delta Networks 
+
+Linear Transformers improve efficiency over standard Transformers, but their reduced contextual interaction often limits performance on long-context tasks. Gated DeltaNet addresses this issue by extending DeltaNet with adaptive memory-control gates and a delta-update rule. Given the query, key, and value vectors qt, kt, and vt at step t, Gated DeltaNet maintains a key-addressed recurrent state: 
+
+St = αtSt−1
+
+ I − βtktk⊤
+
+> t
+
+ + βtvtk⊤ 
+
+> t
+
+, ot = Stqt, (1) where St ∈ Rdv ×dk is the recurrent state, αt controls state retention, and βt controls the delta-update strength. With the cumulative decay γj = Qji=1 αi, the recurrence admits an attention-like form: 
+
+ot =
+
+> t
+
+X
+
+> i=1
+
+vi
+
+ γt
+
+γi
+
+k⊤ 
+
+> i
+
+qt
+
+
+
+, O =  QK ⊤ ⊙ Γ V, (2) where Γ ∈ RL×L is a causal decay mask that assigns decay-aware weights to visible historical positions and masks future positions. 3For efficient training, Gated DeltaNet adopts a chunkwise parallel formulation. The transition matrix 
+
+I − βtktk⊤ 
+
+> t
+
+can be viewed as a generalized Householder transformation, whose cumulative product is represented with a WY-style factorization under a partially expanded recurrence, enabling efficient parallel computation. 
+
+3.2 Semantic State Sink 
+
+To understand why Gated DeltaNet-style recurrent attention may underutilize long user histories, we analyze the historical influence on the current prediction in Figure 1. It shows that early target-relevant behaviors can still provide useful long-range signals, but repeated target-irrelevant semantics in recent history may produce increasingly dominant state responses in vanilla Gated DeltaNet. As a result, the recurrent state is biased toward a sink-like semantic direction, causing the prediction to over-rely on recurring irrelevant patterns while weakening the influence of target-relevant long-range behaviors. 
+
+Phenomenon 1. (Semantic State Sink) 
+
+Semantic state sink refers to the over-retention of semantically repetitive patterns in the recurrent state, where a few semantic directions dominate the state readout and bias subsequent predictions. This phenomenon reveals both the opportunity and challenge of long-sequence recommendation. Long histories contain collaborative behavioral patterns beyond short-term contexts, but directly accumulating them in the recurrent state couples semantic storage with transition modeling. As repetitive patterns are repeatedly written into similar state directions, they may form sink-like semantic directions that dominate subsequent readouts and suppress memory-unexplained transition signals. Thus, collaborative patterns should be externalized into memory, while recurrent computation should focus on memory-unexplained transitions. SinkRec follows this principle by combining conditional memory with TDGD to leverage shared behavioral patterns and purify recurrent writing and reading from memory-covered semantics. 
+
+## 4 Method 
+
+4.1 Hybrid Model Architecture Overview 
+
+As shown in Figure 2, SinkRec adopts a looped hybrid architecture that combines conditional memory with TDGD to separate collaborative pattern storage from dynamic transition modeling [ 9]. Section 4.2 provides the memory side, which preserves recurring local behavior patterns outside the recurrent state. Section 4.3 provides the dynamic computation side, which purifies recurrent writing and reading by suppressing memory-covered updates and removing memory-aligned readout responses. Together, they allow SinkRec to reuse recurring patterns while preventing them from repeatedly dominating the recurrent state. We further provide a theoretical analysis of semantic state sink in Appendix A, showing how repetitive semantic patterns can dominate recurrent state readouts. 
+
+4.2 Conditional Memory Module 
+
+Long sequence recommendation involves recurring interests that appear as collaborative behavior patterns. Motivated by this, SinkRec reduces redundant state encoding by externalizing them into a learnable conditional memory, where compressed behavior windows are residual-quantized, reinjected, and exposed as memory key–value pairs to TDGD. 
+
+Behavior Window Encoding. Given the dense behavioral representation x1: T , SinkRec constructs two local windows for each position t: a contiguous window and a dilated window. The contiguous window captures short-range behavioral transitions, while the dilated window enlarges the receptive field over earlier interactions: 
+
+Wcon  
+
+> t
+
+= [ xt−W +1 , . . . , xt], Wdil  
+
+> t
+
+= [ xt−(W −1) s, . . . , xt−s, xt], (3) where W is the window size and s is the dilation stride. The consecutive and dilated windows are encoded separately and then summed as the compressed local behavior representation, i.e., 
+
+ht = Enc con (Wcon  
+
+> t
+
+) + Enc dil (Wdil  
+
+> t
+
+), which is used for subsequent memory quantization. 4Figure 2: The Architecture of SinkRec for Long Sequence Recommendation. SinkRec consists of L
+
+stacked hybrid architecture blocks, each composed of a conditional memory module and a Gated DeltaNet-style linear attention module. The conditional memory module encodes contiguous and dilated behavior windows into residual-quantized memory representations, using the dilated window to enlarge the historical receptive field and sharing the resulting memory key–value pairs with the linear attention module. The linear attention module then performs temporal-aware Gated DeltaNet updates with memory-conditioned writing and state-relation differential readout. 
+
+Learnable Residual Vector Quantization. SinkRec discretizes ht using a multi-level learnable residual VQ codebook. Starting from r0 
+
+> t
+
+= ht, the ℓ-th quantization level selects the nearest codeword and updates the residual as: 
+
+cℓt = arg min  
+
+> k
+
+rℓt − eℓk 
+
+> 22
+
+, qℓt = eℓcℓt
+
+, rℓ+1  
+
+> t
+
+= rℓt − qℓt , zqt =
+
+> L−1
+
+X
+
+> ℓ=0
+
+qℓt , (4) where eℓk denotes the k-th learnable codeword in the ℓ-th codebook. Rather than relying on static semantic clusters, the codebooks are optimized end-to-end to learn recurring behavioral patterns. 
+
+Memory Output. The quantized representation zqt produces two types of outputs. First, it generates a code sequence that is injected back into the main sequence representation: 
+
+kqt = Wqkzqt , vqt = Wqv zqt , gqt = σ
+
+ Norm( kqt )⊤Norm( xt)
+
+√d
+
+
+
+, (5) 
+
+ct = gqt vqt , xt = xt + ct, (6) where ct denotes the retrieved code representation injected through a residual connection. The projected quantized representations are also exposed to TDGD as memory pairs, kmem ,t = kqt
+
+and vmem ,t = vqt , providing semantic addresses and collaborative behavioral content for memory-conditioned writing and differential readout. 5Training Objective. The memory module is optimized with residual VQ and a reconstruction loss: 
+
+Lmem =
+
+> L−1
+
+X
+
+> ℓ=0
+
+ ∥sg[ ht] − qℓt ∥22 + βc∥ht − sg[ qℓt ]∥22
+
+ + λrec ∥Dec( zqt ) − Yt∥22 , (7) where sg[ ·] denotes the stop-gradient operator, βc controls the commitment strength, Yt is the subsequent behavior window used as reconstruction supervision for the next-behavior prediction context. The final objective is L = Lpred + λvq Lmem .
+
+4.3 Temporal-Aware State-Relation Differential Gated DeltaNet 
+
+We identify semantic state sink in recurrent linear attention, where recurring semantic interests repeatedly accumulate in the recurrent state and dominate future readouts. TDGD mitigates this issue by using external semantic memory to regulate both state writing and state reading. 
+
+Temporal-aware Gated DeltaNet. Given the hidden representation xt, TDGD obtains the block-level gate, value, query, and key vectors through a joint SiLU activated projection: 
+
+[ut, vt, qt, kt] = Split (SiLU ( xtWuvqk )) , (8) where qt and kt address the recurrent state, vt provides the written content, and ut serves as a block-level output gate that modulates the recurrent readout before the feed-forward transformation. Following the gated delta rule, vanilla Gated DeltaNet maintains a recurrent key–value state as: 
+
+St = αtSt−1
+
+ I − βtktk⊤
+
+> t
+
+ + βtvtk⊤ 
+
+> t
+
+, rt = Stqt, (9) where αt controls state retention and βt controls write strength. The readout is further normalized, projected, and modulated by ut before being passed to the downstream feed-forward layer. However, user behaviors in long sequences are highly time-dependent. TDGD therefore injects temporal signals into both query-key addressing and recurrent gating. Following the multi-granularity temporal encoding in FuXi-Linear [ 27 ], we define temporal periods Pj = Bb0+j and represent each timestamp τ with periodic phases {sin(2 πτ /P j ), cos(2 πτ /P j )}m−1 
+
+> j=0
+
+, denoted as ϕ(τ ). The key is conditioned on the current interaction time, while the query is conditioned on the target time: 
+
+˜kt = Norm ( kt + Wτk ϕ(τt)) , ˜qt = Norm  qt + Wτq ϕ(τt+1 ) . (10) The time interval and periodic feature jointly modulate state retention: 
+
+ωt = exp 
+
+
+
+−λ∆ log 
+
+
+
+1 + ∆tt
+
+τ∆
+
+ | {z }
+
+> interval-aware temporal decay
+
+· σ  w⊤ 
+
+> ϕ
+
+ϕ(τt)| {z }
+
+> periodic preference
+
+, (11) where ∆tt denotes the interaction interval, and τ∆ and λ∆ control the scale and strength of temporal decay. The final retention and write gates are: 
+
+αt = σ(xtWα) ωt, βt = σ (xtWβ + W∆∆tt) . (12) With these temporal components, TDGD writes the recurrent update in innovation form: 
+
+¯St−1 = αtSt−1, δt = vt − ¯St−1 ˜kt, St = ¯St−1 + βtδt ˜k⊤ 
+
+> t
+
+. (13) The raw recurrent readout is then obtained as rt = St ˜qt. This enables TDGD to preserve temporally relevant states while adapting updates to time-aware transitions. 
+
+Memory-conditioned write gate. The memory module retrieves codebook-based key–value repre-sentations kmem ,t and vmem ,t . We first map them into the GDN write space through SiLU-activated projections: 
+
+kmt = SiLU ( kmem ,t Wkm ) , vmt = SiLU ( vmem ,t Wvm ) . (14) To determine whether the current state update is already covered by the retrieved memory, we compare the current write pattern with the memory-induced write pattern: 
+
+Pt = vt ˜k⊤ 
+
+> t
+
+, Mt = vmt (kmt )⊤, (15) 6where Pt denotes the current key–value write, and Mt denotes the memory-side write. We compute their write magnitudes and overlap as: 
+
+awt = ∥Pt∥2 
+
+> F
+
+, bwt = ∥Mt∥2 
+
+> F
+
+, swt = ( v⊤ 
+
+> t
+
+vmt )( ˜k⊤ 
+
+> t
+
+kmt ), (16) where awt and bwt measure the strengths of the two writes, while swt measures their key–value overlap. The memory-unexplained write energy is: 
+
+ewt = awt + λ2
+
+> w
+
+bwt − 2λwswt = ∥Pt − λwMt∥2 
+
+> F
+
+, (17) where λw is a learnable scale for calibrating the memory-side write. However, the gate should depend on both the residual energy and the scale of the current and memory-side writes. Therefore, TDGD converts the overlap, residual energy, and write magnitudes into a memory coverage score: 
+
+cwt = σ  W⊤ 
+
+> c
+
+Φw(awt , b wt , s wt , e wt ) + bw
+
+ , (18) where Φw(·) is a compact coverage feature that summarizes the write overlap, residual energy, and write magnitudes. The write gate is then defined as: 
+
+gwt = 1 − ηwcwt , ¯vt = gwt vt. (19) Thus, when the current write is largely covered by memory, cwt becomes larger and the effective value 
+
+¯vt is suppressed; otherwise, the update is preserved. Finally, TDGD updates the recurrent state using the memory-filtered value and the time-aware key: 
+
+¯St−1 = αtSt−1, St = ¯St−1 + βt
+
+
+
+¯vt − ¯St−1 ˜kt
+
+ ˜k⊤ 
+
+> t
+
+. (20) This write gate reduces redundant semantic accumulation in the recurrent state while retaining memory-unexplained transition signals. 
+
+State-relation differential readout. Although the write gate limits future memory-covered updates, the recurrent state may already contain accumulated semantic components [ 22 ]. We further apply a memory-guided differential readout to suppress these residual memory-aligned responses at query time. Given the normalized query and memory-key directions, denoted by ¯qt and ¯kmt , we compute two readouts from the recurrent state: 
+
+rqt = St ¯qt, rmt = St ¯kmt , (21) where rqt denotes the main query readout, while rmt probes the recurrent state along the memory-conditioned direction. We then compute the query-memory relation score and the adaptive suppression coefficient as: 
+
+art = ReLU  (¯kmt )⊤ ¯qt
+
+ , ηrt = ∥rmt ∥2
+
+∥rqt ∥2 + ∥rmt ∥2 + ϵ , (22) where art measures whether the current query accesses the memory-conditioned direction, and ηrt
+
+measures the relative strength of the memory-direction response compared with the main query readout. Therefore, the final TDGD readout is formulated as: 
+
+˜rt = rqt − ηrt art rmt = St
+
+ I − ηrt art ¯kmt (¯kmt )⊤ ¯qt. (23) This memory-guided differential readout suppresses responses along repeated memory-aligned semantics, allowing memory-unexplained transition signals to dominate the current prediction. Finally, TDGD then applies output normalization and projection to the corrected readout, followed by the block-level gate: 
+
+ot = ut ⊙ Post (˜ rt) , (24) where Post( ·) denotes the output normalization and linear projection of the GDN layer. The gate 
+
+ut further modulates the corrected readout before the lightweight linear layer, preventing noisy or redundant state responses from being uniformly propagated. 
+
+Prediction and Optimization. SinkRec predicts the next item from the output representation ot
+
+after stacked hybrid blocks: p(it+1 = j | i1: t) = softmax( otE⊤)j , where E is the item embedding matrix. For efficient autoregressive training, given the positive target it+1 , we sample N negative items Nt and optimize the sampled softmax loss [ 27 ]. The final objective is L = Lpred + λvq Lmem .7Table 1: Dataset statistics. 
+
+Dataset User Item Interactions Avg. Len. 
+
+MovieLens-20M 138,493 26,744 20,000,263 144.41 KuaiRec 7,176 9,958 12,529,113 1745.97 Industrial 70 M 900 K 500 M 2.3 K 
+
+4.4 Complexity Analysis Complexity Analysis. SinkRec preserves the linear complexity of Gated DeltaNet with lightweight memory overhead. Let N be the sequence length, d the hidden dimension, H the number of heads, W
+
+the window size, L the number of residual VQ levels, and K the codebook size. The Gated DeltaNet backbone costs O(N d 2 + N d 2/H ). SinkRec adds two main costs: window encoding with O(N W d )
+
+for contiguous and dilated windows, and residual VQ lookup with O(N LKd ) over L codebooks of size K. The memory-guided write and read operations are of the same order as the recurrent state computation, i.e., O(N d 2/H ), and do not change the asymptotic scaling. Thus, the overall complexity is O(N d 2 + N d 2/H + N W d + N LKd ). Since W , L, and K are fixed hyperparameters, SinkRec scales linearly with N , remaining more efficient than Transformer-based recommenders with O(N 2d) attention cost. 
+
+## 5 Experiments 
+
+5.1 Models and Datasets Models. To comprehensively evaluate the performance of SinkRec, we consider three representative categories of long-sequence recommendation baselines: full-attention models, linear-attention models, and Memory models. Specifically, for full-attention methods, we select SASRec [ 13 ], HSTU [ 29 ], Longer [ 2], BlossomRec [ 19 ], HyTRec [ 25 ], CollectiveKV [ 15 ], which model user behavior se-quences through standard or enhanced attention mechanisms. For linear-attention methods, we compare with Mamba4Rec [ 16 ], TiM4Rec [ 7], FuXi-Linear [ 27 ], which improve sequence modeling efficiency through recurrent, state-space, or linearized attention structures. For memory-enhanced methods, we include MSN [ 24 ], DUIA [ 17 ], which uses memory modules to store personalized user representations for long-term preference modeling. 
+
+Datasets. To evaluate the effectiveness of SinkRec, we conduct experiments on two representative public datasets for long-sequence recommendation: MovieLens-20M and KuaiRec. MovieLens-20M 2 is a standard movie recommendation benchmark with approximately 20 million ratings and rich tagging information, suitable for evaluating long-term preference modeling. KuaiRec 3 [8] is a public short-video recommendation dataset with diverse feedback signals and dynamic user behaviors, providing a challenging scenario for modeling rapidly evolving user interests. For the industrial dataset, we construct KuaiLLSR (i.e., industrial dataset) from large-scale behavioral logs on the Kuaishou platform, where users interact with local life service short videos. It contains eight days of uniformly sampled user-video interaction records and is used for model training and evaluation. 
+
+5.2 Comparison with Baseline 
+
+To validate the effectiveness of the proposed SinkRec, we report the overall performance of all baselines and SinkRec in Table 2. From the results, we obtain the following observations. First, conventional Transformer-based methods show limited performance in long-sequence recommenda-tion, indicating that relying solely on contextual interactions is insufficient for effectively modeling long user histories. In contrast, linear-attention-based models demonstrate strong potential, as they provide a more efficient and scalable way to capture long-range sequential dependencies. Second, the effectiveness of time-aware methods such as FuXi-Linear shows that temporal periodicity and temporal bias are important for sequential prediction. As contextual biases, temporal signals can enhance the modeling of behavior dependencies in long sequences. Moreover, target-time-aware modeling further contributes to performance improvement by aligning historical behaviors with the prediction time. Third, SinkRec consistently outperforms all baseline methods, demonstrating the effectiveness of decoupling static semantic retrieval from dynamic state computation. The results also 
+
+> 2https://grouplens.org/datasets/movielens/
+> 3https://kuairec.com/
+
+8Table 2: Overall performance comparison on public and industrial datasets. The best results are highlighted in bold, and the second-best results are underlined. The performance gains of our method are statistically significant under a paired t-test with p < 0.01 .                          
+
+> Dataset KuaiRec MovieLens-20M Industrial Model R@10 R@50 N@10 N@50 MRR R@10 R@50 N@10 N@50 MRR R@10 R@50 N@10 N@50 MRR
+> SASRec 0.1154 0.1612 0.1895 0.4027 0.1059 0.1787 0.2356 0.3138 0.5713 0.1524 0.05594 0.17404 0.03021 0.05336 0.02602
+> Mamba4Rec 0.1165 0.1622 0.1951 0.4068 0.1058 0.1862 0.2426 0.3220 0.5765 0.1595 0.05324 0.24153 0.02813 0.06168 0.02813
+> TiM4Rec 0.1149 0.1609 0.1894 0.4029 0.1053 0.1850 0.2418 0.3206 0.5772 0.1584 0.07297 0.22342 0.03379 0.06328 0.03185
+> HSTU 0.1265 0.1755 0.2074 0.4358 0.1155 0.2095 0.2663 0.3548 0.6107 0.1798 0.09135 0.29139 0.04056 0.07669 0.03834
+> LONGER 0.1122 0.1583 0.1873 0.4019 0.1023 0.1631 0.2206 0.2893 0.5497 0.1399 0.09572 0.30156 0.04656 0.08522 0.04665
+> HyTRec 0.1131 0.1566 0.1862 0.3878 0.1036 0.1814 0.2397 0.3168 0.5694 0.1547 0.09259 0.26657 0.04509 0.08135 0.04720
+> MSN 0.1340 0.1781 0.2214 0.4436 0.1208 0.2098 0.2673 0.3539 0.6133 0.1805 0.08968 0.25544 0.03367 0.08557 0.03930
+> BlossomRec 0.1085 0.1502 0.1812 0.3739 0.0988 0.1742 0.2315 0.3056 0.5578 0.1476 0.08430 0.25354 0.04264 0.07552 0.03792
+> DUIA 0.1391 0.1898 0.2248 0.4588 0.1271 0.2116 0.2694 0.3571 0.6152 0.1819 0.09084 0.26848 0.05140 0.07798 0.04658
+> CollectiveKV 0.1297 0.1790 0.2117 0.4405 0.1184 0.2144 0.2723 0.3730 0.6113 0.1832 0.10736 0.29970 0.06048 0.08586 0.04887
+> FuXi-Linear 0.1368 0.1851 0.2242 0.4486 0.1235 0.2131 0.2700 0.3592 0.6161 0.1830 0.10372 0.33193 0.04493 0.08843 0.04208
+> SinkRec 0.1515 0.2022 0.2460 0.4805 0.1365 0.2276 0.2867 0.3862 0.6437 0.1973 0.12835 0.35781 0.07693 0.11247 0.05147
+
+verify that incorporating time-aware state modeling improves the ability of recurrent memory-based models to capture evolving user interests. 
+
+5.3 Ablation Study 
+
+As shown in Table 3, we evaluate the contribution of each key component through four variants: (1) w/o TDGD, which replaces TDGD with vanilla Gated DeltaNet; (2) w/o Memory, which removes the conditional memory module and uses only TDGD; (3) w/o Time, which removes temporal decay and periodic temporal features; and (4) w/o Difference, which replaces the differential gate α with a content-only gate. From the ablation results, we draw three main observations. First, TDGD improves performance by integrating temporal modeling with differential gating, enabling more effective state writing and reading. Second, the memory module captures reusable local behavioral patterns and guides TDGD to focus on memory-unexplained transitions. Third, temporal features and differential readout are both essential: temporal signals make state updates time-aware, while differential readout reduces memory-aligned responses and prevents recurrent states from repeatedly absorbing redundant semantic patterns. Table 3: Ablation Study of SinkRec on Kuairec. 
+
+Setting R@10 R@50 N@10 N@50 MRR 
+
+Base 0.1515 0.2022 0.2460 0.4805 0.1365 
+
+1) w/o TDGD 0.1198 0.1686 0.2062 0.4327 0.1071 2) w/o Memory 0.1405 0.1872 0.2275 0.4569 0.1276 3) w/o time 0.1236 0.1731 0.2092 0.4362 0.1113 4) w/o difference 0.1455 0.1942 0.2345 0.4649 0.1321 
+
+5.4 Online A/B Experimental Results 
+
+Figure 3: Online A/B experimental results. To evaluate the practical effectiveness of SinkRec, we conducted a 7-day online A/B test on Kuaishou’s advertising plat-form with live production traffic. The con-trol and treatment groups are each allo-cated 10% of the total traffic for a fair comparison. As shown in Figure 3, our method achieves consistent improvements over the control group, with average relative gains of 6.5% in ADVV and 11.1% in Revenue. Both improvements are statistically significant under a two-tailed test (p < 0.01). The gains remain positive throughout the experimental period, demonstrating that the proposed method can effectively improve both advertiser-side value and platform revenue in production environments. These results validate the practical effectiveness, robustness, and scalability of our framework in large-scale industrial advertising recommendation systems. 96 Conclusion 
+
+We present SinkRec, an efficient long-sequence recommendation framework that addresses the seman-tic state sink phenomenon in recurrent linear attention. By identifying that recurring semantic interests can be repeatedly absorbed into the recurrent state and interfere with current interest adaptation, we motivate a memory-transition decoupled design that separates collaborative semantic lookup from dynamic transition computation. SinkRec externalizes recurring interests into Conditional Semantic Memory and introduces Time-aware Differential Gated DeltaNet to separate sink-inducing collaborative semantics from recurrent state dynamics. This reduces semantic dominance in recurrent states and improves sensitivity to recent interest shifts and target-relevant behaviors. Experiments on public and industrial datasets demonstrate that SinkRec improves recommendation effectiveness while preserving the efficiency of recurrent linear attention. 
+
+## References 
+
+[1] Ali Behrouz, Zeman Li, Yuan Deng, Peilin Zhong, Meisam Razaviyayn, and Vahab Mirrokni. Memory caching: Rnns with growing memory. arXiv preprint arXiv:2602.24281 , 2026. [2] Zheng Chai, Qin Ren, Xijun Xiao, Huizhi Yang, Bo Han, Sijun Zhang, Di Chen, Hui Lu, Wenlin Zhao, Lele Yu, et al. Longer: Scaling up long sequence modeling in industrial recommenders. In Proceedings of the Nineteenth ACM Conference on Recommender Systems , pages 247–256, 2025. [3] Jianxin Chang, Chenbin Zhang, Zhiyi Fu, Xiaoxue Zang, Lin Guan, Jing Lu, Yiqun Hui, Dewei Leng, Yanan Niu, Yang Song, et al. Twin: Two-stage interest network for lifelong user behavior modeling in ctr prediction at kuaishou. In Proceedings of the 29th ACM SIGKDD Conference on Knowledge Discovery and Data Mining , pages 3785–3794, 2023. [4] Yixiao Chen, Yuan Wang, Yue Liu, Qiyao Wang, Ke Cheng, Xin Xu, Juntong Yan, Shuojin Yang, Menghao Guo, Jun Zhang, et al. Recurrent preference memory for efficient long-sequence generative recommendation. arXiv preprint arXiv:2602.11605 , 2026. [5] Zhimin Chen, Chenyu Zhao, Ka Chun Mo, Yunjiang Jiang, Jane H Lee, Khushhall Chandra Mahajan, Ning Jiang, Kai Ren, Jinhui Li, and Wen-Yun Yang. Massive memorization with hundreds of trillions of parameters for sequential transducer generative recommenders. arXiv preprint arXiv:2510.22049 , 2025. [6] Xin Cheng, Wangding Zeng, Damai Dai, Qinyu Chen, Bingxuan Wang, Zhenda Xie, Kezhao Huang, Xingkai Yu, Zhewen Hao, Yukun Li, et al. Conditional memory via scalable lookup: A new axis of sparsity for large language models. arXiv preprint arXiv:2601.07372 , 2026. [7] Hao Fan, Mengyi Zhu, Yanrong Hu, Hailin Feng, Zhijie He, Hongjiu Liu, and Qingyang Liu. Tim4rec: An efficient sequential recommendation model based on time-aware structured state space duality model. 
+
+Neurocomputing , page 131270, 2025. [8] Chongming Gao, Shijun Li, Wenqiang Lei, Jiawei Chen, Biao Li, Peng Jiang, Xiangnan He, Jiaxin Mao, and Tat-Seng Chua. Kuairec: A fully-observed dataset and insights for evaluating recommender systems. In Proceedings of the 31st ACM International Conference on Information & Knowledge Management ,pages 540–550, 2022. [9] Yizhao Gao, Jianyu Wei, Qihao Zhang, Yu Cheng, Shimao Chen, Zhengju Tang, Zihan Jiang, Yifan Song, Hailin Zhang, Liang Zhao, et al. Hysparse: A hybrid sparse attention architecture with oracle token selection and kv cache sharing. arXiv preprint arXiv:2602.03560 , 2026. [10] Mingming Ha, Guanchen Wang, Linxun Chen, Xuan Rao, Yuexin Shi, Tianbao Ma, Zhaojie Liu, Yunqian Fan, Zilong Lu, Yanan Niu, et al. Unimixer: A unified architecture for scaling laws in recommendation systems. arXiv preprint arXiv:2604.00590 , 2026. [11] Zihao Huang, Qiyang Min, Hongzhi Huang, Defa Zhu, Yutao Zeng, Ran Guo, and Xun Zhou. Ultra-sparse memory network. arXiv preprint arXiv:2411.12364 , 2024. [12] Zihao Huang, Yu Bao, Qiyang Min, Siyan Chen, Ran Guo, Hongzhi Huang, Defa Zhu, Yutao Zeng, Banggu Wu, Xun Zhou, et al. Ultramemv2: Memory networks scaling to 120b parameters with superior long-context learning. arXiv preprint arXiv:2508.18756 , 2025. [13] Wang-Cheng Kang and Julian McAuley. Self-attentive sequential recommendation. In 2018 IEEE international conference on data mining (ICDM) , pages 197–206. IEEE, 2018. 
+
+10 [14] Weijiang Lai, Beihong Jin, Di Zhang, Siru Chen, Jiongyan Zhang, Yuhang Gou, Jian Dong, and Xingxing Wang. Unleashing the potential of sparse attention on long-term behaviors for ctr prediction. In Proceedings of the ACM Web Conference 2026 , pages 8041–8050, 2026. [15] Jingyu Li, Zhaocheng Du, Qianhui Zhu, Zhicheng Zhang, Song-Li Wu, Chaolang Li, Pengwen Dai, et al. Collectivekv: Decoupling and sharing collaborative information in sequential recommendation. arXiv preprint arXiv:2601.19178 , 2026. [16] Chengkai Liu, Jianghao Lin, Jianling Wang, Hanzhou Liu, and James Caverlee. Mamba4rec: Towards efficient sequential recommendation with selective state space models. arXiv preprint arXiv:2403.03900 ,2024. [17] Peng Liu, Nian Wang, Cong Xu, Ming Zhao, Bin Wang, and Yi Ren. Dynamic user interest augmen-tation via stream clustering and memory networks in large-scale recommender systems. arXiv preprint arXiv:2405.13238 , 2024. [18] Hui Lu, Zheng Chai, Yuchao Zheng, Zhe Chen, Deping Xie, Peng Xu, Xun Zhou, and Di Wu. Large memory network for recommendation. In Companion Proceedings of the ACM on Web Conference 2025 ,pages 1162–1166, 2025. [19] Mengyang Ma, Xiaopeng Li, Wanyu Wang, Zhaocheng Du, Jingtong Gao, Pengyue Jia, Yuyang Ye, Yiqi Wang, Yunpeng Weng, Weihong Luo, et al. Blossomrec: Block-level fused sparse attention mechanism for sequential recommendations. In Proceedings of the ACM Web Conference 2026 , pages 6389–6399, 2026. [20] Qi Pi, Weijie Bian, Guorui Zhou, Xiaoqiang Zhu, and Kun Gai. Practice on long sequential user behavior modeling for click-through rate prediction. In Proceedings of the 25th ACM SIGKDD international conference on knowledge discovery & data mining , pages 2671–2679, 2019. [21] Qi Pi, Guorui Zhou, Yujing Zhang, Zhe Wang, Lejian Ren, Ying Fan, Xiaoqiang Zhu, and Kun Gai. Search-based user interest modeling with lifelong sequential behavior data for click-through rate prediction. In Proceedings of the 29th ACM International Conference on Information & Knowledge Management ,pages 2685–2692, 2020. [22] Yifan Pu, Jixuan Ying, Qixiu Li, Tianzhu Ye, Dongchen Han, Xiaochen Wang, Ziyi Wang, Xinyu Shao, Gao Huang, and Xiu Li. Linear differential vision transformer: Learning visual contrasts via pairwise differentials. arXiv preprint arXiv:2511.00833 , 2025. [23] Weizhi Wang, Li Dong, Hao Cheng, Xiaodong Liu, Xifeng Yan, Jianfeng Gao, and Furu Wei. Augmenting language models with long-term memory. Advances in Neural Information Processing Systems , 36: 74530–74543, 2023. [24] Shikang Wu, Hui Lu, Jinqiu Jin, Zheng Chai, Shiyong Hong, Junjie Zhang, Shanlei Mu, Kaiyuan Ma, Tianyi Liu, Yuchao Zheng, et al. Msn: A memory-based sparse activation scaling framework for large-scale industrial recommendation. arXiv preprint arXiv:2602.07526 , 2026. [25] Lei Xin, Yuhao Zheng, Ke Cheng, Changjiang Jiang, Zifan Zhang, and Fanhu Zeng. Hytrec: A hybrid temporal-aware attention architecture for long behavior sequential recommendation. arXiv preprint arXiv:2602.18283 , 2026. [26] Ruochen Yang, Yueyang Liu, Zijie Zhuang, Changxin Lao, Yuhui Zhang, Jiangxia Cao, Jia Xu, Xiang Chen, Haoke Xiao, Xiangyu Wu, et al. Sarm: Llm-augmented semantic anchor for end-to-end live-streaming ranking. arXiv preprint arXiv:2602.09401 , 2026. [27] Yufei Ye, Wei Guo, Hao Wang, Luankang Zhang, Heng Chang, Hong Zhu, Yuyang Ye, Yong Liu, Defu Lian, and Enhong Chen. Fuxi-linear: Unleashing the power of linear attention in long-term time-aware sequential recommendation. arXiv preprint arXiv:2602.23671 , 2026. [28] Kun Yuan, Junyu Bi, Daixuan Cheng, Changfa Wu, Shuwen Xiao, Binbin Cao, Jian Wu, and Yuning Jiang. Hisac: Hierarchical sparse activation compression for ultra-long sequence modeling in recommenders. 
+
+arXiv preprint arXiv:2602.21009 , 2026. [29] Jiaqi Zhai, Lucy Liao, Xing Liu, Yueming Wang, Rui Li, Xuan Cao, Leon Gao, Zhaojie Gong, Fangda Gu, Michael He, et al. Actions speak louder than words: Trillion-parameter sequential transducers for generative recommendations. arXiv preprint arXiv:2402.17152 , 2024. [30] Wayne Xin Zhao, Kun Zhou, Junyi Li, Tianyi Tang, Xiaolei Wang, Yupeng Hou, Yingqian Min, Be-ichen Zhang, Junjie Zhang, Zican Dong, et al. A survey of large language models. arXiv preprint arXiv:2303.18223 , 1(2):1–124, 2023. 
+
+11 [31] Guorui Zhou, Xiaoqiang Zhu, Chenru Song, Ying Fan, Han Zhu, Xiao Ma, Yanghui Yan, Junqi Jin, Han Li, and Kun Gai. Deep interest network for click-through rate prediction. In Proceedings of the 24th ACM SIGKDD international conference on knowledge discovery & data mining , pages 1059–1068, 2018. [32] Guorui Zhou, Na Mou, Ying Fan, Qi Pi, Weijie Bian, Chang Zhou, Xiaoqiang Zhu, and Kun Gai. Deep interest evolution network for click-through rate prediction. In Proceedings of the AAAI conference on artificial intelligence , volume 33, pages 5941–5948, 2019. [33] Yu Zhou, Chengcheng Guo, Kuo Cai, Ji Liu, Qiang Luo, Ruiming Tang, Han Li, Kun Gai, and Guorui Zhou. Gems: Breaking the long-sequence barrier in generative recommendation with a multi-stream decoder. arXiv preprint arXiv:2602.13631 , 2026. [34] Jie Zhu, Zhifang Fan, Xiaoxie Zhu, Yuchen Jiang, Hangyu Wang, Xintian Han, Haoran Ding, Xinmin Wang, Wenlin Zhao, Zhen Gong, et al. Rankmixer: Scaling up ranking models in industrial recommenders. In Proceedings of the 34th ACM International Conference on Information and Knowledge Management ,pages 6309–6316, 2025. [35] Zhuang Zhuang, Haitao Yuan, Shanshan Feng, Heng Qi, Yanming Shen, and Baocai Yin. Mgstdn: Multi-granularity spatial-temporal diffusion network for next poi recommendation. In Proceedings of the 34th ACM International Conference on Information and Knowledge Management , pages 4560–4570, 2025. [36] Zhuang Zhuang, Shanshan Feng, Hangwei Qian, Mingqi Yang, Heng Qi, Yanming Shen, and Baocai Yin. Think2go: Generative next poi recommendation with llm reasoning. In Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 1 , pages 2112–2123, 2026. 
+
+12 A Theoretical Analysis of Semantic State Sink 
+
+We provide a simplified derivation to explain why recurrent linear attention may suffer from semantic state sink in long-sequence recommendation. Consider the Gated DeltaNet update: 
+
+St = αtSt−1
+
+ I − βtktk⊤
+
+> t
+
+ + βtvtk⊤ 
+
+> t
+
+, (25) where St is the recurrent state, kt and vt are the key and value vectors, and αt, β t control state retention and writing strength. This update writes the value vt into the state subspace addressed by 
+
+kt. In long user sequences, recurring semantic behavior patterns often appear across distant positions and are expected to produce similar key representations. To analyze how such recurrence affects a key-addressed state subspace, we consider an idealized setting where these keys are aligned with a normalized direction u:
+
+kt = u, ∥u∥2 = 1 . (26) Let zt = Stu denote the state content stored in this repeatedly accessed direction. Right-multiplying Eq. (25) by u and using u⊤u = 1 yields: 
+
+zt = αt(1 − βt)zt−1 + βtvt. (27) Thus, the repeatedly accessed semantic direction follows a first-order state recurrence. To make the address-level dynamics analytically tractable, we consider a locally stationary setting where the retention and write strengths are time-invariant, i.e., αt = α and βt = β. We define the effective retention factor as ρ = α(1 − β), with 0 ≤ ρ < 1. Under this approximation, Eq. (27) reduces to: 
+
+zt = ρzt−1 + βvt. (28) This recurrence characterizes the evolution of the content stored in a repeatedly accessed semantic address: previous address-specific content is retained by ρ, while the current value is written with strength β. For semantically recurrent behaviors, the written values usually share a stable semantic component. We therefore decompose each value vector as: 
+
+vt = ¯ v + ϵt, (29) where ¯v denotes the recurring semantic component and ϵt denotes instance-specific residual variation. Combining the recurrence with the semantic decomposition of vt, we can express the address-specific state as: 
+
+zt = ρtz0 + β(1 − ρt)1 − ρ ¯v
+
+| {z }
+
+> accumulated recurring semantics
+
++ β
+
+> t
+
+X
+
+> i=1
+
+ρt−iϵi
+
+| {z }
+
+> residual variations
+
+. (30) This decomposition separates the address-specific state into a decayed initialization term, an accu-mulated recurring semantic term, and a residual variation term. Since ρ < 1, the state does not diverge; instead, as the same semantic address is repeatedly visited, the contribution of ¯v approaches  
+
+> β
+> 1−ρ
+
+¯v, causing this address subspace to become biased toward the recurring semantic pattern. Such an address-level bias becomes harmful when the next behavior at time t + 1 still activates the same semantic address u, while its value carries an additional residual transition component: 
+
+vt+1 = ¯ v + rt+1 , (31) where rt+1 denotes the new transition component. Ignoring the residual variation and using the steady-state approximation zt ≈ β 
+
+> 1−ρ
+
+¯v, the next state content becomes: 
+
+zt+1 = ρzt + β(¯ v + rt+1 )= β
+
+1 − ρ ¯v
+
+| {z }
+
+> historical recurring semantics
+
++ βrt+1 
+
+| {z } 
+
+> new transition signal
+
+. (32) Therefore, the new transition signal is mixed with an accumulated historical semantic component. Their relative strength can be approximated by: 
+
+Dt+1 ≈ 
+
+> β
+> 1−ρ
+
+¯v 2
+
+∥βrt+1 ∥2
+
+= ∥¯v∥2
+
+(1 − ρ)∥rt+1 ∥2
+
+. (33) 13 Table 4: Comparison between vanilla Gated DeltaNet and TDGD.                                        
+
+> Component Vanilla Gated DeltaNet TDGD
+> State writing βt(vt−αtSt−1kt)k⊤
+> tβt(¯ vt−αtSt−1˜kt)˜k⊤
+> t
+> Write signal Raw input value vtMemory-filtered value ¯vt
+> Key representation Content key ktTime-aware key ˜kt
+> Memory awareness No explicit memory conditioning Memory-conditioned write gate State readout rt=Stqt˜rt=St¯qt−ηrtartSt¯kmt
+> Readout control Query-only state access Relation-level memory suppression Sink control Implicit through decay and gating Explicit write suppression and differential readout Targeted effect General recurrent filtering Mitigates repetitive semantic state sink Complexity Linear recurrent computation Linear recurrent computation with lightweight memory conditioning
+
+When the effective retention ρ is large, or when the new transition signal rt+1 is weak, the accumulated recurring semantics dominate the address-specific state content. To connect this address-level effect back to the Gated DeltaNet output, let ot+1 denote the state readout. For a query qt+1 with a non-negligible projection on the same semantic direction, 
+
+qt+1 = ct+1 u + q⊥
+
+> t+1
+
+, ct+1 = u⊤qt+1 . (34) The readout can then be decomposed as: 
+
+ot+1 = St+1 qt+1 = ct+1 zt+1 + St+1 q⊥
+
+> t+1
+
+. (35) Thus, when ct+1 is non-negligible, the accumulated recurring semantic component in zt+1 is directly propagated to the output ot+1 . A large Dt+1 therefore indicates that the readout along this semantic direction is dominated by historical recurring semantics, making the new transition signal relatively less salient. This phenomenon indicates that semantic state sink is not characterized by unbounded growth of the state norm. Rather, recurrent updates induced by repeated behaviors gradually concentrate the state along frequently visited key-addressed semantic subspaces. Consequently, in long-sequence recommendation, the recurrent state becomes biased toward dominant historical patterns, reducing its sensitivity to recent preference shifts and sparse but predictive transition signals. 
+
+## B Comparison with Vanilla Gated DeltaNet 
+
+Table 4 summarizes the architectural differences between vanilla Gated DeltaNet and TDGD. Vanilla Gated DeltaNet updates a compact recurrent state by writing the current key–value pattern and then reads the state with the current query. This design is efficient, but its writing and reading operations are both driven only by the current input representation. Therefore, when similar semantic behaviors repeatedly appear in a long sequence, vanilla Gated DeltaNet may continue to write these recurring patterns into the state and later retrieve them through query-aligned directions, which can cause semantic state sinks. TDGD differs from vanilla Gated DeltaNet in two key aspects. First, on the writing side, TDGD replaces the raw value vt with the memory-filtered value ¯vt and uses the time-aware key ˜kt. This makes state updates aware of whether the current behavior is already covered by retrieved semantic memory, thereby reducing redundant writes of recurring interests. Second, on the reading side, TDGD augments the standard state readout Stqt with a state-relation differential term ηrt art St ¯kmt .This term suppresses the memory-key-aligned response from the same recurrent state, preventing memory-dominated semantic directions from overwhelming the final readout. These two modifications target both the formation and the effect of semantic state sinks. The memory-conditioned write gate reduces redundant semantic accumulation before it enters the recurrent state, while the state-relation differential readout suppresses memory-aligned responses already encoded in the state. This enables TDGD to preserve memory-unexplained transition signals, making the model more responsive to recent interest shifts and infrequent but currently relevant behaviors in long sequence recommendation. 14 C Illustration of Historical Influence Score 
+
+To visualize semantic state sink, we compute a historical influence score that measures how strongly each past behavior affects the current prediction through the recurrent state. For model 
+
+f ∈ { base , ours }, the state update at position t is: 
+
+∆Sft = βft
+
+
+
+vft − ¯Sft−1kft
+
+
+
+(kft )⊤, ¯Sft−1 = αft Sft−1. (36) Given the current prediction position T , we define: 
+
+Ift = Γft→T ∆Sft qfT 2
+
+, (37) where Γft→T denotes the accumulated retention from t to T , and qfT is the current readout query. Thus, Ift measures the readable influence of the t-th historical behavior on the current prediction. For the case visualization in Figure 1, we rescale the scores with a shared maximum over the compared models: 
+
+˜Ift = Ift
+
+max  
+
+> g∈{ base ,ours }, i
+
+Igi + ϵ . (38) This shared scaling preserves the relative magnitude between the vanilla model and SinkRec. Higher values indicate that the corresponding historical behavior occupies a stronger role in the current recurrent readout. Semantic state sink is indicated when semantically repetitive but target-irrelevant behaviors obtain disproportionately high influence scores and dominate the prediction. 
+
+## D Experiment Settings, Metrics, and Model Scale 
+
+Experiment settings. For data preprocessing, we follow the same settings as HSTU and FuXi-Linear for all compared models to ensure fair comparison. Beyond public datasets, we further validate our framework on a large-scale industrial dataset derived from real-world impression logs of Kuaishou’s advertising platform. Compared with standard public benchmarks, this dataset provides a more realistic evaluation environment characterized by large-scale traffic, diverse user behaviors, and practical commercial recommendation constraints. The results demonstrate the scalability and robustness of our method in real-world industrial deployment scenarios. Training is conducted on 2 A800 GPUs, with all settings following Fuxi-Linear. Instead of stacking distinct layers, SinkRec iteratively reuses a shared hybrid memory-transition block, resulting in a substantially smaller parameter budget. 
+
+Metrics. We adopt three widely used ranking metrics for evaluation: top-K Hit Ratio (HR@ K,denoted as R@ K in tables), Normalized Discounted Cumulative Gain (NDCG@ K, denoted as N@ K in tables), and Mean Reciprocal Rank (MRR). Higher values indicate better recommendation performance for all metrics. Unless otherwise specified, we rank the ground-truth item against the full item set and report results at K = 10 and K = 50 . For the online A/B experiments, we use Advertiser Value (ADVV) and Revenue as core evaluation metrics. 
+
+Model scale. For KuaiRec and ML-20M, we set the number of layers to 4 and 8, and the embedding dimension to 128 and 256, respectively. To ensure a fair comparison, we tune the hidden dimensions of all baselines to keep their model scales comparable. The detailed hyperparameter settings and the numbers of non-embedding parameters are reported in Table 5. These results also show that SinkRec achieves competitive performance with a more lightweight architecture. It is worth noting that SinkRec shares parameters across hybrid blocks, which substantially reduces the overall parameter count without increasing inference latency. 
+
+## E Mechanism Analysis: From Semantic Explanation to State Innovation 
+
+Visualization of semantic state sink. Figure 4 analyzes semantic state sink by probing recurrent states with a shared semantic basis. Specifically, we use the learned memory codewords as semantic probe directions and apply the same probes to both the base model and SinkRec. Although the 15 Table 5: The sizes of models across various datasets.                      
+
+> Model Time-aware ML-20M KuaiRec
+> SASRec (4d) ×6.31M 791.04K Mamba4Rec (4d) ×7.91M 1.04M TiM4Rec (1d) ✓7.57M 984.16K HSTU (4d) ✓7.40M 926.81K FuXi-Linear (1d) ✓7.34M 917.66K SinkRec (4d) ✓4.52M 541.32K
+
+Figure 4: TDGD alleviates semantic state sink. (a) In the base model, normalized state-response mass increasingly concentrates on repetitive sink-prone directions as the prefix grows. (b) TDGD keeps the response mass more balanced across repetitive and remaining directions. (c) The base state-probe response map ∥Stkmj ∥2 shows persistent bright bands, indicating that a few repetitive prototypes dominate the recurrent state. (d) TDGD suppresses such directional concentration while preserving structured semantic responses. For (c) and (d), prototype indices are sorted by repetition frequency from high to low, with j = 1 and j = 96 corresponding to the most and least frequent prototypes, respectively. base model does not contain the memory module, its recurrent state can still be projected onto these codeword directions to examine whether it concentrates on repetitive semantics. Given the recurrent state St and the projected memory-key direction kmj associated with the j-th codeword, we define the state-probe response as 
+
+et,j = Stkmj 2 . (39) A larger et,j indicates that the recurrent state is more strongly readable along the semantic direction represented by the j-th codeword. Let Jrep denote the top-K codeword directions with the highest usage frequency, which represent repetitive behavioral semantics. We measure the response-energy mass concentrated on these repetitive directions as 
+
+mrep  
+
+> t
+
+=
+
+P 
+
+> j∈J rep
+
+e2
+
+> t,j
+
+PJj=1 e2 
+
+> t,j
+
++ ϵ , mrem  
+
+> t
+
+= 1 − mrep  
+
+> t
+
+, (40) 16 Figure 5: The effectiveness comparison across different sequence lengths. where mrep  
+
+> t
+
+quantifies how much state-probe energy is assigned to frequently reused semantic directions. Figure 4(a) shows that the base model gradually shifts more response mass toward high-frequency codeword directions as the prefix grows. This indicates that its recurrent state becomes increasingly concentrated on repetitive semantics. Figure 4(b) shows that TDGD reduces this excessive concentra-tion and maintains a more balanced response distribution, suggesting that memory-guided writing and reading alleviate semantic state sink. Figures 4(c) and (d) further visualize the full state-probe response map ∥Stkmj ∥2, where codeword directions are sorted by usage frequency. In the base model, a few high-frequency directions form persistent bright horizontal bands, especially at later prefixes, showing that repetitive semantics dominate the recurrent state response. In contrast, TDGD yields more distributed yet still structured responses across semantic directions, suppressing excessive dominance by repetitive patterns while preserving meaningful semantic organization. 
+
+## F Sequence Length Scaling Experiment 
+
+To evaluate the scalability of SinkRec with respect to sequence length, we conduct comparative experiments on the KuaiRec dataset. We use FuXi-Linear, the strongest baseline, as the reference model and follow its reported hyperparameter settings for fair comparison. We gradually increase the input sequence length from 256 to 4096. As shown in Figure 5, both models benefit from longer histories, but SinkRec consistently outperforms FuXi-Linear across all sequence lengths. Specifically, SinkRec achieves relative MRR improvements of 8.53%, 8.86%, 9.20%, 8.58%, and 9.21% at sequence lengths 256, 512, 1024, 2048, and 4096, respectively. Moreover, the performance gap remains stable and even reaches the largest relative gain at length 4096, indicating that SinkRec scales more effectively to longer histories. This demonstrates that the proposed memory-transition decoupled design can better exploit extended user sequences while maintaining robust architectural scalability. 
+
+## G Computational Cost 
+
+To further assess the computational efficiency of the proposed architecture, we report the per-batch inference time of all compared models under identical hardware settings. For a fair comparison of the core sequential modeling component, we remove the external Memory module from our method in this efficiency evaluation and measure the inference latency of the remaining backbone. As shown in Table 6, our method achieves the fastest inference speed, requiring only 44.578 ms per batch. This is substantially lower than CollectiveKV (93.578 ms), HSTU (80.491 ms), and BlossomRec (80.368 ms). Notably, our method also outperforms the lightweight linear baseline FuXi-Linear, reducing the inference latency from 61.263 ms to 44.578 ms. 17 Table 6: Inference time comparison on the same NVIDIA A800 GPUs.          
+
+> Method Time (ms/batch)
+> HSTU 80.491 HyTRec 64.140 MSN 73.543 BlossomRec 80.368 DUIA 72.052 CollectiveKV 93.578 FuXi-Linear 61.263
+> SinkRec 44.578
+
+The relatively high cost of CollectiveKV mainly comes from its cross-user collective attention mechanism, while HSTU and BlossomRec introduce additional computation through hierarchical modeling or multi-granularity feature interactions. In contrast, after removing the external Memory module, our backbone still maintains an efficient recurrent/linear sequential modeling structure and avoids expensive quadratic attention or cross-user aggregation during inference. These results demonstrate that the core design of our method is computationally efficient and suitable for large-scale long-sequence recommendation scenarios with strict online latency constraints. 
+
+## H Discussions 
+
+Semantic state sink in recurrent linear attention. Recurrent linear attention improves efficiency by compressing long histories into recurrent states. However, the same state must preserve collabora-tive semantic patterns and compute dynamic transitions. In long user histories, semantically recurrent local patterns can be repeatedly written into the state, causing high-frequency interests to dominate the representation. This semantic state sink weakens the model’s sensitivity to current local behaviors and explains why longer histories do not always yield proportional gains. 
+
+A unified perspective on memory-transition decoupling. SinkRec views long-sequence recom-mendation as a memory-transition decoupling problem. Existing methods often couple semantic pattern retrieval and transition modeling within attention weights, retrieved subsequences, memory slots, or recurrent states. In contrast, SinkRec assigns collaborative semantic patterns to Conditional Semantic Memory and leaves memory-unexplained transition residuals to the recurrent state. This separation reduces redundant semantic accumulation and preserves state capacity for dynamic interest adaptation. 
+
+Semantic initialization of memory codebooks. One future direction is to enrich the memory codebooks with item-side semantic knowledge. While the current residual VQ codebooks are learned end-to-end from behavior windows and mainly capture collaborative recurring patterns, recommendation items often contain category, tag, title, or description information. These textual attributes can be encoded by pretrained LLM embedding models to initialize semantic codebooks. By freezing the initialized codebook vectors during recommendation training, the memory module can preserve a stable external semantic space and avoid being fully collapsed into task-specific ID correlations. The trainable window encoder and projection adapters can then learn to retrieve and use these fixed semantic anchors, while the recurrent state focuses on memory-unexplained transitions. Such frozen semantic codebooks may better capture the latent intent behind contiguous and dilated behavior windows, improving interpretability, cold-start robustness, and generalization to sparse behavioral patterns. 18
