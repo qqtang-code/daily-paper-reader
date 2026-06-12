@@ -6,77 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-11
-- 运行时间：2026-06-11 22:41:46 UTC
+- 最新运行日期：2026-06-12
+- 运行时间：2026-06-12 21:37:29 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日聚焦长上下文强化学习与键值状态演化新突破。最值得看的两篇精读论文：Sparrow提出稳定高效的长上下文RL解耦方案，Q-Delta超越传统键值关联建模状态演化。建议关注长序列推理效率与智能记忆机制，这两方向正从理论走向实用。
-- 详情：[/202606/11/README](/202606/11/README)
+1) 今日精选19篇论文，精读7篇，重点关注多模态推理与注意力机制优化。  
+2) 最值得看《Improving Multimodal Reasoning via Worst Dimension Optimization》（9.0分）和《A Unifying View of Attention Sinks》（9.0分），前者提出最差维度优化方法，后者统一解释注意力沉溺现象。  
+3) 建议优先精读这两篇高分论文，速读可关注《PAR3D》的3D场景理解与《MemDreamer》的长视频推理机制。
+- 详情：[/202606/12/README](/202606/12/README)
 
 ### 精读区论文标签
-1. [Sparrow: Sparse Rollout for Stable and Efficient Long-context RL of Large Language Models](/202606/11/2606.08446v1-sparrow-sparse-rollout-for-stable-and-efficient-long-context-rl-of-large-language-models)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：强化学习中基于稀疏注意力的长上下文展开
-2. [Q-Delta: Beyond Key-Value Associative State Evolution](/202606/11/2606.08804v1-q-delta-beyond-key-value-associative-state-evolution)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：面向线性注意力状态演化的查询感知delta规则
-3. [Visual Para-Thinker++: A Single-Policy Multi-Agent Framework for Visual Reasoning](/202606/11/2606.09290v1-visual-para-thinker-a-single-policy-multi-agent-framework-for-visual-reasoning)  
+1. [Improving Multimodal Reasoning via Worst Dimension Optimization](/202606/12/2606.07801v1-improving-multimodal-reasoning-via-worst-dimension-optimization)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：多智能体框架用于多步视觉推理
-4. [Express Language Modeling](/202606/11/2606.10944v1-express-language-modeling)  
+   evidence：通过最差维度优化提升多模态推理
+2. [A Unifying View of Attention Sinks: Two Algorithms, Two Solutions](/202606/12/2606.08105v1-a-unifying-view-of-attention-sinks-two-algorithms-two-solutions)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：将非因果注意力近似转为因果近似的工具，应用于KV缓存压缩和长上下文预填充
-5. [InternVideo3: Agentify Foundation Models with Multimodal Contextual Reasoning](/202606/11/2606.12195v1-internvideo3-agentify-foundation-models-with-multimodal-contextual-reasoning)  
+   evidence：对注意力沉洞的统一视角，揭示两种不同算法及干预措施
+3. [PRPO: Perception-Reinforced Policy Optimization via Token-Level Dynamic Advantage Reshaping](/202606/12/2606.08708v1-prpo-perception-reinforced-policy-optimization-via-token-level-dynamic-advantage-reshaping)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：多模态上下文推理用于长视频任务
-6. [PJ-RoPE: A Fourier-Jet-Affine Position Space for Relative Attention](/202606/11/2606.05345v1-pj-rope-a-fourier-jet-affine-position-space-for-relative-attention)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：统一相对位置编码，有助于提高注意力机制效率
-7. [WorldBench: A Challenging and Visually Diverse Multimodal Reasoning Benchmark](/202606/11/2606.06538v1-worldbench-a-challenging-and-visually-diverse-multimodal-reasoning-benchmark)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：面向多模态大模型的多模态推理基准，视觉多样性丰富
+   evidence：面向LVLM多模态推理的令牌级动态优势重塑
+4. [End-to-End Context Compression at Scale](/202606/12/2606.09659v1-end-to-end-context-compression-at-scale)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：提出端到端编码器-解码器上下文压缩作为KV缓存压缩的替代方案
+5. [IntentKV: Cross-Turn Intent-Aware KV Cache Pruning for Agent Inference](/202606/12/2606.09916v1-intentkv-cross-turn-intent-aware-kv-cache-pruning-for-agent-inference)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：面向LLM智能体的KV缓存剪枝
+6. [RKSC: Reasoning-Aware KV Cache Sharing and Confident Early Exit for Multi-Step LLM Inference](/202606/12/2606.09937v1-rksc-reasoning-aware-kv-cache-sharing-and-confident-early-exit-for-multi-step-llm-inference)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：推理感知的KV缓存共享与提前退出用于多步LLM推理
+7. [Express Language Modeling](/202606/12/2606.10944v1-express-language-modeling)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：非因果注意力近似用于KV缓存压缩和长上下文预填充
 
 ### 速读区论文标签
-1. [Gated Bidirectional Linear Attention for Generative Retrieval](/202606/11/2606.07317v1-gated-bidirectional-linear-attention-for-generative-retrieval)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：门控双向线性注意力实现线性时间注意力
-2. [MemDreamer: Decoupling Perception and Reasoning for Long Video Understanding via Hierarchical Graph Memory and Agentic Retrieval Mechanism](/202606/11/2606.07512v1-memdreamer-decoupling-perception-and-reasoning-for-long-video-understanding-via-hierarchical-graph-memory-and-agentic-retrieval-mechanism)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：通过层次图记忆和主体检索将长视频理解中的感知与推理解耦
-3. [VisualFLIP: Do Predictions Depend on Task-Critical Visual Evidence in Multimodal Reasoning?](/202606/11/2606.07872v1-visualflip-do-predictions-depend-on-task-critical-visual-evidence-in-multimodal-reasoning)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：多模态推理地基的基准测试
-4. [Decoupling Semantics and Logic: A Training-Free Coarse-to-Fine Pipeline for Video Retrieval-Augmented Generation](/202606/11/2606.07924v1-decoupling-semantics-and-logic-a-training-free-coarse-to-fine-pipeline-for-video-retrieval-augmented-generation)  
+1. [PAR3D: A Unified 3D-MLLM with Part-Aware Representation for Scene Understanding](/202606/12/2606.06485v1-par3d-a-unified-3d-mllm-with-part-aware-representation-for-scene-understanding)  
    标签：评分：8.0/10、query:multimodal
-   evidence：多模态检索与理解流水线
-5. [Latent Reasoning with Normalizing Flows](/202606/11/2606.06447v1-latent-reasoning-with-normalizing-flows)  
-   标签：评分：7.0/10、query:mm-cot
-   evidence：提出基于归一化流的潜在推理，作为显式思维链的替代方案
-6. [The Last Visible Pixel: Probing Fine-Scale Perception in Vision-Language Models](/202606/11/2606.07861v1-the-last-visible-pixel-probing-fine-scale-perception-in-vision-language-models)  
+   evidence：统一的三维多模态大语言模型，具备部件感知场景理解与推理能力
+2. [MemDreamer: Decoupling Perception and Reasoning for Long Video Understanding via Hierarchical Graph Memory and Agentic Retrieval Mechanism](/202606/12/2606.07512v1-memdreamer-decoupling-perception-and-reasoning-for-long-video-understanding-via-hierarchical-graph-memory-and-agentic-retrieval-mechanism)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：将感知与推理解耦，使用层次图记忆和智能体检索实现长视频理解
+3. [EinSort: Sorting is All We Need for Tensorizing LLM](/202606/12/2606.08565v1-einsort-sorting-is-all-we-need-for-tensorizing-llm)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：张量化用于KV缓存压缩
+4. [Sample-Efficient LLM-Based Detection of Malicious Web Server Logs with Forensically Explainable Reasoning](/202606/12/2606.08649v1-sample-efficient-llm-based-detection-of-malicious-web-server-logs-with-forensically-explainable-reasoning)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：使用思维链提示进行日志分析
+5. [GRAMformer: Any-Order Modality Interactions via Volumetric Multimodal Cross-Attention](/202606/12/2606.06249v1-gramformer-any-order-modality-interactions-via-volumetric-multimodal-cross-attention)  
    标签：评分：7.0/10、query:multimodal
-   evidence：视觉语言模型中细粒度视觉感知的研究
-7. [ChronoPhyBench: Do MLLMs Truly Understand the World or Merely Exploit Language Priors?](/202606/11/2606.07962v1-chronophybench-do-mllms-truly-understand-the-world-or-merely-exploit-language-priors)  
+   evidence：体积化多模态交叉注意力实现任意顺序的模态交互
+6. [DyCon: Dynamic Reasoning Control via Evolving Difficulty Modeling](/202606/12/2606.07108v1-dycon-dynamic-reasoning-control-via-evolving-difficulty-modeling)  
    标签：评分：7.0/10、query:mm-cot
-   evidence：评估多模态推理链并检测语言先验的基准
-8. [A Unifying View of Attention Sinks: Two Algorithms, Two Solutions](/202606/11/2606.08105v1-a-unifying-view-of-attention-sinks-two-algorithms-two-solutions)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：分析注意力汇聚点的两种算法机制，为稀疏注意力设计提供见解
-9. [GOPAgen: Motion-Aware and Efficient Agentic Long-Video Understanding with Structural Memory and Hierarchical Reasoning](/202606/11/2606.06532v1-gopagen-motion-aware-and-efficient-agentic-long-video-understanding-with-structural-memory-and-hierarchical-reasoning)  
-   标签：评分：6.0/10、query:mm-cot
-   evidence：长视频理解中的层次推理和结构记忆，与多模态长链推理相关
-10. [Multiscale POD of Transformer Attention Fields: Scale-Selective Analysis via Morlet Scalogram](/202606/11/2606.06573v1-multiscale-pod-of-transformer-attention-fields-scale-selective-analysis-via-morlet-scalogram)  
+   evidence：LRMs中的动态推理控制以缓解过度思考
+7. [Constrained Dominant Sets for Multimodal Document Question Answering](/202606/12/2606.07252v1-constrained-dominant-sets-for-multimodal-document-question-answering)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：多模态文档问答中的约束主导集检索器，解决证据冗余问题
+8. [Constrained Dominant Sets for Multimodal Document Question Answering](/202606/12/2606.07252v2-constrained-dominant-sets-for-multimodal-document-question-answering)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：多模态文档问答中的检索方法，解决重复证据问题
+9. [Multiscale POD of Transformer Attention Fields: Scale-Selective Analysis via Morlet Scalogram](/202606/12/2606.06573v1-multiscale-pod-of-transformer-attention-fields-scale-selective-analysis-via-morlet-scalogram)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：使用POD对变换器注意力场进行尺度选择性分析，与理解稀疏注意力模式相关
-11. [Inference-Time Conformal Reasoning with Valid Factuality Control for Large Language Models](/202606/11/2606.08831v1-inference-time-conformal-reasoning-with-valid-factuality-control-for-large-language-models)  
-   标签：评分：6.0/10、query:mm-cot
-   evidence：提出推理时共形推理，用于多步推理并控制事实性
-12. [SinkRec: Mitigating Semantic State Sink in Long Sequence Recommendation with Memory-Conditioned Gated Delta Networks](/202606/11/2606.09888v1-sinkrec-mitigating-semantic-state-sink-in-long-sequence-recommendation-with-memory-conditioned-gated-delta-networks)  
+   evidence：多尺度注意力分析以理解注意力模式
+10. [The Last Visible Pixel: Probing Fine-Scale Perception in Vision-Language Models](/202606/12/2606.07861v1-the-last-visible-pixel-probing-fine-scale-perception-in-vision-language-models)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：视觉语言模型细粒度感知基准
+11. [When No Answer Is Correct: Diagnosing Absent Answer Detection for MLLMs in Video Understanding](/202606/12/2606.08239v1-when-no-answer-is-correct-diagnosing-absent-answer-detection-for-mllms-in-video-understanding)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：诊断视频理解中MLLM的缺失答案检测，涉及多模态可靠性
+12. [Chiaroscuro Attention: Spending Compute in the Dark](/202606/12/2606.08327v1-chiaroscuro-attention-spending-compute-in-the-dark)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：线性注意力用于高效长序列推荐
+   evidence：提出基于谱熵的动态令牌路由至不同算子，实现高效注意力
 
 
 <div class="dpr-home-promo-card">
