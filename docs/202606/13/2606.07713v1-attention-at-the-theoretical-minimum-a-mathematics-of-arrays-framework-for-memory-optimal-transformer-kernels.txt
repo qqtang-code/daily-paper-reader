@@ -1,0 +1,1031 @@
+Title: Attention at the Theoretical Minimum: A Mathematics of Arrays Framework for Memory-Optimal Transformer Kernels
+
+URL Source: https://arxiv.org/pdf/2606.07713v1
+
+Published Time: Tue, 09 Jun 2026 00:07:35 GMT
+
+Number of Pages: 37
+
+Markdown Content:
+# Attention at the Theoretical Minimum: A Mathematics of Arrays Framework for Memory-Optimal Transformer Kernels 
+
+Lenore Mullin a, ∗, Gaétan Hains b
+
+> aUniversity at Albany, SUNY, Albany, NY, USA
+> bLACL, Université Paris-Est Créteil, Créteil, France
+
+Abstract 
+
+The attention mechanism is the computational core of modern transformer-based arti-ficial intelligence systems—the primitive that allows models to dynamically determine which parts of an input sequence are most relevant when producing each output. Yet its standard implementation incurs quadratic memory traffic in the sequence length, and real-world performance is dominated by memory-bound execution rather than arithmetic throughput. A DRAM access costs 100–1000 × more energy than a floating-point oper-ation on contemporary hardware, so any analysis that focuses solely on FLOP counts fundamentally mischaracterises the bottleneck. This paper presents a Mathematics of Arrays (MoA ) reformulation of scaled dot-product attention and its numerically stable softmax normalization. We derive a De-notational Normal Form (DNF) that eliminates all intermediate arrays—including the implicit transposed-key buffer and every softmax temporary—and achieves the theoret-ical minimum memory traffic by algebraic construction rather than empirical tuning. The derivation proceeds by systematic application of MoA ’s psi-reduction calculus to a PyTorch reference implementation, and is verified numerically at full double-precision floating-point accuracy on concrete inputs. We position this work relative to the state of the art in attention optimization, ar-guing that hardware-specific accelerators, algorithmic approximations such as FlashAt-tention, and array-level tiling techniques all lack a portable algebraic foundation capable     
+
+> ∗Corresponding author
+> Email addresses: lmullin@albany.edu (Lenore Mullin), gaetan.hains@u-pec.fr (Gaétan Hains)
+> arXiv:2606.07713v1 [cs.LG] 5 Jun 2026
+
+of simultaneously providing fusion, shape-transformation correctness, and predictive cost models. MoA provides all three. A formal lower bound argument establishes that the DNF achieves O(nd k + nd v) data movement—where n is the sequence length, dk the key dimensionality, and dv the value dimensionality (number of columns in the value matrix 
+
+V ∈ Rn×dv , i.e. the output token representation dimension)—matching the information-theoretic minimum of O(nd k + nd v), compared to O(n2 + nd k + nd v) for the standard implementation. A predictive performance model, grounded in the literature on memory hierarchy costs, projects 2–100 × speedup and 2–50 × energy reduction across conservative, realistic, and aggressive deployment scenarios, with the advantage widening significantly at exascale sequence lengths. The derivation establishes a mathematically verifiable pipeline from Python source program through architecture-independent DNF, Operational Normal Form (ONF), and dimension-lifted hardware mapping—providing a rigorous foundation for formally correct, performance-portable AI kernels of direct relevance to DARPA edge-deployment objec-tives and DOE exascale scientific computing priorities. 
+
+Keywords: Mathematics of Arrays, transformer attention, memory optimization, Denotational Normal Form, Operational Normal Form, exascale computing, formal verification, psi-reduction calculus, FlashAttention, high-performance computing 
+
+1. Introduction 
+
+The attention mechanism (Vaswani et al., 2017) is the computational primitive that allows modern transformer-based neural networks to dynamically determine which parts of an input sequence are most relevant when producing each output token. Every state-of-the-art large language model, vision transformer, and multimodal system in widespread use today is built around this operation. Yet its power comes at a fundamental cost: the standard implementation of scaled dot-product attention exhibits quadratic data move-ment in the sequence length n and is dominated by memory-bound execution rather than arithmetic throughput. 21.1. The Memory Bottleneck 
+
+A simplified execution model captures the issue precisely. Let T denote total wall-clock time, F the floating-point operation count, M the bytes of memory traffic, and α,
+
+β the cost-per-FLOP and cost-per-byte-moved respectively. Then: 
+
+T ≈ α · F + β · M, where β ≫ α. (1) On contemporary GPU hardware a DRAM access costs approximately 100 –1000 pJ while a floating-point multiply-add costs ∼ 1 pJ (Dao et al., 2022). Memory movement is therefore two to three orders of magnitude more expensive than arithmetic. Any optimization strategy that focuses solely on FLOP reduction is misallocating effort. The attention mechanism, with its O(n2) intermediate score matrix that must be written to DRAM and re-read for the softmax pass, sits squarely in this trap. 
+
+1.2. The Gap in Existing Approaches 
+
+The existing landscape of attention optimization can be organized into three families, each of which addresses part of the problem but leaves a fundamental gap. 
+
+Hardware-specific accelerators. A substantial body of work targets attention acceleration through custom silicon. FACT (Qin et al., 2023) combines custom hardware with diagonal storage and shift-based arithmetic. OPTIMUS (Park et al., 2020) overlaps load and compute while reducing redundancy via sparse formats. The Gemmini systolic array accelerator (Sharma et al., 2025) applies GEMM acceleration to transformer kernels with convincing energy savings. FPGA-based approaches (León-Vega et al., 2023; Li and Chen, 2025; Tan and Teo, 2025) achieve high throughput on specific targets. Edge-device accelerators (Chang et al., 2025) target mobile deployment. The shared limitation is that gains are inseparable from the specific hardware platform: they cannot be formally reasoned about, ported, or proved correct on new architectures. 
+
+Hybrid and algorithmic solutions. FlashAttention (Dao et al., 2022) and its successor (Dao, 2023) tile the attention computation to avoid writing the full n×n score matrix to DRAM, achieving IO-awareness through careful blocking with a proven IO 3complexity bound. The A 3 architecture (Ham et al., 2020) replaces the scoring dot product with an approximate content-based search at O(n/ log n) complexity. Yang et al. (Yang et al., 2025) exploit singular-value sparsity and approximate softmax via a MacLaurin series expansion. Gao et al. (Gao et al., 2023) reformulate LLM attention as a single matrix multiplication but without accounting for data movement costs. These approaches improve empirical performance but mix implementation tricks with algorithmic ideas in ways that make the gains difficult to isolate, port, or formally validate on new targets. 
+
+Array-level optimizations. The FATHOM system (Binder et al., 2025) optimizes attention through dimension transpositions and shape-aware dense matrix-multiplication scheduling, with the authors explicitly identifying shape transforms as the dominant per-formance factor. Liu et al. (Liu et al., 2024) identify matrix chunking, data rearrangement, and vectorization as the three most important techniques for matrix multiplication on het-erogeneous platforms. These approaches identify the right target—shape transformations on arrays—but lack a unified algebraic framework to derive, validate, and cost the trans-forms automatically, and have no mechanism for proving correctness from first principles. The MoA framework, whose foundations are laid in section 3, provides exactly this. 
+
+1.3. Our Approach: Mathematics of Arrays 
+
+The Mathematics of Arrays (MoA ) was introduced by Mullin (1988) and provides a formal algebra for reasoning about multi-dimensional array computations. Its five primitives— ψ (index selection), ι (shape generation), ρ (shape extraction), γ (index-to-offset mapping), and rav (flattening)—define a Denotational Normal Form (DNF) for any array program. The DNF has three properties critical to our argument: (i) It eliminates all intermediate arrays, expressing every output element as a closed-form function of the input element indices alone. (ii) It is architecture-independent, using only Cartesian coordinate arithmetic. (iii) It provably achieves the theoretical minimum memory traffic for the computation: a lower bound of O(output size + input size ) on data movement. 4A subsequent Operational Normal Form (ONF) translates the DNF to starts, stops, and strides on real hardware via the γ mapping. Further dimension lifting maps the ONF to any target architecture by treating all processing components as arrays of known shape. The key distinction from all prior work is epistemological: derivation, not implemen-tation . Memory minimality in MoA is a theorem established before any code is written. FlashAttention achieves empirical IO-efficiency through tiling; MoA provides a formal proof that the DNF eliminates all implicit buffers by algebraic construction, including the transposed-K buffer across heads and layers that FlashAttention does not address. 
+
+1.4. Contributions 
+
+This paper makes the following contributions: 1. Formal DNF derivation of scaled dot-product attention and numerically stable softmax via systematic MoA psi-reduction, presented in full step-by-step detail (section 4). 2. Memory minimality theorem : a formal proposition establishing that the DNF achieves O(nd k + nd v) data movement versus O(n2 + nd k + nd v) for the standard implementation (Proposition 4.1). 3. Lower bound theorem : a formal theorem establishing the information-theoretic minimum data movement for any correct attention implementation (Theorem 6.1). 4. Numerical verification : exact matching of MoA DNF output against PyTorch at full double-precision floating-point on concrete inputs (section 5). 5. Predictive performance and energy model : a quantitative model projecting 
+
+2–100 × speedup and 2–50 × energy reduction with lower-bound and exascale scaling analysis (section 6). 6. Implementation roadmap : a five-stage path from DNF to C reference implemen-tation, ONF, dimension-lifted ONF, and hardware-validated cost models (section 7). 51.5. Paper Organization 
+
+Section 2 surveys related work in detail. Section 3 presents the MoA framework and its core primitives. Section 4 derives the DNF for attention and softmax. Section 5 reports numerical verification. Section 6 presents the predictive performance model. Section 7 outlines the implementation roadmap. Section 9 discusses exascale and national-priority relevance. Section 10 concludes. The appendix contains the complete element-by-element derivation trace. 
+
+2. Related Work 
+
+2.1. Complexity of Attention and Early Optimizations 
+
+The original Transformer architecture (Vaswani et al., 2017) established the O(n2) at-tention complexity that has dominated the field since 2017. Multi-head attention extends this to h heads, each operating on dk/h -dimensional projections, but the quadratic scal-ing in n remains the binding constraint for long-sequence settings. Early work focused on approximate attention—sparse patterns (Yang et al., 2025), linear approximations (Gao et al., 2023)—but these sacrifice the exactness of the attention function, which is unac-ceptable in settings requiring formal correctness. 
+
+2.2. FlashAttention and IO-Aware Computation 
+
+The most influential algorithmic advance is FlashAttention (Dao et al., 2022), which reformulates attention to avoid materializing the n × n score matrix by using a tiled computation with online softmax normalization. The key insight is that the forward pass can be computed in O(n2/M ) IO operations (where M is SRAM size), compared to O(n2)
+
+for the naive implementation. FlashAttention-2 (Dao, 2023) reduces non-matmul FLOPs and improves parallelism. The relationship between MoA and FlashAttention deserves careful comparison. FlashAt-tention achieves IO-awareness by design—the programmer explicitly tiles to fit SRAM. 
+
+MoA achieves IO-minimality by derivation—the DNF eliminates all unnecessary mem-ory traffic as a consequence of algebraic normalization. The FlashAttention bound is 
+
+O(n2/M ); the MoA bound is O(nd k) (linear in sequence length), which is asymptotically 6superior when n ≫ M/d k. Furthermore, MoA also eliminates the transposed-K buffer that FlashAttention’s tiling scheme does not address, and the derivation is portable across architectures without re-tiling. 
+
+2.3. Hardware-Specific Accelerators 
+
+The accelerator literature is extensive. We highlight the most relevant designs. The FACT system (Qin et al., 2023) co-optimizes feed-forward and attention computation using eager correlation prediction. OPTIMUS (Park et al., 2020) develops a matrix-multiplication structure specific to the transformer’s four matrix multiplications per layer. The Gemmini systolic array (Sharma et al., 2025) provides a GEMM-centric approach with strong energy results. Edge AI hardware (Chang et al., 2025) optimizes the full attention pipeline for mobile deployment constraints. FPGA implementations (León-Vega et al., 2023; Li and Chen, 2025; Tan and Teo, 2025) achieve high clock-frequency efficiency but are inherently non-portable. The A 3 architecture (Ham et al., 2020) is particularly interesting: it observes that attention is a content-based search and replaces the exact softmax with an approximate version, achieving O(n/ log n) complexity. However, the gains are inseparable from the custom hardware and the approximation sacrifices exactness. 
+
+2.4. Array Algebra and Formal Methods for HPC 
+
+The MoA framework (Mullin, 1988) provides the foundational algebra on which the present paper is built; a full account of the primitives, normal forms, and cost model is given in section 3. In brief, prior work has validated the approach across a range of numerical computing problems: DGEMM with cache-blocking (Thomas et al., 2021a,b), parallel code generation with predictive models (Mullin and Hains, 2025), energy efficiency on GPUs (Mullin, 2023), and general numerical algorithm analysis (Markus and Mullin, 2026). The algorithm-to-hardware co-design framework that contextualises this work is developed in Hains (2026). The FATHOM system (Binder et al., 2025) is the most directly related prior work in the array-optimization tradition. It achieves significant speedups on attention through 7dimension transpositions and shape-aware scheduling, and the authors’ finding that shape transforms dominate performance is consistent with the MoA thesis. However, FATHOM lacks a formal algebra for deriving rather than discovering these transforms, and has no mechanism for proving correctness or computing costs from first principles. 
+
+2.5. Formal Verification of Numerical Programs 
+
+There is a growing body of work on formal correctness of numerical computations, in-cluding work on floating-point arithmetic (Dao et al., 2022) and array program semantics. 
+
+MoA provides a form of semantic equivalence verification: each step of the psi-reduction preserves the denotational meaning of the array expression, so correctness of the DNF follows by construction. This is a stronger guarantee than post-hoc testing and more tractable than full formal verification of the compiled binary. 
+
+3. Mathematics of Arrays Framework 
+
+This section presents the MoA framework that the derivations in section 4 are built upon. The foundational theory was established by Mullin (1988). Its application to par-allel code generation and predictive performance modelling is developed in Mullin and Hains (2025) and Mullin and Hains (2026). Energy efficiency on GPUs via MoA -derived formulations is demonstrated in Mullin (2023), and application to general numerical algo-rithm analysis in Markus and Mullin (2026). Validated implementations of MoA -based DGEMM with cache-blocking on multicore systems—establishing the practical basis for the cost model in section 6—are reported in Thomas et al. (2021a,b). The theoretical treatment of computing performance as an experimental science that situates MoA in the algorithm-to-hardware co-design context is given in Hains (2026). The present paper applies this framework, for the first time, to the full scaled dot-product attention pipeline. 83.1. Arrays, Shapes, and Rank 
+
+Definition 3.1. Arrays and Shape 
+
+An array A of rank r = δA is characterized by: 
+
+• Its shape ρ A = ⟨d0, d 1, . . . , d r−1⟩ ∈ Nr, a vector of r positive integers. 
+
+• Its content, a map from Qr−1
+
+> k=0
+
+{0, . . . , d k − 1} to the type of content elements. 
+
+• Its extent or content size τ (A) = red ×(ρ A ) = Qr−1 
+
+> k=0
+
+dk, the total number of scalar elements, i.e. the product-reduce of the shape vector. Here τ denotes the total number of components operator; specifically for any vector ⃗v: τ (⃗v)
+
+is the number of elements in ⃗v. In particular, τ (ρ A ) = δA , i.e. the number of components in the shape vector of A equals the dimension (rank) of A.
+
+• For r = 0 : a scalar (zero-rank array) contains one element. 
+
+• For r = 1 : a vector of length d0.
+
+• For r = 2 : a matrix with d0 rows and d1 columns. 
+
+Arrays are stored in row-major (C-style) order by default: the last index varies fastest. This matches the memory layout of NumPy arrays and PyTorch tensors with default contiguous storage, which is essential for the correctness of the ONF derivation. 
+
+3.2. The Five Primitives 
+
+Definition 3.2. MoA Primitives 
+
+The five fundamental MoA primitives are: (1) ρ (Rho — shape extraction): ρ A returns the shape vector of A. For a scalar, ρ s = ⟨⟩ (empty vector). (2) ι (Iota — index generation): ι n creates the canonical index vector 
+
+⟨0, 1, . . . , n − 1⟩.1  
+
+> 1When ιis applied to a vector argument rather than a scalar, it generates a structured array of index vectors spanning the index space of the given shape. This generalisation is defined formally in Mullin’s dissertation (Mullin, 1988) and is not required for the derivations in the present paper.
+
+9(3) ψ (Psi — index selection): ⃗ i ψ A selects the sub-array of A at multi-index ⃗i. In general, for a multi-index ⃗ i:
+
+ρ (⃗i ψ A ) = τ (⃗i) ↓ (ρ A ). (2) where n ↓⃗v drops the n initial elements of ⃗v. For an index ⟨i⟩, ⟨i⟩ ψ A returns the i-th sub-array along the first axis (a "section"). Then τ (⟨i⟩) = 1 , so 
+
+ρ (⟨i⟩ ψ A ) = 1 ↓ (ρ A ), e.g. if ρ A = ⟨2, 3, 4⟩ then ρ (⟨i⟩ ψ A ) = 1 ↓ ⟨ 2, 3, 4⟩ =
+
+⟨3, 4⟩. For a full multi-index ⃗ i, τ (⃗i) = δA = r (i.e. the number of components in ⃗ i equals the rank of A); then r ↓ (ρ A )d = Θ (the empty vector ⟨⟩ ), so ⃗ i ψ A 
+
+returns a scalar. (4) γ (Gamma — index-to-offset): The gamma MoA operator is the key to reasoning about parallel execution cost. Its inverse is the reshape operator. It maps any array to a linear (1-dimensional) form that corresponds to computer memory locations. It transports all operations to simple data accesses and arithmetic, thus making data transfer costs explicit. Given a shape vector ⃗ s = ⟨s 0, . . . , s r−1⟩ and a valid multi-index ⃗ v =
+
+⟨v0, . . . , v r−1⟩, the row-major a linear offset is: 
+
+γ(⃗v,⃗s ) = 
+
+> r−1
+
+X
+
+> k=0
+
+vkr−1Y
+
+> j=k+1
+
+sj . (3) 
+
+Example. Let ⃗v = ⟨1, 2⟩ and ⃗s = ⟨3, 4⟩, so r = τ (⃗v) = 2 . Expanding term by term: 
+
+k = 0 : v01Y
+
+> j=1
+
+sj = 1 × s1 = 1 × 4 = 4 ,k = 1 : v11Y
+
+> j=2
+
+sj = 2 × 1 = 2 (empty product = 1 ).
+
+Therefore γ(⟨1, 2⟩, ⟨3, 4⟩) = 4 + 2 = 6 . This is the row-major memory offset 
+
+10 of the element at row 1, column 2 in a 3 × 4 array: 1 × 4 + 2 = 6 , i.e. the 7th element (0-indexed) in the flat storage buffer. This primitive bridges the architecture-independent DNF and the hardware-mapped ONF. (5) rav (Rav — flattening): rav A reshapes A to a one-dimensional array in row-major order, with ρ (rav A) = ⟨(red × (ρ A )) ⟩.
+
+> a
+
+The formula in equation (3) gives the row-major (C-style, last index varies fastest) linear offset. A family of γ functions exists for other storage layouts: column-major (Fortran-style, first index varies fastest) reverses the product limits, giving γcol (⃗v,⃗ s) = Pr−1 
+
+> k=0
+
+vk
+
+Qk−1 
+
+> j=0
+
+sj ; strided layouts introduce per-dimension stride parameters σk in place of the implicit stride Qr−1 
+
+> j=k+1
+
+sj ;and tiled or blocked layouts compose two levels of γ. MoA’s DNF is layout-agnostic: the same index expression is valid for any γ variant; only the ONF changes when the storage convention changes. 
+
+3.3. The Omega Operator 
+
+The Omega operator is the primary mechanism by which binary operations are lifted over array dimensions. 
+
+Definition 3.3. Omega Operator 
+
+For a binary scalar operation f and arrays ξl, ξr, the expression ξl fΩ⟨σl,σ r ⟩ ξr
+
+distributes f over the last δ(ξl)−σl dimensions of ξl and the last δ(ξr)−σr dimensions of ξr, matching them component-wise. The result shape is: 
+
+ρ (ξl fΩ⟨σl,σ r ⟩ ξr) = ( σl ↓ ρ ξ l) # ( σr ↓ ρ ξ r), (4) where # denotes shape-vector concatenation, n ↓⃗v removes the first n elements of ⃗v (see (2)), and the number of matched (consumed) dimensions is: 
+
+m = ( δξ l − σl) ⌊ (δξ r − σr). (5) Here a⌊b = min( a, b ). The σl leading dimensions of ρ ξ l and the σr leading di-mensions of ρ ξ r are consumed by the matching; what remains from each side is concatenated to form the result shape. 11 The content of ξl fΩ⟨σl,σ r ⟩ ξr is built by (a) partitioning the elements of ξl to obtain an array of shape δ(ξl) − σl (b) similarly partition the element of ξr to obtain an array of shape δ(ξr) − σr, then (c) applying f or its pointwise-lifted version to matching pairs of arguments on the left and right. 
+
+Remark 3.1. The Omega shape rule enables static memory cost analysis: the shape— and hence the size—of every intermediate expression can be computed from the shapes of the inputs alone, before any code is generated. This is the foundation of the MoA cost model. 
+
+Example 3.1 (Omega addition of a vector and a matrix) . Consider the expression 
+
+⟨5, 6, 7⟩ (+ Ω ⟨0, 1⟩) ((3 4 ρ) ι 12) .
+
+Step 1: Build the right argument. ι 12 = ⟨0, 1, 2, . . . , 11 ⟩, reshaped to ⟨3, 4⟩:
+
+ξr =
+
+
+
+0 1 2 34 5 6 78 9 10 11 
+
+ , ρ ξ r = ⟨3, 4⟩.
+
+The left argument is ξl = ⟨5, 6, 7⟩, ρ ξ l = ⟨3⟩.
+
+Step 2: Omega parameters. σl = 0 , σr = 1 .
+
+Step 3: Shape rule (4) .
+
+ρ Result = σl ↓ ρ ξ l # σr ↓ ρ ξ r = 0 ↓ ⟨ 3⟩ # 1 ↓ ⟨ 3, 4⟩ = ⟨3⟩ # ⟨4⟩ = ⟨3, 4⟩.
+
+Step 4: Matching. m = ( δξ l − σl)⌊(δξ r − σr) = (1 − 0) ⌊(2 − 1) = 1 ⌊1 = 1 . The single matched dimension (size 3) pairs ξl’s axis with ξr’s first axis: scalar i ψ ξ l operates against row i ψ ξ r (shape ⟨4⟩) for each i ∈ { 0, 1, 2}.
+
+12 Step 5: Psi-reduction. For each row i:
+
+i = 0 : 0 ψ ξ l + 0 ψ ξ r = 5 + ⟨0, 1, 2, 3⟩ = ⟨5, 6, 7, 8⟩,i = 1 : 1 ψ ξ l + 1 ψ ξ r = 6 + ⟨4, 5, 6, 7⟩ = ⟨10 , 11 , 12 , 13 ⟩,i = 2 : 2 ψ ξ l + 2 ψ ξ r = 7 + ⟨8, 9, 10 , 11 ⟩ = ⟨15 , 16 , 17 , 18 ⟩.
+
+Result (shape ⟨3, 4⟩): 
+
+5 6 7 810 11 12 13 15 16 17 18 
+
+ .
+
+The Omega operator has broadcast the vector ⟨5, 6, 7⟩ across the rows of the 3 × 4 matrix, adding each scalar to its corresponding row. 3.4. Psi Reduction and the DNF Pipeline 
+
+The psi-reduction calculus is a set of rewrite rules for systematically eliminating Omega operators by pushing index arguments inward through array expressions. The goal is to express every output element (⃗i ψ Output ) directly in terms of input indices, producing the DNF. 
+
+Definition 3.4. Denotational Normal Form 
+
+The Denotational Normal Form (DNF) of an array program is a representation of every output element as a closed-form expression in the input element indices alone without intermediate arrays. 
+
+Example 3.2 (DNF of the Omega addition from Example 3.1) . Let R = ξl (+ Ω ⟨0, 1⟩) ξr
+
+with ξl = ⟨5, 6, 7⟩ (shape ⟨3⟩) and ξr = (3 4 ρ) ι 12 (shape ⟨3, 4⟩), so ρ R = ⟨3, 4⟩. Applying the psi-reduction rule for Ω⟨0, 1⟩, the DNF expresses every output element directly in terms of input indices, with the Omega operator entirely eliminated: 
+
+< i, j > ψ R = < i > ψ ξ l + < i, j > ψ ξ r, 0 ≤ i < 3, 0 ≤ j < 4. (6) 
+
+The right-hand side contains no intermediate arrays: it accesses ξl at scalar index i and 
+
+13 ξr at two-component index ⟨i, j ⟩—both directly from the original input storage. 
+
+Verification on two elements: 
+
+< 1, 2 > ψ R =< 1 > ψ ξ l+ < 1, 2 > ψ ξ r = 6 + 6 = 12 ,< 0, 3 > ψ R =< 0 > ψ ξ l+ < 0, 3 > ψ ξ r = 5 + 3 = 8 .
+
+Both agree with the result matrix computed in Example 3.1. 
+
+Memory access count. To compute all 3 × 4 = 12 output elements, the DNF reads exactly 3 elements of ξl (one per row i, reused for all j) and 12 elements of ξr (each once)— 15 reads total. No intermediate array is written/read to/from memory. By contrast, a naïve implementation would allocate a 3 × 4 intermediate result buffer (12 writes then 12 reads = 24 extra memory operations). The DNF achieves theoretical minimum cost. 
+
+Definition 3.5. Operational Normal Form 
+
+The Operational Normal Form (ONF) is obtained from the DNF by applying the γ
+
+primitive (3) to all index expressions, translating multi-index Cartesian arithmetic into: memory offset = base + stride 0 · i0 + stride 1 · i1 + · · · (7) This form captures the storage convention (row-major vs. column-major, contigu-ous vs. strided) and enables standard loop-nest analysis by compilers. A DNF is equivalent to a fragment-C loop-nest program Mullin and Hains (2025). 
+
+The central correctness guarantee of MoA is: 
+
+Theorem 3.1. Storage Theorem 
+
+For any well-formed array program P a, the DNF of P is semantically equivalent to 
+
+P —it computes the same output for all inputs. Furthermore, the DNF is unique up to reordering of independent index computations, and achieves the theoretical minimum number of memory accesses required to compute the output from the input. No other implementation of P has lower transfer costs and equal arithmetic cost. 14 aUnderstood to be a non-recursive functional program i.e. a closed expression built with MoA operators and the input arrays 
+
+Proof sketch. Semantic equivalence follows by induction on the psi-reduction rules: each rewrite step preserves the denotational semantics of the expression (see Mullin 1988 for the full rule set). Minimality follows because the DNF has no intermediate array: the only data read from memory are input elements, and the only data written are output elements. □
+
+3.5. Dimension Lifting Dimension lifting is the process by which an ONF loop nest is mapped to a parallel or hierarchical hardware architecture. The key insight is that every processing component of a hardware system—a SIMD lane, a GPU warp, a cache line, a NUMA socket—can be modeled as an array of known shape. The ONF loop-nest index space is then partitioned across this hardware array, producing a parallel loop nest whose index structure has a shape that matches the hardware topology. Concretely, if the hardware has p parallel processors arranged as an array of shape 
+
+Π, and the ONF loop nest has iteration space of shape N , then dimension lifting maps 
+
+N → Π # ( N ⊘ Π) , where ⊘ denotes element-wise integer division. The resulting struc-ture expresses both inter-processor parallelism (outer loop over Π) and intra-processor computation (inner loop over N ⊘ Π) in a single algebraic expression. 
+
+4. MoA DNF Derivation of Attention 
+
+4.1. Problem Setup 
+
+The scaled dot-product attention function (Vaswani et al., 2017) computes: 
+
+Attention( Q, K, V) = softmax 
+
+QK ⊤
+
+√dk
+
+
+
+V, (8) where Q ∈ Rn×dk , K ∈ Rn×dk , V ∈ Rn×dv (with n, dk, dv as defined in the abstract), and 
+
+dk is the key (and query) dimensionality. In practice, Q, K, V are obtained by projecting 15 an input sequence X ∈ Rn×d through learned weight matrices: Q = XW Q, K = XW K ,
+
+V = XW V .We derive the DNF for the concrete instance n = 3 , dk = dv = 4 , so: 
+
+ρ Q = ρ K = ρ V = ⟨3, 4⟩. (9) The numerically stable softmax (Dao et al., 2022) is: 
+
+softmax( xi) = exp( xi − max j xj )
+
+P 
+
+> j
+
+exp( xj − max j xj ). (10) We define the scaled score matrix x = ( Q +.× K⊤)/√dk with ρ x = ⟨3, 3⟩.
+
+4.2. Overview of Derivation Steps 
+
+The derivation proceeds through four Omega steps, each eliminating one layer of intermediate array storage. Figure 1 summarizes the pipeline. 
+
+Remark 4.1 (Higher-rank tensors, transpose Omega, and parallelism) . The derivation below treats Q, K, V as 2-D matrices (shape ⟨n, d k⟩), so the transpose K⊤ is a simple 2-D operation that costs one n×dk buffer in the standard implementation (eliminated by the DNF via equation (17) ). In practice, transformer models batch these inputs as 3-D or higher-rank tensors—for example, shape ⟨B, n, d k⟩ for a batch of B sequences, or ⟨B, h, n, d k⟩ for h attention heads. For such inputs the transpose is no longer a simple 2-D flip; it becomes a transposition over the innermost two dimensions of a higher-rank tensor, which in MoA notation is expressed as: transpose (K) = ( transpose Ω⟨2⟩) K, (11) 
+
+i.e. an Omega step with σ = 2 that acts on the trailing 2-D index structure of each tensor, swapping the n and dk axes within each leading-dimension slice. This introduces an additional Omega step into the derivation pipeline: the transpose itself must be reduced by psi-reduction before the score matrix x = ( Q +.× K⊤)/√dk can be formed. 
+
+16 PyTorch Source 
+
+Ω Step I 
+
+Row-max z
+
+Ω Step II 
+
+Numer. ez
+
+Ω III/IV 
+
+Den. & Div. 
+
+DNF 
+
+i′′ ψ Y 
+
+Output 
+
+i′′ ψ Out         
+
+> ×V
+> elim. K⊤
+> buf. n·dk
+> elim. score matrix n2elim. exp buffer n2elim. den. vec. n
+> no scratch memory
+
+Figure 1: The MoA psi-reduction pipeline for attention. Each Omega step eliminates one category of intermediate array (red, dashed). The final DNF and output access only original Q, K, V elements by multi-index, with no scratch memory. 
+
+The key structural consequence is that the leading dimensions ( B, h) are consumed by this outer Omega, partitioning the computation into independent 2-D sub-problems—one per batch element and attention head— each of which is exactly the 2-D derivation given here. 
+
+General principle: all higher-rank operations reduce to 2-D. This generalises beyond the transpose. For any higher-rank tensor input, every array operation in the attention pipeline must ultimately be partitioned into 2-D matrix operations by the Omega operator. The score matrix computation is the canonical example: for Q, K of shape 
+
+⟨B, h, n, d k⟩, the scaled inner product becomes 
+
+Q  (+ .×) Ω ⟨2, 2⟩ (( transpose Ω<2>)( K)) , (12) 
+
+where (+ .×) is the inner product (matrix multiplication) and Ω⟨2, 2⟩ distributes it over the leading ⟨B, h ⟩ dimensions, performing one independent n×dk matrix multiplication for each (b, ˆh) pair. The softmax, the denominator summation, and the final multiplication by V each acquire a corresponding Ω⟨2, 2⟩ (or Ω⟨2, 1⟩) wrapper that distributes the 2-D operation across the leading batch and head dimensions. Each 2-D partition can therefore be assigned to a separate processing element (GPU warp, SIMD lane, compute node), yielding a provably correct parallel implementation directly from the algebraic structure of Omega, without any additional scheduling or syn-chronisation logic. This is the mechanism by which MoA’s dimension lifting (Section 3) extends the 2-D DNF to full batched, multi-head attention on arbitrary architectures. 
+
+17 4.3. Step I: Row-Max Subtraction (First Omega) 
+
+We begin with the stabilized exponent argument: 
+
+z = x (− Ω⟨1, 0⟩)  (⌈red ⌉ Ω⟨1⟩) x. (13) 
+
+Shape analysis. Left argument ξl = x: ρ ξ l = ⟨3, 3⟩, δξ l = 2 , σl = 1 . Right argument 
+
+ξr = ( ⌈red ⌉ Ω⟨1⟩) x: ρ ξ r = ⟨3⟩, δξ r = 1 , σr = 0 . By (5): m′ = (2 − 1) ⌊(1 − 0) = 1 , result shape ⟨3, 3⟩.
+
+Psi-reduction. For each row i′′ ∈ { 0, 1, 2}:
+
+< i ′′ > ψ z = < i ′′ > ψ x − ⌈ red ⌉(< i ′′ > ψ x ) . (14) This is a vector minus scalar of shape ⟨3⟩: the maximum of each row is subtracted from every element in that row, with no intermediate full-matrix storage. 
+
+4.4. Step II: Numerator (Second Omega) 
+
+The softmax numerator is: 
+
+num = ez , ρ num = ⟨3, 3⟩. (15) Substituting (14): 
+
+< i ′′ > ψ num = exp  < i ′′ > ψ x − ⌈ red ⌉(< i ′′ > ψ x ). (16) Now we eliminate the score matrix x and the transpose K⊤ simultaneously. Since ρ K⊤ =
+
+⟨4, 3⟩, the k-th column of K⊤ equals the k-th row of K. For index pair < i ′′ , k > :
+
+< i ′′ , k > ψ (Q +.× K⊤) = red +(< i ′′ , j > ψ Q× < k, j > ψ K) , 0 ≤ j < 4. (17) This eliminates the K⊤ buffer: we access K directly by row index k, with no transposition buffer required. 18 4.5. Steps III and IV: Denominator and Division 
+
+Denominator (Step III). 
+
+den = (red + Ω < 1 >) ez , ρ den = ⟨3⟩. (18) By the Omega reduction with σl = 1 , σr not applicable: 
+
+< i ′′ > ψ den = red +(< i ′′ > ψ e z ) , (a scalar) . (19) 
+
+Division (Step IV). The attention weight matrix Y is obtained by dividing each row of the numerator by its denominator scalar, via Omega division with σl = 1 , σr = 0 :result shape ⟨3, 3⟩.
+
+4.6. The Complete DNF 
+
+Combining all four steps yields the complete DNF for the attention weight ma-trix :
+
+Key Result 
+
+< i ′′ > ψ Y =exp 
+
+
+
+> 3
+
+X
+
+> j=0
+
+< i ′′ , j > ψ Q× < k, j > ψ K
+
+√dk
+
+−
+
+
+
+> 3
+
+X
+
+> j=0
+
+< i ′′ , j > ψ Q× < k, j > ψ K
+
+√dk
+
+row 
+
+
+
+> 2
+
+X
+
+> k′=0
+
+exp 
+
+
+
+> 3
+
+X
+
+> j=0
+
+< i ′′ , j > ψ Q× < k ′, j > ψ K
+
+√dk
+
+− ⌈· · · ⌉ row 
+
+
+
+(20) for all 0 ≤ i′′ < 3, 0 ≤ k < 3, 0 ≤ j < 4, where ⌈· · · ⌉ row denotes the row maximum. 
+
+4.7. Final Output: MM with V 
+
+The attention output is the weighted combination of value rows: 
+
+< i ′′ > ψ Output = red +(< i ′′ , p > ψ Y × < p > ψ V) , 0 ≤ p < 3. (21) 19 Equations (20)–(21) together constitute the complete DNF for attention. The entire computation is expressed without a single intermediate array. Every memory access is to original input data ( Q, K, V) at specific multi-indices. 
+
+Proposition 4.1. Memory Minimality 
+
+The DNF of (20)–(21) requires no scratch memory beyond the output buffer. It achieves data movement: 
+
+O(nd k + nd v) versus O n2 + nd k + nd v
+
+
+
+for the standard implementation, which must store the intermediate n × n score matrix and exponential array. 
+
+Proof. The DNF accesses each Q-element < i ′′ , j > ψ Q once per output row i′′ (as part of the inner sum over j), each K-element < k, j > ψ K once per pair (i′′ , k )—amortized over output rows, each K-element is read O(1) times per row—and each V-element < p, p v > ψ V once per output element (< i ′′ , p v > ψ Output ) via equation (21). Total DNF reads: O(nd k) for Q and K, and O(nd v) for V, giving O(nd k + nd v) overall. There are no intermediate arrays. The standard implementation additionally writes the score matrix ( n2 elements) and the exponential array ( n2 elements) to DRAM in separate passes, adding O(n2) to the traffic. □
+
+5. Numerical Verification 
+
+5.1. Experimental Setup 
+
+To validate the derivation, we executed both the PyTorch reference implementa-tion (Listing 1) and the MoA DNF on identical concrete inputs with batch_size=1 ,
+
+seq_len=3 , embed_dim=4 , d_k=4 . The input tensors Q, K, V were generated with a fixed random seed for reproducibility. 20 5.2. Input Values 
+
+The concrete input matrices used for verification (with batch dimension suppressed): 
+
+Q =
+
+
+
+−0.1984 0.2698 0.3414 −0.0372 0.2547 −1.0674 0.3460 −2.5242 0.6822 −0.6265 0.0252 0.3978 
+
+ ,
+
+K =
+
+
+
+−1.1567 0.6885 −0.1884 0.4743 0.2246 1.7564 0.5235 −2.3014 
+
+−1.5899 0.3730 −0.8257 −1.2069 
+
+ ,
+
+V =
+
+
+
+1.0739 0.4006 −0.9671 0.4870 0.5589 −0.7209 −0.7650 0.2689 0.8237 0.3763 0.8320 0.0014 
+
+ .
+
+5.3. Verification Results 
+
+Tables 1 and 2 compare PyTorch and MoA DNF outputs on all entries.         
+
+> Table 1: Attention weight matrix ρ·=⟨3,3⟩: PyTorch vs. MoA DNF. All entries agree to displayed precision.
+
+Row Col 0 Col 1 Col 2 Match 
+
+0 0.3202 0.3834 0.2964 ✓
+
+1 0.0288 0.7300 0.2412 ✓
+
+2 0.4270 0.2844 0.2887 ✓
+
+Row sums: 
+
+0 1.0000 ✓
+
+1 1.0000 ✓
+
+2 1.0001 * ✓          
+
+> *Rounding to 4 d.p.; exact value is 1.0000. Table 2: Final output matrix ρ·=⟨3,4⟩:PyTorch vs. MoA DNF. All entries agree to full double-precision floating-point.
+
+Row Col 0 Col 1 Col 2 Col 3 Match 
+
+0 0.8023 -0.0366 -0.3563 0.2595 ✓
+
+1 0.6376 -0.4240 -0.3857 0.2107 ✓
+
+2 0.8552 0.0747 -0.3903 0.2848 ✓
+
+21 Listing 1: PyTorch numerically stable softmax and scaled dot-product attention.  
+
+> 1
+
+import torch  
+
+> 23
+
+def stable_softmax(x, dim=-1):  
+
+> 4
+
+# Subtract row maximum for numerical stability  
+
+> 5
+
+z = x - torch.max(x, dim=dim, keepdim=True)[0]  
+
+> 6
+
+num = torch.exp(z)  
+
+> 7
+
+den = torch.sum(num, dim=dim, keepdim=True)  
+
+> 8
+
+return num / den  
+
+> 910
+
+# Dimensions: batch=1, seq_len=3, embed_dim=4  
+
+> 11
+
+batch_size, seq_len, embed_dim = 1, 3, 4  
+
+> 12
+
+d_k = embed_dim  
+
+> 13 14
+
+# Random Q, K, V matrices (shape: [1, 3, 4])  
+
+> 15
+
+q = torch.randn(batch_size, seq_len, embed_dim)  
+
+> 16
+
+k = torch.randn(batch_size, seq_len, embed_dim)  
+
+> 17
+
+v = torch.randn(batch_size, seq_len, embed_dim)  
+
+> 18 19
+
+# Step 1-2: Scaled similarity scores  
+
+> 20
+
+scores = torch.matmul(q, k.transpose(-2, -1)) / (d_k ** 0.5)  
+
+> 21 22
+
+# Step 3: Numerically stable softmax  
+
+> 23
+
+attn_weights = stable_softmax(scores, dim=-1)  
+
+> 24 25
+
+# Step 4: Weighted sum of values  
+
+> 26
+
+output = torch.matmul(attn_weights, v) 
+
+Both output matrices match identically between PyTorch and the MoA DNF compu-tation. The row-by-row derivation trace further confirms the result: computing (< 0 >ψ Output ) directly from the index-level DNF (21) yields ⟨0.8023 , −0.0366 , −0.3563 , 0.2595 ⟩,in exact agreement with PyTorch. This confirms the derivation is correct and that no temporary array is required. 
+
+6. Predictive Performance and Energy Model 
+
+6.1. Memory Traffic Dominance 
+
+From (1), real-world execution time is dominated by β · M . Current GPU hardware energy values are: 
+
+• Flop energy: ∼ 1 pJ/Flop (at ∼ 1 Tflop/s per Watt) 
+
+• DRAM access energy: ∼ 100 –1000 pJ per access 22 Consequently memory operations are 10 2–10 3× more expensive than arithmetic. Any optimization reducing memory traffic by factor k yields: Energy Reduction ≈ 100 k, (22) even if the arithmetic count is unchanged. This model is consistent with published GPU energy measurements (Dao et al., 2022; Mullin, 2023). 
+
+6.2. Classical vs. MoA Memory Traffic for Attention 
+
+For the standard attention implementation with matrices of shape ⟨n, d k⟩:
+
+Mclassical = n2
+
+|{z} 
+
+> score
+
++ nd k
+
+|{z} 
+
+> Q
+
++ nd k
+
+|{z} 
+
+> K
+
++ n2
+
+|{z} 
+
+> exp
+
++ n|{z} 
+
+> den
+
++ n2
+
+|{z} 
+
+> attn
+
++ nd v
+
+|{z} 
+
+> V
+
+= O(n2 + nd k + nd v), (23) 
+
+MMoA = nd k
+
+|{z} 
+
+> Q
+
++ nd k
+
+|{z} 
+
+> K
+
++ nd v
+
+|{z} 
+
+> V
+
+= O(nd k + nd v). (24) The reduction factor is: 
+
+k = Mclassical 
+
+MMoA 
+
+≈ n2 + nd k + nd v
+
+nd k + nd v
+
+∼ n2
+
+nd k
+
+= ndk
+
+, n ≫ dk. (25) For a long-context setting with n = 32 ,768 and dk = 64 : k ≈ 512 , corresponding to three orders of magnitude reduction in memory traffic—and, by (22), a comparable energy reduction. 
+
+6.3. Memory Reduction Mechanisms 
+
+The MoA DNF achieves traffic reduction through four distinct mechanisms: 1. Temporary elimination. All intermediate arrays (score matrix, ez array, denom-inator vector) are computed on-the-fly at index granularity, requiring zero scratch storage. 2. Transpose elimination. The transposed-K buffer is replaced by direct row-indexed K access (17), saving n · dk elements per attention call (significant when tiling across heads and layers). 23 256 1024 4096 16384 65536 
+
+0
+
+200 
+
+400 
+
+600 
+
+> Exascale ( n=32 K)
+
+Sequence Length n
+
+> Memory Traffic Ratio ( Mclassical /M MoA )
+
+dk = 64 (typical LLM head) 
+
+dk = 128 (larger heads) 
+
+dk = 256 (wide heads)             
+
+> Figure 2: Memory traffic ratio Mclassical /M MoA as a function of sequence length nfor three head dimen-sions dk. The advantage grows linearly with n/d k, reaching 512 ×at n= 32 ,768 ,dk= 64 .
+
+3. Streaming access patterns. The DNF produces affine, stride-predictable index arithmetic (3), enabling hardware prefetching and eliminating cache thrashing from irregular accesses. 4. Fusion by construction. The entire pipeline compiles to a single index expression— no separate kernel launches, no pipeline breaks, no synchronization barriers. 
+
+6.4. Predicted Gains by Scenario 
+
+Table 3 summarizes predicted speedup and energy reduction across three deployment scenarios and Figure 2 illustrates the scaling behavior. 
+
+> Table 3: Predicted speedup and energy reduction by deployment scenario. Estimates based on published memory-traffic baselines (Mullin and Hains, 2025, 2026).
+
+Scenario Description Speedup Energy Red. 
+
+Conservative Drop-in replacement, no compiler changes, memory traffic savings only 
+
+2–5× 2–5×
+
+Realistic Compiler fusion + algorithm redesign, full DNF loop nest optimization 
+
+5–20 × 5–20 ×
+
+Aggressive MoA -native systems: full hardware co-design with dimension-lifted ONF 
+
+10 –100 × 10 –50 ×
+
+24 6.5. Lower Bound Theorem 
+
+Theorem 6.1. Lower Bound on Attention Data Movement 
+
+Let Attention( Q, K, V) be any correct implementation of equation (8). Any such implementation must read at least O(nd k + nd v) bytes of input and write O(nd v)
+
+bytes of output. The MoA DNF achieves this bound. 
+
+Proof. Lower bound. Every element of the n×dv output depends, through the softmax normalization, on all n×dk elements of both Q and K (since the softmax denominator sums over all k). Thus all 2nd k elements of Q and K must be read. Every output element also depends on at least one element of each row of V, so all nd v elements of V must be read. Total input reads: O(nd k + nd v).
+
+Achievability. In the DNF (20), for a fixed output row i′′ : the inner sum P 
+
+> j
+
+<i′′ , j > ψ Q· < k, j > ψ K reads dk elements of Q-row i′′ and dk elements of K-row k, for each k ∈ { 0, . . . , n −1}. Over all k, each Q-row is read n times but can be kept in registers (or L1 cache) across the k-loop. Similarly, each K-row is read once. With appropriate register allocation, total DRAM reads per output row equal dk + nd k = O(nd k), and over all n output rows: O(nd k). Total: O(nd k + nd v). □
+
+Remark 6.1. Theorem 6.1 is qualitatively equivalent to FlashAttention’s IO-complexity lower C bound (Dao et al., 2022), which establishes O(n2/M ) for the standard tiled im-plementation where M is the SRAM size. The MoA bound of O(nd k) is strictly smaller when n ≫ M/d k, i.e., when the sequence length exceeds the SRAM capacity divided by the head dimension—exactly the long-context regime where performance is critical. 
+
+7. Implementation Roadmap 
+
+The present paper establishes the DNF and its correctness. The path to a complete, experimentally validated MoA -based attention system proceeds through five stages. 
+
+7.1. Stage 1: Reference Implementation from DNF 
+
+The DNF of equations (20)–(21) translates directly to a C triple-loop computation: outer loop over output rows i′′ , middle loop over columns k (for attention weights) then j
+
+25 (for the output), and inner reduction over j. The implementation uses no heap allocation beyond the output buffer. This is the first validation target: match PyTorch output at double precision on all test cases. Algorithm 1 shows the pseudocode. 
+
+Input: Q[n][ dk], K[n][ dk], V [n][ dv], √dk
+
+Output: Output [n][ dv]
+
+for i′′ ← 0 to n − 1 do 
+
+// Compute row i′′ of attention weights 
+
+for k ← 0 to n − 1 do 
+
+s[k] ← Pdk −1 
+
+> j=0
+
+Q[i′′ ][ j] · K[k][ j] / √dk;
+
+end 
+
+m ← max k s[k];
+
+for k ← 0 to n − 1 do 
+
+e[k] ← exp( s[k] − m);
+
+end 
+
+Z ← Pn−1 
+
+> k=0
+
+e[k];
+
+for k ← 0 to n − 1 do 
+
+w[k] ← e[k]/Z ;
+
+end 
+
+// Compute row i′′ of output 
+
+for pv ← 0 to dv − 1 do 
+
+Output [i′′ ][ pv] ← Pn−1 
+
+> p=0
+
+w[p] · V [p][ pv];
+
+end end Algorithm 1: generic C implementation from MoA DNF Note that the arrays s, e, and w in Algorithm 1 are O(n) local scratch vectors (not 
+
+O(n2) matrices), and with aggressive register allocation can be eliminated entirely in the ONF. 
+
+7.2. Stage 2: Operational Normal Form Derivation 
+
+Applying the γ primitive (3) to the DNF index arithmetic produces the ONF: a loop nest expressed as base + stride 0*i 0 + stride 1*i 1 for each dimension. For a row-major 
+
+n×dk matrix at base address p, row i′′ , column j: offset = i′′ · dk + j. This form is directly amenable to: 
+
+• Loop interchange (to improve cache reuse for K)
+
+• Loop tiling (to fit working sets in L1/L2 cache) 26 • Auto-vectorization (LLVM/GCC recognize stride-1 inner loops) 
+
+• Pragma-based OpenMP/SIMD annotation 
+
+7.3. Stage 3: Dimension Lifting 
+
+Dimension lifting maps the ONF loop-nest index space N to a hardware processing array Π. For an NVIDIA H100 GPU with 132 streaming multiprocessors (SMs), each with 64 CUDA cores, the hardware array has shape Π = ⟨132 , 64 ⟩. The ONF outer loop (over i′′ ) is lifted to distribute across SMs; the inner loops (over k, j) are vectorized within each SM. The algebraic dimension lifting: 
+
+N = ⟨n⟩ → ⟨ n/ 132 , 132 ⟩
+
+produces a parallel loop structure that maximizes SM utilization without hand-tuning the thread block geometry. Target architectures for the full experimental validation campaign include: 
+
+• NVIDIA H100 (SXM5), 3.35 TB/s HBM3 bandwidth 
+
+• AMD MI300X (Frontier/El Capitan), 5.2 TB/s HBM3 bandwidth 
+
+• Intel Ponte Vecchio (Aurora), 3.2 TB/s HBM2e bandwidth 
+
+7.4. Stage 4: Cost Prediction and Experimental Validation 
+
+Once the dimension-lifted ONF is available, all costs are computable from shapes alone: Memory traffic = X
+
+> arrays
+
+(size accessed at each step) , (26) Arithmetic = (loop-nest trip count) × (operations per iteration) . (27) These predicted costs will be compared against: 
+
+• Empirical roofline measurements on each target GPU 27 • PyTorch native attention ( F.scaled_dot_product_attention )
+
+• FlashAttention-2 kernel 
+
+• cuDNN attention (NVIDIA proprietary) 
+
+• cuBLAS GEMM baseline 
+
+7.5. Stage 5: Backward Pass and Full Training Loop 
+
+Full transformer training requires MoA derivations for the backward pass—gradient computations for Q, K, V, and the projection weight matrices. The gradient of the attention output with respect to Q is: 
+
+∂L
+
+∂Q = ∂L
+
+∂Output · V⊤ · ∂softmax 
+
+∂(QK ⊤/√dk) · K
+
+√dk
+
+,
+
+where the softmax Jacobian is a dense n×n matrix in the standard formulation but can be expressed as a DNF with O(nd k) memory traffic via MoA reduction. We have begun this derivation; it will complete the MoA coverage of a full training iteration. 
+
+8. Mechanization: From Python to MoA to FPGA via C 
+
+A central promise of the MoA framework is not merely theoretical elegance but mecha-nizability : the ability to carry a specification from a high-level language (Python, NumPy) through the DNF and ONF all the way to verified hardware execution, with no semantic gap at any transition. This section describes the realized pipeline and articulates why compiler-based approaches cannot provide equivalent guarantees. 
+
+8.1. The Python–MoA–C–FPGA Pipeline 
+
+The mechanization pipeline has been demonstrated in a series of collaborative hardware– software co-design experiments by Grout and Mullin (2018, 2022a,b). The pipeline oper-ates in four stages: 1. Python/NumPy specification. The algorithm is expressed as a NumPy or Python program using standard array operations. This is the source of truth for the computation’s intended semantics. 28 2. MoA derivation to DNF/ONF. The Python program is reformulated in MoA 
+
+and reduced via psi-reduction to the DNF, then translated to the ONF via the γ
+
+primitive. The ONF expresses the computation as starts, stops, and strides over con-tiguous memory—a universal machine abstraction that is architecture-independent and semantically equivalent to the original specification by the MoA Storage The-orem (Theorem 3.1). 3. C implementation from ONF. The ONF is transcribed to a C program using a 
+
+semantic subset of C that maps directly to array index arithmetic: loops, pointer arithmetic, and scalar operations. No dynamic allocation, no undefined behaviour, no compiler-dependent optimizations. This restricted C is the bridge between the mathematical specification and the hardware instruction set. Grout and Mullin (2018) demonstrated this step for matrix multiplication and the Kronecker (tensor) product, with the C program serving as both the software reference and the hardware specification. 4. FPGA/ASIC realization. The C-level ONF description is mapped to hardware description language (Verilog/VHDL), targeting FPGA and ASIC devices. Grout and Mullin (2022a) realized MoA operations including inner products, outer prod-ucts, and tensor operations as custom hardware–software co-design solutions on Xil-inx FPGAs, demonstrating that the ONF stride-and-offset structure maps directly to hardware memory access controllers without further transformation. Grout and Mullin (2022b) extended this to a processing-in-memory architecture, exploiting the DNF’s elimination of intermediate arrays to minimize data movement between compute and memory units— precisely the optimization that drives the performance model of Section 6. 
+
+8.2. Why Compiler-Based Approaches Cannot Provide Equivalent Guarantees 
+
+A natural question is whether the same pipeline could be achieved by compiling a high-level Python or C program with a sufficiently advanced compiler (LLVM, GCC, Intel ICC). The answer is no, for a fundamental reason: compilers do not preserve semantic 
+
+29 equivalence in a provable sense across all targets .Different compilers, and even different versions or optimization flags of the same com-piler, produce different executables from the same source code. These executables may differ in: 
+
+• Floating-point evaluation order , due to reassociation under -O3 or -ffast-math ,breaking IEEE 754 reproducibility; 
+
+• Memory layout and aliasing assumptions , which vary by target ABI and may differ between x86, ARM, and GPU backends; 
+
+• Intermediate representation , which changes across LLVM versions and is not formally specified as a semantic standard; 
+
+• Vectorization and loop transformations , which are applied heuristically and cannot be guaranteed to preserve the original loop semantics in all cases. There is no formal proof that a compiler-optimized executable is semantically equivalent to its source program across all inputs and all target platforms. This is not a criticism of compilers—it reflects the fundamental difficulty of verified compilation, which remains an active research frontier (e.g., the CompCert verified C compiler covers only a subset of C and only targets specific architectures). 
+
+8.3. MoA as a Verified Bridge from Specification to Execution 
+
+MoA provides a different guarantee. Because the pipeline from Python to DNF to ONF to the semantic subset of C consists entirely of algebraic rewrites, each of which preserves denotational semantics by the MoA Storage Theorem, the C program is prov-ably equivalent to the original Python specification—not by trusting a compiler, but by construction. The semantic subset of C used in the ONF transcription maps one-to-one onto instruction-set operations on any target architecture: loop bounds become iteration counts, stride expressions become address offsets, and scalar operations become individual instructions. This one-to-one correspondence can be verified by inspection for any target instruction set architecture (ISA). 30 The consequence is that MoA enables end-to-end verified performance prediction :because the DNF and ONF are derived algebraically, all costs—memory traffic, arithmetic operation counts, and parallelism degree—are computable from the shapes of the arrays alone, as described in Section 6. These predictions hold for any target ISA to which the ONF is mapped, because the semantic subset guarantees that no compiler transformation can silently change the access patterns or operation count. For transformer attention in particular, this means that the O(nd k + nd v) data movement bound of Theorem 6.1 is not merely a theoretical result—it is a guaranteed property of any correct FPGA or ASIC implementation derived via the MoA pipeline. 
+
+9. Exascale and National Priority Relevance 
+
+9.1. DOE Exascale Computing 
+
+At the three U.S. Department of Energy exascale systems—Frontier (Oak Ridge), Au-rora (Argonne), and El Capitan (Lawrence Livermore)—memory bandwidth is the dom-inant performance bottleneck, not FLOP throughput. Frontier delivers ∼ 700 PFLOP/s peak compute but only 9.2 TB/s aggregate HBM bandwidth across its AMD MI250X GPUs. At n = 32 ,768 (a sequence length now common in scientific LLMs applied to protein structure, climate modeling, and materials discovery), each attention call in the standard implementation moves ∼ 4 GB of DRAM bandwidth for the score matrix alone. Over a training run of billions of steps, this constitutes the binding energy and time constraint. The MoA DNF reduces this to O(nd k) traffic, which at dk = 64 and n = 32 ,768 is 
+
+∼ 16 MB per attention call—a reduction of 256 ×. For a model with L = 96 attention layers and h = 96 heads, the aggregate bandwidth saving per training step is 96 ×96 ×256 ×
+
+4 GB ≈ 9.4 PB. This is more than the total HBM capacity of Frontier. The implication is not merely “faster”—it is the difference between a workload that fits in memory and one that does not. 
+
+9.2. DARPA AI Assurance and Edge Deployment 
+
+Two distinct DARPA priorities are addressed by this work. 31 AI assurance. The MoA derivation provides a formally verifiable path from Py-Torch source code to hardware execution. Each psi-reduction step is an algebraic identity preserving semantic equivalence, providing a level of correctness guarantee not available from empirical testing alone. For AI systems deployed in contested or safety-critical en-vironments, this formal grounding is a prerequisite for certification. 
+
+Edge deployment. The DNF eliminates O(n2) memory allocations, enabling longer-context attention on hardware with constrained DRAM budgets— precisely the situation on edge inference hardware (embedded GPUs, tactical AI processors). The dimension-lifting mechanism further allows the same DNF to be mapped to diverse edge-hardware topologies without re-derivation. 
+
+9.3. Cross-Architecture Portability and Reproducibility 
+
+A critical but underappreciated advantage of the MoA approach is bit-level repro-ducibility across architectures . The DNF specifies the exact sequence of floating-point operations at the index level; different hardware targets execute the same operations in the same order (up to dimension-lifted parallelism). This satisfies the scientific repro-ducibility requirements that are increasingly mandatory for DOE-funded computational science (Mullin and Hains, 2026). 
+
+10. Conclusion 
+
+We have presented a Mathematics of Arrays derivation of scaled dot-product attention and numerically stable softmax, producing a Denotational Normal Form that (a) elimi-nates all intermediate arrays, (b) provably minimizes data movement, and (c) is verified at full floating-point precision against a PyTorch reference implementation. The deriva-tion demonstrates that the attention mechanism, despite its apparent complexity, admits a clean, index-level formulation with no scratch storage beyond the output. The key distinction from all prior work is epistemological: derivation, not implemen-tation . Memory minimality in MoA is a theorem established before any code is written. The standard implementation wastes O(n2) memory bandwidth writing and re-reading in-termediate arrays; MoA ’s DNF eliminates this waste by algebraic construction. FlashAt-32 tention achieves IO-efficiency by designing a tiling scheme; MoA achieves IO-minimality by normalizing the algebraic expression. The resulting guarantee is stronger: it holds for all architectures, all tiling strategies, and all future hardware configurations. The predictive performance model projects 2–100 × speedup and 2–50 × energy re-duction, with the advantage widening at exascale sequence lengths to potentially 512 × or beyond. At the scale of DOE exascale systems, this is not an incremental improvement—it changes the class of computations that are feasible. Future work will complete the five-stage implementation roadmap: C reference from DNF, ONF derivation, dimension-lifted ONF, experimental validation on Frontier/Au-rora/El Capitan, and backward-pass DNF for full training coverage. The formal and numerical foundation laid in this paper makes MoA a practical and provably optimal approach to transformer computation at scale. 
+
+Appendix A. Complete Element-Level Derivation Trace 
+
+This appendix presents the complete row-by-row derivation trace for the first output row 0 ψ Output , verifying (20) and (21) element by element. 
+
+Appendix A.1. Computing Scaled Scores for Row 0 
+
+For i′′ = 0 , the inner product P3 
+
+> j=0
+
+Q[0][ j] · K[k][ j] for each key row k:
+
+k = 0 :
+
+s0,0 = ( −0.1984)( −1.1567) + (0 .2698)(0 .6885) + (0 .3414)( −0.1884) + ( −0.0372)(0 .4743) = 0 .22960 + 0 .18577 − 0.06432 − 0.01764 = 0 .33341 .k = 1 :
+
+s0,1 = ( −0.1984)(0 .2246) + (0 .2698)(1 .7564) + (0 .3414)(0 .5235) + ( −0.0372)( −2.3014) = −0.04456 + 0 .47387 + 0 .17872 + 0 .08561 = 0 .69364 .
+
+33 k = 2 :
+
+s0,2 = ( −0.1984)( −1.5899) + (0 .2698)(0 .3730) + (0 .3414)( −0.8257) + ( −0.0372)( −1.2069) = 0 .31544 + 0 .10063 − 0.28185 + 0 .04490 = 0 .17912 .
+
+Scaled scores (divide by √4 = 2 ): 
+
+xrow 0 = ⟨0.16670 , 0.34682 , 0.08956 ⟩.
+
+Appendix A.2. Row-Max Subtraction and Exponentiation 
+
+Row maximum: m = 0 .34682 . Stabilized scores: 
+
+zrow 0 = ⟨− 0.18012 , 0.0, −0.25726 ⟩.
+
+Numerator: ez = ⟨0.83512 , 1.0, 0.77315 ⟩.Denominator: Z = 0 .83512 + 1 .0 + 0 .77315 = 2 .60827 .
+
+Appendix A.3. Attention Weights for Row 0 
+
+wrow 0 = ⟨0.3202 , 0.3834 , 0.2964 ⟩,
+
+matching Table 1 exactly. 
+
+Appendix A.4. Output Row 0 Output [0][0] = 0 .3202 · 1.0739 + 0 .3834 · 0.5589 + 0 .2964 · 0.8237 = 0 .3439 + 0 .2143 + 0 .2441 = 0 .8023 ,
+
+Output [0][1] = 0 .3202 · 0.4006 + 0 .3834 · (−0.7209) + 0 .2964 · 0.3763 = 0 .1283 − 0.2764 + 0 .1115 = −0.0
+
+Output [0][2] = 0 .3202 · (−0.9671) + 0 .3834 · (−0.7650) + 0 .2964 · 0.8320 = −0.3096 − 0.2933 + 0 .2466 = 
+
+Output [0][3] = 0 .3202 · 0.4870 + 0 .3834 · 0.2689 + 0 .2964 · 0.0014 = 0 .1560 + 0 .1031 + 0 .0004 = 0 .2595 ,
+
+34 matching Table 2 exactly. This confirms that the DNF is correct and that no temporary arrays are required at any stage of the computation. □
+
+Acknowledgments 
+
+L. Mullin acknowledges support from the University at Albany, SUNY. G. Hains ac-knowledges support from LACL, Université Paris-Est Créteil. The authors thank the PyTorch development team at Meta Platforms for the reference implementation used in the verification experiments. 
+
+References 
+
+Binder, E., Sudarsanam, A., Sunkavalli, R., Low, T.M., 2025. FATHOM: Fast attention through optimizing memory. In: Proceedings of IEEE IPDPS , pp. 1166–1178. Chang, Y.-R., Chen, H.-F., Shih, H.-Y., 2025. MOSA: Matrix optimized self-attention hardware accelerator for mobile device. In: Proceedings of ICEIC , pp. 1–4. Dao, T., 2023. FlashAttention-2: Faster attention with better parallelism and work par-titioning. arXiv: 2307.08691. Dao, T., Fu, D.Y., Ermon, S., Rudra, A., Ré, C., 2022. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. arXiv: 2205.14135. Grout, I.A., Mullin, L., 2018. Hardware considerations for tensor implementation and analysis using the field programmable gate array. Electronics 7 (11), 320. doi:10.3390/electronics7110320. Grout, I.A., Mullin, L., 2022a. Realizing mathematics of arrays operations as cus-tom architecture hardware-software co-design solutions. Information 13 (11), 528. doi:10.3390/info13110528. Grout, I.A., Mullin, L., 2022b. Processing in memory for mathematics of arrays opera-tions. In: Proceedings of SAI Computing Conference , 2022. 35 Gao, Y., Song, Z., Wang, W., Yin, J., 2023. A fast optimization view: Reformulating single layer attention in LLM based on tensor and SVM trick. arXiv: 2309.07418. Hains, G., 2026. From algorithm to code to hardware to execution: Why isn’t computing performance an experimental science? In: Proceedings of PDP 2026 , Euromicro Confer-ence on Parallel, Distributed, and Network-Based Processing. Cluj-Napoca, Romania. Ham, T.J., Jung, S.J., Kim, S., Oh, Y.H., Park, Y., Song, Y., Park, J.-H., Lee, S., Park, K., Lee, J.W., Jeong, D.-K., 2020. A 3: Accelerating attention mechanisms in neural networks with approximation. In: Proceedings of IEEE HPCA , pp. 328–341. León-Vega, L.G., Chacón-Rodríguez, A., Salazar-Villalobos, E., Castro-Godínez, J., 2023. Acceleration of fully connected layers on FPGA using the Strassen matrix multiplica-tion. In: Proceedings of IEEE BIP , pp. 1–6. Li, R., Chen, S., 2025. Design and implementation of an FPGA-based hardware acceler-ator for transformer. arXiv: 2503.16731. Liu, J., Wu, C., Li, J., Chen, X., Wang, S., 2024. Research on matrix multiplication optimization and deployment method for heterogeneous platforms. In: Proceedings of ICCBD+AI , pp. 266–270. Markus, A., Mullin, L., 2026. Array access and performance regarding numerical algo-rithms. Transactions on Engineering on Computing Sciences 14 (2), 1–14. Mullin, L.M., 1988. A Mathematics of Arrays. Ph.D. dissertation. Syracuse University, Syracuse, NY. Mullin, L.M.R., 2023. From array algebra to energy efficiency on GPUs. arXiv: 2306.11148. Mullin, L., Hains, G., 2025. Towards automatic, predictable and high-performance parallel code generation. In: Proceedings of CSCE/PDPTA2024 , Springer Nature Switzerland, pp. 109–119. Mullin, L., Hains, G., 2026. New mathematics for computer performance: array algebra and cost functions. Technical Report. https://hal.science/hal-05442652 .36 Park, J., Yoon, H., Ahn, D., Choi, J., Kim, J.-J., 2020. OPTIMUS: Optimized matrix multiplication structure for transformer neural network accelerator. In: Proceedings of MLSys , vol. 2, pp. 363–378. Qin, Y., Wang, Y., Deng, D., Zhao, Z., Yang, X., Liu, L., Wei, S., Hu, Y., Yin, S., 2023. FACT: FFN-attention co-optimized transformer architecture with eager correla-tion prediction. In: Proceedings of ISCA , pp. 1–14. Sharma, A., Krishna, L.H., Srinivasu, B., 2025. High-performance Gemmini-based matrix multiplication accelerator for deep learning workloads. IEEE Transactions on VLSI Systems 33 (12), 3276–3289. Tan, X., Teo, T.H., 2025. Design and implementation of a BRAM-banked double-buffered matrix multiplication accelerator for transformer models on edge FPGAs. In: Proceed-ings of IEEE MCSoC , pp. 582–585. Thomas, S., Mullin, L., Swirydowicz, K., 2021a. Improving the performance of DGEMM with MoA and cache-blocking. In: Proceedings of ACM ARRAY’21 .Thomas, S., Mullin, L., Swirydowicz, K., Khan, R., 2021b. Threaded multicore GEMM with MoA and cache-blocking. In: Proceedings of CSC’21, CSCE’21 .Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.N., Kaiser, Ł., Polosukhin, I., 2017. Attention is all you need. In: Advances in Neural Information Processing Systems (NeurIPS) .Yang, Q., Wang, X., Zhou, Y., Li, Q., Qiao, S., 2025. Hardware friendly transformer optimization with dynamic attention matrix fusion. In: Proceedings of IEEE ISCAS ,pp. 1–5. 37

@@ -1,0 +1,752 @@
+Title: Prefilling-dLLM: Predictive Prefilling for Long-Context Inference in Diffusion Language Models
+
+URL Source: https://arxiv.org/pdf/2606.10537v1
+
+Published Time: Wed, 10 Jun 2026 00:42:24 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+## Prefilling-dLLM: Predictive Prefilling for Long-Context Inference in Diffusion Language Models 
+
+Jing Xiong 1, Qi Han 1, Shansan Gong 1, Yunta Hsieh 2,Chengyue Wu 1, Chaofan Tao 1, Chenyang Zhao 3, Ngai Wong 1
+
+> 1
+
+The University of Hong Kong, 2University of Michigan, Ann Arbor, 3LMSYS Org 
+
+Abstract 
+
+Diffusion large language models (dLLMs) re-encode the entire prefix at every denoising step, causing recomputation that scales quadrat-ically with context length and becomes pro-hibitive for long-context scenarios. We propose PREFILLING -DLLM, a training-free prefill-decode disaggregation framework for dLLMs that partitions the prefix into N chunks, caches their KV representations once, and selects the top-K most relevant chunks with intra-chunk token sparsity for decoding, showing that sparse prefilling can outperform dense attention while reducing per-step complexity from quadratic in the full sequence length to quadratic only in the decode length. On Long-Bench and InfiniteBench, P REFILLING -DLLM achieves state-of-the-art quality among dLLM acceleration methods, and an attention ker-nel that parallelizes decoding over the non-contiguously cached chunk KV yields 9.1– 28.0 × speedup at 8K–32K contexts. We fur-ther show that beginning-of-sequence tokens prepended to each chunk act as periodic at-tention anchors that eliminate the lost-in-the-middle phenomenon. 1
+
+1 Introduction 
+
+Diffusion large language models (dLLMs) have emerged as a promising alternative to autoregres-sive (AR) models, offering the ability to gener-ate multiple tokens in parallel through iterative de-noising (Nie et al., 2025; Ye et al., 2025a; Sahoo et al., 2024; Austin et al., 2021). Unlike AR models that produce tokens sequentially from left to right, dLLMs corrupt and reconstruct entire sequences simultaneously, enabling flexible generation orders and potentially faster inference (Wu et al., 2025b; Wang et al., 2025a). However, this paradigm in-troduces a critical inefficiency in long-context sce-narios: the entire input prefix must participate in     
+
+> 1Our code is available at https://github.com/menik1126/Prefilling-dLLM.
+
+every denoising step, even though its representation remains largely unchanged across iterations. In autoregressive LLM serving, the prefill-decode disaggregation architecture (Zhong et al., 2024) assigns the prefill and decode phases to sep-arate GPU clusters, exploiting their distinct com-putational profiles (prefill is compute-bound while decode is memory-bound) to maximize hardware utilization and serving throughput. In contrast, dLLM inference is fundamentally compute-bound throughout: since the entire sequence (prefix + de-code) must be jointly processed at every denoising step, each iteration performs a full forward pass over the combined sequence, making the work-load dominated by matrix multiplications rather than memory bandwidth . This compute-bound na-ture persists across all denoising iterations, unlike AR decoding where only a single new token is appended per step. Recent work on dLLM accel-eration has explored KV caching strategies (Ma et al., 2026; Liu et al., 2025b; Nguyen-Tri et al., 2025) and sparse attention mechanisms (Wang et al., 2025b; Song et al., 2025; Jiang et al., 2025), yet none explores disaggregating the prefill and decode stages to avoid repeated long-context com-putation across denoising iterations. Our key insight is that in long-context dLLM inference, the input prefix is redundantly pro-cessed at every denoising iteration, yet atten-tion from response tokens to the prefix exhibits strong locality bias that intensifies across steps, and only a small fraction of prefix tokens are ac-tively attended to. Motivated by this observation, we present P REFILLING -DLLM ( Prefilling for 
+
+diffusion LLM s), which computes the prefix KV cache once in a dedicated prefill stage and reuses it across all decode steps without recomputation. Specifically, we partition the prefix into N fixed-size chunks of size C with intra-chunk attention, re-ducing prefill complexity from O(L2
+
+> p
+
+) to O(N ·C2)
+
+and enabling parallel processing across devices. 1
+
+> arXiv:2606.10537v1 [cs.CL] 9 Jun 2026
+
+During decode, we retain only a small subset of relevant chunks via retrieval-augmented genera-tion (Jiang et al., 2024; Lai et al., 2025; Xu et al., 2025; Yuan et al., 2025), reducing complexity from 
+
+O(( Lp + Ld)2 · T ) to O(N · C2 + ( L2 
+
+> d
+
++ K · C) · T ),where K is the number of selected chunks and T
+
+is the number of denoising steps. We evaluate PREFILLING -DLLM on Long-Bench and InfiniteBench, achieving 9.1–28.0 ×
+
+speedup at 8K–32K contexts with state-of-the-art quality among dLLM acceleration methods. Our contributions are as follows: • We propose P REFILLING -DLLM, a training-free prefill-decode disaggregation framework for dLLMs. By prefilling the prefix KV cache once and sharing it across all denoising iterations, we eliminate recomputation and achieve significant speedups that scale with context length. • We introduce sparse prefilling that selects rel-evant chunks and tokens, reducing complexity from O(( Lp + Ld)2 · T ) to O(N · C2 + ( L2 
+
+> d
+
++
+
+K · C) · T ). Combined with an optimized at-tention kernel that parallelizes decoding over the cached chunk KV, this yields up to 28 × end-to-end speedup at 32K. • We show that BOS tokens prepended to each chunk act as periodic attention anchors, mit-igating the lost-in-the-middle phenomenon in dLLMs without introducing attention sinks. 
+
+2 Related Work 
+
+2.1 Diffusion Language Models 
+
+Diffusion models have been extended from contin-uous domains to discrete text generation through various formulations. Early work explored contin-uous diffusion over word embeddings (Li et al., 2022; Gong et al., 2022) and masked diffusion over discrete tokens (Austin et al., 2021; He et al., 2023; Sahoo et al., 2024). More recently, masked discrete diffusion has been scaled to large language mod-els (Gong et al., 2025): LLaDA (Nie et al., 2025) demonstrated that masked diffusion can match autoregressive models at the 8B parameter scale, while Dream (Ye et al., 2025a) and MDLM (Sahoo et al., 2024) further validated the effectiveness of this paradigm. Subsequent efforts have focused on scaling (Bie et al., 2025; Gong et al., 2025), pref-erence alignment (Zhu et al., 2025), and extending dLLMs to long contexts (Liu et al., 2025a; He et al., 2025) and multimodal settings (You et al., 2025). Despite these advances, the efficiency of dLLMs in long-context scenarios remains underexplored. 
+
+2.2 Efficient Inference for dLLMs 
+
+In autoregressive LLMs, sparse attention methods such as MInference (Jiang et al., 2024), DCA (An et al., 2024), FlexPrefill (Lai et al., 2025), XAtten-tion (Xu et al., 2025) and NSA (Yuan et al., 2025) reduce long-context attention cost via adaptive or block-sparse patterns, while StreamingLLM (Xiao et al., 2024), H2O (Zhang et al., 2023), and SnapKV (Li et al., 2024) compress the KV cache by retaining only important entries. However, these techniques target causal attention where a KV cache is naturally built during left-to-right gen-eration, and do not directly apply to the bidirec-tional attention in dLLMs where no such cache exists. For dLLMs, Fast-dLLM (Wu et al., 2025b) and Fast-dLLM v2 (Wu et al., 2025a) introduce KV caching across denoising steps by reusing key-value representations from previous iterations. dKV-Cache (Ma et al., 2026) proposes adaptive caching that selectively updates KV entries based on token confidence. SparseD (Wang et al., 2025b), Sparse-dLLM (Song et al., 2025), d 2Cache (Jiang et al., 2025), Focus-dLLM (Long et al., 2026) and LoSA (Xi et al., 2026) exploit inherent attention sparsity for dynamic cache eviction. However, all these methods operate within the standard infer-ence loop where the entire sequence is processed at every step. Our work instead disaggregates the prefix computation from iterative decoding at the system level, and applies sparse chunk retrieval over a static prefix KV cache. 
+
+2.3 Prefill-Decode Disaggregation 
+
+In autoregressive LLM serving, prefill is compute-bound while decode is memory-bound. Dist-Serve (Zhong et al., 2024) exploits this asymmetry by assigning the two phases to separate GPU clus-ters. Mooncake (Qin et al., 2024) transfers KV caches between prefill and decode nodes via a dis-tributed cache pool, SPAD (Zhang et al., 2025) designs specialized hardware for each phase, and Semi-PD (Hong et al., 2025) introduces a hybrid approach with disaggregated computation and uni-fied storage. This principle has not been applied to dLLMs, where every denoising step performs a full forward pass over the entire sequence, making inference compute-bound throughout. Our work bridges this gap by computing the prefix KV cache once and reusing it across all denoising iterations, and further analyzes the potential memory bottle-2neck introduced by caching. 
+
+3 Preliminary: Masked Diffusion Models 
+
+Masked diffusion language models (dLLMs) define a forward noising process (Sahoo et al., 2024; Gong et al., 2025; Ye et al., 2025a) that progressively cor-rupts a discrete token sequence x0 = ( x1, . . . , x L)
+
+by replacing tokens with a special [MASK] token. At each diffusion timestep t ∈ [0 , 1] , each token is independently masked with probability t, yield-ing a noised sequence xt. The reverse (denois-ing) process is parameterized by a neural network 
+
+pθ(x0|xt) that predicts the original clean tokens given the partially masked input. During training, the model is optimized to mini-mize the cross-entropy loss over masked positions: 
+
+L = Et, x0,xt
+
+− X
+
+i:xit=[M] 
+
+log pθ(xi
+
+0|xt)
+
+ . (1) During inference, the model starts from a fully masked sequence and iteratively unmasks tokens over T denoising steps. At each step, the model predicts all masked positions simultaneously, and a subset of high-confidence predictions are un-masked according to a scheduling strategy. This parallel decoding enables dLLMs to generate mul-tiple tokens per step, but at each step the model per-forms full self-attention over the entire sequence (prefix + response), resulting in computational cost that scales with the total length at every iteration. 
+
+4 Motivation 
+
+4.1 Lost-in-the-Middle in dLLMs 
+
+Autoregressive LLMs suffer from the “lost-in-the-middle” phenomenon (Liu et al., 2024), where re-trieval accuracy drops for information placed in the middle of the context. We evaluate whether dLLMs share this bias using a position-controlled multi-document QA task and find three key ob-servations: (i) Within the native training range (256–2K tokens) and YaRN ×2 extrapolation (4K), Dream-7B achieves perfect accuracy at all posi-tions; (ii) Further extrapolation (8K, 16K, 32K) in-troduces emerging positional sensitivity (Figure 1), with accuracy skewing toward positions closer to the response, unlike the U-shaped curve in AR LLMs where both the beginning and end are fa-vored; (iii) In dLLMs, bidirectional attention pro-duces a monotonic decay: tokens near the response receive strong attention regardless of their absolute 0% 10% 20% 30% 40% 50% 60% 70% 80% 90% 100% 
+
+> Relative Position of Gold Document
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Exact Match
+> Lost-in-the-Middle: Dream-7B (Vanilla)
+> 256 tokens
+> 2K tokens
+> 4K tokens
+> 8K tokens
+> 16K tokens
+> 32K tokens
+
+Figure 1: Lost-in-the-Middle evaluation on Dream-7B (training length = 2K). Context extrapolation via YaRN scaling. Native range (256–2K) and YaRN ×2 (4K) achieve EM = 1.0 across all positions. YaRN ×4 (8K), YaRN ×8 (16K), and YaRN ×16 (32K) show increasing degradation. Each position is evaluated with 30 samples; 10 evenly spaced positions per context length. 0 250 500 750 1000 1250 1500 1750 2000    
+
+> Distance from response (tokens)
+> 10 4
+> 10 3
+> 10 2
+> Average attention weight
+> Attention Decay by Distance (averaged over layers)
+> Step 0 (t=1.000)
+> Step 4 (t=0.750)
+> Step 8 (t=0.501)
+> Step 12 (t=0.251)
+> Step 15 (t=0.063)
+
+Figure 2: Attention weight decay as a function of dis-tance from response tokens to prefix tokens, measured at different denoising steps. Attention decays rapidly with distance, exhibiting strong locality bias. This decay becomes more pronounced in later denoising steps as token predictions stabilize. 
+
+position, while distant tokens are uniformly ne-glected. This locality-driven degradation motivates our chunk-based selective retrieval strategy. 
+
+4.2 Locality of Attention Decay 
+
+We further analyze the attention patterns of Dream-7B during denoising to understand how response tokens attend to the prefix. We measure the aver-age attention weight from response tokens to prefix tokens as a function of distance (number of tokens separating them). We observe three key findings (Figure 2): (i) Attention weights decay rapidly with distance, with response tokens concentrating most of their attention mass on nearby prefix tokens; (ii) The decay becomes more pronounced as de-noising progresses and token predictions stabilize, suggesting that full attention over the entire pre-fix is largely redundant in later steps; (iii) Beyond 3the overall decay trend, attention exhibits sparse, quasi-periodic spikes at specific prefix positions, with the dominant spike concentrating 25% of at-tention mass, stable across all denoising steps and consistent across layers 5–27, corresponding to salient tokens (e.g., segment boundaries). This locality and sparsity pattern directly moti-vates our P REFILLING -DLLM design: since distant prefix tokens contribute negligibly to response gen-eration and a small number of chunks capture the majority of useful attention signal, we can cache the prefix KV once with parallel chunk processing and selectively retrieve only relevant chunks during decoding, achieving significant speedups. 
+
+5 Method 
+
+We present PREFILLING -DLLM, a two-stage framework that disaggregates prefix computation from iterative denoising. Instead of re-encoding the prefix at every denoising step, we process it once in a prefill stage and cache its KV represen-tations for reuse during decoding. This reduces computational complexity from O(( Lp + Ld)2 · T )
+
+to O(N ·C2+( L2
+
+> d
+
++K·C)·T ), where N = ⌈Lp/C ⌉
+
+is the number of chunks and C is the chunk size. The prefill cost scales linearly with prefix length, while the decoding cost is independent of it. 
+
+5.1 Prefill 
+
+Inspired by the attention decay observed in Sec-tion 2, we observe that attending to all N chunks is unnecessary, nor do chunks need to attend to each other. Instead, we propose a predictive prefill strategy that independently processes each chunk, scores its relevance to the query, and selects only the top-K informative chunks for decoding. 
+
+Chunk Prefill. We partition the prefix into N =
+
+⌈Lp/C ⌉ non-overlapping chunks {c1, . . . , cN },each of size C tokens. A special BOS token is prepended to each chunk as a delimiter. We obtain 
+
+pseudo-labels m by running iterative denoising over the query with each chunk to produce an ini-tial response estimate; these pseudo-labels guide chunk scoring without requiring ground-truth tar-gets. For each chunk, we concatenate it with the query tokens q and m to form the input [ci; q; m],and perform a forward pass. This yields per-chunk KV caches:         
+
+> Ki,Vi=IntraAttn (ci),Ki,Vi∈RH×C×d(2)
+
+where H is the number of attention heads and 
+
+d is the head dimension. Since chunks are inde-pendent, they can be processed in parallel across devices. The prefill complexity is O(N · C2).
+
+Predictive Score. We score each chunk using two complementary signals obtained during prefill to evaluate its relevance as an inter-chunk sparsity estimator . First, we compute the Self-Information Score as the negative log-likelihood of the query window q conditioned on the chunk: 
+
+sI(ci) = − 1
+
+|q|
+
+> |q|
+
+X
+
+> j=1
+
+log pθ(qj | ci, q<j ) (3) A lower NLL indicates that the chunk provides more information relevant to the query. Second, we compute the Pseudo-Label Score using the pseudo-labels m obtained during prefill. We evaluate how well each chunk predicts these pseudo-labels: 
+
+sP(ci) = − 1
+
+|m|
+
+> |m|
+
+X
+
+> j=1
+
+log pθ(mj | ci, q) (4) where m denotes the pseudo-labels obtained from a preliminary diffusion generation. 
+
+5.2 Sparse Attention 
+
+Our framework introduces sparsity at two levels. 
+
+Intra-chunk sparsity. During prefill, each chunk performs bidirectional self-attention only within it-self, avoiding the quadratic cost of full-prefix atten-tion. The query tokens participate in bidirectional attention with each chunk and serve as a proxy to evict irrelevant tokens from the chunk’s KV cache, retaining only the most informative entries for de-coding. Specifically, for each token cj in chunk 
+
+ci, we compute its eviction score as the cumulative bidirectional attention weight between the token and the query:       
+
+> e(cj) =
+> |q|
+> X
+> k=1
+> Attn (qk, c j) +
+> |q|
+> X
+> k=1
+> Attn (cj, q k)(5)
+
+Tokens are ranked by eviction score and only the top-B tokens per chunk are retained in the KV cache, maintaining a fixed budget while preserving query-relevant information. 
+
+Inter-chunk sparsity. We rank chunks by the combined score s(ci) = sI(ci) + sP(ci) and retain only the top-K chunks ( K ≪ N ). During decod-ing, only these K chunks participate in attention, so the response tokens attend to K · B prefix tokens rather than the full prefix of length Lp, significantly reducing the per-step computation. 4Figure 3: Overview of P REFILLING -DLLM. (I) Prefill: The prefix is partitioned into N chunks, each independently prefilled with intra-chunk attention to produce per-chunk KV caches; chunks are ranked by a predictive score combining self-information and pseudo-label logits; the top-K chunks are selected, and only the top-B query-relevant tokens per chunk are retained in the KV cache. (II) Sparse Attention: During decoding, only the selected chunks’ KV caches participate in cross-attention with the response tokens. (III) Decoding: Iterative denoising progressively unmasks the response over T steps, reusing the cached KV without recomputation. 
+
+5.3 Decoding Prefix Reuse. The KV cache of the selected K
+
+chunks is fixed after prefill and remains static across all T denoising steps. At each denoising step, the query and response tokens are jointly pro-cessed to produce KV representations, which are then concatenated with the cached KV of the se-lected chunks. The query tokens are recomputed at each step as they participate in bidirectional at-tention with the denoised response. This yields a per-step cost of O(L2
+
+> d
+
+) instead of O(( Lp + Ld)2).
+
+Iterative Denoising. Starting from a fully masked response sequence, the model iteratively unmasks tokens over T denoising steps. At each step, the model predicts all remaining masked posi-tions simultaneously, and tokens whose confidence exceeds a threshold τ are unmasked. As denoising progresses, the number of masked tokens decreases monotonically until the full response is revealed. 
+
+6 Experiments 
+
+6.1 Setup Benchmarks. We evaluate P REFILLING -DLLM on two long-context benchmarks: LongBench (Bai et al., 2024), which covers a set of tasks including single-document QA, multi-document QA, sum-marization, few-shot learning, synthetic tasks, and code completion with context lengths ranging from 2K to 32K tokens; and InfiniteBench (Zhang et al., 2024), which extends to contexts exceeding 100K tokens with tasks such as long-document retrieval, book-level QA, and mathematical reasoning. 
+
+6.2 Main Results 
+
+Intra-chunk sparsity can improve performance in dLLMs , contrary to the performance drop observed in AR LLMs under sparse attention. 
+
+LongBench. Table 1 presents the performance comparison on LongBench. We highlight several observations: (i) On Dream-7B, Ours (inter + intra-sparsity) reaches the best average score among ac-celeration methods (34.59), with a large gain on RB-P over both Vanilla and the strongest non-ours acceleration baseline on this task (57.98 vs. 41.99 and 29.23); on UltraLLaDA, it reaches 37.02 aver-age score, exceeding Sparse-dLLM (36.68), dKV-Cache (36.29), and Fast-dLLM (35.98); (ii) On UltraLLaDA, the two P REFILLING -DLLM vari-ants jointly obtain the best results on 9 out of 16 subtasks, with gains on context-sensitive tasks such as MF-en (39.94 vs. 37.31) and RB-P (62.67 vs. 54.97), demonstrating that inter-chunk sparsity ef-fectively identifies relevant context; (iii) Compared with inter-only sparsity, adding intra-chunk sparsity improves the average score from 22.01 to 34.59 on Dream-7B and from 35.64 to 37.02 on UltraLLaDA while further reducing computation. 
+
+InfiniteBench. We evaluate PREFILLING -
+
+> D
+
+LLM on InfiniteBench with contexts exceeding 128K tokens. Results are presented in Table 2. On Dream-7B, Ours (inter + intra-sparsity) achieves 43.62 average accuracy, surpassing the strongest baseline Fast-dLLM v2 (30.32) by over 13 points, with particularly strong gains on Passkey (95.42) and Number retrieval (70.00), further confirming that sparsity improves performance, all without any additional training. 
+
+6.3 Efficiency Analysis 
+
+We show that PREFILLING -DLLM scales sub-linearly with length via fixed-size chunk selection, surpassing the strongest baseline Sparse-dLLM at 16K and 32K. 
+
+5Table 1: Performance comparison on LongBench. Bold indicates the best performance among acceleration methods. In sparse variants, we retain the top-B highest-attention tokens per chunk, with B = 512 in our experiments. 
+
+Method Single-Doc. QA Multi-Doc. QA Summarization Few-shot Learning Synthetic Code Ave. Score NarrativeQA Qasper MF-en HotpotQA 2WikiMQA Musique GovReport QMSum MultiNews SAMSum TREC TriviaQA PCount PRe LCC RB-P 
+
+Dream-v0-Base-7B (Ye et al., 2025a) (extrapolated to 128K via YaRN) 
+
+YaRN (128K) 7.08 16.33 32.37 9.30 10.75 6.89 5.25 14.88 8.09 29.00 26.00 55.04 0.68 7.40 26.28 31.44 17.92 Vanilla (2K) 20.27 19.33 40.50 29.38 20.07 15.06 5.22 17.76 8.42 33.77 60.00 81.87 0.50 16.50 46.95 41.99 28.60 Fast-dLLM 9.70 18.03 36.28 11.32 11.94 7.07 5.24 13.32 7.88 31.09 46.00 70.61 0.27 3.50 24.62 29.23 20.38 Fast-dLLM v2 27.50 33.25 49.76 46.00 35.92 22.90 4.28 17.53 6.20 31.38 43.50 78.28 4.00 88.50 10.41 7.12 31.66 Sparse-dLLM 3.19 9.45 20.25 7.04 6.11 4.99 5.27 5.92 8.13 13.04 0.00 10.96 0.23 2.62 17.01 22.46 8.54 dKV-Cache 3.57 6.60 18.33 7.02 6.34 4.44 5.32 6.07 7.84 7.71 0.00 7.17 0.47 1.60 14.74 19.92 7.32 Ours (inter-sparsity) 12.14 18.28 38.26 15.32 16.13 9.75 5.40 17.74 7.70 29.24 46.00 70.68 0.00 13.75 21.49 30.23 22.01 Ours (inter + intra-sparsity) 19.90 26.72 46.40 36.22 22.10 19.96 5.58 17.52 8.02 32.96 64.50 92.11 1.54 76.02 25.90 57.98 34.59 
+
+UltraLLaDA (He et al., 2025) (native 128K) 
+
+Vanilla (128K) 17.04 22.71 33.20 15.98 16.71 12.20 5.38 17.30 8.00 37.10 79.50 90.53 1.48 96.08 67.77 54.97 36.00 Fast-dLLM 22.03 21.58 37.31 17.31 16.97 11.04 5.30 17.71 8.20 33.18 79.50 90.53 1.36 94.47 66.08 53.10 35.98 Sparse-dLLM 21.30 23.16 35.43 19.08 19.27 15.39 5.35 17.51 8.26 35.37 77.50 91.43 0.73 97.58 66.89 52.57 36.68 dKV-Cache 17.86 22.36 32.99 17.89 18.39 14.25 5.41 17.18 8.04 36.30 80.50 90.53 1.48 94.88 67.96 54.61 36.29 Ours (inter-sparsity) 12.27 22.40 39.94 22.21 23.48 9.64 5.33 17.85 8.48 34.33 67.00 88.16 2.38 90.91 65.10 62.67 35.64 Ours (inter + intra-sparsity) 17.07 24.71 36.07 21.57 17.87 14.30 5.21 18.12 8.46 34.43 77.50 92.50 2.50 96.91 66.92 58.20 37.02 
+
+Table 2: Performance comparison on InfiniteBench. Ac-curacy is reported as percentage. Bold indicates the best performance among acceleration methods. In sparse variants, we retain the top-B highest-attention tokens per chunk, with B = 512 in our experiments. 
+
+Method Passkey Number KV LongBook Math Code Ave. 
+
+Dream-v0-Base-7B (Ye et al., 2025a) (extrapolated to 128K via YaRN) 
+
+YaRN (128K) 0.00 0.00 0.00 6.11 3.43 7.87 2.90 Vanilla (2K) 1.69 2.54 0.00 35.81 34.57 0.00 12.44 Fast-dLLM 0.17 3.05 0.00 8.73 3.43 8.38 3.96 Fast-dLLM v2 27.12 27.12 0.00 57.21 24.29 46.19 30.32 Sparse-dLLM 39.32 25.59 0.00 1.31 3.43 3.81 12.24 dKV-Cache 0.51 0.00 0.00 5.68 4.00 3.05 2.21 Ours (inter + intra-sparsity) 95.42 70.00 0.00 53.71 24.57 18.02 43.62 
+
+UltraLLaDA (He et al., 2025) (native 128K) 
+
+Vanilla (128K) 10.81 1.72 0.00 10.09 19.15 0.85 7.10 Fast-dLLM 16.10 6.61 0.00 7.86 14.29 0.25 7.52 Sparse-dLLM 8.14 2.37 0.00 5.24 7.43 1.52 4.12 dKV-Cache 5.59 7.12 0.00 8.30 16.00 0.25 6.21 Ours (inter + intra-sparsity) 13.22 30.00 0.00 14.41 26.00 1.52 14.19 
+
+As shown in Figure 4, we highlight several key observations: (i) P REFILLING -DLLM achieves in-creasing speedups as context grows (9.1 × at 8K, 16.1 × at 16K, 28.0 × at 32K), because it com-presses the context to a fixed budget (top-4 chunks 
+
+× 1024 tokens ≈ 4K) regardless of input length, while all baselines must process the full context at every denoising step; (ii) Sparse-dLLM is fastest at 8K (16.62 tok/s) through aggressive token evic-tion, but degrades rapidly at longer contexts (3.51 tok/s at 32K) because its eviction ratio is fixed; (iii) In contrast, P REFILLING -DLLM surpasses Sparse-dLLM at both 16K and 32K, demonstrating 8K 16K 32K 
+
+> Context Length
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 15.0
+> 17.5
+> 20.0
+> Throughput (tokens/s)
+> 3.5×
+> 4.2×
+> 5.3×
+> 11.9×
+> 14.1×
+> 15.3×
+> 9.1×
+> 16.1×
+> 28.0×
+> Transformers
+> Baseline
+> Fast-dLLM
+> dKV-Cache
+> Sparse-dLLM
+> Prefilling-dLLM
+> (Ours)
+
+Figure 4: Throughput comparison (tokens/s) on Long-Bench MF-en at varying context lengths (Dream-7B, bf16, GQA with 32 query heads, 8 KV heads, head dim 128, single A800 GPU, 32 generated tokens, 5 measured samples). Labels above bars show speedup relative to the Transformers baseline. 
+
+that retrieval-augmented generation provides better quality (Table 1) and superior scaling efficiency. 
+
+Attention Kernel Comparison. Loading the en-tire cached prefix KV at every denoising step cre-ates a memory bottleneck. We adopt Split-S Flex-Attention to address this, achieving up to 10.2 ×
+
+speedup over vanilla FlexAttention. We bench-mark attention kernel options for the two phases of PD-separated dLLM inference. For prefilling, we compare Flash Attention (Dao et al., 2022), FlexAttention (Dong et al., 2024), xFormers Atten-tion (Rabe and Staats, 2021), and FlashInfer (Ye et al., 2025b). As shown in Figure 5(a), FlashInfer and Flash Attention achieve the lowest prefilling latency, while FlexAttention adds 1.4–1.5 × over-head from block mask evaluation and xFormers is 64K 8K 16K 32K    
+
+> Sequence Length
+> 10 1
+> 10 2
+> Latency (ms)
+> 1.0×
+> 1.4×
+> 1.6×
+> 1.0×
+> 1.5×
+> 1.8×
+> 1.1×
+> 1.4×
+> 1.7×
+> 1.2×
+> 1.4×
+> 1.8×
+> (a) Prefilling
+> FlashInfer
+> FlashAttn
+> FlexAttn
+> xFormers
+> 4K 8K 16K 32K
+> Prefix Length
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> Decode Latency (ms)
+> 4.5×
+> 8.2×
+> 9.5×
+> 10.2×
+> (b) Decoding (PD Sep.)
+> FlexAttn
+> Split-K
+
+Figure 5: Attention kernel benchmark (bf16, GQA 32/8 heads, single A800). (a) Prefilling: FlashInfer achieves the lowest latency; Flash Attention is 1.0–1.2 × slower; FlexAttention adds 1.4–1.5 × overhead; xFormers is 1.6– 1.8 × slower. Labels show relative slowdown vs. Flash-Infer. (b) Decoding (PD separation, Ld=32 , S=4 
+
+splits): Split-S FlexAttention partitions the KV dimen-sion into S chunks and processes them in parallel via batch dimension. 
+
+1.6–1.8 × slower. For decoding under PD separation, each denois-ing step computes attention with query length Ld
+
+against KV length Lp + Ld, creating a highly asym-metric pattern ( Ld ≪ Lp). FlexAttention paral-lelizes only along the query dimension, severely underutilizing the GPU. We apply Split-S de-composition that directly operates on the S non-contiguously stored chunk KV caches from prefill-ing, computes attention independently per chunk, and merges partial results via log-sum-exp re-duction, avoiding the need to gather chunk KV into contiguous memory and achieving 5.8–10.2 ×
+
+speedup (Figure 5b). 
+
+Finding 1: Under PD separation, chunked prefilling naturally partitions the prefix KV cache into independently addressable segments. Reusing these independent KV segments for Split-S parallel decoding yields 5.8–10.2 × la-tency reduction, turning the prefill-stage parti-tioning into a direct decode-stage speedup. 
+
+6.4 Lost-in-the-Middle 
+
+As shown in Section 1, dLLMs exhibit positional sensitivity under context extrapolation, with re-trieval accuracy degrading for information placed in the middle of long contexts. We investigate whether P REFILLING -DLLM mitigates this ef-fect by evaluating on the same position-controlled multi-document QA task (Liu et al., 2024). Since PREFILLING -DLLM selects the most relevant chunks via predictive scoring rather than relying on positional proximity, we hypothesize that it can attend to informative tokens regardless of their po-0% 10% 15% 20% 25% 30% 35% 40% 45% 50% 55% 60% 65% 70% 75% 80% 85% 90% 95% 100% 
+
+> Relative Position of Gold Document
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Exact Match
+> Lost-in-the-Middle: Prefilling-dLLM vs Vanilla Dream-7B
+> (training length = 2K)
+> Prefilling-dLLM (Ours)
+> Vanilla Dream
+> 4K (YaRN ×2)
+> 4K Vanilla
+> 8K (YaRN ×4)
+> 8K Vanilla
+> 16K (YaRN ×8)
+> 16K Vanilla
+> 32K (YaRN ×16)
+> 32K Vanilla
+
+Figure 6: Lost-in-the-Middle evaluation on Dream-7B (training length = 2K). We compare P REFILLING -
+
+DLLM (solid) against Vanilla Dream (dashed) with YaRN extrapolation across 4K–32K contexts, measuring exact-match accuracy as a function of gold document position. P REFILLING -DLLM maintains consistently high EM across all positions and context lengths, while Vanilla collapses at 16K and 32K. 
+
+sition in the prefix. 
+
+Finding 2: Inter-chunk sparsity eliminates the lost-in-the-middle phenomenon in dLLMs, enabling position-invariant needle retrieval across all context lengths. 
+
+The periodic attention spikes that cause posi-tional bias in Vanilla inference become the signal that P REFILLING -DLLM leverages for position-invariant chunk retrieval, transforming catastrophic failure into mild degradation at 32K. 
+
+6.5 Attention Sink Analysis 
+
+Do the periodic attention spikes from chunk-level BOS tokens degenerate into attention sinks (Xiao et al., 2024)? We investigate whether they absorb disproportionate attention mass and bias chunk se-lection toward positional artifacts. We analyze the attention patterns during gen-eration for both P REFILLING -DLLM and Vanilla Dream (YaRN ×4, 8K context), measuring the frac-tion of attention mass absorbed by the first-1 token, first-5 tokens, and all BOS tokens across all 28 layers. Both conditions use the full 8K context without chunk selection: Vanilla Dream processes the flat token sequence, while P REFILLING -DLLM segments it into 8 chunks of 1024 tokens with a BOS delimiter prepended to each chunk. 
+
+Finding 3: The position-invariant retrieval in Finding 2 is enabled by chunk-level BOS tokens, which act as periodic attention anchors that dis-tribute attention mass across the context rather than degenerating into attention sinks. 
+
+We highlight several observations from Figure 7 70 2 4 6 8 10 12 14 16 18 20 22 24 26 
+
+> Layer
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> Attention Ratio (%)
+> Per-layer attention ratio absorbed by special tokens
+> Vanilla: first-1
+> Vanilla: first-5
+> Ours: first-1
+> Ours: first-5
+> Ours: all BOS
+
+Figure 7: Attention sink analysis (8K context, YaRN 
+
+×4). Left: Per-layer attention ratio absorbed by the first-1, first-5, and all chunk BOS tokens; both methods stay below 1% on average, with the BOS token absorbing only 0.59% (Vanilla) and 0.30% (P REFILLING -DLLM). 
+
+Right: Attention profile at layer 14 (log scale); green dashes mark chunk BOS positions, showing periodic attention spikes that distribute mass uniformly. 0    
+
+> 20
+> 40
+> 60
+> 80
+> 100
+> 120
+> Key Position 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> 16
+> Denoising Step
+> 4.2
+> 4.0
+> 3.8
+> 3.6
+> 3.4
+> 3.2
+> log  (Attention Weight)
+> mask=100%
+> mask=47%
+> Attention Landscape Vanilla Dream
+> (Layer 14, bidirectional, terrain colormap)
+> 4.2
+> 4.0
+> 3.8
+> 3.6
+> 3.4
+> log  (Attention Weight) 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> 120
+> Key Position 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> 16
+> Denoising Step
+> 4.2
+> 4.0
+> 3.8
+> 3.6
+> 3.4
+> log  (Attention Weight)
+> mask=100%
+> mask=56%
+> Attention Landscape Prefilling-dLLM
+> (Layer 14, bidirectional, terrain colormap)
+> 4.2
+> 4.0
+> 3.8
+> 3.6
+> 3.4
+> log  (Attention Weight)
+
+Figure 8: Attention landscape during denoising (layer 14, log-scale). Left: Vanilla Dream shows a flat landscape with mild elevation at the sequence start. 
+
+Right: PREFILLING -DLLM exhibits periodic ridges (cyan lines) at chunk BOS positions, serving as stable attention anchors without forming dominant sinks. 
+
+and Figure 8: (i) Unlike AR LLMs where the BOS token absorbs 20–60% of attention mass (Xiao et al., 2024), the first token in dLLMs absorbs only 0.59% (Vanilla) and 0.30% (P REFILLING -DLLM) on average across layers; (ii) Even when summing over all 9 chunk BOS tokens, the total BOS at-tention in P REFILLING -DLLM is only 2.72%, con-firming that chunk BOS tokens serve as segment de-limiters without becoming parasitic attention sinks; (iii) As shown in Figure 8, Vanilla Dream devel-ops a mild ridge only at the sequence start, while PREFILLING -DLLM exhibits periodic ridges at chunk BOS positions that remain stable throughout denoising without growing into dominant peaks. 
+
+Finding 4: Chunk BOS tokens form stable, low-magnitude attention ridges throughout denois-ing, acting as distributed anchors rather than accumulating into dominant sinks. 
+
+6.6 Effect of Chunk Size on Prefilling 
+
+We investigate how chunk size affects downstream task performance under a fixed token budget. Specifically, we keep the total number of selected tokens constant at 4096 (i.e., top-k × chunk_size 256 512 1024 2048 4096         
+
+> Chunk Size
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Exact Match (%)
+> top-16
+> top-8 top-4 top-2
+> top-1
+> top-16 top-8 top-4 top-2
+> top-1
+> top-16 top-8
+> top-4
+> top-2
+> top-1
+> top-16 top-8
+> top-4
+> top-2
+> top-1
+> top-16
+> top-8
+> top-4 top-2
+> top-1
+> optimal
+> 8K context
+> 16K context
+> 32K context
+> 64K context
+> 128K context
+
+Figure 9: Effect of chunk size on Lost-in-the-Middle retrieval accuracy. We fix the total token budget (top-k
+
+× chunk_size = 4096) and vary the chunk granularity across 8K–128K contexts. The base model is Vanilla Dream-7B with a 2K training length; all longer contexts require extrapolation. Smaller chunks (256–512) main-tain >90% EM even at 128K ( ×64 extrapolation), while large chunks (4096, top-1) degrade sharply beyond 32K. 
+
+= 4096) and vary the chunk granularity across 256, 512, 1024, 2048, and 4096 tokens. Figure 9 shows the results on the Lost-in-the-Middle benchmark at 8K, 16K, 32K, 64K, and 128K context lengths. The results reveal a clear trade-off that intensi-fies with context length. At 8K, smaller chunks (256 tokens, top-16) achieve the highest accuracy (96.0% EM). As context grows to 16K–64K, chunk size 1024 (top-4) becomes optimal (92.0%, 92.7%, and 95.3% EM for 16K, 32K, and 64K respec-tively). At 128K ( ×64 extrapolation), finer granu-larity becomes essential: chunk size 256 (top-16) achieves 92.3% EM, while chunk size 1024 drops to 83.0%. Too-large chunks (4096 tokens, top-1) degrade sharply beyond 32K (47.0% at 64K, 68.0% at 128K), confirming that multi-chunk prefilling is essential for long-context dLLM inference. 
+
+Finding 5: Chunk size creates a quality– efficiency trade-off: smaller chunks improve re-trieval accuracy but underutilize GPU compute. Multi-chunk selection is essential, as single-chunk prefilling fails at all long contexts. 
+
+See Appendix C for additional ablations. 
+
+7 Conclusion 
+
+We presented PREFILLING -DLLM, a prefill-decode disaggregation framework for dLLMs that caches chunked prefix KV once and retrieves the top-K chunks for decoding, achieving 9.1–28.0 ×
+
+speedup at 8K–32K contexts. Our analysis reveals that chunk-level BOS tokens act as periodic atten-tion anchors that eliminate the lost-in-the-middle phenomenon, and that multi-chunk prefilling en-ables extrapolation to 128K tokens with over 92% exact-match accuracy on retrieval-based QA. 8Limitations 
+
+Our chunk selection is static: the top-K chunks are fixed after prefill with no dynamic re-selection during decoding, so inaccurate pseudo-labels may cause relevant context to be missed. The chunk size 
+
+C and K require task-specific tuning, as smaller chunks improve accuracy but underutilize GPU compute. Additionally, FlexAttention lacks paged memory management, requiring the prefix KV cache to be reloaded at every decoding step. Finally, we evaluate only on Dream-7B and UltraLLaDA with English benchmarks; generalization to other dLLM architectures, larger scales, or multilingual settings remains to be verified. 
+
+Use of AI Assistants 
+
+We used AI writing assistants solely for language polishing and proofreading. All research ideas, ex-perimental design, implementation, and scientific conclusions are entirely the authors’ own work. 
+
+References 
+
+Chenxin An, Fei Huang, Jun Zhang, Shansan Gong, Xipeng Qiu, Chang Zhou, and Lingpeng Kong. 2024. Training-free long-context scaling of large language models. In Proceedings of the 41st Interna-tional Conference on Machine Learning , ICML’24. JMLR.org. Jacob Austin, Daniel D Johnson, Jonathan Ho, Daniel Tarlow, and Rianne Van Den Berg. 2021. Structured denoising diffusion models in discrete state-spaces. 
+
+Advances in neural information processing systems ,34:17981–17993. Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, and 1 others. 2024. Long-bench: A bilingual, multitask benchmark for long context understanding. In Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers) , pages 3119– 3137. Tiwei Bie, Maosong Cao, Kun Chen, Lun Du, Min-gliang Gong, Zhuochen Gong, Yanmei Gu, Jiaqi Hu, Zenan Huang, Zhenzhong Lan, Chengxi Li, Chongx-uan Li, Jianguo Li, Zehuan Li, Huabin Liu, Lin Liu, Guoshan Lu, Xiaocheng Lu, Yuxin Ma, and 12 oth-ers. 2025. Llada2.0: Scaling up diffusion language models to 100b. Preprint , arXiv:2512.15745. Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. 2022. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Processing Sys-tems (NeurIPS) .Juechu Dong, Boyuan Feng, Driss Guessous, Yanbo Liang, and Horace He. 2024. Flex Attention: A pro-gramming model for generating optimized attention kernels. arXiv preprint arXiv:2412.05496 .Shansan Gong, Shivam Agarwal, Yizhe Zhang, Ji-acheng Ye, Lin Zheng, Mukai Li, Chenxin An, Peilin Zhao, Wei Bi, Jiawei Han, Hao Peng, and Lingpeng Kong. 2025. Scaling diffusion language models via adaptation from autoregressive models. Preprint ,arXiv:2410.17891. Shansan Gong, Mukai Li, Jiangtao Feng, Zhiyong Wu, and LingPeng Kong. 2022. Diffuseq: Sequence to se-quence text generation with diffusion models. arXiv preprint arXiv:2210.08933 .Guangxin He, Shen Nie, Fengqi Zhu, Yuankang Zhao, Tianyi Bai, Ran Yan, Jie Fu, Chongxuan Li, and Binhang Yuan. 2025. Ultrallada: Scaling the context length to 128k for diffusion large language models. 
+
+Preprint , arXiv:2510.10481. Zhengfu He, Tianxiang Sun, Qiong Tang, Kuanning Wang, Xuan-Jing Huang, and Xipeng Qiu. 2023. Dif-fusionbert: Improving generative masked language models with diffusion models. In Proceedings of the 61st annual meeting of the association for compu-tational linguistics (volume 1: Long papers) , pages 4521–4534. Ke Hong, Lufang Chen, Zhong Wang, Xiuhong Li, Qi-uli Mao, Jianping Ma, Chao Xiong, Guanyu Wu, Buhe Han, Guohao Dai, and 1 others. 2025. semi-pd: Towards efficient llm serving via phase-wise dis-aggregated computation and unified storage. arXiv preprint arXiv:2504.19867 .Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H Abdi, Dongsheng Li, Chin-Yew Lin, and 1 others. 2024. Minference 1.0: Accelerating pre-filling for long-context llms via dynamic sparse at-tention. Advances in Neural Information Processing Systems , 37:52481–52515. Yuchu Jiang, Yue Cai, Xiangzhong Luo, Jiale Fu, Jiarui Wang, Chonghan Liu, and Xu Yang. 2025. d 2cache: Accelerating diffusion-based llms via dual adaptive caching. Preprint , arXiv:2509.23094. Xunhao Lai, Jianqiao Lu, Yao Luo, Yiyuan Ma, and Xun Zhou. 2025. Flexprefill: A context-aware sparse attention mechanism for efficient long-sequence in-ference. arXiv preprint arXiv:2502.20766 .Xiang Li, John Thickstun, Ishaan Gulrajani, Percy S Liang, and Tatsunori B Hashimoto. 2022. Diffusion-lm improves controllable text generation. Advances in neural information processing systems , 35:4328– 4343. Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. Snapkv: 
+
+9Llm knows what you are looking for before gener-ation. Advances in Neural Information Processing Systems , 37:22947–22970. Nelson F Liu, Kevin Lin, John Hewitt, Ashwin Paran-jape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the middle: How language mod-els use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173. Xiaoran Liu, Yuerong Song, Zhigeng Liu, Zengfeng Huang, Qipeng Guo, Ziwei He, and Xipeng Qiu. 2025a. Longllada: Unlocking long context capabili-ties in diffusion llms. Preprint , arXiv:2506.14429. Zhiyuan Liu, Yicun Yang, Yaojie Zhang, Junjie Chen, Chang Zou, Qingyuan Wei, Shaobo Wang, and Lin-feng Zhang. 2025b. dllm-cache: Accelerating dif-fusion large language models with adaptive caching. 
+
+Preprint , arXiv:2506.06295. Lingkun Long, Yushi Huang, Shihao Bai, Ruihao Gong, Jun Zhang, Ao Zhou, and Jianlei Yang. 2026. Focus-dllm: Accelerating long-context diffusion llm infer-ence via confidence-guided context focusing. arXiv preprint arXiv:2602.02159 .Xinyin Ma, Runpeng Yu, Gongfan Fang, and Xinchao Wang. 2026. dkv-cache: The cache for diffusion language models. Advances in Neural Information Processing Systems , 38:149009–149033. Quan Nguyen-Tri, Mukul Ranjan, and Zhiqiang Shen. 2025. Attention is all you need for kv cache in diffu-sion llms. Preprint , arXiv:2510.14973. Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. 2025. Large language dif-fusion models. Preprint , arXiv:2502.09992. Bowen Peng, Jeffrey Quesnelle, Honglu Fan, and En-rico Shao. 2023. Yarn: Efficient context window extension of large language models. arXiv preprint arXiv:2309.00071 .Ruoyu Qin, Zheming Li, Weiran He, Jialei Cui, Heyi Tang, Feng Ren, Teng Ma, Shangming Cai, Yineng Zhang, Mingxing Zhang, and 1 others. 2024. Moon-cake: A kvcache-centric disaggregated architecture for llm serving. ACM Transactions on Storage .Markus N Rabe and Charles Staats. 2021. Self-attention does not need o(n2) memory. arXiv preprint arXiv:2112.05682 .Subham Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin Chiu, Alexan-der Rush, and Volodymyr Kuleshov. 2024. Simple and effective masked diffusion language models. Ad-vances in Neural Information Processing Systems ,37:130136–130184. Yuerong Song, Xiaoran Liu, Ruixiao Li, Zhigeng Liu, Zengfeng Huang, Qipeng Guo, Ziwei He, and Xipeng Qiu. 2025. Sparse-dllm: Accelerating dif-fusion llms with dynamic cache eviction. Preprint ,arXiv:2508.02558. Xu Wang, Chenkai Xu, Yijie Jin, Jiachun Jin, Hao Zhang, and Zhijie Deng. 2025a. Diffusion llms can do faster-than-ar inference via discrete diffusion forc-ing. Preprint , arXiv:2508.09192. Zeqing Wang, Gongfan Fang, Xinyin Ma, Xingyi Yang, and Xinchao Wang. 2025b. Sparsed: Sparse atten-tion for diffusion language models. arXiv preprint arXiv:2509.24014 .Chengyue Wu, Hao Zhang, Shuchen Xue, Shizhe Diao, Yonggan Fu, Zhijian Liu, Pavlo Molchanov, Ping Luo, Song Han, and Enze Xie. 2025a. Fast-dllm v2: Efficient block-diffusion llm. arXiv preprint arXiv:2509.26328 .Chengyue Wu, Hao Zhang, Shuchen Xue, Zhijian Liu, Shizhe Diao, Ligeng Zhu, Ping Luo, Song Han, and Enze Xie. 2025b. Fast-dllm: Training-free accel-eration of diffusion llm by enabling kv cache and parallel decoding. Preprint , arXiv:2505.22618. Haocheng Xi, Harman Singh, Yuezhou Hu, Coleman Hooper, Rishabh Tiwari, Aditya Tomar, Minjae Lee, Wonjun Kang, Michael Mahoney, Chenfeng Xu, and 1 others. 2026. Losa: Locality aware sparse attention for block-wise diffusion language models. arXiv preprint arXiv:2604.12056 .Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2024. Efficient streaming lan-guage models with attention sinks. In International Conference on Learning Representations .Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han. 2025. XAttention: Block sparse attention with antidiagonal scoring. In Forty-second International Conference on Machine Learning .Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong. 2025a. Dream 7b: Diffusion large language models. 
+
+Preprint , arXiv:2508.15487. Zihao Ye, Lequn Chen, Ruihang Lai, Wuwei Lin, Yi-neng Zhang, Stephanie Wang, Tianqi Chen, Baris Kasikci, Vinod Grover, Arvind Krishnamurthy, and 1 others. 2025b. Flashinfer: Efficient and customizable attention engine for llm inference serving. Proceed-ings of Machine Learning and Systems , 7. Zebin You, Shen Nie, Xiaolu Zhang, Jun Hu, Jun Zhou, Zhiwu Lu, Ji-Rong Wen, and Chongxuan Li. 2025. Llada-v: Large language diffusion models with visual instruction tuning. arXiv preprint arXiv:2505.16933 .Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Y. X. Wei, Lean Wang, Zhiping Xiao, Yuqing Wang, Chong Ruan, Ming Zhang, Wenfeng Liang, and Wangding Zeng. 2025. Native sparse attention: Hardware-aligned and natively trainable sparse at-tention. Preprint , arXiv:2502.11089. 
+
+10 Hengrui Zhang, Pratyush Patel, August Ning, and David Wentzlaff. 2025. Spad: Specialized prefill and de-code hardware for disaggregated llm inference. arXiv preprint arXiv:2510.08544 .Xinrong Zhang, Yingfa Chen, Shengding Hu, Zi-hang Xu, Junhao Chen, Moo Hao, Xu Han, Zhen Thai, Shuo Wang, Zhiyuan Liu, and 1 others. 2024. 
+
+∞bench: Extending long context evaluation beyond 100k tokens. In Proceedings of the 62nd Annual Meeting of the Association for Computational Lin-guistics (Volume 1: Long Papers) , pages 15262– 15277. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuan-dong Tian, Christopher Ré, Clark Barrett, and 1 oth-ers. 2023. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Ad-vances in Neural Information Processing Systems ,36:34661–34710. Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xuanzhe Liu, Xin Jin, and Hao Zhang. 2024. {DistServe }: Disaggregating prefill and de-coding for goodput-optimized large language model serving. In 18th USENIX Symposium on Operat-ing Systems Design and Implementation (OSDI 24) ,pages 193–210. Fengqi Zhu, Rongzhen Wang, Shen Nie, Xiaolu Zhang, Chunwei Wu, Jun Hu, Jun Zhou, Jianfei Chen, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. 2025. Llada 1.5: Variance-reduced preference optimiza-tion for large language diffusion models. Preprint ,arXiv:2505.19223. 
+
+11 Appendix A Implementation Details 
+
+We implement P REFILLING -DLLM on top of three dLLM base models : Dream-7B (Ye et al., 2025a), UltraLLaDA (He et al., 2025), and Fast-dLLM v2 (Wu et al., 2025a). We use T denoising steps and set the chunk size C and the number of chunks 
+
+K based on validation performance. All experi-ments are conducted on NVIDIA A100 GPUs. 
+
+Common Settings. All PREFILLING -DLLM runs use bfloat16 inference and greedy decoding with temperature 0. During prefill, we prepend a BOS token to every prefix chunk, use causal at-tention for chunk scoring, and score each chunk independently with the query and optional pseudo-label window. Unless otherwise stated, selected chunks are cached with full-mask KV construc-tion, continuous chunk positions, and query posi-tions placed after the selected chunks. For sparse variants with intra-chunk sparsity, we retain the top-B highest-scoring tokens per selected chunk and set B = 512 in the main experiments. 
+
+Prompting and Truncation. For LongBench, we use the original task-specific prompt templates provided by the LongBench evaluation configu-ration, where each prompt is rendered by fill-ing the {context} and {input} fields. For InfiniteBench, we use the raw benchmark-style prompts for each task, following the same structure of an instruction prefix, the long context, and a task query. In both benchmarks, P REFILLING -DLLM separates the rendered prompt into three parts, namely the instruction prefix, the long-context field, and the query suffix. Only the long-context field is partitioned into chunks for chunk scoring, top-K
+
+retrieval, and optional top-B token retention; the instruction prefix and query suffix are kept outside the chunk pool and are always included in decod-ing. For vanilla and acceleration baselines that can-not process the full prompt within their context window, we apply context-only head-tail trunca-tion: after rendering the same prompt template, we allocate a prompt budget of max_length minus the generation length, keep the instruction prefix and query suffix unchanged, and truncate only the long-context field by preserving equal-length head and tail portions while dropping the middle. This avoids removing task instructions or the question. For Dream-7B experiments that use YaRN extrap-olation, the effective context window is expanded by the corresponding RoPE scaling factor; for Ul-traLLaDA, we use its native 128K context window. UltraLLaDA main-table experiments are evaluated without a chat template.                                                           
+
+> Prompt example. For LongBench MF-en, the rendered prompt has the following structure:
+> Read the following text and answer briefly. Title: City Archive Renovation The archive reopened after atwo-year renovation. The director noted that the new reading room would hold letters, maps, and oral histories from local residents. ... In alater interview, the curator said the first public exhibit would focus on neighborhood transit records from 1912. Now, answer the following question based on the above text, only give me the answer and do not output any other words. Question: [question] Answer:
+
+Dream-v0-Base-7B. Dream-v0-Base-7B has a native 2K context window, so the 128K long-context rows use YaRN extrapolation with rope scale factor 64. For P REFILLING -DLLM with inter-chunk sparsity, we use chunk size C = 1024 
+
+and select top-K = 4 chunks. Chunk ranking uses pseudo-label scoring with 4 pseudo-label to-kens and one partial denoising round. The main intra-chunk sparsity setting keeps the same chunk-selection configuration and adds top-B token reten-tion with B = 512 , using the bidirectional query– chunk attention score for token importance. 
+
+UltraLLaDA. UltraLLaDA supports native 128K context length. We evaluate it without a chat template in the main tables. For the inter-chunk sparsity setting, we use C = 1024 ,select top-K = 2 chunks, and rank chunks by self-information scoring with a query window of 64 tokens. For the intra-chunk sparsity setting, we use C = 1024 , select top-K = 8 chunks, and retain top-B = 512 tokens per chunk with the bidirectional query–chunk attention score. 12 B Baselines 
+
+We compare P REFILLING -DLLM against standard dLLM inference (full-attention at every denoising step) and dLLM acceleration methods, including Fast-dLLM (Wu et al., 2025b), Fast-dLLM v2 (Wu et al., 2025a), dKV-Cache (Ma et al., 2026), and Sparse-dLLM (Song et al., 2025). We also include YaRN (Peng et al., 2023) as a context extrapolation baseline, which extends the native context window of Dream-7B (2K) to 128K via RoPE scaling. 
+
+C Detailed Ablation Analysis 
+
+The ablations show that PREFILLING -DLLM ben-efits most from selecting a small set of informative chunks, using short pseudo-labels for chunk scor-ing, and retaining a moderate top-B token budget under intra-chunk sparsity. 
+
+We provide detailed MF-en ablations in Tables 3– 6. We focus on MF-en because it is a retrieval-intensive LongBench task where long-context mod-els must identify a small amount of useful evidence from a large prefix. This makes it a direct probe for both inter-chunk sparsity and intra-chunk sparsity. 
+
+Ablation on top-K. The optimal number of se-lected chunks is small, but it depends on whether intra-chunk sparsity is used. Without intra-chunk sparsity, Dream-v0-Base-7B performs best with top-K = 4 , while UltraLLaDA prefers top-K = 2 
+
+on the o46 subset. With intra-chunk sparsity, Dream still favors top-K = 4 , whereas UltraL-LaDA improves with top-K = 8 , suggesting that token-level compression can benefit from a broader candidate chunk pool. 
+
+Ablation on chunk size. The best chunk gran-ularity is model-dependent. Dream-v0-Base-7B favors C = 1024 , which balances retrieval resolu-tion with enough local context inside each selected chunk. UltraLLaDA, evaluated on the o46 sub-set, performs best at C = 2048 in the top-K = 4 
+
+sweep, indicating that the native 128K model can benefit from slightly coarser chunks in this setting. 
+
+Ablation on chunk BOS. The chunk-BOS con-trol shows that boundary handling matters, but its effect is not uniform. On UltraLLaDA, keeping the chunk BOS improves MF-en from 28.06 to 29.34 under the top-K = 4 , C = 1024 self-information setting. On Dream-v0-Base-7B, the effect is mixed in the early chunk-query route: removing the chunk BOS helps with 16 pseudo-labels, while keeping it is better with 4 pseudo-labels. We there-fore keep chunk BOS in the final configuration. 
+
+Ablation on chunk score. Pseudo-label scoring is a stable way to rank chunks before final decoding. On Dream-v0-Base-7B, short pseudo-label win-dows slightly improve over self-information, while longer pseudo-label windows do not consistently help. On UltraLLaDA, one or two pseudo-labels already improve over self-information on the o46 
+
+subset, and increasing the pseudo-label window brings no additional gain. 
+
+Ablation on partial rounds. Partial denoising rounds should be kept short. Dream-v0-Base-7B benefits from two partial rounds in the tested pseudo-label settings, but additional rounds reduce the score. UltraLLaDA shows an even stronger preference for early pseudo-labels: one partial round is best across the tested pseudo-label win-dows, and further rounds degrade performance, suggesting that repeated refinement can inject noise into the chunk-ranking signal. 
+
+Ablation on cache build. The cache construc-tion strategy is important for Dream-v0-Base-7B. full-mask KV construction substantially outperforms chunk-query and chunk-only ,confirming that selected chunks should be cached under the same masking pattern used by the final decoding stage. 
+
+Ablation on retained-token budget. When intra-chunk sparsity is enabled, both base models benefit from a larger retained-token budget. Increasing the budget from B = 256 to B = 512 improves Dream-v0-Base-7B and UltraLLaDA, supporting our choice of a moderate top-B budget that pre-serves useful local evidence inside each selected chunk. 
+
+Ablation on token-retention score. For Dream-v0-Base-7B, the bidirectional token-retention score improves over the query-to-chunk score, support-ing our design choice of measuring token impor-tance using attention in both directions between query tokens and chunk tokens. Overall, the abla-tions validate the main configuration used in our experiments: inter-chunk sparsity selects a compact set of relevant chunks, while intra-chunk sparsity preserves the most query-relevant tokens with a fixed top-B budget. 13 Table 3: Dream-v0-Base-7B MF-en ablations without intra-chunk sparsity on the LongBench full split ( n = 150 ). Each block changes one design variable; shaded cells mark the variable under ablation. 
+
+Variant top-K C chunk BOS chunk score # pseudo-labels rounds KV build MF-en 
+
+Ablation on top-K
+
+top-4 4 1024 on pseudo-label 4 – full-mask 46.57 top-6 6 1024 on pseudo-label 4 – full-mask 45.01 
+
+Ablation on chunk size 
+
+chunk 1024 4 1024 on pseudo-label 4 – full-mask 41.52 chunk 1900 4 1900 on pseudo-label 4 – full-mask 37.68 chunk 512 4 512 on pseudo-label 4 – full-mask 33.14 
+
+Ablation on chunk BOS (chunk-query KV) 
+
+draft16 BOS on 4 1024 on pseudo-label 16 – chunk-query 39.32 draft16 BOS off 4 1024 off pseudo-label 16 – chunk-query 40.81 draft4 BOS on 4 1024 on pseudo-label 4 – chunk-query 43.39 draft4 BOS off 4 1024 off pseudo-label 4 – chunk-query 42.73 
+
+Ablation on chunk score 
+
+query-only 4 1024 on self-info 0 – full-mask 46.65 pseudo-2 4 1024 on pseudo-label 2 1 full-mask 46.89 pseudo-4 4 1024 on pseudo-label 4 1 full-mask 46.57 pseudo-8 4 1024 on pseudo-label 8 1 full-mask 46.15 pseudo-16 4 1024 on pseudo-label 16 1 full-mask 45.99 pseudo-32 4 1024 on pseudo-label 32 1 full-mask 46.68 
+
+Ablation on partial rounds (2 pseudo-labels) 
+
+round 1 4 1024 on pseudo-label 2 1 full-mask 46.48 round 2 4 1024 on pseudo-label 2 2 full-mask 46.89 
+
+Ablation on partial rounds (4 pseudo-labels) 
+
+round 2 4 1024 on pseudo-label 4 2 full-mask 47.54 
+
+round 3 4 1024 on pseudo-label 4 3 full-mask 46.41 round 4 4 1024 on pseudo-label 4 4 full-mask 46.57 
+
+Ablation on cache build 
+
+chunk-query KV 4 1024 on pseudo-label 4 2 chunk-query 41.52 chunk-only KV 4 1024 on pseudo-label 4 2 chunk-only 34.13 full-mask KV 4 1024 on pseudo-label 4 2 full-mask 46.57 
+
+Table 4: Dream-v0-Base-7B MF-en ablations with intra-chunk sparsity on the LongBench full split ( n = 150 ). Each block changes one design variable; shaded cells mark the variable under ablation. 
+
+Variant top-K C chunk score # pseudo-labels rounds KV build top-B token score MF-en 
+
+Ablation on top-K
+
+top-6 6 1024 pseudo-label 4 2 full-mask 512 query-to-chunk 45.21 top-4 4 1024 pseudo-label 4 2 full-mask 512 query-to-chunk 47.54 top-2 2 1024 pseudo-label 4 2 full-mask 512 query-to-chunk 46.94 
+
+Ablation on retained-token budget 
+
+cap 256 4 1024 pseudo-label 4 2 full-mask 256 query-to-chunk 44.46 cap 512 4 1024 pseudo-label 4 2 full-mask 512 query-to-chunk 47.54 
+
+Ablation on token-retention score 
+
+query-to-chunk 4 1024 pseudo-label 4 2 full-mask 512 query-to-chunk 47.54 bidirectional 4 1024 pseudo-label 4 2 full-mask 512 bidirectional 47.96 
+
+14 Table 5: UltraLLaDA MF-en ablations without intra-chunk sparsity on the o46 subset ( n = 46 ). Each block changes one design variable; shaded cells mark the variable under ablation. 
+
+Variant top-K C chunk BOS chunk score # pseudo-labels rounds KV build MF-en o46 
+
+Ablation on top-K (C = 1024 )
+
+top-2 2 1024 on self-info 0 – full-mask 34.84 top-3 3 1024 on self-info 0 – full-mask 29.08 top-4 4 1024 on self-info 0 – full-mask 29.34 top-5 5 1024 on self-info 0 – full-mask 29.19 top-6 6 1024 on self-info 0 – full-mask 28.66 top-8 8 1024 on self-info 0 – full-mask 26.29 
+
+Ablation on chunk size (top-K = 4 )
+
+chunk 512 4 512 on self-info 0 – full-mask 26.62 chunk 1024 4 1024 on self-info 0 – full-mask 29.34 chunk 2048 4 2048 on self-info 0 – full-mask 31.51 chunk 4096 4 4096 on self-info 0 – full-mask 27.34 
+
+Ablation on chunk BOS 
+
+chunk BOS on 4 1024 on self-info 0 – full-mask 29.34 chunk BOS off 4 1024 off self-info 0 – full-mask 28.06 
+
+Ablation on chunk score 
+
+query-only 2 1024 on self-info 0 – full-mask 34.84 pseudo-1 2 1024 on pseudo-label 1 1 full-mask 37.22 
+
+pseudo-2 2 1024 on pseudo-label 2 1 full-mask 37.17 pseudo-4 2 1024 on pseudo-label 4 1 full-mask 36.17 pseudo-8 2 1024 on pseudo-label 8 1 full-mask 36.39 
+
+Ablation on partial rounds (2 pseudo-labels) 
+
+round 1 2 1024 on pseudo-label 2 1 full-mask 37.17 round 2 2 1024 on pseudo-label 2 2 full-mask 34.75 
+
+Ablation on partial rounds (4 pseudo-labels) 
+
+round 1 2 1024 on pseudo-label 4 1 full-mask 36.17 round 2 2 1024 on pseudo-label 4 2 full-mask 33.53 round 3 2 1024 on pseudo-label 4 3 full-mask 31.53 round 4 2 1024 on pseudo-label 4 4 full-mask 33.07 
+
+Ablation on partial rounds (8 pseudo-labels) 
+
+round 1 2 1024 on pseudo-label 8 1 full-mask 36.39 round 2 2 1024 on pseudo-label 8 2 full-mask 32.35 
+
+Table 6: UltraLLaDA MF-en ablations with intra-chunk sparsity on the o46 subset ( n = 46 ). Each block changes one design variable; shaded cells mark the variable under ablation. 
+
+Variant top-K C chunk score # pseudo-labels rounds KV build top-B token score MF-en o46 
+
+Ablation on retained-token budget 
+
+cap 256 8 1024 self-info 0 – full-mask 256 bidirectional 26.01 cap 512 8 1024 self-info 0 – full-mask 512 bidirectional 28.75 
+
+Ablation on top-K with intra-chunk sparsity 
+
+top-4 4 1024 self-info 0 – full-mask 512 bidirectional 27.71 top-6 6 1024 self-info 0 – full-mask 512 bidirectional 27.62 top-8 8 1024 self-info 0 – full-mask 512 bidirectional 28.75 
+
+15 8K 16K 32K 
+
+> Context Length
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> Latency (seconds)
+> constant decode
+> 66%
+> 34%
+> 2.52s
+> 74%
+> 26%
+> 3.35s
+> 83%
+> 17%
+> 5.00s
+> Prefilling (chunk scoring + cache build)
+> Decoding (diffusion generation)
+
+Figure 10: Latency breakdown of P REFILLING -DLLM into prefilling (chunk scoring + cache build) and de-coding (diffusion generation). Decoding time remains constant ( ∼0.86s) regardless of context length, while prefilling scales with input size. 
+
+D Prefilling Efficiency Analysis 
+
+To isolate the contribution of each phase, we sep-arately measure the latency of prefilling (chunk scoring + KV cache construction) and decoding 
+
+(diffusion generation) within P REFILLING -DLLM. As shown in Figure 10, the decoding latency re-mains nearly constant ( ∼0.86s) across all context lengths, since it always operates on the fixed com-pressed context ( ∼4K tokens). The prefilling cost grows with input length (1.66s at 8K, 2.49s at 16K, 4.14s at 32K) as chunk scoring must attend over the full context. Nevertheless, prefilling is a one-time cost amortized over the entire generation, and the constant decoding time explains why P REFILLING -
+
+DLLM’s speedup advantage widens at longer con-texts. 16
