@@ -1,0 +1,469 @@
+Title: Where Does the Answer Come From? Benchmarking View-Level Visual Evidence Identification in Multi-View MLLMs for Autonomous Driving
+
+URL Source: https://arxiv.org/pdf/2606.09644v1
+
+Published Time: Tue, 09 Jun 2026 02:31:34 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Where Does the Answer Come From? Benchmarking View-Level Visual Evidence Identification in Multi-View MLLMs for Autonomous Driving 
+
+Yimu Wang *, Yee Man Choi *, Barry Zhang, Mozhgan Nasr Azadani, Sean Sedwards, and Krzysztof Czarnecki 
+
+University of Waterloo 
+
+Abstract 
+
+Multimodal large language models (MLLMs) achieve strong results on visual reasoning benchmarks, but answer accuracy alone does not indicate whether a model relied on the cor-rect visual evidence. This gap is particularly important in multi-view driving scenes used for autonomous driving, where a model can produce a plausible answer while grounding it in the wrong camera view. We introduce a multi-view visual question answering bench-mark for evaluating evidence-source identifica-tion: given six synchronized NuScenes views and a question, the model must identify the sup-porting camera view and answer the question. The benchmark contains 122 conflict-centric question-answer pairs from 73 scenes, span-ning causality, counterfactual reasoning, and intent prediction. View labels are proposed by an automatic conflict-mining pipeline and manually verified by annotators. We evaluate three settings: camera-view selection, oracle QA given the golden view, and joint predic-tion in which the model selects a view and answers in one pass. Answers are evaluated in both multiple-choice and free-form formats, using exact match for structured predictions and an LLM judge for free-form responses. By explicitly separating visual-source identifica-tion from answer correctness, the benchmark exposes grounding failures that answer-only evaluation misses. 
+
+1 Introduction 
+
+Multimodal large language models (MLLMs) (Liu et al., 2023a, 2024) have shown strong performance on image understanding (Qian et al., 2024) and vi-sual question answering (Liu et al., 2025). Yet most evaluations emphasize final-answer correct-ness and pay limited attention to whether the an-swer is grounded in the right visual source. Even 
+
+> *
+
+Equal contribution. They will continuing along the 
+
+> pedestrian walkway without
+> crossing the road.
+> Answer Generation
+> What are the pedestrians near
+> the building frontage most
+> likely doing?
+> Question
+> A sample
+> scene
+> Front
+> Front Right
+> Back Right
+> Bac k
+> Back Left
+> Front Left
+> Golden View
+> Selection
+> Front Left
+
+Figure 1: Benchmark overview. Given six synchronized NuScenes camera views and a question, the benchmark evaluates whether an MLLM can identify the supporting camera view and answer the question. The figure illus-trates surround-view input and golden-view grounding. 
+
+in single-image settings, models can produce plau-sible responses (Li et al., 2023) by exploiting lan-guage priors or dataset shortcuts. In multi-view settings (Caesar et al., 2020), this concern becomes more explicit: when given several synchronized views of the same scene, a reliable model should identify which view contains the evidence needed to answer the question. We study this problem in autonomous driving scenes (Caesar et al., 2020; Sun et al., 2020; Qian et al., 2024), where vehicles, pedestrians, and cy-clists may appear in different camera views around the ego vehicle. Consider a question about a po-tential conflict with a vehicle approaching from the back-left. If a model answers correctly but attributes its evidence to the front camera, it has not demonstrated faithful multi-view grounding. Such behaviour may reflect guessing, language bias, or hallucinated evidence attribution, echoing broader concerns about object hallucination and visual illusion in MLLMs (Li et al., 2023; Guan et al., 2024). This matters in safety-critical driving settings (Zhou et al., 2024; Cui et al., 2024), where trustworthy reasoning requires not only a correct answer but also a correct evidence source. We propose a benchmark for evaluating view identification in multi-view MLLMs, as illustrated 1
+
+> arXiv:2606.09644v1 [cs.CL] 8 Jun 2026
+
+in Figure 1. Each instance contains six synchro-nized NuScenes camera views (Caesar et al., 2020) and a natural-language question. The central an-notation is a manually verified golden view: the camera channel that provides the most direct visual evidence for answering the question. We evaluate three complementary settings. First, in view selec-tion , the model receives all six views and predicts only the golden view. Second, in oracle QA , the model receives the golden-view image and answers the question, isolating reasoning when the correct visual source is given. Third, in joint prediction ,the model receives all six views and predicts both the supporting view and the answer. This setup distinguishes genuinely grounded behaviour from cases where models answer correctly while select-ing the wrong visual source. Our contributions are: • We introduce a compact diagnostic multi-view VQA benchmark for evaluating whether MLLMs can identify the visual evidence source behind their answers. • We construct 122 conflict-centric QA pairs from 73 scenes, covering causality, counter-factual reasoning, intent prediction. • We propose a three-part evaluation protocol covering view selection, oracle QA given the golden view, and joint prediction. • We evaluate both multiple-choice and free-form answer formats, using exact match for structured outputs and an LLM judge for free-form responses. • We benchmark representative proprietary and open-source MLLMs, including GPT, Gem-ini, Claude, Qwen-VL, and InternVL families, under a unified zero-shot prompting protocol. 
+
+2 Related Work 
+
+Existing MLLM benchmarks primarily score final answers (Liu et al., 2025; Gurari et al., 2018), while giving limited insight into whether models use the correct visual evidence. This issue is especially important in autonomous driving (Cui et al., 2024), where information is distributed across synchro-nized surround-view cameras. Our benchmark is complementary to answer-centric driving QA (Cae-sar et al., 2020), including graph-structured driving VQA (Sima et al., 2024): we explicitly evaluate whether models can first identify the supporting camera view, then produce a correct answer. The closest driving VQA settings (Sima et al., 2024; Qian et al., 2024) usually treat multi-view images as a shared visual context and score the final re-sponse, whereas our benchmark makes the evi-dence source itself an explicit prediction target. This distinction is also different from generic multi-image reasoning (Jiang et al., 2024): the candidate evidence sources are calibrated camera channels from the same timestamp, so a wrong source can be objectively checked against a manually veri-fied golden view. By evaluating oracle QA and joint prediction separately, we can distinguish fail-ures of visual-source localization from failures of downstream answer reasoning. In addition, un-like answer-only benchmarks, our evaluation ex-plicitly identifies wrong-view/correct-answer be-haviour, which is central for diagnosing shortcut reasoning and evidence misattribution. This shifts evaluation from answer plausibility to evidence-grounded reasoning. 
+
+3 Task, evaluation metric, and dataset 
+
+3.1 Problem Setup 
+
+Each example contains six synchronized NuScenes camera views (Caesar et al., 2020), a question q, a view label v∗, and a reference answer a∗. For an-swerable examples, v∗ is the golden camera view; for unsupported examples, v∗ is N ONE . We eval-uate three settings: (1) view selection (predict ˆv
+
+from all six views), (2) oracle QA (predict ˆa given only the golden-view image for answerable exam-ples), and (3) joint prediction (predict both ˆv and ˆa
+
+from all six views). In joint prediction, the model must choose the view or abstain before answering, reducing post-hoc evidence attribution. 
+
+3.2 Metrics 
+
+View prediction is scored by exact match against 
+
+v∗:
+
+Acc view = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+1[ˆ vi = v∗ 
+
+> i
+
+]. (1) For answers, multiple-choice outputs use exact match, while free-form outputs are graded by an LLM judge with a semantic-equivalence rubric, following recent use of LLM-based evaluators for open-ended generation (Liu et al., 2023b; Zheng et al., 2023). For joint prediction, we additionally report strict joint success, where both the view and 2nuScenes         
+
+> Scenes
+> Scene Selection (Appendix B)
+> Conflict Event
+> Mining
+> Actor And Frame
+> Window Selection
+> Candidate
+> Golden View
+> Camera Visibility
+> Projection
+> QA Generation
+> (Appendix B)
+> Manual Verification
+> (Appendix B)
+> Final
+> Benchmark Figure 2: Dataset construction pipeline. We mine conflict-centric candidate events from NuScenes, identify involved actors and event frame windows, project actor 3D boxes into the six camera views to propose candidate golden views, generate QA pairs, and manually verify answerability, single-view grounding, and reference answers.
+> Statistic Value
+> Dataset source NuScenes (Caesar et al., 2020) Camera views 6Scenes 73 QA pairs 122
+> Question Types
+> Causality 52 Counterfactual 35 Intent Prediction 35
+> Table 1: Benchmark statistics.
+
+answer must be correct: 
+
+Acc joint = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+1[ˆ vi = v∗ 
+
+> i
+
+∧ ˆai = a∗ 
+
+> i
+
+]. (2) For free-form joint outputs, ˆai = a∗ 
+
+> i
+
+denotes judge-evaluated semantic correctness rather than string identity. 
+
+3.3 Dataset 
+
+The dataset contains 122 conflict-centric QA pairs from 73 NuScenes scenes and uses camera in-puts only (no LiDAR/radar/BEV). The statistics are summarized in Table 1, and the construction pipeline is shown in Figure 2. All examples are manually filtered to have either one dominant sup-porting camera view or no camera view that pro-vides sufficient evidence. Scene selection follows an event-centric pipeline: we first mine candidate conflict events from cached kinematic, geometric, and map features, then iden-tify the camera view(s) in which the relevant actor is visible during the event window. Candidates are post-processed to keep cases where one view provides the clearest support for the question. We cover six event families (pedestrian crossing, brak-ing, cut-in, lane change, turning, and Car-to-Car Front Turn-Across-Path) to encourage diverse in-teraction patterns rather than single-object recogni-tion. Details are deferred to Section B.4.1. Question-answer generation targets three reason-ing types: causality, counterfactual reasoning, and intent prediction. Each question can be instantiated in multiple-choice and free-form variants. This paired design enables deterministic answer scoring for multiple-choice while still testing unconstrained generation quality in free-form evaluation. Golden views are proposed automatically and manually verified. Annotators inspect all six syn-chronized views to confirm that (i) the question is answerable, (ii) the proposed golden view con-tains the critical evidence, and (iii) no alternative view offers equally direct evidence. Ambiguous or weakly grounded samples are revised or removed. 
+
+Annotation protocol and reliability. When mul-tiple views partially show an actor, annotation guidelines prioritize the view with the most direct evidence needed to answer the question; if no sin-gle view is dominant, the sample is excluded. We also preserve 5 QA pairs whose questions cannot be supported by the camera views to test rejection ability. The details of the annotation protocol are provided in Appendix B. To reduce annotation leakage into evaluation, we treat the dataset as test-only and do not create a training split. This choice matches the benchmark’s diagnostic goal: we want to measure whether exist-ing MLLMs can identify the evidence source under realistic multi-view prompting, rather than opti-mize a model specifically for this label space. Be-cause the benchmark is compact, the reported num-bers should be interpreted as controlled diagnostics of grounding behaviour rather than leaderboard-style saturated performance. Extended algorithmic details and implementation specifics are provided in Appendix B. 
+
+4 Experiment 
+
+4.1 Models 
+
+We evaluate representative proprietary and open-source MLLMs. The proprietary group includes GPT-5.4, Gemini, and Claude. The open-source group includes Qwen2.5-VL (Bai et al., 2023, 2025b), Qwen3-VL (Bai et al., 2025a), and In-3Model Mean (%) SD (%) 95% CI (%)                   
+
+> GPT-5.4 77.54 0.45 [76.98, 78.10] Gemini 74.10 1.89 [71.76, 76.44] Claude 82.62 0.69 [81.77, 83.47] Qwen2.5VL-7B 12.62 1.24 [11.08, 14.17] Qwen3VL-8B 61.64 2.42 [58.64, 64.64] InternVL3 61.48 2.09 [58.88, 64.07]
+
+Table 2: View-selection exact-match accuracy summary over 5 runs. ‘SD’ stands for standard deviation and ‘95% CI’ stands for 95% confidence interval.                                        
+
+> Model View Oracle Oracle Joint Joint Acc. MC Free MC Free
+> GPT-5.4 77.5 86.9 79.5 66.9 61.3 Gemini 74.1 89.3 73.8 68.8 56.8 Claude 82.6 89.3 73.0 73.2 59.8 Qwen2.5VL-7B 12.6 78.7 37.7 8.4 4.0 Qwen3VL-8B 61.6 66.4 51.4 43.5 29.0 InternVL3 61.5 82.0 40.2 51.7 25.4
+
+Table 3: Main evaluation summary. View Acc. is exact-match accuracy for view selection. Oracle MC and Oracle Free evaluate answering when the golden view is provided. Joint MC and Joint Free report strict joint correctness, requiring both the selected view and answer to be correct. 
+
+ternVL3 (Zhu et al., 2025). All models are tested in a zero-shot setting without task-specific fine-tuning. 
+
+4.2 Experimental Setup 
+
+All models are evaluated under a unified zero-shot protocol with fixed prompts per setting and de-terministic decoding where applicable (details in Appendix B.2). We use three settings: view selec-tion (six synchronized views → supporting camera channel), oracle QA (golden-view image only →
+
+answer, in multiple-choice or free-form format), and joint prediction (six views → view, answer, and rationale in one pass, in both answer formats). Multiple-choice answers (MC) are scored by ex-act identifier match; free-form answers use a fixed LLM judge for semantic correctness (Liu et al., 2023b; Zheng et al., 2023). In the joint setting, we report both answer quality and strict joint cor-rectness (view and answer both correct). For un-supported examples, N ONE is the correct view-selection target and oracle QA is not applicable. Full prompt templates are in Section C. 
+
+4.3 Main Results 
+
+Table 2 shows that view selection is stable across repeated runs for the strongest proprietary mod-els, with Claude achieving the highest mean accu-racy (82.62%, 95% CI: [81.77, 83.47]) and GPT-5.4/Gemini following at 77.54%/74.10%. Open-source performance is generally lower: Qwen3VL-8B and InternVL3 cluster around 61.5%, while Qwen2.5VL-7B drops to 12.62%, near or below a naive uniform baseline over the candidate labels. This gap suggests that multi-view evidence local-ization remains difficult even when the candidate camera set is small. Table 3 further reveals a consistent oracle-to-joint drop across all models (e.g., Claude: 89.3 →73.2 in MC; GPT-5.4: 86.9 →66.9). Be-cause the oracle setting supplies the golden view, this drop indicates that view identification is a major bottleneck for end-to-end grounded answer-ing. Finally, free-form scores are consistently be-low multiple-choice in both oracle and joint set-tings, suggesting that unconstrained generation introduces additional reasoning, calibration, and grounding errors beyond option selection. 
+
+4.4 Analysis 
+
+We analyze several representative failure modes. First, models may output a correct answer while selecting a wrong view, indicating shortcut rea-soning or evidence misattribution that answer-only metrics would miss. Second, models may exhibit front-camera bias, over-selecting CAM_FRONT even when key evidence appears in side or rear chan-nels. Third, models may confuse adjacent views (e.g., CAM_FRONT versus CAM_FRONT_LEFT ) when evidence spans boundary regions. Fourth, mod-els may fail to abstain on unsupported examples, selecting a visually plausible but non-evidential camera view. Finally, some free-form answers re-main plausible but weakly grounded in the selected image, especially in counterfactual and intent ques-tions. We analyze per-region confusion patterns, and per-question-type breakdowns, together with qualitative case studies (Appendix B.5). 
+
+5 Conclusion 
+
+We have introduced a multi-view VQA benchmark for autonomous driving that tests whether MLLMs can identify the camera view that supports their answers. The benchmark evaluates view selection, oracle QA given the golden view, and joint pre-diction with both multiple-choice and free-form answer formats. By separating evidence-source identification from answer quality, the benchmark reveals grounding failures hidden by answer-only evaluation. This enables more targeted analysis of hallucination, evidence attribution, and multi-view 4reasoning in autonomous driving scenes. 
+
+6 Limitations 
+
+The current benchmark is compact (122 QA pairs) and intended as a diagnostic test rather than a large-scale training resource. Because all examples are conflict-centric, it does not measure general driv-ing VQA performance. The distribution of event types and golden views may reflect biases in the conflict-mining pipeline and in NuScenes itself. Each question currently has a single golden view, although real scenarios may require multi-view evidence. Free-form answer quality depends on an LLM judge and may therefore include evalua-tion noise. Finally, the benchmark currently uses camera images only and excludes LiDAR, radar, and BEV inputs. Accordingly, our claims focus on view-level evidence attribution in selected con-flict scenarios, not on end-to-end autonomous driv-ing competence. Because our benchmark is based on NuScenes, both open-source and proprietary MLLMs may have encountered related images, metadata, or derived captions during pretraining, which could bias absolute performance estimates. For this reason, the benchmark is best interpreted as a controlled diagnostic probe rather than evidence of deployment readiness. 
+
+7 Ethical Considerations 
+
+The benchmark is derived from the public NuScenes dataset and should be used under the original dataset license and terms of use. Although the images are public research data, they depict real traffic scenes and may include pedestrians, cy-clists, and vehicles. We therefore recommend using the benchmark only for research on model evalua-tion and not for identifying individuals, inferring private attributes, or supporting deployed driving decisions. 
+
+References 
+
+Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng Wang, Junyang Lin, Chang Zhou, and Jingren Zhou. 2023. Qwen-VL: A Versatile Vision-Language Model for Understanding, Local-ization, Text Reading, and Beyond. Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wenbin Ge, Zhi-fang Guo, Qidong Huang, Jie Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhaohai Li, Mingsheng Li, and 45 others. 2025a. Qwen3-VL technical re-port. Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wen-bin Ge, Sibo Song, Kai Dang, Peng Wang, Shi-jie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, and 8 others. 2025b. Qwen2.5-VL Technical Report. Holger Caesar, Varun Bankiti, Alex H. Lang, Sourabh Vora, Venice Erin Liong, Qiang Xu, Anush Krishnan, Yu Pan, Giancarlo Baldan, and Oscar Beijbom. 2020. nuScenes: A Multimodal Dataset for Autonomous Driving. In 2020 IEEE/CVF Conference on Com-puter Vision and Pattern Recognition (CVPR) , pages 11618–11628. Can Cui, Yunsheng Ma, Xu Cao, Wenqian Ye, Yang Zhou, Kaizhao Liang, Jintai Chen, Juanwu Lu, Zi-chong Yang, Kuei-Da Liao, Tianren Gao, Erlong Li, Kun Tang, Zhipeng Cao, Tong Zhou, Ao Liu, Xinrui Yan, Shuqi Mei, Jianguo Cao, and 2 others. 2024. A Survey on Multimodal Large Language Models for Autonomous Driving . In 2024 IEEE/CVF Win-ter Conference on Applications of Computer Vision Workshops (WACVW) , pages 958–979. Tianrui Guan, Fuxiao Liu, Xiyang Wu, Ruiqi Xian, Zongxia Li, Xiaoyu Liu, Xijun Wang, Lichang Chen, Furong Huang, Yaser Yacoob, Dinesh Manocha, and Tianyi Zhou. 2024. HallusionBench: An Advanced Diagnostic Suite for Entangled Language Hallucina-tion and Visual Illusion in Large Vision-Language Models. In Proceedings of the IEEE/CVF Confer-ence on Computer Vision and Pattern Recognition (CVPR) , pages 14375–14385. Danna Gurari, Qing Li, Abigale J. Stangl, Anhong Guo, Chi Lin, Kristen Grauman, Jiebo Luo, and Jeffrey P. Bigham. 2018. VizWiz Grand Challenge: Answer-ing Visual Questions from Blind People. In 2018 IEEE/CVF Conference on Computer Vision and Pat-tern Recognition , pages 3608–3617. Dongfu Jiang, Xuan He, Huaye Zeng, Cong Wei, Max Ku, Qian Liu, and Wenhu Chen. 2024. Mantis: Inter-leaved multi-image instruction tuning. Transactions on Machine Learning Research .Fuhao Li, Huan Jin, Bin Gao, Liaoyuan Fan, Lihui Jiang, and Long Zeng. 2025. NuGrounding: A Multi-View 3D Visual Grounding Framework in Autonomous Driving. Yifan Li, Yifan Du, Kun Zhou, Jinpeng Wang, Xin Zhao, and Ji-Rong Wen. 2023. Evaluating Object Hallucination in Large Vision-Language Models. In 
+
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 292– 305. Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee. 2024. Improved baselines with visual instruc-tion tuning. In CVPR .
+
+5Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 2023a. Visual instruction tuning. In NeurIPS .Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang, Ruochen Xu, and Chenguang Zhu. 2023b. G-eval: NLG evaluation using gpt-4 with better human align-ment. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,pages 2511–2522. Yuan Liu, Haodong Duan, Yuanhan Zhang, Bo Li, Songyang Zhang, Wangbo Zhao, Yike Yuan, Jiaqi Wang, Conghui He, Ziwei Liu, Kai Chen, and Dahua Lin. 2025. MMBench: Is Your Multi-modal Model an All-Around Player? In Computer Vision – ECCV 2024 , pages 216–233. Ana-Maria Marcu, Long Chen, Jan Hünermann, Al-ice Karnsund, Benoit Hanotte, Prajwal Chidananda, Saurabh Nair, Vijay Badrinarayanan, Alex Kendall, Jamie Shotton, Elahe Arani, and Oleg Sinavski. 2024. LingoQA: Visual Question Answering for Autonomous Driving. In Computer Vision – ECCV 2024 , pages 252–269. Fanqing Meng, Jin Wang, Chuanhao Li, Quanfeng Lu, Hao Tian, Tianshuo Yang, Jiaqi Liao, Xizhou Zhu, Jifeng Dai, Yu Qiao, Ping Luo, Kaipeng Zhang, and Wenqi Shao. 2025. MMIU: Multimodal multi-image understanding for evaluating large vision-language models. In The Thirteenth International Conference on Learning Representations .Tianwen Qian, Jingjing Chen, Linhai Zhuo, Yang Jiao, and Yu-Gang Jiang. 2024. NuScenes-QA: A Multi-Modal Visual Question Answering Benchmark for Autonomous Driving Scenario. Proceedings of the AAAI Conference on Artificial Intelligence , pages 4542–4550. Chonghao Sima, Katrin Renz, Kashyap Chitta, Li Chen, Hanxue Zhang, Chengen Xie, Jens Bei{\ss}wenger, Ping Luo, Andreas Geiger, and Hongyang Li. 2024. DriveLM: Driving with Graph Visual Question An-swering. In Proceedings of the Computer Vision -{ECCV} 2024 - 18th European Conference , pages 256–274. Pei Sun, Henrik Kretzschmar, Xerxes Dotiwalla, Au-relien Chouard, Vijaysai Patnaik, Paul Tsui, James Guo, Yin Zhou, Yuning Chai, Benjamin Caine, Vi-jay Vasudevan, Wei Han, Jiquan Ngiam, Hang Zhao, Aleksei Timofeev, Scott Ettinger, Maxim Krivokon, Amy Gao, Aditya Joshi, and 4 others. 2020. Scala-bility in perception for autonomous driving: Waymo open dataset. In Proceedings of the IEEE/CVF con-ference on computer vision and pattern recognition (CVPR) .Bingchen Zhao, Yongshuo Zong, Letian Zhang, and Timothy Hospedales. 2024. Benchmarking multi-image understanding in vision and language models: Perception, knowledge, reasoning, and multi-hop rea-soning. arXiv preprint .Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. 2023. Judging LLM-as-a-judge with MT-bench and chatbot arena. In Thirty-seventh Conference on Neural Information Processing Systems Datasets and Benchmarks Track .Xingcheng Zhou, Mingyu Liu, Ekim Yurtsever, Bare Luka Zagar, Walter Zimmer, Hu Cao, and Alois C. Knoll. 2024. Vision language models in autonomous driving: A survey and outlook. IEEE Transactions on Intelligent Vehicles , pages 1–20. Jinguo Zhu, Weiyun Wang, Zhe Chen, Zhaoyang Liu, Shenglong Ye, Lixin Gu, Hao Tian, Yuchen Duan, Weijie Su, Jie Shao, Zhangwei Gao, Erfei Cui, Xue-hui Wang, Yue Cao, Yangzhou Liu, Xingguang Wei, Hongjie Zhang, Haomin Wang, Weiye Xu, and 32 others. 2025. InternVL3: Exploring Advanced Train-ing and Test-Time Recipes for Open-Source Multi-modal Models. 
+
+6Appendix Overview 
+
+The appendix provides additional context and im-plementation details for the benchmark. Section A expands the related-work discussion. Section B provides extended task definitions, dataset con-struction details, evaluation protocol, annotation procedure, and analysis tables. Section B.4.1 de-scribes the scene-selection algorithm used to mine conflict-centric NuScenes events. Section B.5 presents qualitative case studies referenced in the main paper. Section C documents the prompts used for view selection, oracle QA, joint prediction, and free-form judging. Section D provides the AI dis-closure statement. 
+
+A Extended Related Work 
+
+This section expands the related-work context from the main paper. 
+
+Evidence-grounded evaluation for MLLMs. Acommon limitation of multimodal benchmarks (Liu et al., 2025) is that they evaluate the final answer but not whether the model used the correct visual source. Recent work on object hallucination and visual illusion has shown that fluent responses can be only weakly tied to the input evidence (Li et al., 2023; Guan et al., 2024). Our benchmark follows this line of motivation but operationalizes it at the camera-view level: the model must identify which synchronized view supports its answer. 
+
+Driving-oriented vision-language benchmarks. 
+
+Driving VLM benchmarks (Qian et al., 2024; Marcu et al., 2024; Li et al., 2025) typically fo-cus on scene understanding, behavior prediction, risk analysis, or planning-oriented question answer-ing. Most such settings evaluate answer quality under a fixed input view or under aggregated multi-sensor context, as in graph-structured driving VQA built on driving datasets such as nuScenes (Cae-sar et al., 2020; Sima et al., 2024). Our setting is complementary because it explicitly evaluates source identification in a surround-view camera setup, where the evidence may appear only in a specific channel. 
+
+Multi-image and multi-view reasoning. Gen-eral multi-image reasoning benchmarks (Zhao et al., 2024; Meng et al., 2025) study cross-image correspondence, temporal consistency, or image-set question answering. However, many tasks do not require committing to a single evidence source (Jiang et al., 2024). In contrast, our bench-mark is designed around single-dominant-view supervision, making it suitable for diagnosing whether a model can localize evidence before an-swering. 
+
+LLM-as-a-judge for free-form evaluation. 
+
+Open-ended answer evaluation has increasingly relied on model-based judges to score semantic correctness beyond exact string matching. This approach improves coverage for paraphrases and semantically equivalent responses, but also introduces evaluator sensitivity (Liu et al., 2023b; Zheng et al., 2023). In our setup, judge-based scoring is used only for free-form answers, while multiple-choice outputs remain exact-match, so we can separate answer-format effects from view-selection behavior. 
+
+B Extended Task, Dataset, and Analysis Details 
+
+B.1 Formal Task Definitions 
+
+Let the six synchronized camera images at one timestamp be {I1, . . . , I 6}, the question be q, the view label be v∗, and the reference answer be a∗.For answerable examples, v∗ is a camera channel; for unsupported examples, v∗ = NONE . We evalu-ate three settings: 
+
+fview (I1, . . . , I 6, q ) → ˆv, (3) 
+
+foracle (Iv∗ , q ) → ˆa, (4) 
+
+fjoint (I1, . . . , I 6, q ) → (ˆ v, ˆa). (5) The model may also return a short rationale and visible-evidence text, but the primary evidence-source prediction is the selected view label or NONE .
+
+B.2 Experimental Protocol Prompting and input format. Our experimental design has three settings: 1. Golden (view selection): the model receives all synchronized views and predicts the sup-porting camera channel ( Golden_view ). 2. Oracle QA: for answerable examples, the model receives only the golden-view image and answers the question. We evaluate both 
+
+multiple-choice and free-form variants. 3. Full Loop (joint prediction): the model re-ceives all six views, selects the supporting 7view, and answers in one pass (JSON with 
+
+Golden_view , Answer , and Rationale ). We evaluate both multiple-choice and free-form 
+
+answer variants. All prompts explicitly list the candidate camera channels. The prompt templates also include N ONE 
+
+as a fallback option when no provided view sup-ports the question. For unsupported examples, NONE is scored as the correct view label; for an-swerable examples, selecting N ONE is scored as in-correct. If a model outputs an invalid camera name, we map it to the closest valid label only when intent is unambiguous; otherwise, the view prediction is marked incorrect. Full prompt templates and re-sponse schemas are provided in Appendix C. 
+
+Evaluation protocol. The overall protocol is summarized in Table 4. For free-form answer-ing, we keep prompting and judge criteria fixed across models so that comparisons primarily reflect model behaviour rather than evaluator drift. For models with stochastic generation effects, we re-port repeated-run statistics when available (mean, standard deviation, and 95% confidence interval). In the joint setting, strict joint correctness isolates cases where textual correctness is achieved with incorrect visual grounding. 
+
+B.3 Evaluation Details 
+
+View selection is scored by exact match: 
+
+Acc view = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+1[ˆ vi = v∗ 
+
+> i
+
+]. (6) For multiple-choice answers: 
+
+Acc ans = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+1[ˆ ai = a∗ 
+
+> i
+
+]. (7) For joint prediction, as summarized in Table 5, we also report strict success: 
+
+Acc joint = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+1[ˆ vi = v∗ 
+
+> i
+
+∧ ˆai = a∗ 
+
+> i
+
+], (8) using exact answer match for multiple-choice out-puts and judge correctness for free-form outputs. Oracle QA is computed only on answerable exam-ples because unsupported examples do not have a golden-view image to provide.                  
+
+> Setting Visual input Model output Metric
+> View selection 6 views c⋆∈ C Exact match Oracle QA Gold view, an-swerable subset
+> a∈ O or text Exact /judge Joint prediction 6 views (c⋆, a )Exact /judge
+
+Table 4: Inference settings evaluated in our benchmark. 
+
+Oracle QA supplies the human-annotated camera; Joint prediction asks the model to select a view and answer in one pass.           
+
+> View Answer Interpretation
+> Correct Correct grounded success Correct Wrong right source, failed reasoning Wrong Correct shortcut or ungrounded answer Wrong Wrong full failure
+
+Table 5: Joint interpretation of view identification and answer quality. 
+
+B.4 Benchmark Construction B.4.1 Scene Selection 
+
+The role of scene selection in this pipeline is to mine candidate scenes in which another road user may conflict with, influence, or be influenced by the ego vehicle. For each such scene, our algorithm also identifies the camera view(s) the event was visible in. We then filter these candidate scenes for cases in which the question can be answered from a single dominant camera view. This design allows the benchmark to evaluate view identification with a clean single-label target. To mine suitable scenes from the dataset, we need something concrete to search for. We there-fore define a fixed set of event categories , each one a recurring, well-defined class of ego/road user interaction: • Pedestrian crossing events : a pedestrian walks across the trajectory of a vehicle (ego or non-ego). • Braking events : a vehicle exhibits a sus-tained, significant deceleration. • Cut-in events : a non-ego vehicle moves later-ally from an adjacent lane into the ego’s lane while remaining ahead of the ego. • Lane change events : a vehicle (ego or non-ego) transitions from one lane to an adjacent lane in the same direction of travel. • Left/right turn events : a vehicle executes a left or right turn at a road intersection. 8• CCFtap events (Car-to-Car Front Turn-Across-Path): an event between two vehicles at opposite sides of an intersection; one vehi-cle makes a turn that intersects the path of the oncoming vehicle going straight. The scene-selection algorithm is designed to find events from these categories by querying the nuScenes dataset. The backbone of the algorithm is a pre-populated SQLite database where we cache the per-frame kinematic and geometric features needed to query for events. For a given event cate-gory, the algorithm executes a SQL query against this database to select candidates that satisfy con-ditions that are necessary, but not sufficient, for the event category. The algorithm then runs a post-processing pass to filter candidate events down to final matches. Each final match consists of the in-volved road users and the frame window during which the event occurs. For example, when querying for pedestrian cross-ings, the SQL query retrieves all pedestrian-vehicle pairs whose trajectories cross during a scene, along with the frame each actor reached the crossing point. Post-processing keeps only pairs where these two frames are within a few frames of each other (a near-simultaneous crossing, not minutes apart), and reports the event’s frame window as the range between them. A final match might be: in scene-0103, pedestrian P crosses in front of the ego from frame 12 to frame 23. Because we pre-populate the database once up front, each query just filters cached rows, rather than rescanning the raw nuScenes data each time. 
+
+Identifying the relevant camera view. To facil-itate selecting the golden view for an event, we pre-compute, for each non-ego actor, which of the six ego-mounted cameras it appeared in at each frame. We pre-compute this camera appearance infor-mation by projecting each non-ego actor’s 3D bounding box onto each of the six camera image planes. The actor is considered visible in a given camera at a given frame if its projected box over-laps that camera’s image rectangle. This per-frame, per-camera visibility information is cached in the SQLite database alongside the other features. The candidate golden view for an event is then sim-ply the camera in which the relevant non-ego actor appeared during the event’s frames — or the se-quence of cameras, if the road users were visible in multiple camera views during the scene. This au-tomatic proposal is then filtered manually to keep only cases answerable from a single dominant cam-era, yielding the benchmark’s final golden views. 
+
+Per-category criteria. The features cached in the SQLite database, all derived from the nuScenes de-vkit, fall into four groups: (a) per-frame poses for the ego vehicle and every non-ego instance (vehi-cles, pedestrians), consisting of (x, y, z ) position and (qw, q x, q y, q z ) orientation quaternion; (b) 3D bounding boxes for non-ego instances and their per-camera 2D projections; (c) per-frame visibility annotations; and (d) HD-map geometry — specifi-cally lane connectors (polylines inside an intersec-tion that connect one incoming lane to one outgoing lane) and road intersection polygons. Below, we describe how each event category is queried: • Pedestrian crossing events : from per-frame poses we determine, for every (vehicle, pedes-trian) pair in a scene, whether the pedestrian’s trajectory intersects the vehicle’s trajectory; in the special case of a stationary or stopped vehicle, we additionally check whether the pedestrian’s path passes within a small dis-tance of the vehicle. Pairs satisfying either condition constitute crossings. • Braking events : per-frame speed and acceler-ation are computed directly from the cached ego and non-ego poses, and a braking event is defined as any window in which a vehicle’s deceleration exceeds a sustained magnitude threshold. • Cut-in events : from the cached poses we compute, for each non-ego vehicle, its lon-gitudinal and lateral offsets relative to the ego in the ego’s heading frame. A cut-in is de-fined over a sliding window in which the abso-lute lateral offset starts sufficiently large (ve-hicle clearly outside the ego’s lane), decreases nearly-monotonically to a sufficiently small value (vehicle clearly inside the ego’s lane), and the longitudinal offset remains positive and bounded throughout (the vehicle stays ahead of the ego). • Lane change events : using lane connectiv-ity derived from the HD map together with the cached vehicle poses, a lane change is de-fined as a frame window in which a vehicle’s 9pose transitions from one lane polygon to an adjacent, parallel lane polygon. • Left/right turn events : a turn is a special case of an intersection traversal , defined as any window during which a vehicle’s pose lies inside a road-intersection polygon from the HD map. We classify each traversal as 
+
+left , right , or straight using two signals: (i) the vehicle’s yaw rate across the traversal window, and (ii) the shape of the route it took through the intersection. • CCFtap events : built on top of the intersec-tion traversal data, a CCFtap event is defined as a straight -labelled traversal paired with a 
+
+left - or right -labelled traversal in the same intersection over an overlapping time window, subject to a geometric opposite-approach con-straint that requires the two vehicles to have entered the intersection from approximately opposite legs. 
+
+B.4.2 Question-Answer Pair Generation 
+
+We generate questions for three reasoning cate-gories: • Causality : questions that ask why a conflict or risk exists. • Counterfactual : questions that ask what may happen under a changed condition. • Intent prediction : questions that ask about the likely future behavior of a road user. These categories are chosen because they re-quire more than object recognition. Models must reason about interactions between the ego vehi-cle and other road users while locating the view that contains the relevant evidence. For example, a question about a vehicle approaching from the back-left should be grounded in CAM_BACK_LEFT ,not a generic front-facing view. For answer evalua-tion, each question can be instantiated in either a multiple-choice format or a free-form format. The multiple-choice version supports deterministic answer scoring, while the free-form version tests whether models can generate natural explanations without being constrained to predefined options. 
+
+B.4.3 Verification 
+
+The view label is proposed automatically and then manually verified. Annotators inspect all six cam-era views and check that the question is answerable, the proposed golden view contains the required ev-idence, and no other view provides equally direct support. For unsupported examples, annotators ver-ify that none of the six views directly grounds the question. They also verify that the reference answer is visually consistent. Ambiguous samples are re-vised or removed. This process balances scalability with annotation reliability. 
+
+B.4.4 Annotator Training, Recruitment, and Compensation Instructions. Annotators received written anno-tation guidelines before verification. The instruc-tions define the task (golden-view and answer veri-fication), label definitions, adjudication rules, and quality criteria aligned with Section B (Verifica-tion). They state that work involves reviewing pub-lic autonomous-driving camera footage only, with no collection of annotators’ personal data beyond standard employment records, and no physical or psychological risks beyond routine screen-based work. 
+
+Recruitment and payment. We recruited graduate-student annotators through standard recruitment channels. Compensation was provided as hourly pay at rates consistent with comparable graduate research-assistant annotation work. Annotators completed a short training session on the guidelines and pilot examples before inde-pendent labeling. 
+
+Data consent. All scene images come from the public nuScenes dataset (Caesar et al., 2020), used under its published terms of use; we do not col-lect new in-the-wild video from annotators or by-standers. Annotators were informed that their la-bels would be used to build and release a research benchmark derived from nuScenes, and that they should not share raw annotation materials outside the project. 
+
+B.5 Qualitative Case Studies 
+
+We summarize qualitative failure modes through aggregate case-study tables that decompose each prediction by whether the model selects the correct view and whether it answers correctly. 
+
+Analysis. Tables 8 and 9 show that answer cor-rectness and source identification are only par-tially aligned. Across all models, 192 out of 732 multiple-choice trials fall into the wrong-view/correct-answer quadrant, meaning that more 10 Model Front Side Rear None / insufficient View MC Free View MC Free View MC Free View MC Free 
+
+Claude 96.59 96.59 80.68 46.15 80.77 65.38 100.00 50.00 0.00 16.67 33.33 16.67 Gemini 87.50 95.45 78.41 57.69 84.62 73.08 100.00 50.00 50.00 0.00 33.33 16.67 GPT-5.4 88.64 95.45 86.36 53.85 73.08 76.92 100.00 50.00 50.00 0.00 33.33 0.00 InternVL3 73.86 85.23 38.64 38.46 88.46 57.69 100.00 100.00 0.00 0.00 0.00 0.00 Qwen2.5-VL 0.00 80.68 32.95 46.15 73.08 61.54 0.00 100.00 50.00 16.67 66.67 0.00 Qwen3-VL 79.55 73.86 44.32 30.77 50.00 53.85 100.00 0.00 0.00 0.00 50.00 16.67 
+
+Table 6: Per-region analysis across models. Values are accuracies (%) for view identification ( View ), oracle multiple-choice answering ( MC ), and oracle free-form answering judged by an LLM ( Free ). 
+
+Model Causality Counterfactual Intent prediction View MC Free View MC Free View MC Free 
+
+Claude 88.46 92.31 73.08 88.57 94.29 77.14 65.71 80.00 68.57 Gemini 75.00 96.15 75.00 82.86 91.43 74.29 74.29 77.14 71.43 GPT-5.4 82.69 92.31 82.69 82.86 91.43 82.86 62.86 74.29 71.43 InternVL3 55.77 82.69 28.85 74.29 91.43 42.86 62.86 71.43 54.29 Qwen2.5-VL 5.77 82.69 40.38 8.57 85.71 31.43 20.00 65.71 40.00 Qwen3-VL 59.62 69.23 44.23 80.00 74.29 45.71 60.00 54.29 42.86 
+
+Table 7: Per-question-type analysis across models. Values are accuracies (%) for view identification ( View ), oracle multiple-choice answering ( MC ), and oracle free-form answering judged by an LLM ( Free ).                                             
+
+> Model G✓/ MC ✓G✓/ MC ×G×/ MC ✓G×/ MC ×Total Claude 97 312 10 122 Gemini 90 419 9122 GPT-5.4 89 517 11 122 InternVL3 67 10 33 12 122 Qwen2.5-VL 10 386 23 122 Qwen3-VL 56 24 25 17 122 All models 409 49 192 82 732
+
+Table 8: Outcome counts on the 122-question bench-mark, decomposed by golden-view selection (G) and oracle multiple-choice accuracy (MC). Each row sums to 122.                                             
+
+> Model G✓/ Free ✓G✓/ Free ×G×/ Free ✓G×/ Free ×Total Claude 81 19 814 122 Gemini 75 19 15 13 122 GPT-5.4 79 15 18 10 122 InternVL3 29 48 20 25 122 Qwen2.5-VL 7639 70 122 Qwen3-VL 38 42 16 26 122 All models 309 149 116 158 732
+
+Table 9: Outcome counts on the 122-question bench-mark, decomposed by golden-view selection (G) and oracle free-form accuracy judged by an LLM (Free). Each row sums to 122. 
+
+than one quarter of model-example pairs produce the right option despite selecting the wrong evi-dence source. This pattern is especially pronounced for Qwen2.5-VL, where 86 multiple-choice an-swers are correct despite an incorrect view, suggest-ing that answer-only evaluation would substantially overestimate grounded reasoning for this model. Free-form answering reduces but does not remove this effect: 116 trials remain wrong-view/free-form-correct, while 149 trials are correct-view/free-form-wrong, indicating that free generation exposes both evidence misattribution and downstream reasoning failures. Table 6 further shows that view localization is not uniformly difficult across camera regions. Most models perform much better on front and rear views than on side views, where adjacent-camera ambi-guity and partial actor visibility are more common. The N ONE /insufficient-evidence cases are partic-ularly challenging: even strong proprietary mod-els rarely abstain correctly, which supports includ-ing unsupported examples as a diagnostic stress test rather than treating all questions as answer-able by construction. Table 7 shows a comple-mentary pattern across reasoning types. Oracle multiple-choice accuracy remains relatively high for many models, but view identification drops on intent-prediction questions for several systems, suggesting that forecasting-oriented questions re-quire models to identify subtle interaction evidence rather than only salient objects. Together, these tables support the central claim of the benchmark: final-answer accuracy alone conflates visual-source localization, answer reasoning, and abstention be-havior. 11 C Prompts 
+
+We provide the prompt templates used for model inference and for grading free-form answers. Each instance is constructed from a benchmark item: the natural-language question q, metadata such as task type τ and horizon h, and—depending on the setting—either a single reference image or the set of synchronized multi-view frames at one nuScenes keyframe. Bracketed placeholders in the boxes below (e.g., <question> ) denote fields filled per instance at runtime. The candidate camera set is 
+
+C = { CAM FRONT , CAM FRONT LEFT ,
+
+CAM FRONT RIGHT , CAM BACK ,
+
+CAM BACK LEFT , CAM BACK RIGHT ,
+
+NONE }
+
+where N ONE indicates that no provided view ad-equately supports the question. In the multiple-choice setting, the model must select one option identifier from a question-specific list O; we score predictions by exact match to the gold identifier. Free-form responses are evaluated with a separate LLM judge (Section C.4). 
+
+Multimodal message format. For API-based models, the user turn contains the textual prompt followed by each candidate view preceded by its channel name. For local vision–language models that accept an ordered image list, the user prompt states the channel order explicitly; images are in-serted in that order (excluding N ONE ). All infer-ence prompts request structured JSON; schemas ap-pear in Section C.5. We use temperature 0 for view-selection and joint-prediction calls unless noted otherwise in the main text. 
+
+C.1 Camera View Selection 
+
+The model observes all synchronized views at timestamp t and predicts the channel c⋆ ∈ C whose field of view best exhibits the evidence required to answer q.
+
+View selection — system                           
+
+> You are selecting the single best camera view from synchronized nuScenes images. Rules: -Use only the provided images and question text. - Choose exactly one best_camera_channel from the provided candidate channels. -Prefer the single camera that most directly shows the visual evidence needed to answer the benchmark question. - If none of the provided camera views directly grounds the question, choose NONE_OF_THE_ABOVE. -If several views are useful, choose the one with the clearest visibility of the key object, action, or constraint. - Keep the rationale short and grounded in visible evidence.
+
+View selection — user                            
+
+> Question ID: <question_id> Task type: <task_type> Original question text: <original_question> Benchmark question: <question> Annotated frame: <frame_index> Choose the single camera channel that best shows the scenario or visual evidence needed to answer the benchmark question from this synchronized timestamp. Choose NONE_OF_THE_ABOVE only if none of the provided camera views directly grounds the question. Candidate camera channels: - <channel_1> - <channel_2> . . . Return the best_camera_channel, a short rationale, visible evidence, and aconfidence score.
+
+C.2 Grounded QA with Oracle View 
+
+The model receives only the human-annotated gold-view image Icgold and answers q. This setting iso-lates reasoning given correct visual grounding. 12 C.2.1 Multiple-choice Oracle QA (MC) — system 
+
+You are answering a single-frame driving benchmark question. Rules: - Use only the provided image and question text. - Do not use scene-level future knowledge beyond what can reasonably be inferred from the current frame. - Choose exactly one answer_id from the provided options. - If the image does not support a confident decision, choose insufficient_evidence. - Keep the rationale short and grounded in visible evidence. 
+
+Oracle QA (MC) — user 
+
+Question ID: <question_id> Task type: <task_type> Time horizon: <horizon> seconds Question: <question> Options: - <option_id_1>: <option_text_1> - <option_id_2>: <option_text_2> . . . Return the best answer_id, a short rationale, visible evidence, and aconfidence score. 
+
+C.2.2 Free-form Oracle QA (free-form) — system 
+
+You are answering a single-frame driving benchmark question. Rules: - Use only the provided image and question text. - Do not use scene-level future knowledge beyond what can reasonably be inferred from the current frame. - Write a concise free-form answer in your own words. Do not pick from a fixed option list. - If the image does not support aconfident decision, say clearly that there is insufficient evidence. - Keep the rationale short and grounded in visible evidence. 
+
+Oracle QA (free-form) — user 
+
+Question ID: <question_id> Task type: <task_type> Time horizon: <horizon> seconds Question: <question> No multiple-choice options are provided. Return a concise free-form answer, ashort rationale, visible evidence, and a confidence score. 
+
+C.3 Joint View Selection and Answering 
+
+In a single forward pass the model predicts (c⋆, a ):the supporting view and the answer to q, along with a brief rationale tied to c⋆. The multimodal input format follows Section C.1. 
+
+C.3.1 Multiple-choice Joint prediction (MC) — system 
+
+You are answering a synchronized multi-camera nuScenes driving benchmark question. Rules: - Use only the provided images and question text. - Do not use scene-level future knowledge beyond what can reasonably be inferred from the current timestamp. - Return JSON only with keys Golden_view, Answer, and Rationale. - Golden_view: choose exactly one camera channel from the provided candidates that best shows the visual evidence needed to answer the question. Use NONE_OF_THE_ABOVE only if none of the provided views directly grounds the question. - Answer: choose exactly one answer_id from the provided options. Use insufficient_evidence if no view supports a confident decision. - Rationale: briefly explain which visible evidence in your chosen Golden_view supports your Answer. 
+
+13 Joint prediction (MC) — user 
+
+Question ID: <question_id> Task type: <task_type> Original question text: <original_question> Benchmark question: <question> Time horizon: <horizon> seconds Annotated frame: <frame_index> From the synchronized camera images at this timestamp: 1. Pick Golden_view: the single camera channel that best shows the visual evidence for answering the question (or NONE_OF_THE_ABOVE if none apply). 2. Pick Answer: the best answer_id from the options below. 3. Write Rationale: short explanation grounded in what is visible in Golden_view. Candidate camera channels: - <channel_1> . . . Options: - <option_id_1>: <option_text_1> . . . Return JSON with exactly these keys: Golden_view, Answer, Rationale. 
+
+C.3.2 Free-form Joint prediction (free-form) — system 
+
+You are answering a synchronized multi-camera nuScenes driving benchmark question. Rules: - Use only the provided images and question text. - Do not use scene-level future knowledge beyond what can reasonably be inferred from the current timestamp. - Return JSON only with keys Golden_view, Answer, and Rationale. - Golden_view: choose exactly one camera channel from the provided candidates that best shows the visual evidence needed to answer the question. Use NONE_OF_THE_ABOVE only if none of the provided views directly grounds the question. - Answer: write a concise free-form answer in your own words. Do not pick from a fixed option list. If no view supports a confident decision, say clearly that there is insufficient evidence. - Rationale: briefly explain which visible evidence in your chosen Golden_view supports your Answer. 
+
+Joint prediction (free-form) — user 
+
+Question ID: <question_id> Task type: <task_type> Original question text: <original_question> Benchmark question: <question> Time horizon: <horizon> seconds Annotated frame: <frame_index> From the synchronized camera images at this timestamp: 1. Pick Golden_view: the single camera channel that best shows the visual evidence for answering the question (or NONE_OF_THE_ABOVE if none apply). 2. Write Answer: a concise free-form answer in your own words (no option list). 3. Write Rationale: short explanation grounded in what is visible in Golden_view. Candidate camera channels: - <channel_1> . . . Return JSON with exactly these keys: Golden_view, Answer, Rationale. 
+
+C.4 LLM Judge for Free-Form Answers 
+
+Free-form predictions are graded by a separate vision–language model prompted as a semantic evaluator. The judge receives q, the gold refer-ence answer, the model’s free-form answer, and optionally the model’s rationale. When a frame is provided, we use the image at the predicted view for joint-setting outputs and the gold-view image for oracle-setting outputs, so that grading reflects the visual context the answer claims to rely on. Multiple-choice predictions are not sent to this judge; they are scored by identifier-level exact match. 14 Answer grading — system 
+
+You are grading a free-form driving benchmark answer. Decide whether the predicted answer is correct with respect to the gold reference answer for the same question. Evaluation rules: 1. Primary criterion: semantic equivalence to the gold reference answer. 2. Ignore minor wording differences, paraphrases, singular/plural variation, and equivalent expressions. 3. Be strict on factual content; be lenient on phrasing. 4. When an image is provided, the predicted answer must also be plausibly supported by visible evidence in that frame. If the text matches gold but is clearly unsupported by the image, mark incorrect. 5. If both predicted and gold answers clearly indicate insufficient evidence, and the image does not contradict that, mark correct (verdict: insufficient_evidence_ok). 6. If the predicted answer contradicts the gold answer, mark incorrect. Return JSON only with: - correct: 1 if correct, 0 if incorrect - verdict: one of correct, incorrect, insufficient_evidence_ok - reason: short explanation grounded in the comparison (and image when provided) 
+
+Answer grading — user 
+
+Question ID: <question_id> Task type: <task_type> Question: <question> Gold reference answer: <gold_answer> Predicted answer: <predicted_answer> Predicted rationale: <predicted_rationale> Return JSON with keys: correct (0 or 1), verdict, and reason. 
+
+C.5 Structured Response Formats 
+
+Models are instructed to return JSON objects with the fields below. Enumerated fields are instantiated per question (e.g., option identifiers or channels in 
+
+C). Providers that support strict JSON schema use these definitions directly; otherwise the required keys are repeated in the system prompt. 
+
+Schema: view selection 
+
+{"best_camera_channel": "<enum over 
+
+C>", "confidence": <float ∈ [0 , 1] >, "visible_evidence": ["<string>", . . . ], "rationale": "<string>" }
+
+Schema: oracle QA (multiple-choice) 
+
+{"answer_id": "<enum over O>", "confidence": <float ∈ [0 , 1] >, "visible_evidence": ["<string>", . . . ], "rationale": "<string>" }
+
+Schema: oracle QA (free-form) 
+
+{"answer": "<string>", "confidence": <float ∈ [0 , 1] >, "visible_evidence": ["<string>", . . . ], "rationale": "<string>" }
+
+Schema: joint prediction (multiple-choice) 
+
+{"Golden_view": "<enum over C>", "Answer": "<enum over O>", "Rationale": "<string>" }
+
+Schema: joint prediction (free-form) 
+
+{"Golden_view": "<enum over C>", "Answer": "<string>", "Rationale": "<string>" }
+
+15 Schema: answer grading     
+
+> {"correct": 0 | 1, "verdict": "correct" |"incorrect" |"insufficient_evidence_ok", "reason": "<string>" }
+
+D AI Disclosure 
+
+AI writing assistance was used only for proofread-ing and formatting support. All scientific content, experiments, analyses, and conclusions were pro-duced and verified by the authors. 16
