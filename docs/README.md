@@ -6,77 +6,85 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-14
-- 运行时间：2026-06-14 21:38:13 UTC
+- 最新运行日期：2026-06-15
+- 运行时间：2026-06-15 23:12:24 UTC
 - 运行状态：成功
-- 本次总论文数：19
-- 精读区：7
+- 本次总论文数：21
+- 精读区：9
 - 速读区：12
 
 ### 今日简报（AI）
-今日收录19篇，7篇精读，重点关注注意力机制在结构优化与理论框架上的突破。最值得看的是满分论文《MiniMax Sparse Attention》和9分论文《Hasse Diagrams for Attention》，前者提出高效稀疏注意力，后者用偏序框架设计Transformer掩码。建议优先精读这两篇，并留意速读中关于注意力同步动力学与多模态上下文学习的创新方向。
-- 详情：[/202606/14/README](/202606/14/README)
+今日精选21篇论文，精读9篇，重点关注稀疏注意力与跨模态建模的前沿突破。  
+最值得关注的是满分论文《MiniMax Sparse Attention》与《HiST: A Hierarchical Sparse Transformer》，分别从高效稀疏注意力机制和跨模态空间转录组学建模给出创新方案。  
+建议普通读者优先精读这两篇满分工作，并速读《RoVE》与《Multi-Turn Reasoning》以拓展对位置编码和多步推理的理解。
+- 详情：[/202606/15/README](/202606/15/README)
 
 ### 精读区论文标签
-1. [MiniMax Sparse Attention](/202606/14/2606.13392v1-minimax-sparse-attention)  
+1. [MiniMax Sparse Attention](/202606/15/2606.13392v2-minimax-sparse-attention)  
    标签：评分：10.0/10、query:sparse-attn
-   evidence：直接提出面向Transformer的稀疏注意力机制
-2. [Hasse Diagrams for Attention: A Partial Order Framework for Designing Transformer Masks](/202606/14/2606.09951v1-hasse-diagrams-for-attention-a-partial-order-framework-for-designing-transformer-masks)  
+   evidence：面向Transformer的块稀疏注意力机制
+2. [HiST: A Hierarchical Sparse Transformer for Cross-Modal Spatial Transcriptomics Modeling](/202606/15/2606.14251v1-hist-a-hierarchical-sparse-transformer-for-cross-modal-spatial-transcriptomics-modeling)  
+   标签：评分：10.0/10、query:sparse-attn
+   evidence：分层稀疏Transformer结合稀疏窗口注意力
+3. [CORA: Analyzing and bridging thinking-answer gap in Multimodal RLVR via Consistency-Oriented Reasoning Alignment](/202606/15/2606.14691v1-cora-analyzing-and-bridging-thinking-answer-gap-in-multimodal-rlvr-via-consistency-oriented-reasoning-alignment)  
+   标签：评分：10.0/10、query:mm-cot
+   evidence：面向一致性的推理对齐用于多模态RLVR，解决思考-答案不一致
+4. [Are Reasoning Vision-Language Models Robust to Semantic Visual Distractions?](/202606/15/2606.08894v1-are-reasoning-vision-language-models-robust-to-semantic-visual-distractions)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：评估推理型VLM对语义视觉干扰的鲁棒性
+5. [Inside the Latent Flow: Causal Deciphering of Attention Dynamics in Audio Separation Foundation Models](/202606/15/2606.10046v1-inside-the-latent-flow-causal-deciphering-of-attention-dynamics-in-audio-separation-foundation-models)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：通过Hasse图为稀疏模式设计注意力掩码的理论框架
-3. [Towards Deep Contextual Reasoning from Broad Descriptions for ASR with Speech-LLM via Metadata-Driven Reasoning Chains](/202606/14/2606.10838v1-towards-deep-contextual-reasoning-from-broad-descriptions-for-asr-with-speech-llm-via-metadata-driven-reasoning-chains)  
+   evidence：针对音频模型的层选择性注意力缓存
+6. [Attention Amnesia in Hybrid LLMs: When CoT Fine-Tuning Breaks Long-Range Recall, and How to Fix It](/202606/15/2606.11052v1-attention-amnesia-in-hybrid-llms-when-cot-fine-tuning-breaks-long-range-recall-and-how-to-fix-it)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：利用视频元数据的语音大模型链式思维推理
-4. [InternVideo3: Agentify Foundation Models with Multimodal Contextual Reasoning](/202606/14/2606.12195v1-internvideo3-agentify-foundation-models-with-multimodal-contextual-reasoning)  
+   evidence：CoT微调降低长程召回并提出修复方案
+7. [Bridging Modal Isolation in Interleaved Thinking: Supervising Modality Transitions via Stepwise Reinforcement](/202606/15/2606.12886v1-bridging-modal-isolation-in-interleaved-thinking-supervising-modality-transitions-via-stepwise-reinforcement)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：多模态链式思维推理
-5. [Bridging Modal Isolation in Interleaved Thinking: Supervising Modality Transitions via Stepwise Reinforcement](/202606/14/2606.12886v1-bridging-modal-isolation-in-interleaved-thinking-supervising-modality-transitions-via-stepwise-reinforcement)  
+   evidence：多模态逐步推理与模态转换监督
+8. [Beyond the Commitment Boundary: Probing Epiphenomenal Chain-of-Thought in Large Reasoning Models](/202606/15/2606.13603v1-beyond-the-commitment-boundary-probing-epiphenomenal-chain-of-thought-in-large-reasoning-models)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：通过逐步强化学习解决多模态长链推理中的模态隔离问题
-6. [ChronoPhyBench: Do MLLMs Truly Understand the World or Merely Exploit Language Priors?](/202606/14/2606.07962v1-chronophybench-do-mllms-truly-understand-the-world-or-merely-exploit-language-priors)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：探测多模态推理的跨模态理解基准
-7. [SVoT: State-aware Visualization-of-Thought for Spatial Reasoning via Reinforcement Learning](/202606/14/2606.11770v1-svot-state-aware-visualization-of-thought-for-spatial-reasoning-via-reinforcement-learning)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：多模态推理结合思维链与可视化
+   evidence：探测链式思维步骤的因果重要性
+9. [SuperThoughts: Reasoning Tokens in Superposition](/202606/15/2606.13862v1-superthoughts-reasoning-tokens-in-superposition)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：压缩CoT推理token以加速
 
 ### 速读区论文标签
-1. [Inside the Latent Flow: Causal Deciphering of Attention Dynamics in Audio Separation Foundation Models](/202606/14/2606.10046v2-inside-the-latent-flow-causal-deciphering-of-attention-dynamics-in-audio-separation-foundation-models)  
+1. [RoVE: Rotary Value Embeddings Attention for Relative Position-dependent Value Pathways](/202606/15/2606.11275v1-rove-rotary-value-embeddings-attention-for-relative-position-dependent-value-pathways)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：提出层选择注意力缓存用于高效Transformer推理
-2. [Task-Aware Structured Memory for Dynamic Multi-modal In-Context Learning](/202606/14/2606.11853v1-task-aware-structured-memory-for-dynamic-multi-modal-in-context-learning)  
+   evidence：旋转值嵌入使注意力具有位置敏感性,提升效率
+2. [On Subquadratic Architectures: From Applications to Principles](/202606/15/2606.12364v1-on-subquadratic-architectures-from-applications-to-principles)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：面向多模态上下文学习的任务感知结构化记忆压缩，解决KV缓存开销
-3. [Attention by Synchronization in Coupled Oscillator Networks](/202606/14/2606.12059v1-attention-by-synchronization-in-coupled-oscillator-networks)  
+   evidence：比较亚二次架构作为变压器中二次注意力的高效替代方案
+3. [Multi-Turn Reasoning When Context Arrives in Pieces: Scalable Sharding and Memory-Augmented RL](/202606/15/2606.12941v1-multi-turn-reasoning-when-context-arrives-in-pieces-scalable-sharding-and-memory-augmented-rl)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：多轮推理结合记忆增强
+4. [MiniPIC: Flexible Position-Independent Caching in <100LOC](/202606/15/2606.13126v1-minipic-flexible-position-independent-caching-in-100loc)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：基于振荡器同步的新型高效注意力机制
-4. [Doc-to-Atom: Learning to Compile and Compose Memory Atoms](/202606/14/2606.12400v1-doc-to-atom-learning-to-compile-and-compose-memory-atoms)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：通过语义原子进行参数化记忆压缩，降低长文档注意力开销
-5. [RAPID: Layer-Wise Redundancy-Aware Pruning and Importance-Driven Token Merging for Efficient ViT](/202606/14/2606.08156v1-rapid-layer-wise-redundancy-aware-pruning-and-importance-driven-token-merging-for-efficient-vit)  
+   evidence：面向LLM推理的位置无关KV缓存
+5. [Momentum for Reasoning: Dense Intrinsic Signals in Policy Optimization](/202606/15/2606.08815v1-momentum-for-reasoning-dense-intrinsic-signals-in-policy-optimization)  
+   标签：评分：7.0/10、query:mm-cot
+   evidence：通过密集内在奖励信号进行长链推理
+6. [ARM: An AutoRegressive Large Multimodal Model with Unified Discrete Representations](/202606/15/2606.11188v1-arm-an-autoregressive-large-multimodal-model-with-unified-discrete-representations)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：统一多模态自回归模型与离散表示
+7. [Doc-to-Atom: Learning to Compile and Compose Memory Atoms](/202606/15/2606.12400v1-doc-to-atom-learning-to-compile-and-compose-memory-atoms)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：针对ViT的token减少实现高效自注意力
-6. [Temporal-Aware Reasoning Optimization for Video Temporal Grounding](/202606/14/2606.09248v1-temporal-aware-reasoning-optimization-for-video-temporal-grounding)  
-   标签：评分：7.0/10、query:mm-cot
-   evidence：时间感知推理优化用于视频时间定位
-7. [Reason Twice: Segmentation via Candidate Discovery and Comparative Reasoning](/202606/14/2606.09303v1-reason-twice-segmentation-via-candidate-discovery-and-comparative-reasoning)  
-   标签：评分：7.0/10、query:mm-cot
-   evidence：多步视觉推理用于分割
-8. [ActiveMem: Distributed Active Memory for Long-Horizon LLM Reasoning](/202606/14/2606.10532v1-activemem-distributed-active-memory-for-long-horizon-llm-reasoning)  
-   标签：评分：7.0/10、query:mm-cot
-   evidence：用于长视界LLM推理的分布式主动记忆
-9. [Decoupling Semantics and Logic: A Training-Free Coarse-to-Fine Pipeline for Video Retrieval-Augmented Generation](/202606/14/2606.07924v1-decoupling-semantics-and-logic-a-training-free-coarse-to-fine-pipeline-for-video-retrieval-augmented-generation)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：无训练视频RAG流水线，解耦语义检索和逻辑推理
-10. [Where Does the Answer Come From? Benchmarking View-Level Visual Evidence Identification in Multi-View MLLMs for Autonomous Driving](/202606/14/2606.09644v1-where-does-the-answer-come-from-benchmarking-view-level-visual-evidence-identification-in-multi-view-mllms-for-autonomous-driving)  
+   evidence：组合记忆原子用于高效长上下文推理
+8. [PRISMR: Overcoming Parse Collapse in Multimodal Listwise Ranking via Parameterized Representation Internalization](/202606/15/2606.12942v1-prismr-overcoming-parse-collapse-in-multimodal-listwise-ranking-via-parameterized-representation-internalization)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：多模态长上下文排序与参数化表示内化
+9. [AudioProcessBench: Benchmark for Identifying Process Errors in Audio-Grounded Reasoning](/202606/15/2606.09925v1-audioprocessbench-benchmark-for-identifying-process-errors-in-audio-grounded-reasoning)  
    标签：评分：6.0/10、query:mm-cot
-   evidence：多模态视觉证据识别基准
-11. [ARM: An AutoRegressive Large Multimodal Model with Unified Discrete Representations](/202606/14/2606.11188v1-arm-an-autoregressive-large-multimodal-model-with-unified-discrete-representations)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：统一图像理解、生成和编辑的自回归多模态模型
-12. [Mind the Perspective: Let's Reason Recursively for Theory of Mind](/202606/14/2606.11724v1-mind-the-perspective-lets-reason-recursively-for-theory-of-mind)  
+   evidence：音频推理步骤级过程错误识别基准
+10. [The Periodic Table of LLM Reasoning: A Structured Survey of Reasoning Paradigms, Methods, and Failure Modes](/202606/15/2606.11470v1-the-periodic-table-of-llm-reasoning-a-structured-survey-of-reasoning-paradigms-methods-and-failure-modes)  
    标签：评分：6.0/10、query:mm-cot
-   evidence：用于嵌套信念推理的递归推理框架
+   evidence：包含思维链的推理范式结构化综述
+11. [Kuramoto Attention: Synchronizing Self-Attention on the Torus](/202606/15/2606.11585v1-kuramoto-attention-synchronizing-self-attention-on-the-torus)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：基于角度表示的新型自注意力机制
+12. [Beyond Fully Random Masking: Attention-Guided Denoising and Optimization for Diffusion Language Models](/202606/15/2606.12273v1-beyond-fully-random-masking-attention-guided-denoising-and-optimization-for-diffusion-language-models)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：注意力引导的优化提升生成效率
 
 
 <div class="dpr-home-promo-card">

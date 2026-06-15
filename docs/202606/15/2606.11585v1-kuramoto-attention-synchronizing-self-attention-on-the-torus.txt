@@ -1,0 +1,468 @@
+Title: Kuramoto Attention: Synchronizing Self-Attention on the Torus
+
+URL Source: https://arxiv.org/pdf/2606.11585v1
+
+Published Time: Thu, 11 Jun 2026 00:31:19 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Kuramoto Attention: Synchronizing Self-Attention on the Torus 
+
+Joshua Nunley joshnunl@iu.edu Department of Informatics, Luddy School of Informatics, Computing, and Engineering Cognitive Science Program Indiana University Bloomington 
+
+# Abstract 
+
+We introduce Kuramoto attention , a self-attention layer in which each hidden coordinate is an angle. The layer scores tokens by gated cosine similarity, attends over previous phase states, and updates each token by the tangent component of the attention-weighted circular mean. Because the values are the raw phase states, this update is exactly the Kuramoto coupling term ∑ 
+
+> u
+
+At,u sin (θu −θt), with the attention matrix acting as an adaptive, content-dependent coupling kernel. Equivalently, the gated score is a learned metric on the torus that selects which tokens couple, and the update pulls each token toward the circular mean of the tokens it selects, tightening their phase agreement. The same two ingredients, an invariant similarity score and an on-manifold mean, define such a layer on any compact group; the torus is the abelian case, where both are closed-form. The softmax weights solve an entropy-regularized phase-retrieval problem, and rotary position enters as a position-dependent phase drift in the score. On enwiki8 character-level language modeling, the layer trains as a functional language model whose bits-per-character stays close to a strong matched RoPE+SwiGLU transformer: within 0.02 BPC at one million parameters ( 1.637 ± 0.010 versus 1.616 ± 0.004 ) and level on the median at five million ( 1.448 versus 1.452 over five seeds) with the transformer ahead on the mean ( 1.468 versus 1.456 ). These experiments establish that the constrained geometric structure is a viable language model at this scale; the structure itself, and its synchronization reading, is the contribution. Ablations isolate the load-bearing components, and the result gives a compact bridge between self-attention and phase synchronization. 
+
+# 1 Introduction 
+
+Self-attention is conventionally described as content-based retrieval (Vaswani et al., 2017): queries and keys produce a softmax weighting, and values are averaged. We introduce a self-attention layer whose hidden state is phase-valued, a bank of phase oscillators on a torus, and we design its value update so that the layer computes an adaptive Kuramoto synchronization step. In this step, each oscillator is pulled toward the attention-weighted circular mean of the oscillators it attends to, and the softmax attention matrix acts as a content-dependent coupling kernel. Because the values are the raw phases, the value update equals the Kuramoto coupling term ∑ 
+
+> u
+
+At,u sin (θu −θt)
+
+exactly (Theorem 1); the softmax weights solve an entropy-regularized phase-retrieval problem (Theorem 2). These weights are the assignment that best matches each token’s phases to its neighbors’ while staying as spread out as an entropy penalty allows, which means that the layer first selects neighbors and then synchronizes with them. Rotary position enters as a position-dependent phase drift in the score (Section 3), and for this layer that drift reads as the natural frequencies of the Kuramoto model; as in a transformer, it is a positional choice and not part of the core layer. On enwiki8 the layer trains as a functional character-level language model whose validation BPC stays close to a matched transformer: level on the median at five million parameters ( 1.448 versus 1.452 over five seeds) with the transformer ahead on the mean ( 1.468 versus 1.456 ), and within 0.02 BPC at one million ( 1.637 ± 0.010 versus 1.616 ± 0.004 ). Ablations isolate the load-bearing 1
+
+> arXiv:2606.11585v1 [cs.LG] 10 Jun 2026
+
+components. The contribution is the structure and its synchronization reading; these experiments show the structure is a viable language model at a non-trivial scale and task. 
+
+Contributions. 
+
+1. A new attention layer. We introduce Kuramoto attention, a self-attention layer whose hidden state is phase-valued and lives on a torus. Its values are geometry-native, since the values are the raw phase states themselves and are not learned projections, and its increment is bounded so that every update stays on the torus (Section 2). 2. The Kuramoto identity. Because its values are the raw phases, its value update is exactly Kuramoto coupling, at every step, with the softmax attention matrix as the coupling kernel (Theorem 1). 3. Selection and synchronization are one coherence. The softmax weights solve an entropy-regularized phase-retrieval problem (Theorem 2), so the layer selects a soft set of neighbors. The score reads this coherence under a learned metric, and the value update follows the same coherence to pull each token toward its selected neighbors, so selection and synchronization are two aspects of one object (Theorem 3, which holds for fixed A; because A depends on the phases, the full layer is not a single gradient flow). 4. Rotary position as phase drift. Rotary embedding, the positional encoding we use, enters as a position-dependent phase drift in the score, and this drift reads as the natural frequencies of the Kuramoto model. As in a transformer it is an optional positional choice, separate from the core layer, and its score-only placement is the natural one (Remark 1). 5. A multiplicative value path. Kuramoto attention has no dense value or output projection, and it carries no coordinate’s value additively into another’s update: the values mix only multiplicatively, through the gates and the per-coordinate value gate, with additive value mixing left to the feed-forward block. The gates that set those per-coordinate scalars are themselves dense readouts of all phases; they act on the update multiplicatively. This is a marked departure from standard attention (Section 3.5). 6. A functional layer, with ablations. As a character-level language model on enwiki8 the layer reaches BPC close to a matched transformer (level on the median at five million, within 0.02 BPC at one million), which shows the constrained structure is a viable language model, and ablations isolate the contribution of each component (Sections 4 and 4.3). Geshkovski et al. (Geshkovski et al., 2023; 2024) analyze standard attention and prove that it clusters only asymptotically, and oscillator-attention models such as AKOrN (Miyato et al., 2025) add Kuramoto dynamics to attention by design. We design a phase-state attention layer whose value update is exactly an adaptive Kuramoto step at every layer, and we show that this layer is a functional language model performing close to a standard transformer on a character-level task. The synchronization is the layer’s own value update, so it requires no added oscillator machinery. 
+
+# 2 Kuramoto Attention 
+
+We model each token’s hidden state as a vector of phases θ ∈ Rk/(2 πZ)k, i.e. a bank of k unit oscillators eiθ j .A layer maps a sequence of phase states to phase increments through three stages: a gated similarity score, a circular-mean value update, and a bounded feed-forward block. Tokens are embedded as learned phases and logits are read out by phase alignment. 2The layer at a glance. Writing ψ(θ) = ( cos θ, sin θ) for the lift and ρ for a positive gate, the layer maps the phases of token t, coordinate j, to updated phases by 
+
+gqt = ρ(Wq ψ(θt)), gkt = ρ(Wk ψ(θt)),st,u = τ√k
+
+∑ 
+
+> j
+
+gqt,j gku,j cos (θt,j − θu,j + ωj (t − u)), At, · = softmax u≤t st, ·,Gt,j = ∑ 
+
+> u≤t
+
+At,u eiθ u,j , at,j = − sin θt,j Re Gt,j + cos θt,j Im Gt,j ,θt ← θt + bound (v(θt) ⊙ at
+
+),θt ← θt + bound (SwiGLU( θt)).
+
+(1) The two residual updates are applied in turn. The subsections below define each line, and Section 3 reads them as synchronization. 
+
+2.1 Gated phase similarity 
+
+Each token produces positive query and key gates from its phase features ψ(θ) = ( cos θ, sin θ) (the ( cos , sin )
+
+lift used throughout), 
+
+gqt = ρ(Wq ψ(θt)), gkt = ρ(Wk ψ(θt)),
+
+with ρ = softplus followed by mean normalization ( ¯g = g/ mean (g)). The score combines the gates with the native torus cosine kernel and a rotary phase advance ωj (t − u) with learned per-coordinate rates ωj :
+
+st,u = τ
+
+√k
+
+∑
+
+> j
+
+gqt,j gku,j cos (θt,j − θu,j + ωj (t − u)), A = softmax u
+
+(st,u 
+
+)
+
+with causal masking. Position enters only here, through the score, as the per-coordinate phase drift ωj (t − u);the rest of the layer, and all of its synchronization structure, is independent of position. We use rotary position for this drift, with learned per-coordinate rates ωj , and setting ω ≡ 0 recovers the bare torus cosine kernel (Section 3). 
+
+Score and value update share one coherence. The score and the value update are both built from a single quantity, namely the pairwise phase coherence ∑ 
+
+> j
+
+cos (θt,j − θu,j ). The score reads this coherence under a learned metric, and in doing so it selects which tokens couple. The gates gq gk supply that metric, because they are a position-dependent, per-coordinate weighting that forms a diagonal metric on Tk (Section B), and this metric is shared across layers. The value update below follows the same coherence: it pulls each token toward the attention-weighted circular mean of the tokens it selects, and so synchronizes their phases. Section 3 develops this shared structure (Theorem 3). 
+
+2.2 Circular-mean value update 
+
+Values are the raw phase states, and they are not learned projections. We write Gt,j = ∑ 
+
+> u
+
+At,u eiθ u,j for the attention-weighted resultant. This resultant is the circular mean of the attended phases. Viewed as a point in the complex plane, its argument is the mean phase and its modulus measures how closely the attended phases agree. The update then moves θt,j toward this mean. The increment is the tangent component of Gt,j 
+
+at the current phase, which we obtain as follows. The unit tangent to the circle at θt,j is (− sin θt,j , cos θt,j ),and projecting Gt,j = (Re Gt,j , Im Gt,j ) onto this tangent gives 
+
+at,j = − sin θt,j Re Gt,j + cos θt,j Im Gt,j .
+
+Equivalently, writing the phase as the unit phasor zt,j = eiθ t,j so that Gt,j = ∑ 
+
+> u
+
+At,u zu,j , this projection is the imaginary part of a single complex product, at,j = Im (zt,j Gt,j 
+
+), from which |at,j | ≤ | Gt,j | ≤ 1 follows at once. This increment keeps the motion on the torus, because it advances the angle along the circle, and Theorem 1 shows that this increment equals the Kuramoto coupling term. A per-coordinate value gate v = v(θt) scales a. The gate is a signed, linear readout of the phase features, so a positive entry pulls a coordinate toward the attended circular mean and a negative entry pushes it away; it is a learned, 3content-dependent coupling strength, positive for synchronization and negative for repulsion. A tanh bound then keeps the phase increment within a learned radius. The bound is norm-matched, which means that small increments are scaled by the learned radius and otherwise left in proportion, while large increments are compressed toward this radius, so the saturating nonlinearity caps the step size without distorting the relative sizes of typical updates. The bounded increment is added to the state, θ ← θ + bound( v ⊙ a).
+
+2.3 Feed-forward block 
+
+A SwiGLU feed-forward block produces a second, bounded increment that relocates the state between layers. The block acts in local phase coordinates, since the angles θ are its input features and its output is a per-coordinate angular increment, θ ← θ + bound (SwiGLU (θ)). Layers are residual in the phase state. This block is the standard transformer feed-forward network in phase coordinates, and it is the one component not built from the geometry. It is non-geometric in a precise sense: it reads the raw angle θ as its input, where every other component reads the ( cos , sin ) lift, so its output depends on the representative chosen for a phase ( θ versus θ + 2 π) and it is not a function on the torus. The feed-forward block alone breaks the periodicity that the rest of the layer respects, and a variant that acts on the lift is the natural geometry-native replacement. Section 3.5 returns to it as the only block that mixes the embedding values additively. 
+
+No normalization layer. A transformer interleaves attention with a normalization layer that rescales the residual stream (Ba et al., 2016; Zhang & Sennrich, 2019); RMSNorm projects each token onto a sphere of fixed radius, a constraint the normalized transformer makes explicit (Loshchilov et al., 2024). Kuramoto attention places the hidden state on Tk by construction, because every coordinate keeps unit modulus at every layer, and each update adds a bounded increment to the angles. On the flat torus the exponential map at θ is the addition θ 7 → θ + X of a tangent vector X, so adding the increment is exactly this exponential map, a retraction onto the torus for whatever tangent vector the update forms, here the gated and bounded Kuramoto step bound (v ⊙ a). The torus is the per-coordinate analogue of that sphere, and it is built into the state itself, so the network uses no normalization layer. The increment bound supplies the scale control that a normalization gain would otherwise provide. 
+
+2.4 Phase-alignment readout 
+
+Logits score each vocabulary item by phase alignment against a learned prototype phase ϕv , ℓv ∝ ∑ 
+
+> j
+
+cos (θj −
+
+ϕv,j ).
+
+Design summary. The model has four components. The gated similarity produces the coupling weights, the phase-valued circular-mean update revises the phases, the increment bounding supplies stability, and the feed-forward block performs the between-layer mixing. Section 3 reads these components as synchronization, and Section 4.3 quantifies every component. 
+
+# 3 The Synchronization View 
+
+The layer has a simple reading. The softmax selects which past tokens a token attends to, and the value update then synchronizes the token’s phases with the selected ones. We make three pieces of this reading precise. We show that the value update is exactly Kuramoto coupling, that the softmax is entropy-regularized retrieval, and that rotary position acts as a phase drift. Throughout, we write Gt,j = ∑ 
+
+> u
+
+At,u eiθ u,j for the attention-weighted resultant. This resultant is the weighted sum of the attended unit vectors eiθ u,j , read as a planar vector. Its argument is the circular mean of those phases, and its length ∥Gt,j ∥ ∈ [0 , 1] measures how closely the phases agree, since the length is near 1 when the attended phases align and near 0 when they cancel. 43.1 The value update is Kuramoto coupling 
+
+Proposition 1 (Kuramoto coupling) . The circular-mean value update of Section 2 satisfies, for every coordinate j,
+
+at,j = − sin θt,j Re Gt,j + cos θt,j Im Gt,j = ∑
+
+> u
+
+At,u sin (θu,j − θt,j 
+
+).
+
+That is, the update is the Kuramoto coupling term with coupling matrix A.Proof. Expand sin( θu,j − θt,j ) = sin θu,j cos θt,j − cos θu,j sin θt,j and sum against At,u .Unlike standard Kuramoto, the coupling A is computed from the states by a softmax of the cosine-similarity score, and is causal. Each token is pulled toward the attention-weighted circular mean of the tokens it attends to, with pull strength set by the resultant length ∥Gt,j ∥.The direction at is exactly the Kuramoto term. The implemented layer scales this direction by a learned per-coordinate value gate and a norm bound before adding it to the state (Section 2). The attention matrix 
+
+A sets which tokens pull a phase and toward where. The value gate is signed, so it sets how strongly, and in which direction, each coordinate responds: a positive gate gives Kuramoto attraction toward the attended mean, and a negative gate gives repulsion, so a single layer can both synchronize and desynchronize a coordinate against the tokens it selects. The norm bound then rescales the whole increment by one positive scalar. 
+
+3.2 Softmax selects neighbors 
+
+Proposition 2 (Entropy-regularized retrieval) . Write the score as st,u = τ ¯st,u , where ¯st,u is the τ -free cosine affinity and τ > 0 is the learned score scale. With retrieval cost ct(u) = −¯st,u and entropy temperature 
+
+λ = 1 /τ , the attention weights are the unique minimizer 
+
+At, · = arg min 
+
+> π∈∆
+
+{ ∑ 
+
+> u
+
+π(u) ct(u) + λ KL( π ∥ unif) 
+
+}
+
+= softmax u
+
+(¯st,u /λ ) = softmax u
+
+(st,u 
+
+).
+
+Proof. The Gibbs variational identity (Boyd & Vandenberghe, 2004): a Lagrange multiplier on the simplex gives π∗ ∝ exp( −ct/λ ), and the uniform reference contributes only a constant. The learned scale τ = 1 /λ is the inverse temperature of the retrieval: large τ sharpens attention toward the closest keys, while τ → 0 makes it uniform. So the softmax chooses a soft set of neighbors, and the update of Theorem 1 then synchronizes the token’s phases with those neighbors. In this way the softmax first selects, and the update then synchronizes. 
+
+3.3 A single geometry that plays two roles 
+
+The two propositions describe one cosine coherence acting twice. The score is that coherence under the learned metric G(θ) = diag (gq gk) of Section B. By Theorem 2, the attention matrix A is entropy-regularized retrieval under this metric G, so the metric sets which tokens couple. The update, in turn, is the gradient of the same coherence taken without the gate: 
+
+Lemma 3 (Synchronization is coherence descent) . For fixed A, the Kuramoto update of Theorem 1 is the negative gradient of the attention-weighted coherence energy Et(θt) = − ∑ 
+
+> u
+
+At,u 
+
+∑ 
+
+> j
+
+cos( θt,j − θu,j ):
+
+at,j = − ∂E t/∂θ t,j = ∑
+
+> u
+
+At,u sin( θu,j − θt,j ).
+
+Proof. ∂θt,j cos( θt,j − θu,j ) = − sin( θt,j − θu,j ); sum against At,u and negate. 5So a single coherence plays both roles. When it is metric-gated in the score, this coherence selects neighbors, and it does so through the coupling kernel of Theorem 2. When it appears ungated in Et, the negative gradient of this coherence is the synchronization step, which is the coupling term of Theorem 1. The metric therefore sets which tokens are selected, while the descent runs on the flat coherence, so that the model selects under the learned metric and then synchronizes. This gradient reading holds for the update at a single step, with A held fixed; because A is itself computed from the phases, the full layer is not the gradient flow of one fixed energy, and we make no such claim. The descent identity is exact, as shown in Theorem 1, and the metric is the equal-position geometry of the score, as shown in Section B. This gives the geometric reading of Kuramoto on the torus. The same two ingredients, namely an invariant similarity score and an on-manifold mean, can be defined on any compact group, an outlook that we develop in Section 6. 
+
+3.4 Rotary position as phase drift 
+
+Position is not part of the base layer of Section 2; we add it the way a transformer does, through a positional encoding. We use rotary position, which enters the score as a per-coordinate phase drift, st,u =
+
+> τ√k
+
+∑ 
+
+> j
+
+gqt,j gku,j cos (θt,j − θu,j + ωj (t − u)) , and only there. For this layer the drift has a natural reading: the rates ωj are learned per coordinate (initialized at the geometric rotary schedule) and act as natural frequencies in the Kuramoto model, since each oscillator advances at its own rate and the score compares tokens after that advance. This reading is a bonus of the geometry, and the synchronization results above hold with or without the drift. Both parts of the score shape selection: the gates are the learned metric (Section B) and the drift ωj (t − u) is the natural-frequency advance applied before tokens are compared. Metric and frequencies set which tokens couple; the value update then synchronizes with them (Theorem 3). 
+
+Remark 1 (Score-only position) . The drift ωj (t − u) is fixed by the positions, so the layer applies it to the score but not to the values, which keeps deterministic position out of the content state. Section 4.3 ablates this choice against gate and value rotary. 
+
+3.5 A multiplicative value path 
+
+Remark 2 (Identity values are the synchronization regime) . The synchronization reading is the identity-value case, because for any attention matrix A, identity values together with the tangent projection give the Kuramoto update ∑ 
+
+> u
+
+At,u sin (θu,j − θt,j ). A general value map departs from this case, since it averages transformed features, so that the output is no longer a circular mean and the update is no longer Kuramoto coupling. We therefore make no claim about attention with general values. A standard attention layer mixes the embedding coordinates additively. Its value and output projections WV
+
+and WO are dense linear maps, so each coordinate of the output is a weighted sum of all coordinates of the input. This additive mixing across coordinates is a core part of what a standard attention layer computes. Kuramoto attention has no such dense projection, but its value path is not empty. The value that the layer aggregates is the raw phase state eiθ u itself, with no WV applied. From the aggregate Gt the layer forms the Kuramoto direction by the tangent retraction (Absil et al., 2008), which also stands in for the output projection WO and ambient residual of standard attention, and it then scales that direction with a learned, content-dependent per-coordinate value gate v(θt) before bounding it (lines 3–4 of Equation (1)). So the layer does transform its values. What makes this transform different from a usual value map is that every step on the value path is multiplicative. The value gate rescales each coordinate’s update on its own, with a learned sign, and the norm-match bound applies a single positive scalar to the whole increment. Neither step forms a linear combination across coordinates of the values. Additive cross-coordinate computation does enter the layer, in one place: the gates. Each gate entry is a dense linear readout of all phases, gqt,j = ρ((Wq ψ(θt)) j
+
+) with Wq dense, so coordinate j’s gate depends on every phase, and the value gate is the same kind of dense readout. Those readouts set the per-coordinate scalars, the metric of the score and the value-gate strengths, which then enter the update multiplicatively through the single shared attention weight At,u . What the layer never does is carry one coordinate’s value additively into another’s update; that additive mixing of the values is left to the feed-forward block, a dense linear map. The ablations make this split visible. Making the value path additive across coordinates, by 61M 5M Model split median mean ±std median mean ±std Kuramoto attention val 1.629 1.637 ± 0.010 1.448 1.468 ± 0.039 
+
+test 1.623 1.629 ± 0.010 1.453 1.472 ± 0.038 
+
+Matched transformer val 1.616 1.616 ± 0.004 1.452 1.456 ± 0.009 
+
+(RoPE+SwiGLU) test 1.610 1.610 ± 0.004 1.455 1.461 ± 0.011 
+
+Table 1: Validation and test BPC over five seeds, as median and mean ±std. At 1M the transformer leads on both splits by about 0.02 . At 5M the two are level on the median (Kuramoto attention ahead by 0.004 on validation and 0.002 on test) while the transformer leads on the mean; the higher Kuramoto-attention mean and variance come from one seed that lagged from the first epoch and converged to val BPC 1.55 against the others’ ∼1.45 .replacing the value gate with a dense linear value projection, costs +0 .25 BPC (Remark 2), and removing the feed-forward block, the only component that mixes coordinates additively, costs +0 .27 BPC. The two ablations show that the multiplicative value path and the additive feed-forward block each carry distinct load. 
+
+# 4 Experiments 
+
+4.1 Setup 
+
+We train at ≈ 10 6 and ≈ 5 × 10 6 parameters on enwiki8 (Hutter, 2006), sequence length 256 , 4 layers, 50 
+
+epochs, with total parameters matched to the transformer baseline at each scale. Optimizer, learning rate, architecture, exact parameter counts, and the matching protocol are in Section A. 
+
+4.2 Language modeling 
+
+We test the layer as a character-level language model on enwiki8. It trains stably and reaches validation and test BPC close to a matched RoPE+SwiGLU transformer: within 0.02 BPC at one million parameters, and at five million it is level on the median over five seeds while the transformer leads on the mean, with held-out test BPC tracking validation at both scales (Table 1). These experiments show that the constrained geometric structure is a viable language model at this scale, with the matched transformer as the reference point. One Kuramoto-attention seed lagged from the first epoch onward and converged to val BPC 1.55 ,against the others’ ∼1.45 ; an active run would have restarted it. 
+
+4.3 Ablation suite 
+
+The metric reading of the score organizes the ablations. The construction has two geometry-native ingredients. The first is a learned metric on the torus, which is the score, and the second is an on-manifold mean, which is the value update. These two ingredients, together with the positional drift in the score, which is the geometry’s form of a positional encoding, are the parts that would carry over to a different compact group. The construction also has one non-geometric component, namely the feed-forward block. Finally, it admits a family of optional geometric corrections that the metric naturally suggests. We ablate one axis at a time from the reference configuration (Table 2). 
+
+Geometry-native core (required). These axes are the synchronization machinery of Section 3. The on-manifold value update is the Kuramoto coupling step (Theorem 1; circular-mean vs. a learned value projection, value gate and bound). The metric is the coupling kernel (Theorem 2; gate activation, mean-normalization, shared vs. per-layer). The natural frequencies are the rotary drift (Remark 1; score-only vs. gate, value, or no rotary); as in a transformer the drift is an optional positional choice, and like any positional encoding it carries performance on sequence modeling. These three axes are the portable ingredients, and 7Ablation ∆ val BPC group remove feed-forward block +0 .27 ± 0.00 feed-forward (non-geometric) learned value projection +0 .25 ± 0.07 core: on-manifold mean remove metric gates +0 .09 ± 0.00 core: metric per-layer (unshared) gates +0 .05 ± 0.01 core: metric shared feed-forward block +0 .04 ± 0.02 feed-forward (non-geometric) no gate normalization +0 .02 ± 0.01 minor no value bound +0 .02 ± 0.01 minor linear readout +0 .01 ± 0.00 readout Table 2: Single-axis ablations, mean ± std over five seeds, ∆ from the reference (five-seed mean 1.637 ); total parameters are re-matched per row. they carry the performance. Replacing the circular mean with a learned value projection costs +0 .25 BPC, which is the largest geometry-native effect. Removing the metric gates costs +0 .09 , and untying them across layers costs a further +0 .05 , so the single shared metric is itself load-bearing. 
+
+Feed-forward block (the non-geometric residual). This is the one piece that is neither the coupling kernel nor the synchronization step. Because it lies outside the geometry, it is implemented as the same SwiGLU that the matched transformer uses, and it is the layer’s only block that mixes the embedding values additively across coordinates (Section 3.5). Removing it costs +0 .27 BPC, which is the largest effect in the suite, and sharing it across layers in place of per-layer learning costs +0 .04 . Replacing this generic map with one built from the group is the remaining step toward a fully geometry-native layer. 
+
+Minor components. Gate normalization, the value bound, and a phase-alignment readout each move val BPC by at most 0.02 relative to their simpler alternatives. 
+
+Geometric corrections (optional). Once the score is read as a metric (Section B), a frame-field connection and richer metric parameterizations become the natural geometric refinements to test next. 
+
+4.4 Phase dynamics 
+
+Two diagnostics make the synchronization visible in the reference run (Figures 1 and 2). The per-coordinate attention-weighted order parameter Rt,j = |Gt,j | = |∑ 
+
+> u
+
+At,u eiθ u,j |, averaged over coordinates, stays near 1 at every layer, which means that each token synchronizes tightly with the neighbors it selects. Yet the global 
+
+order parameter Rglob  
+
+> j
+
+= | 1
+
+> N
+
+∑ 
+
+> u
+
+eiθ u,j | falls with depth; it is the same coherence with the attention weights 
+
+At,u replaced by a flat average over all N tokens. Tokens lock tightly to the few neighbors that each one selects, while the population of phases as a whole spreads out. The model therefore synchronizes locally without collapsing globally, which is the select-then-synchronize behavior of Section 3. Separately, the learned natural frequencies ωj depart from their geometric initialization into a depth-to-timescale trend: early layers carry higher frequencies, later layers lower frequencies. A larger ωj advances the phase faster per position step, so the cosine kernel cos (θt,j − θu,j + ωj (t − u)) de-correlates over a shorter token distance. A high frequency therefore corresponds to short-range coupling, while a low frequency corresponds to long-range coupling, and so the depth trend reads as early layers mixing locally and later layers reaching far. 
+
+# 5 Related Work 
+
+Transformers as synchronizing dynamics. Geshkovski et al. (2023; 2024) analyze standard self-attention as an interacting particle system on the sphere and prove asymptotic clustering. That line of work analyzes 
+
+the limiting behavior of vanilla attention. By contrast, we design a trained, functional language-model layer that carries an exact, per-step Kuramoto identity. When the values are taken to be the identity, the aggregate becomes a circular mean, so its tangent projection is exactly the Kuramoto step. A general value map, on the other hand, averages transformed features and therefore breaks the identity (Remark 2). 80 50 100 150 200 250 
+
+sequence position 
+
+> 0.850
+> 0.875
+> 0.900
+> 0.925
+> 0.950
+> 0.975
+> 1.000
+> local order parameter
+
+(a) Local coherence stays near one        
+
+> layer 1 layer 2 layer 3 layer 4
+> emb L1 L2 L3 L4
+
+depth 
+
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> order parameter
+
+(b) Global order falls with depth 
+
+> local (attention-weighted)
+> global (all tokens)
+
+Figure 1: Local synchronization without global collapse (reference 1M run, validation split). (a) The local order parameter Rt = ⟨| ∑ 
+
+> u
+
+At,u eiθ u,j |⟩ j , the coherence of each token with the neighbors it attends to, stays near one at every layer and sequence position. (b) The global order parameter Rglob = ⟨| 1
+
+> N
+
+∑ 
+
+> u
+
+eiθ u,j |⟩ j , the same coherence with the attention weights replaced by a flat average over all N tokens, falls with depth while the local one stays high: each token locks to its selected neighbors while the population of phases spreads out. 0 50 100 150 
+
+coordinate (sorted by rate)       
+
+> 10 6
+> 10 5
+> 10 4
+> 10 3
+> 10 2
+> 10 1
+> 10 0
+> frequency magnitude
+
+(a) Learned frequency spectrum by layer    
+
+> layer 1
+> layer 2
+> layer 3
+> layer 4
+> geometric init
+> 1234
+
+layer 
+
+> 0.100
+> 0.125
+> 0.150
+> 0.175
+> 0.200
+> 0.225
+> mean frequency magnitude
+
+(b) Mean frequency falls with depth 
+
+> learned, per layer
+> initialization
+
+Figure 2: Learned natural frequencies follow a depth-to-timescale trend (reference 1M run). (a) The per-layer spectrum of learned rates |ωj | departs from the geometric rotary initialization (dashed). (b) The mean rate falls with depth; a high frequency de-correlates the score over a short token distance, so early layers couple short-range and later layers long-range. 
+
+Oscillator neurons. Miyato et al. (2025) build Kuramoto oscillatory neurons bottom-up and relate them to attention, primarily for vision, binding, and reasoning, and Muzellec et al. (2025) add complex-valued representations and Kuramoto synchronization dynamics to deep networks, with gains on object binding. Both add oscillator dynamics to a network. Our layer is instead a phase-state causal attention layer whose value update already is adaptive Kuramoto coupling, with its natural frequencies supplied by rotary position (Section 3) and its coupling kernel an entropy-regularized soft assignment (Theorem 2), evaluated on language modeling. 9Kuramoto dynamics. The classical model (Kuramoto, 1975; Acebrón et al., 2005) couples phase oscillators with heterogeneous natural frequencies. Our layer is the same coupling made content-adaptive, in the sense that the coupling matrix is a softmax of token similarities and the frequencies are learned. 
+
+Attention as associative memory. Ramsauer et al. (2021) connect attention to modern Hopfield retrieval, reading a step as energy descent toward stored patterns. We give the complementary reading, in which the same step is understood as synchronization dynamics on phase states. In this reading, the same softmax weights act as a coupling kernel, and the value update is the Kuramoto step that pulls each token’s phases toward the phases of the tokens it attends to (Theorem 1). 
+
+Rotary position. We read rotary embeddings (Su et al., 2021) in the phase-state representation as a position-dependent phase drift in the score (Section 3). This phase drift plays the role of the natural-frequency term in the Kuramoto model. 
+
+Unitary/group-valued recurrence. Arjovsky et al. (2016) and follow-up work place the recurrent 
+
+parameters on a group, whereas in our setting it is the state that lives on the group. 
+
+# 6 Conclusion 
+
+We introduced a phase-valued self-attention layer that functions as a character-level language model at a level close to a matched transformer, and showed that its value update is an adaptive Kuramoto synchronization step. In this step, the value update is exactly the Kuramoto coupling term, and the softmax attention matrix plays the role of the coupling kernel (Theorem 1). The softmax itself selects neighbors, and it does so as an entropy-regularized form of phase retrieval (Theorem 2). Rotary position enters as a phase drift, and for this layer that drift can be read as the natural frequencies of the Kuramoto model (Remark 1). When we read these results geometrically, the score and the update are two aspects of a single object. The score is a learned metric on the torus, and the update follows the same coherence, pulling each token toward the neighbors that the metric selects (Theorem 3); Kuramoto is the abelian case. Our ablations isolate the components that carry the performance. Taken together, these results give a compact bridge between self-attention and phase synchronization. 
+
+Beyond the torus. The construction uses only two group-geometric ingredients. The first ingredient is a group-invariant similarity score, and the second is a value update that stays on the manifold. The torus is the abelian case, in which both of these ingredients have closed forms. Supplying the invariant inner product and the on-manifold mean of any compact subgroup of the unitary group defines an attention layer whose hidden state stays on that group; this is the Lohe model of non-abelian synchronization (Lohe, 2009), with the torus as its abelian (Kuramoto) case, and we develop the general construction separately (Nunley, 2026). Our ablations show that the metric and the on-manifold mean carry the performance, and they also show that the feed-forward block is the one generic map that has still to be made geometry-native. The motivating targets are manifold-valued domains, such as articulated motion on SO (3) J or unitary-valued states in quantum machine learning. We leave to future work the task of instantiating the non-abelian cases and the task of making the feed-forward block geometry-native. 
+
+Limitations. The identity is exact for this phase-state layer; standard dot-product attention is known only to synchronize asymptotically (Geshkovski et al., 2023). The layer trails a matched transformer at one million parameters and performs comparably at five million (level on the median over five seeds, the transformer leading on the mean), and it offers no speed advantage. Our evidence comes from character-level enwiki8 at one-to-five-million parameters, so broader scales and tasks are natural next steps. 
+
+# A Experimental details 
+
+Data. enwiki8 (Hutter, 2006), the first 10 8 characters of English Wikipedia, split 90 /5/5% into train/validation/test by character. Inputs are character sequences of length 256 (vocabulary size 205 ). 10 Training. AdamW, learning rate 10 −3, weight decay 0.01 , batch size 64 , gradient clipping at 1.0, dropout 
+
+0.1, 50 epochs. We use the identical training recipe for both models at both scales and report validation BPC at the best epoch. 
+
+Architecture and parameter matching. Both models use 4 layers, a SwiGLU feed-forward block, and RoPE position; the transformer baseline is single-head dot-product attention, and Kuramoto attention is likewise single-head (one shared bank of k oscillators per layer), so the two differ only in the attention mechanism. We fix the depth and the parameter budget and then vary the width so that the total number of parameters is equalized at each scale. For Kuramoto attention the width is the torus dimension k, and for the transformer the width is dmodel . The two widths are not directly comparable: k counts phase coordinates, each carried by a two-component ( cos , sin ) lift, whereas dmodel counts model channels directly, so the Kuramoto-attention model reaches the same parameter budget at a larger nominal width ( k = 176 vs. 
+
+dmodel = 120 at 1M). We hold the total parameter count fixed across the two models, and the widths are allowed to differ. Table 3 reports the achieved widths and counts (matched to within ∼ 3% ). Scale Model width parameters 1M Kuramoto attention k = 176 1,003 ,386 
+
+Matched transformer dmodel = 120 974 ,845 
+
+5M Kuramoto attention k = 400 4,968 ,410 
+
+Matched transformer dmodel = 276 4,997 ,461 
+
+Table 3: Achieved widths and parameter counts at each scale. All settings needed to reproduce the runs are given above; the exact configuration files will accompany the code release. 
+
+# B The score as a position-varying metric 
+
+The score splits into an equal-position part and the rotary drift ωj (t − u), where the rotary drift plays the role of the natural frequencies (Section 3). The metric we study here is the equal-position part of this split. To extract it, fix a query at θ and a key at θ + δ with small δ and t = u. At equal position the rotary drift ωj (t − u) vanishes, so the score’s kernel cos (θt,j − θu,j + ωj (t − u)) reduces to cos δj , with δj the j-th component of the offset δ. For gates that vary slowly across the torus we treat them as locally constant, 
+
+gkj (θ + δ) = gkj (θ) + O(δ∇g), so the score’s leading δ-dependence is the cosine kernel. Expanding it, 
+
+s = τ
+
+√k
+
+∑
+
+> j
+
+gqj (θ) gkj (θ) cos δj = τ
+
+√k
+
+∑
+
+> j
+
+gqj gkj − τ
+
+2√k
+
+∑
+
+> j
+
+gqj gkj δ2 
+
+> j
+
++ O(δ4, δ ∇g),
+
+so similarity falls off quadratically in δ at a rate set by the gate product. The symmetric quadratic form that measures this second-order decay assigns a squared length ∑ 
+
+> j
+
+Gjj (θ) δ2 
+
+> j
+
+to a small displacement δ, with the conventional factor 1/2 absorbed. Because the gates gq , g k are strictly positive (softplus outputs), this form is positive-definite and diagonal on Tk, and it varies smoothly with θ, so it is a position-dependent metric on the flat torus, which we call the score’s metric and read lengths under, 
+
+G(θ) = τ
+
+√k diag (gq (θ) gk(θ)),
+
+position-dependent through the gates. Here diagonal describes the quadratic form, whose second-order expansion has no δiδj cross-term, so G is diagonal at each point. As a field over the torus it is not separable, because each entry Gjj (θ) is a dense readout of all phases (the gates depend on every coordinate, Section 3.5), so ∂θi Gjj ̸ = 0 for i̸ = j. Sharing the gates across layers makes G a single learned geometry under which every layer synchronizes. This is the content of Theorem 3, in which the value update follows the coherence that this metric gates, pulling each token toward its selected neighbors. A metric fixes lengths and angles; a separate, optional structure fixes how a tangent vector is carried between nearby points. The frame-field 11 correction of Section 4.3 is one such carrying rule, a candidate refinement beyond the metric. Because the metric field is non-separable, the connection it induces couples coordinates even though the metric form does not, so a correction that keeps only the per-coordinate part is exact in the separable case and approximate here. The on-manifold value update is the circular mean of the selected tokens, where the selection is the entropy-regularized retrieval that the score induces (Theorem 2). Only the feed-forward block lies outside this geometry. 
+
+# References 
+
+P.-A. Absil, Robert Mahony, and Rodolphe Sepulchre. Optimization Algorithms on Matrix Manifolds .Princeton University Press, 2008. Juan A Acebrón, Luis L Bonilla, Conrad J Pérez Vicente, Félix Ritort, and Renato Spigler. The Kuramoto model: A simple paradigm for synchronization phenomena. Reviews of Modern Physics , 77(1):137–185, 2005. Martin Arjovsky, Amar Shah, and Yoshua Bengio. Unitary evolution recurrent neural networks. In 
+
+International Conference on Machine Learning , 2016. Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E Hinton. Layer normalization. arXiv preprint arXiv:1607.06450 , 2016. Stephen Boyd and Lieven Vandenberghe. Convex Optimization . Cambridge University Press, 2004. Borjan Geshkovski, Cyril Letrouit, Yury Polyanskiy, and Philippe Rigollet. The emergence of clusters in self-attention dynamics. In Advances in Neural Information Processing Systems , 2023. Borjan Geshkovski, Cyril Letrouit, Yury Polyanskiy, and Philippe Rigollet. A mathematical perspective on transformers. arXiv preprint arXiv:2312.10794 , 2024. Marcus Hutter. The Hutter prize for lossless compression of human knowledge (enwik8). http://prize. hutter1.net/ , 2006. Yoshiki Kuramoto. Self-entrainment of a population of coupled non-linear oscillators. International Symposium on Mathematical Problems in Theoretical Physics , pp. 420–422, 1975. M. A. Lohe. Non-Abelian Kuramoto models and synchronization. Journal of Physics A: Mathematical and Theoretical , 42(39):395101, 2009. Ilya Loshchilov, Cheng-Ping Hsieh, Simeng Sun, and Boris Ginsburg. nGPT: Normalized transformer with representation learning on the hypersphere. arXiv preprint arXiv:2410.01131 , 2024. Takeru Miyato, Sindy Löwe, Andreas Geiger, and Max Welling. Artificial Kuramoto oscillatory neurons. In 
+
+International Conference on Learning Representations , 2025. Sabine Muzellec, Andrea Alamia, Thomas Serre, and Rufin VanRullen. Enhancing deep neural networks through complex-valued representations and Kuramoto synchronization dynamics. Transactions on Machine Learning Research , 2025. Joshua Nunley. Subgroups of U (d) induce natural RNN and transformer architectures. arXiv preprint arXiv:2602.18417 , 2026. Hubert Ramsauer, Bernhard Schäfl, Johannes Lehner, Philipp Seidl, Michael Widrich, Thomas Adler, Lukas Gruber, Markus Holzleitner, Milena Pavlović, Geir Kjetil Sandve, et al. Hopfield networks is all you need. In International Conference on Learning Representations , 2021. Jianlin Su, Yu Lu, Shengfeng Pan, Ahmed Murtadha, Bo Wen, and Yunfeng Liu. RoFormer: Enhanced transformer with rotary position embedding. arXiv preprint arXiv:2104.09864 , 2021. 12 Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems ,2017. Biao Zhang and Rico Sennrich. Root mean square layer normalization. In Advances in Neural Information Processing Systems , 2019. 13

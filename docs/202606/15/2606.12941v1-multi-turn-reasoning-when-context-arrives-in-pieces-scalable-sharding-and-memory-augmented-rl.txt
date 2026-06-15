@@ -1,0 +1,279 @@
+Title: Multi-Turn Reasoning When Context Arrives in Pieces: Scalable Sharding and Memory-Augmented RL
+
+URL Source: https://arxiv.org/pdf/2606.12941v1
+
+Published Time: Fri, 12 Jun 2026 00:32:37 GMT
+
+Number of Pages: 7
+
+Markdown Content:
+# Multi-Turn Reasoning When Context Arrives in Pieces: Scalable Sharding and Memory-Augmented RL 
+
+Shu Tong Luo and Wenqin Liu and Rui Liu 
+
+The University of Melbourne 
+
+{shutong2,wenqinl,ruiliu2}@student.unimelb.edu.au 
+
+Mingming Gong 
+
+The University of Melbourne 
+
+mingming.gong@unimelb.edu.au 
+
+Jiaxian Guo 
+
+Google Research Australia 
+
+jeffguo@google.com 
+
+Abstract 
+
+When a user reveals task-critical information across several conversation turns, LLM accu-racy drops by up to 65% despite full context availability. We show that this Lost in Con-versation degradation can be substantially mit-igated by training models to maintain a com-pact rolling memory instead of attending to a growing history. To make such training scal-able, we introduce a low-cost sharding pipeline that converts single-turn QA datasets into multi-turn fragmented-information episodes, elim-inating the need for hours of manual anno-tation. Training only on sharded GSM8K, our memory-augmented policy significantly improves multi-turn accuracy and generalises zero-shot to harder math and out-of-domain long-context QA. Moreover, memory-trained models outperform full-history baselines even when given the full history at test time, sug-gesting that learning to compress induces more robust incremental reasoning than full-context exposure alone. 
+
+1 Introduction 
+
+Consider a user interacting with a travel-planning assistant. Rather than providing all requirements upfront, the user incrementally reveals constraints such as including the destination, budget, and travel dates across multiple turns. Successfully complet-ing such task requires the model to continuously accumulate and reconcile information distributed throughout the conversation. Yet, frontier LLMs struggle substantially in such settings, with average task accuracy degrading by 39% on the benchmark of Laban et al. (2026). This phenomenon is termed 
+
+Lost in Conversation (LiC). Since incremental con-text is fundamental to both human-AI dialogue and agentic workflows, LiC represents a major bottle-neck for real-world LLM applications. Reinforcement Learning with Verifiable Re-wards (RLVR) has driven recent progress on rea-soning (DeepSeek-AI, 2025; Yu et al., 2025b), but two obstacles block its direct application to LiC. First, training data is expensive: the LiC benchmark pipeline requires 1 to 4 hours of manual inspection per task and 30 LLM simulations per instruction, yielding only 90 to 120 validated examples (Laban et al., 2026), insufficient for RLVR at scale. Sec-ond, models default to reasoning over the full chat history, and this strategy degrades with length (Liu et al., 2023), leaving no obvious mechanism for robust cross-turn accumulation. We address both obstacles with a single recipe. The model maintains a bounded natural-language memory buffer that it rewrites at every turn, trained via RLVR on cheaply sharded multi-turn data. Only the buffer, not the raw history, is carried forward. While such memory buffers have been shown to compress single-turn long documents effectively (Yu et al., 2025a), whether the same mechanism extends to incremental dialogue, where information is partial at every step and must be inte-grated under reward, remains unknown. We answer this question affirmatively, and find that bounded memory is not merely a viable substitute for full history but a stronger training signal. Our contributions are threefold: (1) A cheap, scalable sharding pipeline that converts any single-turn QA dataset into multi-turn fragmented episodes using only 1 to 3 few-shot examples, with noise-augmented variants for ablation; (2) A memory-augmented, multi-turn RL recipe that recovers up to 60 points of LiC degradation on GSM8K (Cobbe et al., 2021) and surpasses full-history training under all evaluation conditions; (3) Evidence that this capability is domain-general: models trained only on GSM8K generalise zero-shot to MATH500 (Hendrycks et al., 2021; Light-man et al., 2023) and LongBench (Bai et al., 2024). 
+
+2 Related Work 
+
+The Lost in Conversation problem. While most multi-turn benchmarks treat conversations episodi-                                              
+
+> arXiv:2606.12941v1 [cs.CL] 11 Jun 2026 Atrain travels 60km
+> at 30km/h, then 40km
+> at 80km/h. What is the
+> total journey time?
+> Find the total journey
+> time of atrain.
+> It first travels 60
+> km at 30 km/h.
+> Then it travels 40 km at
+> 80 km/h.
+> segment
+> Single-turn
+> QA dataset
+> LLM Pipeline
+> Split
+> Verify
+> Extract
+> Multi-turn
+> sharded dataset
+> LLM
+> LLM
+> User turn 1
+> Q
+> User turn 2
+> Q11
+> LLM
+> User turn 3
+> Q22
+> LLM
+> User turn n
+> Q
+> n-1
+> n-1 Response
+> ...
+> RL with in-context rolling memory
+> Motivation
+> Method
+> Results
+> Dataset creation Simple, low-cost
+> sharded dataset creation
+> RLVR w/ memory
+> recovers accuracy lost
+> Zero-shot transfer to
+> harder maths &
+> OOD long-context QA
+> RL with rolling memory
+> outperforms RL with full
+> history at inference time
+> Q: Main question
+> : Question shard 1
+> 1: Rolling memory
+> RLVR w/
+> multi-turn
+> DAPO
+> Rule-based
+> Reward
+> v1
+> GSM8K(1.5B): 0.20 → 0.80
+> GSM8K (4B): 0.37 → 0.88
+> MATH500: 0.26 → 0.69
+> LongBench avg.: 0.42 → 0.59
+> Q
+> 1
+> 2
+> ...
+> ...
+> ...
+> ...
+> v2
+> v3
+> Back-propagation GSM8K: -19 to -65 pp
+> MATH500: -27 to -32 pp
+
+Figure 1: Overview of our approach. We shard single-turn QA problems into sharded multi-turn episodes and use RLVR to train a memory-augmented policy via multi-turn DAPO. Models trained exclusively on sharded GSM8K generalise well to in-domain and OOD long-context datasets. 
+
+cally (Zheng et al., 2023; Kwan et al., 2024), Laban et al. (2026) show that frontier model performance degrades by 39% on average under incremental context revelation, a setting that remains largely underexplored for training. Concurrent work (Li et al., 2026) addresses solvability detection from incomplete shard sequences via RLVR, yet scal-able data construction and accumulation reliability across complete sequences remain open. 
+
+Memory-augmented language models. As con-text grows, model performance degrades due to the lost-in-the-middle phenomenon (Liu et al., 2023), motivating memory mechanisms that avoid relying on the full history. Retrieval-based ap-proaches (Lewis et al., 2021; Gao et al., 2024) address this but require explicit retrieval infras-tructure; an appealing alternative is an in-context memory buffer that the model itself maintains. Yu et al. (2025a) demonstrates the viability by training a model to iteratively compress document chunks into a bounded memory buffer, outperforming full-context approaches on long-context QA. 
+
+RLVR. RLVR has emerged as a powerful train-ing paradigm for eliciting reasoning capability in LLMs (DeepSeek-AI, 2025; Wen et al., 2025), with subsequent work focusing on stabilising policy op-timisation (Yu et al., 2025b; Yue et al., 2025; Liu et al., 2025). MemAgent (Yu et al., 2025a) extends this to sequences of context-independent model calls, propagating a single outcome reward across all intermediate memory update steps, but operates over document chunks and has not been extended to genuinely multi-turn dialogue, where informa-tion is partial and must be integrated incrementally. 
+
+3 Methodology 
+
+3.1 Sharded Dataset Construction 
+
+We construct multi-turn sharded datasets from GSM8K and MATH500 via LLM-based sharding, which preserves the logical structure of each prob-lem by decomposing it into semantically complete units. Each problem is processed through a three-step prompting pipeline: (1) the problem statement is segmented into its minimal logical units; (2) the segmentation is then verified for completeness and non-redundancy; (3) the core question is ex-tracted and withheld from the shard sequence, in-stead presented at every turn alongside the current shard. The pipeline requires only 1–3 manually annotated few-shot examples as reference in the prompt, which significantly reduces human effort. For long-context datasets, which lack the dis-crete reasoning structure that motivates LLM-based segmentation, the LongBench QA documents are instead chunked into fixed-size token segments aligned to sentence boundaries, averaging 10 to 14 shards per document. To ablate what training structure best induces memory extraction, we train three dataset variants: (1) Sharded , following the pipeline above; (2) Full-question , where one randomly-positioned shard contains the full question and remaining shards contain randomly sampled Wikitext passages (Mer-ity et al., 2016), forcing the model to distinguish relevant content from noise; and (3) Mixed , inter-leaving Sharded with Wikitext noise shards to com-bine logical decomposition with distraction. We additionally construct noise-augmented sets from MATH500 by injecting n ∈ { 2, 4} noise shards between each turn to assess test-time robustness. 3.2 RL with In-Context Memory 
+
+Training a model to accumulate information across fragmented turns introduces a credit assignment problem: the policy must learn to write useful mem-ory states at every intermediate turn, yet the only training signal is whether the final answer is correct. We extend the multi-conv DAPO framework (Yu et al., 2025a) from single-turn native inference to a genuinely multi-turn setting, applying it to discrete reasoning shards derived from single-turn problems rather than chunks of a single long document. 
+
+Memory Mechanism. At each shard turn t ∈{1, . . . , K }, the policy receives the question q, the current memory state mt, and the incoming shard 
+
+st, and generates a rewritten memory mt+1 ∼
+
+πθ(· | q, m t, s t). The memory is a free-form nat-ural language buffer capped at Lm = 256 tokens, deliberately constrained to prevent the model from copying all previously seen evidence and to make selective retention non-trivial. At the final turn, the policy conditions only on q and the terminal mem-ory mK to produce an answer a ∼ πθ(· | q, m K ).The memory representation receives no direct su-pervision; its structure emerges from the down-stream reward signal alone. 
+
+Training Objective. For each sample, G trajec-tories are sampled from πθold , each yielding a scalar reward R(g) = V(a(g), y ⋆) from a rule-based veri-fier. Group-relative advantages are computed as: 
+
+ˆA(g) = R(g) − 1
+
+G
+
+> G
+
+X
+
+> h=1
+
+R(h). (1) This advantage is propagated uniformly to all turns in trajectory g. As determining what a mem-ory state should contain at any given turn is non-deterministic, we avoid intermediate credit assign-ment. Following DAPO (Yu et al., 2025b), the actor is updated with a dual-clipped surrogate with token-mean aggregation across all turns, ensuring longer memory updates do not disproportionately dominate the gradient relative to the final answer turn. A KL penalty is applied as a separate loss term to constrain policy drift: 
+
+L(θ) = Lclip (θ) + β D KL (πθ∥πref ). (2) 
+
+Full-History Baseline. We train a separate full-history model where the policy receives the con-catenated chat history of all previous turns, rather than a compressed memory state. At inference, all models are evaluated under both the memory 
+
+and full-history condition, isolating whether perfor-mance differences are driven by memory compres-sion or the underlying shard structure. 
+
+4 Experimental Setup 
+
+We train two model scales, Qwen2.5-Math-1.5B-Instruct (Yang et al., 2024) and Qwen3-4B-Thinking (Yang et al., 2025), with G=4 tra-jectories per prompt on 2×A100 GPUs using veRL+vLLM (Sheng et al., 2025; Kwon et al., 2023). The actor uses a dual-clipped PPO sur-rogate (Schulman et al., 2017; Yu et al., 2025b), DrGRPO-style advantage normalisation (Liu et al., 2025; Shao et al., 2024), KL penalty ( β = 0 .001 ), and learning rate 1 × 10 −6.We evaluate under two inference conditions: 
+
+memory , where the model receives only the ques-tion, current memory state, and incoming shard at each turn, and full-history , where all previous shards are provided as context. OOD evaluation covers five LongBench subsets: 2WikiMQA (Ho et al., 2020), HotpotQA (Yang et al., 2018), Mul-tifieldQA (Bai et al., 2024), Qasper (Dasigi et al., 2021), and TriviaQA (Joshi et al., 2017). Training is conducted exclusively on GSM8K, evaluating on the other datasets. For brevity, variant compar-isons and LongBench results are 4B-only, where the larger model provides a cleaner signal. 
+
+5 Results 
+
+Memory RL vs. Full-History Training Figure 2 reveals a substantial LiC effect between single-turn and sharded multi-turn base models (19.4–64.9pp drop). Full-history RL partially recovers this, but Memory RL outperforms it by 15.2–35.6pp across both datasets and model scales, gains that persist under identical full-history conditions without the memory mechanism, suggesting the memory train-ing objective instils more robust representations rather than merely exploiting compression at infer-ence time. Injecting noise shards further exposes this gap; Full-history RL degrades sharply while Memory RL remains more resilient at n=2 , consis-tent with selective retention implicitly encouraging noise-filtering. 
+
+Memory-Augmented Evaluation Table 1 shows that these gains extend to the rolling-memory set-ting, where Memory RL produces consistent im-provements across both scales, with the 1.5B and GSM8K MATH500             
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Accuracy
+> GSM8K MATH500 024
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> MATH500 accuracy
+> 024
+> Noise injected between each context shard (n)
+> (a) 1.5B (b) 4B (c) 1.5B (noise) (d) 4B (noise)
+> Single-turn Base Full-hist. RL Memory RL
+
+Figure 2: Accuracy under full-history inference across datasets and model scales (a–b), and MATH500 noise robustness under shard injection (c–d), also evaluated with full conversation history available. Memory RL consistently outperforms both baselines, recovering LiC degradation and maintaining an advantage under noise.                                        
+
+> Model Method GSM8K MATH500 Noisy ( n=2) Noisy ( n=4) Qwen2.5-1.5B Base 0.199 0.334 0.290 0.284 Memory RL (Sharded) 0.799 0.550 0.290 0.290
+> Qwen3-4B ( r=512) Base 0.265 0.050 0.064 0.050
+> Memory RL (Sharded) 0.825 0.516 0.160 0.048 Qwen3-4B ( r=1024) Base 0.370 0.260 0.232 0.196 Memory RL (Sharded) 0.877 0.638 0.538 0.438 Memory RL (Full-Question) 0.823 0.682 0.638 0.516 Memory RL (Mixed) 0.849 0.692 0.630 0.570
+
+Table 1: Accuracy under the rolling-memory framework. Memory RL models consistently outperform base models, generalising to unseen harder datasets. Truncation at r=512 collapses thinking model generalisation. 
+
+4B ( r = 1024 ) models improving by 60% and 51% on GSM8K respectively, and both generalising to the unseen, harder MATH500 dataset, supporting that training induces general incremental reasoning rather than dataset-specific pattern matching. The r = 512 ablation reveals that the 4B think-ing model requires sufficient response length to externalise its reasoning chain, with truncation col-lapsing MATH500 accuracy to 0.050 and suppress-ing noise robustness; both recover at r = 1024 .Among these variants, Sharded achieves the high-est in-distribution accuracy but degrades most un-der noise, while Mixed offers the best overall bal-ance, as interleaving context shards with noise dur-ing training encourages the model to both decom-pose problems logically and filter irrelevant con-tent, improving resilience when noisy shards are encountered at inference time. 
+
+Generalisation to Long-Context QA Table 2 shows that all Memory RL variants generalise to every LongBench QA subset without task-specific training, improving average F1 by 31.7–43.4% over the base model. Full-Question and Mixed out-perform Sharded on every subset, suggesting that training on noisy contexts builds distractor-filtering skills that transfer more readily to open-domain QA                          
+
+> Model 2Wiki Hotpot Multi Qasper Trivia Base 0.470 0.407 0.260 0.256 0.691 Sharded 0.682 0.588 0.392 0.307 0.775 Full-Q 0.705 0.616 0.413 0.375 0.850 Mixed 0.713 0.627 0.406 0.390 0.852
+
+Table 2: LongBench F1 score for training variants (4B) 
+
+than Sharded ’s sequential reasoning. Overall, these results indicate that memory-based RL induces a general-purpose information extraction capability that transfers broadly across domains. 
+
+6 Conclusion 
+
+We presented a scalable sharding pipeline for con-structing multi-turn training episodes from single-turn QA datasets, and showed that training a memory-augmented policy via multi-turn DAPO substantially recovers LiC degradation. Memory-trained models outperform full-context baselines even under full-context evaluation, and generalise zero-shot to harder mathematical reasoning and out-of-domain long-context QA, suggesting that memory compression induces a domain-agnostic incremental reasoning capability. We aim for this work to provide a practical and reproducible foun-dation for future research on LLM reliability. Limitations 
+
+All datasets and models used are publicly avail-able for research purposes. GSM8K and both Qwen models are released under permissive open-source licenses (MIT and Apache 2.0 respectively); sharded derivatives produced in this work are like-wise intended for research use only. Due to resource constraints, experiments are conducted on two scales within a single model family (Qwen). While the lost-in-conversation phenomenon has been demonstrated consistently across all tested model families (Laban et al., 2026), and we therefore expect our findings to generalise, cross-family validation remains future work. The memory buffer is intentionally capped at 256 tokens, stricter than the shard content itself, to force the model to learn selective retention rather than verbatim copying; larger buffer sizes may re-lax this inductive bias at the cost of less compact representations. Finally, while our models generalise zero-shot to LongBench QA subsets, these are evaluated with-out task-specific training, meaning performance may not reflect the full potential of the memory mechanism under domain-matched conditions. 
+
+References 
+
+Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. 2024. Longbench: A bilingual, multi-task benchmark for long context understanding. Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. 2021. Training verifiers to solve math word prob-lems. Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith, and Matt Gardner. 2021. A dataset of information-seeking questions and answers anchored in research papers. DeepSeek-AI. 2025. Deepseek-r1: Incentivizing rea-soning capability in llms via reinforcement learning. Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jinliu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Meng Wang, and Haofen Wang. 2024. Retrieval-augmented gen-eration for large language models: A survey. Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. 2021. Measuring mathematical problem solving with the math dataset. NeurIPS .Xanh Ho, Anh-Khoa Duong Nguyen, Saku Sugawara, and Akiko Aizawa. 2020. Constructing a multi-hop qa dataset for comprehensive evaluation of reasoning steps. Mandar Joshi, Eunsol Choi, Daniel S. Weld, and Luke Zettlemoyer. 2017. Triviaqa: A large scale distantly supervised challenge dataset for reading comprehen-sion. Wai-Chung Kwan, Xingshan Zeng, Yuxin Jiang, Yufei Wang, Liangyou Li, Lifeng Shang, Xin Jiang, Qun Liu, and Kam-Fai Wong. 2024. Mt-eval: A multi-turn capabilities evaluation benchmark for large lan-guage models. Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. 2023. Effi-cient memory management for large language model serving with pagedattention. Philippe Laban, Hiroaki Hayashi, Yingbo Zhou, and Jennifer Neville. 2026. LLMs get lost in multi-turn conversation. In The Fourteenth International Con-ference on Learning Representations .Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Hein-rich Küttler, Mike Lewis, Wen tau Yih, Tim Rock-täschel, Sebastian Riedel, and Douwe Kiela. 2021. Retrieval-augmented generation for knowledge-intensive nlp tasks. Ming Li, Pei Chen, Zhenhao Zhang, Tao Yang, Xinyang Zhang, Han Li, Tianyu Cao, Ming Zeng, Zhuofeng Wu, Meng Jiang, Huasheng Li, Lihong Li, and Bing Yin. 2026. Mitigating lost in multi-turn conversa-tion via curriculum rl with verifiable accuracy and abstention rewards. Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. 2023. Let’s verify step by step. arXiv preprint arXiv:2305.20050 .Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paran-jape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2023. Lost in the middle: How language models use long contexts. Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin. 2025. Understanding r1-zero-like training: A critical perspective. Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. 2016. Pointer sentinel mixture mod-els. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proximal policy optimization algorithms. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. 2025. Hybridflow: A flexible and efficient rlhf framework. In Proceedings of the Twentieth European Conference on Computer Sys-tems , EuroSys ’25, page 1279–1297. ACM. Xumeng Wen, Zihan Liu, Shun Zheng, Shengyu Ye, Zhi-rong Wu, Yang Wang, Zhijian Xu, Xiao Liang, Junjie Li, Ziming Miao, Jiang Bian, and Mao Yang. 2025. Reinforcement learning with verifiable rewards im-plicitly incentivizes correct reasoning in base llms. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayi-heng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xu-ancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. 2025. Qwen3 technical report. An Yang, Beichen Zhang, Binyuan Hui, Bofei Gao, Bowen Yu, Chengpeng Li, Dayiheng Liu, Jian-hong Tu, Jingren Zhou, Junyang Lin, Keming Lu, Mingfeng Xue, Runji Lin, Tianyu Liu, Xingzhang Ren, and Zhenru Zhang. 2024. Qwen2.5-math tech-nical report: Toward mathematical expert model via self-improvement. Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Ben-gio, William W. Cohen, Ruslan Salakhutdinov, and Christopher D. Manning. 2018. Hotpotqa: A dataset for diverse, explainable multi-hop question answer-ing. Hongli Yu, Tinghong Chen, Jiangtao Feng, Jiangjie Chen, Weinan Dai, Qiying Yu, Ya-Qin Zhang, Wei-Ying Ma, Jingjing Liu, Mingxuan Wang, and Hao Zhou. 2025a. Memagent: Reshaping long-context llm with multi-conv rl-based memory agent. Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan Tong, Chi Zhang, Mofan Zhang, Wang Zhang, Hang Zhu, Jinhua Zhu, Jiaze Chen, Jiangjie Chen, Chengyi Wang, Hongli Yu, Weinan Dai, Yuxuan Song, Xiangpeng Wei, Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin Yan, Mu Qiao, Yonghui Wu, and Mingxuan Wang. 2025b. Dapo: An open-source llm reinforcement learning system at scale. Yu Yue, Yufeng Yuan, Qiying Yu, Xiaochen Zuo, Ruofei Zhu, Wenyuan Xu, Jiaze Chen, Chengyi Wang, TianTian Fan, Zhengyin Du, Xiangpeng Wei, Xi-angyu Yu, Gaohong Liu, Juncai Liu, Lingjun Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Chi Zhang, Mofan Zhang, Wang Zhang, Hang Zhu, Ru Zhang, Xin Liu, Mingxuan Wang, Yonghui Wu, and Lin Yan. 2025. Vapo: Efficient and reliable reinforcement learning for advanced reasoning tasks. Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. 2023. Judging llm-as-a-judge with mt-bench and chatbot arena. 
+
+A Appendix 
+
+A.1 Training Hyperparameters 
+
+All models are trained for 10 epochs on sharded GSM8K with a batch size of 64 on 2 ×A100 GPUs, taking an average of approximately 35 hours per run until convergence. Sequence lengths are delib-erately constrained during training. The memory buffer is capped at 256 tokens to force selective retention rather than verbatim copying, and the maximum number of shards per episode is capped at 35 to bound trajectory length. 
+
+Parameter Value 
+
+Training epochs 10 Train batch size 64 Max shard tokens 1,024 tokens Max memory buffer Lm 256 tokens Max shards per episode 35 Max response length 512 / 1,024 tokens LR warmup steps 10 Wall-clock time ∼30 hours / run 
+
+Table 3: RL training configuration. Max response length 512/1,024 corresponds to 1.5B/4B models respectively. 
+
+The response length budget differs by model scale: the 1.5B model is a math-specialised model and produces compact answers, so r=512 suffices. The 4B model is a general-purpose thinking model that expends a substantial portion of its response budget on chain-of-thought reasoning before pro-ducing an answer; at r=512 this reasoning is trun-cated, collapsing MATH500 accuracy to 0.050. Set-ting r=1024 restores meaningful performance, as reported in Table 1. A.2 Sharding Prompt 
+
+Sharding Prompt 
+
+You are given a math problem. Rewrite it as a natural multi-turn conversation. Each turn should restate part of the original problem in conversational form, preserving ALL information exactly. 
+
+Rules: 
+
+1. You may rephrase, but preserve all numbers, expressions, symbols, constraints, and formatting. 2. Only describe what is explicitly stated. Do not add reasoning, methods, hints, or interpretations. 3. Do not add or remove facts. 4. Output only JSON with key shards. 
+
+Example 1: 
+
+Q: Betty is saving money for a new wallet which costs $100. Betty has only half of the money she needs. Her parents decided to give her $15 for that purpose, and her grandparents twice as much as her parents. How much more money does Betty need to buy the wallet? {"shards": [{"shard": "How much more money does Betty need to buy the wallet?"}, {"shard": "The wallet costs $100"}, {"shard": "Betty has only half of the money she needs"}, {"shard": "Her parents gave her $15"}, {"shard": "Her grandparents gave twice as much as her parents"}]} 
+
+Example 2: 
+
+Q: What is the value of 34 × 32?{"shards": [{"shard": "An expression is given: 34 × 32."}, {"shard": "The question asks for its value."}]} 
+
+Example 3: 
+
+Q: Convert the point (0 , 3) in rectangular coordinates to polar coordinates. Enter your answer in the form (r, θ ), where r > 0
+
+and 0 ≤ θ < 2π.{"shards": [{"shard": "A point is given: 
+
+(0 , 3) in rectangular coordinates."}, {"shard": "It should be converted to polar coordinates."}, {"shard": "The answer format is (r, θ ), where r > 0 and 0 ≤ θ < 
+
+2π."}]} Q: [[QUESTION]] 
+
+Figure 3: Sharding prompt used to construct multi-turn episodes from single-turn problems. [[QUESTION]] is replaced with the problem text at runtime. 
+
+The segmentation prompt is shown in Figure 3, representative of the validation and question ex-traction prompts which follow the same format. It includes explicit rules instructing the model to re-tain all numerical and symbolic content verbatim while avoiding added reasoning, hints, or interpreta-tions, with output constrained to JSON for reliable programmatic parsing. Three few-shot examples spanning simple arithmetic, symbolic expressions, and multi-constraint geometry encourage general-isation across diverse problem types, and the ap-proach can readily extend to other domains by sub-stituting the few-shot examples accordingly. 
+
+A.3 Memory Mechanism 
+
+Prompt templates for intermediate memory update turns and the final answer turn are shown in Fig-ure 4. The final answer turn requires the model to produce its answer in \boxed{} format, enabling rule-based match verification against the ground-truth solution without any learned reward model. Intermediate Turn 
+
+You are given a question and additional information. Please read the new information carefully and update your understanding to help answer the question. Retain all relevant details from your previous understanding while incorporating the new information. 
+
+〈question 〉 {question} 〈/question 〉〈memory 〉 {memory} 〈/memory 〉〈segment 〉 {segment} 〈/segment 〉
+
+Updated memory: 
+
+Final Turn 
+
+You are presented with a problem and a previous memory. Please answer the problem based on the previous memory and put the answer in \boxed{}. 
+
+〈question 〉 {question} 〈/question 〉〈memory 〉 {memory} 〈/memory 〉
+
+Your final answer: 
+
+Figure 4: Prompt templates for intermediate memory update turns and the final answer turn. At intermediate turns the model rewrites its memory given a new shard; at the final turn it answers using only the terminal mem-ory state, with no access to the shard history.

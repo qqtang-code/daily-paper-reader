@@ -1,0 +1,643 @@
+Title: Bridging Modal Isolation in Interleaved Thinking: Supervising Modality Transitions via Stepwise Reinforcement
+
+URL Source: https://arxiv.org/pdf/2606.12886v1
+
+Published Time: Fri, 12 Jun 2026 00:28:45 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# Bridging Modal Isolation in Interleaved Thinking: Supervising Modality Transitions via Stepwise Reinforcement 
+
+Tingyu Li 1,2 , Le Zhou 2, Siyuan Li 3, Yujun Wu 1, Xinglong Xu 4, Jingxuan Wei 4, Conghui He 1,
+
+Cheng Tan 11Shanghai Artificial Intelligence Laboratory, 2Shanghai Jiaotong University, 3Zhejiang University, 4University of Chinese Academy of Sciences Interleaved thinking, where a unified multimodal model alternates between textual reasoning and visual generation, has shown promise on spatial and physical tasks. However, in complex long-chain scenarios, we identify a fundamental failure mode: generated images diverge from the textual context while subsequent text ignores the visual evidence, causing the two modalities to alternate without genuinely informing each other. We term this Modal Isolation 
+
+and attribute it to compounding information loss at modality boundaries. We decompose each reasoning cycle into atomic operations and define modality transition loss, quantifying cross-modal hallucination (text-to-image) and visual utilization deficit (image-to-text) at each boundary. We propose MoTiF (Mo dality Ti ransition Fidelity), a two-stage training frame-work that directly optimizes these transitions: Reflective SFT trains the model to detect and recover from erroneous visual outputs; Flow-GRPO improves image generation fidelity via reinforcement learning. All training signals in MoTiF derive from transition-level fidelity rather than end-task accuracy. Across four visual puzzle benchmarks, this transition-level supervision substantially improves both cross-modal coherence and final task accuracy. The results demonstrate that effective interleaved reasoning requires explicit structural supervision at modality boundaries, not merely scaling or end-task optimization. 
+
+Code Website Dataset 
+
+# 1 Introduction 
+
+The ability to reason about the physical world requires coordinating abstract symbolic thinking with concrete visual imagination [ 1 , 28 , 23 ]. Unified multimodal models (UMMs), capable of natively generating both text and images [ 21 , 26 ], have enabled interleaved thinking : a reasoning paradigm where the model alternates between textual reasoning and visual world modeling within a single chain [ 13 , 5, 11 , 25 ]. Prior work has demonstrated the viability of this paradigm on short-horizon spatial and physical tasks. In this work, we investigate its behavior in long-chain visual reasoning. We observe a persistent failure mode across multiple tasks, illustrated in Figure 1. Consider a maze navigation example: the model first performs textual reasoning, planning a sequence of moves (“move left 2 steps, go down 4 steps, go up 4 steps...”). It then generates an image to visualize the resulting path. However, the generated image depicts a path that is fundamentally inconsistent with the textual plan—passing through walls and deviating from the specified moves. This constitutes text-to-image information loss ( ℓtext →image ). More critically, when the model subsequently observes its own generated image, it fails to detect these inconsistencies: it declares “the blue path goes from start to end without hitting any walls ” and confidently concludes the goal is reached—despite the path being clearly invalid. This constitutes image-to-text information loss ( ℓimage →text ). The two modalities alternate in form but never genuinely inform each other, and the model arrives at a confident but wrong 
+
+answer. We term this phenomenon Modal Isolation : compounding information loss at modality boundaries progressively decouples the two modalities, causing each to operate in isolation despite their surface-level interleaving. 1
+
+> arXiv:2606.12886v1 [cs.CV] 11 Jun 2026
+
+Supervising Modality Transitions via Stepwise Reinforcement 
+
+A natural response is to optimize end-task accuracy via reinforcement learning, but this approach is fundamentally misaligned with the problem: it can reward models that arrive at correct answers ① First move left 2 steps.       
+
+> ②Go down for 4 steps.
+> ③Go up 4 steps.
+> ④Move left 2 steps.
+> ⑤Go up 2 steps.
+> Looking at the image, the blue
+> path goes from start to the
+> end without hitting any walls.
+> So the path is valid.
+> Therefore, the steps are
+> correct. So we reach the goal!
+
+Figure 1: The phenomenon of modal iso-lation in interleaved thinking. In a maze navigation task, the generated image de-picts an inconsistent path. Subsequently, the model observes the erroneous image yet fails to detect the discrepancy, incor-rectly validating the path. through hallucinated intermediate reasoning, leaving modal isolation unaddressed. Similarly, supervised fine-tuning on correct chains teaches the model what to pro-duce but not how to verify cross-modal consistency, offer-ing no mechanism to detect or recover from generation errors at inference time. These limitations point to the need for process-level supervision at modality boundaries .We formalize the information loss at each modality boundary as Modality Transition Loss , decomposing it into cross-modal hallucination (text →image fidelity) and vi-sual utilization deficit (image →text fidelity). We then propose MoTiF (Mo dality Ti ransition Fidelity), a two-stage training framework that directly optimizes a joint transition objective, with neither stage relying on end-task accuracy: (1) Reflective SFT , which trains the textual modality to detect and recover from erroneous visual out-puts by exposing the model to deliberately corrupted im-ages during training; and (2) Flow-GRPO , which improves the visual modality’s fidelity to textual instructions via re-inforcement learning over the image generation process. Our main contributions are: • We identify and formalize modal isolation, a com-pounding failure mode in interleaved thinking where modalities alternate without mutual informa-tion transfer. • We propose a two-stage training pipeline that pro-vides structural supervision at modality boundaries without relying on end-task accuracy signals. • Across four visual puzzle benchmarks, our method significantly improves the performance, demonstrat-ing that transition-level supervision is both necessary and effective for long-chain interleaved reasoning. 
+
+# 2 Related Work 
+
+Multimodal Understanding and Generation. Recent multimodal models have gradually moved be-yond perception-centered understanding toward joint modeling of understanding and generation, con-tributing to the development of unified multimodal models (UMMs). Early approaches connect large language models with image generators, visual decoders, or generative visual tokens, enabling models to produce images or mixed-modal outputs conditioned on multimodal contexts [ 12 , 8, 29 , 19 , 18 ]. Subsequent work explores tighter integration between language and vision, including autoregressive modeling over multimodal tokens, early-fusion mixed-modal architectures, unified autoregressive-diffusion frameworks, and native image-text generation [ 22 , 20 , 27 , 4]. More recent studies further revisit the relationship between visual understanding and image generation within unified frame-works, showing that the two capabilities may require visual representations at different levels of granularity, and improving their coordination through decoupled visual encoding, model scaling, 2Supervising Modality Transitions via Stepwise Reinforcement 
+
+and large-scale unified pretraining [ 24 , 2 , 7]. Together, these studies establish the conditions under which text and images can be jointly modeled and generated through a shared multimodal interface. However, they primarily address how to build models capable of understanding and generation across modalities, rather than how these capabilities behave when repeatedly composed over long reasoning. 
+
+Interleaved Visual Reasoning. Building on these model-level advances, interleaved visual reasoning studies how visual representations can participate in the reasoning process itself, rather than serving only as static inputs or final outputs. Explicit visual-state generation methods produce visual imagina-tion, sketches, or progressive image-text reasoning traces to support tasks involving spatial relations, object-state changes, and multi-step visual planning [ 13 , 6 , 11 ]. Visually grounded multimodal reason-ing methods instead introduce grounding signals, visual tokens, or structured image-text supervision into chain-of-thought reasoning, strengthening the connection between verbal reasoning and visual evidence without necessarily synthesizing full images [ 9, 10 , 3 , 16 ]. Post-training approaches further encourage models to acquire, generate, or exploit visual information through reinforcement learning or process-level rewards, improving the modeling and use of intermediate visual states in complex rea-soning [ 30 , 15 ]. Complementary benchmarks and analyses show that intermediate visual information can provide state constraints that are difficult to express through language alone, especially in tasks involving spatial structure, physical state tracking, and visual world modeling [ 31 , 25 ]. Taken together, these studies establish visual content as an intermediate representation for multimodal reasoning. However, existing work primarily examines the utility, construction, elicitation, and final-task benefits of visual steps; the fidelity of the modality transitions themselves remains less explicitly characterized. Specifically, the world state encoded in textual reasoning may fail to be faithfully externalized by the generated image, and subsequent text may fail to correctly decode or use the generated visual evidence. This gap motivates our focus on Modal Isolation, where two modalities appear to alternate over long reasoning chains but progressively decouple in the world states they encode and use. 
+
+# 3 Method 
+
+## 3.1 Preliminaries: Interleaving Thinking 
+
+Let W be the world state space of a visual reasoning task—encoding the positions, spatial relations, and physical configurations of entities in the environment. Let d : W × W → R≥0 be a divergence measure on W that quantifies the discrepancy between two world states. An interleaving thinking chain over K visual generation steps is a sequence 
+
+R = ( t1, v1, t2, v2, . . . , vK, tK+1), (1) where ti ∈ T denotes a text segment, vi ∈ V a generated image, and each element is conditioned on all preceding elements in the chain. Rather than treating ti as an opaque unit, we decompose it by function within the reasoning cycle. For each step i, the text segment ti performs three atomic operations: 1. tobs  
+
+> i
+
+extracts a world state estimate ˜ wi−1 ∈ W from the preceding image vi−1;2. trea  
+
+> i
+
+performs symbolic reasoning over ˜ wi−1 to decide the next action; 3. tins  
+
+> i
+
+encodes the intended next world state ˆ wi ∈ W as a drawing instruction. The image vi is then generated conditioned on ti, completing the cycle. We write ti = ( tobs  
+
+> i
+
+, trea  
+
+> i
+
+, tins  
+
+> i
+
+) to denote this functional decomposition. 3Supervising Modality Transitions via Stepwise Reinforcement 1 Interleaved Chain 2 Atomic Text State               
+
+> 3Atomic Interleaving Cycle
+> Draw
+> Instruction
+> Observe Reason
+> Draw
+> Instruction
+> Observe Reason Observe
+> 4World-State Transition and Per-Step Losses
+> intended state
+> (encoded by )rendered state
+> (in )
+> decoded state
+> (extracted by )
+> 5Chain-Level Objective
+> 6Compounding Error
+> large corrupted
+> (in )
+> large faulty next-step
+> reasoning
+> larger
+> Modal Isolation
+
+Figure 2: Modality transition loss and atomic decomposition of interleaving thinking. Two modality transitions occur in each cycle, at the boundaries between textual and visual processing: 
+
+M(i) 
+
+> T →V
+
+: tins  
+
+> i
+
+7 → vi, (2) 
+
+M(i) 
+
+> V →T
+
+: vi 7 → tobs 
+
+> i+1
+
+. (3) At each transition, information crosses between two heterogeneous representation spaces: the symbolic space T (discrete, compositional, structured by linguistic syntax and semantics) and the pixel space 
+
+V (continuous, holistic, structured by visual statistics). These spaces encode world states through fundamentally different inductive biases. Every modality crossing is therefore a potential site of information loss—the encoding modality must faithfully externalize its world knowledge, and the decoding modality must correctly interpret what was externalized. 
+
+## 3.2 Modality Transition Optimization 
+
+Modality Transition Loss. To quantify the information loss at modality boundaries, we introduce three world state variables for each cycle i:• ˆwi ∈ W : the world state that tins  
+
+> i
+
+intends to render—the target state produced by symbolic reasoning. • wVi ∈ W : the world state actually rendered in vi—what the visual modality produced in pixel space. • ˜wi ∈ W : the world state that tobs  
+
+> i+1
+
+extracts from vi—what the symbolic modality decodes from visual evidence. These three variables trace the lifecycle of a world state as it traverses a modality boundary: encoding ( ˆwi), rendering ( wVi ), and decoding ( ˜wi). When the transition is lossless, ˆwi = wVi = ˜wi; in practice, each step introduces distortion. 4Supervising Modality Transitions via Stepwise Reinforcement Definition 1 (Cross-Modal Hallucination) For the und → gen transition M(i) 
+
+> T →V
+
+, the cross-modal halluci-nation loss is 
+
+ℓ(i) 
+
+> und →gen
+
+≜ d( ˆwi, wVi ). (4) 
+
+This measures the degree to which vi diverges from the intended world state ˆwi: a large value indicates that the visual modality failed to faithfully externalize the reasoning output of the textual modality. 
+
+Definition 2 (Visual Utilization Deficit) For the gen → und transition M(i) 
+
+> V →T
+
+, the visual utilization deficit is 
+
+ℓ(i) 
+
+> gen →und
+
+≜ d(wVi , ˜ wi). (5) 
+
+This measures the degree to which the text modality fails to correctly decode the visual evidence in vi: a large value indicates that textual reasoning proceeds on an incorrect or incomplete world model despite the availability of visual information. 
+
+Summing over the chain yields the Modality Transition Loss :
+
+LMT (R) = 
+
+> K
+
+# ∑
+
+> i=1
+
+
+
+α · ℓ(i) 
+
+> und →gen
+
++ β · ℓ(i)
+
+> gen →und
+
+
+
+, (6) where α, β > 0 are weighting coefficients. This definition is self-contained at the conceptual level: it depends only on the abstract structure of W and d, without reference to how d(·, ·) is empirically estimated. 1
+
+The two components of LMT are not independent; their interaction produces a compounding effect across the chain. When ℓ(i) 
+
+> und →gen
+
+is large, wVi is a degraded representation of the true world state, which raises the expected value of ℓ(i)
+
+> gen →und
+
+—the text must now decode a corrupted visual signal. When 
+
+ℓ(i) 
+
+> gen →und
+
+is large, ˜wi (and consequently ˆwi+1 encoded by tins 
+
+> i+1
+
+) rests on a faulty perceptual foundation, making ℓ(i+1) 
+
+> und →gen
+
+more likely to be large. This mutual amplification accumulates with chain length 
+
+K, providing a formal account of Modal Isolation : the progressive decoupling of textual reasoning from visual evidence, where each modality drifts further from the other with every transition. LMT 
+
+thus serves as both a diagnostic metric and a fundamental bottleneck on the scalability of interleaving thinking to long chains. 
+
+Joint Optimization of Modality Transitions. The above diagnosis suggests a direct remedy: rather than optimizing for end-task accuracy alone—which may inadvertently reward models that arrive at correct answers through hallucinated reasoning—we directly supervise the modality transitions themselves. The training objective is min  
+
+> θ
+
+ER∼πθ [LMT (R)] . (7) We decompose this objective by transition direction: 
+
+Lund →gen (θ) = ER∼πθ
+
+" K
+
+# ∑
+
+> i=1
+
+ℓ(i)
+
+> und →gen
+
+#
+
+, (8) 
+
+Lgen →und (θ) = ER∼πθ
+
+" K
+
+# ∑
+
+> i=1
+
+ℓ(i)
+
+> gen →und
+
+#
+
+. (9)    
+
+> 1In our experiments, d(·,·)is operationalized through rubric-based VLM-as-Judge evaluations; see Section 4 for details. The theoretical framework is independent of this implementation choice.
+
+5Supervising Modality Transitions via Stepwise Reinforcement 
+
+The two sub-objectives govern different generation policies: Lund →gen concerns the image generation policy πV 
+
+> θ
+
+(a flow matching model), while Lgen →und concerns the text generation policy πT 
+
+> θ
+
+(an autoregressive model). Due to this architectural heterogeneity, we adopt a jointly optimized but separately implemented strategy: both sub-objectives share the same base model parameters θ and jointly minimize 
+
+LMT , while each is optimized through the RL framework best suited to its modality. For Lund →gen , we formulate the flow matching denoising process as a Markov Decision Process and ap-ply online policy optimization via Flow-GRPO [ 14 ]. Given a ground-truth textual context ending with 
+
+Figure 3: Reflective SFT data collection pipeline. 
+
+tins  
+
+> i
+
+, the model generates an image vi and receives a reward signal derived from the empirical estimate of ℓ(i)
+
+> und →gen
+
+. The policy πV 
+
+> θ
+
+is updated via group-relative advantage estimation with KL divergence regularization against a reference policy, maximiz-ing the fidelity of image generation to textual in-structions while preserving generation quality. For Lgen →und , we construct contrastive supervision data by introducing controlled perturbations to the visual stream: an intermediate image vi in a ground-truth chain is replaced with a corrupted variant ˜vi,and a frontier model is prompted to produce text that detects the discrepancy and either corrects the visual output or works around it. The resulting data, filtered by the empirical estimate of ℓ(i)
+
+> gen →und
+
+,provides supervised signals that explicitly train the textual modality to attend to, verify, and recover from visual evidence—thereby reducing the visual utilization deficit. Neither optimization path depends on end-task ac-curacy. Every training signal is derived from the fidelity of a single modality transition, evaluated independently of whether the final answer is correct. The two paths are unified under the single objective min θ LMT : both serve to reduce information loss at modality boundaries, and both contribute to miti-gating modal isolation and enabling more coherent long-chain interleaving thinking. Table 1: Naive interleaving SFT datasets.           
+
+> Task Reference Size
+> Sokoban Game-RL 7,997 Maze Game-RL 7,365 Multi-hop Manipulation CLEVER 8,000 Ball Tracking RBench-V 8,000
+
+# 4 Experimental Design 
+
+In this chapter, we systematically introduce the task selection and data construction pipeline, training workflow, hyperparameter settings, and evaluation suite. 6Supervising Modality Transitions via Stepwise Reinforcement 
+
+## 4.1 Task Selection and Naive SFT Dataset 
+
+Based on the varying cognitive load required to solve multimodal problems (i.e., whether the primary reasoning function is performed by the generation or the understanding module), we select four representative types of tasks: (1) Sokoban. Built upon Game-RL. This task requires the model to find the optimal path (i.e., pushing boxes to designated targets with the minimum number of steps) in a Sokoban grid environment. In this task, the understanding module bears the primary reasoning responsibility. (2) Maze. Also built upon the Game-RL codebase, this task requires the model to find the correct path from the start to the goal in a maze environment. (3) Multi-hop Manipulation. 
+
+Inspired by works such as CLEVER, we use Blender to render composite images that contain certain spatial relationships and individual attributes. The model is required to perform operations such as “removing/adding” objects, converting object attributes (e.g., color, shape), and moving objects’ spatial positions, and then answer specific spatial understanding questions. In tasks (2) and (3), the model needs to combine the abstract symbolic reasoning provided by the visual understanding module with the physical world intuition provided by the generation module to solve the problems. (4) Ball Tracking. Based on RBench-V and Viseval, this task provides the starting position and outgoing direction of a ball, and asks after several specular reflections which region the ball finally reaches. This task heavily demands the model’s physical intuition and visual world knowledge modeling, and the visual generation module bears the primary reasoning responsibility. We use a rule-based solver to obtain the correct answers and code-synthesized chain-of-thought; meanwhile, we render the key intermediate images during the solving process. We prompt Gemini3.1-Flash-Lite to rewrite the chain-of-thought, ultimately obtaining a high-quality, image-text interleaved fine-tuning dataset. See Table 1. 
+
+## 4.2 Model Training 
+
+To isolate the effects of Modal Isolation across tasks, we train a separate model per task. We choose Bagel [ 7 ] as our baseline, and all experiments are done on 8 ×H200 GPUs, full hyperparameters are in the Appendix. Our pipeline has two stages mapping to the two sub-objectives of Eq. 7. 
+
+Reward Design. To operationalize the modality transition losses, we construct two rubric-based VLM-as-Judge evaluators that explicitly quantify cross-modal hallucination and visual utilization at each modality boundary. Both produce binary (0/1) judgments, providing clean, transition-level training signals independent of end-task outcomes. Concretely, Rimg evaluates the MT →V transition: given the problem, the preceding reasoning context ending with a drawing instruction, the generated image, and the ground-truth image, it judges whether the generated image is logically equivalent to the ground truth—requiring agreement on task-relevant objects, spatial relations, and actions while tolerating superficial style differences. Rtxt evaluates the MV →T transition: for non-final steps it checks whether the <think>...</think> text correctly observes the preceding image, reasons coherently, and issues an executable drawing instruction; for final steps it verifies answer correctness and <ans>...</ans> 
+
+formatting. Both evaluators are implemented by prompting a strong frontier VLM with detailed rubrics. 
+
+Stage 1: Reflective SFT. This stage optimizes Lgen →und by training the model to detect and recover from erroneous visual outputs. Starting from the naive interleaving chains in Section 4, we randomly replace an intermediate image vk with a corrupted variant ˜vk to simulate a generation error, then prompt Gemini3.1-Flash-Lite to produce reflective text that identifies the discrepancy and responds. Two recovery patterns are used: (1) Detect-and-Ignore. where the model acknowledges the error and continues without regenerating. (2) Detect-and-Redraw. where it diagnoses the error and re-issues the drawing instruction for vk. The resulting chains are filtered by Rtxt , retaining only samples where the reflection correctly addresses the perturbation. 7Supervising Modality Transitions via Stepwise Reinforcement 
+
+Table 2: Model performance on our benchmarks. 
+
+Model Sokoban Maze Manipulation Ball Tracking Overall 
+
+Frontier Models 
+
+Gemini3.5-Flash 85.71 97.47 93.33 77.33 88.46 Gemini3.1-Flash-Lite 37.30 11.39 88.00 40.00 44.17 Seed2.0-Lite-0215 69.05 64.56 89.33 58.67 70.40 
+
+Open-Source Models 
+
+Qwen3.5-27B [17] 80.95 16.46 86.67 32.00 54.02 Gemma-4-31B 66.67 13.92 90.67 32.00 50.82 Bagel-7B-MoT [7] 16.67 10.13 45.33 29.33 25.37 ThinkMorph [11] 18.25 8.86 69.33 48.00 36.11 
+
+⊢ w.o. interleave thinking 22.22 5.06 65.33 37.33 31.74 
+
+Our Models 
+
+Ours (Stage1: optimize. Lgen →und ) 43.65 67.09 87.67 70.33 67.19 Ours (Stage2: optimize. Lund →gen ) 50.00 70.57 90.67 72.67 70.98 
+
+∆ max (vs. BaseModel) +33.33 +60.44 +45.34 +43.34 +45.61 
+
+We fine-tune Bagel with a combined objective: 
+
+LSFT (θ) = − ∑
+
+> i
+
+log pθ (ti | C<i) + ∑
+
+> j/∈M
+
+Et,ϵ vθ (xtj , t | C<j) − (ϵ − xj) 22 (10) where M indexes the perturbed images ˜vk, whose flow matching loss is masked to prevent the model from learning erroneous visual states. The model is trained to follow the format <think>...</think><create -image> for intermediate steps and <ans>...</ans> for the answer. 
+
+Stage 2: Flow-GRPO. This stage optimizes Lund →gen by improving the fidelity of image generation to textual drawing instructions. We extracted prefixes [Q, t1, v1, . . . , ti] from ground-truth chains, where 
+
+ti ends with a drawing instruction tins  
+
+> i
+
+; the model must generate vi.Following Flow-GRPO [ 14 ], we formulate the flow matching denoising process as an MDP and opti-mize via group-relative advantage estimation, using Rimg as the binary reward at the final denoising step: 
+
+LFlow-GRPO = − log πθ · ˆA + β DKL (πθ ∥πref ), (11) We adopt the policy gradient formulation for concise presentation. Refer to the appendix for details. 
+
+# 5 Results Analysis 
+
+We demonstrate that even without explicit outcome reward supervision, leveraging stepwise rewards based on VLM-as-Judge to mitigate modal isolation in interleaved thinking helps boost the model’s performance on visual reasoning tasks. Additionally, we discuss whether Reflective SFT and Flow-GRPO in the model training pipeline—whose objectives are to optimize Lund →gen and Lgen →und 
+
+respectively—incur catastrophic forgetting and damage the model’s learned capabilities. 
+
+## 5.1 Modality Transition Optimization Boosts Interleaving Thinking 
+
+Table 2 presents the performance of frontier multimodal models and open-source multimodal reasoning models with a similar parameter scale to Bagel-7B-MoT across four tasks (Sokoban, Maze, Multi-hop 8Supervising Modality Transitions via Stepwise Reinforcement 0 21/2 41/2 61/2 81/2 10 1/2 12 1/2 14 1/2 16 1/2 
+
+> GPU Hours (1/50)
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> Acuuracy
+
+Sokoban 
+
+Acc (w. gen und )
+
+Acc (w. und gen )  
+
+> gen und
+
++ und gen 0 50 1/4 100 1/4 150 1/4 200 1/4 250 1/4 300 1/4 350 1/4 400 1/4 
+
+> GPU Hours (1/50)
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> Acuuracy
+
+Ball Tracking 
+
+Acc (w. gen und )
+
+Acc (w. und gen )  
+
+> gen und
+
++ und gen 0 51/2 10 1/2 15 1/2 20 1/2 25 1/2 
+
+> GPU Hours (1/50)
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> Acuuracy
+
+Maze 
+
+Acc (w. gen und )
+
+Acc (w. und gen )  
+
+> gen und
+
++ und gen 0 10 1/3 20 1/3 30 1/3 40 1/3 50 1/3 
+
+> GPU Hours (1/50)
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> Acuuracy
+
+Multi-hop Manipulation 
+
+Acc (w. gen und )
+
+Acc (w. und gen )  
+
+> gen und
+
++ und gen 
+
+Figure 4: Solid lines denote model accuracy scores, with different colors distinguishing the Reflective SFT and Flow-GRPO training stages. Dashed lines represent the model’s cross-modal reward scores. This figure illustrates how model capabilities evolve synergistically with the optimization of Modal Transition Loss across various tasks. Manipulation, Ball Tracking). We observe that by optimizing the Modal Transition Loss to address issues including cross-modal hallucination and low utilization efficiency in Interleaving Thinking, our method consistently outperforms various open-source multimodal models on all tasks and achieves the optimal overall performance. We note that for challenging planning reasoning tasks such as Sokoban, the generation module of UMM fails to understand and follow complex reasoning contexts and construct meaningful visual world modeling, and cross-modal hallucination occurs at an extremely high frequency in such tasks. Consequently, the enhancement of the model’s reasoning capability via Flow-GRPO in the second training phase is particularly remarkable. Additionally, in the other tasks, the physical world intuition provided by visual modeling plays a more crucial role, and the reasoning paradigm constructed by Interleaving Thinking delivers a far more substantial improvement over the open-source baselines. Figure 4 further demonstrates the synergistic evolution between model performance and cross-modal reward scores throughout the training process. We build two benchmarks adopting the designed VLM-as-Judge reward functions, which quantify the severity of modal isolation by evaluating single-step text and image generation during interleaved thinking. In the figure, ℓund →gen and ℓgen →und 
+
+respectively represent the reward scores of the corresponding benchmarks. 
+
+## 5.2 Will Reflective SFT and Flow-GRPO Damage Each Other? 
+
+9Supervising Modality Transitions via Stepwise Reinforcement gen und  
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Accuracy (%)
+> Sokoban
+> Maze
+> Manipulation
+> Ball
+> und gen
+> Modal Transition Reward (lighter: after flow-grpo)
+
+Figure 5: Changes of Rg2u and Ru2g before and after Flow-GRPO training. Since the two training phases of Reflective SFT and Flow-GRPO optimize the modal transition loss in different dimensions, we systematically analyze whether multi-objective conflict and catastrophic forgetting occur during this process. Given that prior work has indicated that optimizing UMM with Flow-GRPO would impair the model’s rea-soning ability, Figure ?? analyzes the model’s cross-modal performance on different tasks. The results show that Flow-GRPO can significantly enhance the model’s understanding-to-generation process, while keeping the degradation of generation-to-understanding ability within an acceptable range, and even achieves a slight improvement on the Maze task. Detailed per-task numbers are provided in Appendix B (Table 5). This demonstrates that our designed two-stage training pipeline can stably and effectively improve the interleaving thinking capability of UMM. 
+
+# 6 Discussion 
+
+In this paper, we identify an inherent failure mode of interleaved thinking in unified multimodal models. By decomposing it into atomic operations, we pinpoint the phenomenon of modal isolation, wherein the textual and visual modalities alternate in form but fail to transfer information across boundaries. We quantitatively evaluate its manifestation using a carefully designed rubrics-based VLM judge. We reveal that effective interleaved reasoning relies on structural supervision at modal boundaries. More broadly, we provides a principled optimization objective for multimodal reasoning that extends beyond this specific paradigm. We hope this work provides both a diagnostic framework and a practical toolkit for advancing multimodal reasoning in unified models. 10 Supervising Modality Transitions via Stepwise Reinforcement 
+
+# References 
+
+[1] Peter W Battaglia, Jessica B Hamrick, and Joshua B Tenenbaum. Simulation as an engine of physical scene understanding. Proceedings of the national academy of sciences , 110(45):18327–18332, 2013. [2] Xiaokang Chen, Zhiyu Wu, Xingchao Liu, Zizheng Pan, Wen Liu, Zhenda Xie, Xingkai Yu, and Chong Ruan. Janus-pro: Unified multimodal understanding and generation with data and model scaling. arXiv preprint arXiv:2501.17811 , 2025. [3] Xinyan Chen, Renrui Zhang, Dongzhi Jiang, Aojun Zhou, Shilin Yan, Weifeng Lin, and Hongsheng Li. Mint-cot: Enabling interleaved visual tokens in mathematical chain-of-thought reasoning. Advances in neural information processing systems , 38:69110–69139, 2026. [4] Ethan Chern, Jiadi Su, Yan Ma, and Pengfei Liu. Anole: An open, autoregressive, native large multimodal models for interleaved image-text generation. arXiv preprint arXiv:2407.06135 , 2024. [5] Ethan Chern, Zhulin Hu, Steffi Chern, Siqi Kou, Jiadi Su, Yan Ma, Zhijie Deng, and Pengfei Liu. Thinking with generated images. arXiv preprint arXiv:2505.22525 , 2025. [6] Ethan Chern, Zhulin Hu, Steffi Chern, Siqi Kou, Jiadi Su, Yan Ma, Zhijie Deng, and Pengfei Liu. Thinking with generated images, 2025. URL https://arxiv.org/abs/2505.22525 .[7] Chaorui Deng, Deyao Zhu, Kunchang Li, Chenhui Gou, Feng Li, Zeyu Wang, Shu Zhong, Weihao Yu, Xiaonan Nie, Ziang Song, et al. Emerging properties in unified multimodal pretraining. arXiv preprint arXiv:2505.14683 , 2025. [8] Runpei Dong, Yuang Peng, Zekun Qi, Zheng Ge, Jinrong Yang, Liang Zhao, Jianjian Sun, Hongyu Zhou, Haoran Wei, Xiangwen Kong, et al. Dreamllm: Synergistic multimodal comprehension and creation. In 
+
+International Conference on Learning Representations , volume 2024, pages 6666–6702, 2024. [9] Yue Fan, Xuehai He, Diji Yang, Kaizhi Zheng, Ching-Chen Kuo, Yuting Zheng, Xinze Guan, and Xin Wang. Grit: Teaching mllms to think with images. Advances in Neural Information Processing Systems , 38: 116522–116543, 2026. [10] Jun Gao, Yongqi Li, Ziqiang Cao, and Wenjie Li. Interleaved-modal chain-of-thought. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 19520–19529, 2025. [11] Jiawei Gu, Yunzhuo Hao, Huichen Will Wang, Linjie Li, Michael Qizhe Shieh, Yejin Choi, Ranjay Krishna, and Yu Cheng. Thinkmorph: Emergent properties in multimodal interleaved chain-of-thought reasoning. 
+
+arXiv preprint arXiv:2510.27492 , 2025. [12] Jing Yu Koh, Daniel Fried, and Russ R Salakhutdinov. Generating images with multimodal language models. 
+
+Advances in Neural Information Processing Systems , 36:21487–21506, 2023. [13] Chengzu Li, Wenshan Wu, Huanyu Zhang, Yan Xia, Shaoguang Mao, Li Dong, Ivan Vuli ´c, and Furu Wei. Imagine while reasoning in space: Multimodal visualization-of-thought. In International Conference on Machine Learning , pages 36340–36364. PMLR, 2025. [14] Jie Liu, Gongye Liu, Jiajun Liang, Yangguang Li, Jiaheng Liu, Xintao Wang, Pengfei Wan, Di Zhang, and Wanli Ouyang. Flow-grpo: Training flow matching models via online rl. Advances in neural information processing systems , 38:40783–40818, 2026. [15] Ming Nie, Chunwei Wang, Jianhua Han, Hang Xu, and Li Zhang. Towards unified multimodal interleaved generation via group relative policy optimization. Advances in Neural Information Processing Systems , 38: 5332–5353, 2026. [16] Luozheng Qin, Jia Gong, Yuqing Sun, Tianjiao Li, Mengping Yang, Xiaomeng Yang, Chao Qu, Zhiyu Tan, and Hao Li. Uni-cot: Towards unified chain-of-thought reasoning across text and vision. arXiv preprint arXiv:2508.05606 , 2025. [17] Qwen Team. Qwen3.5: Towards native multimodal agents, February 2026. URL https://qwen.ai/blog?id= qwen3.5 .
+
+11 Supervising Modality Transitions via Stepwise Reinforcement 
+
+[18] Quan Sun, Yufeng Cui, Xiaosong Zhang, Fan Zhang, Qiying Yu, Yueze Wang, Yongming Rao, Jingjing Liu, Tiejun Huang, and Xinlong Wang. Generative multimodal models are in-context learners. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 14398–14409, 2024. [19] Quan Sun, Qiying Yu, Yufeng Cui, Fan Zhang, Xiaosong Zhang, Yueze Wang, Hongcheng Gao, Jingjing Liu, Tiejun Huang, and Xinlong Wang. Emu: Generative pretraining in multimodality. In International conference on learning representations , volume 2024, pages 12352–12380, 2024. [20] Chameleon Team. Chameleon: Mixed-modal early-fusion foundation models. arXiv preprint arXiv:2405.09818 ,2024. [21] Chameleon Team. Chameleon: Mixed-modal early-fusion foundation models. arXiv preprint arXiv:2405.09818 ,2024. [22] Xinlong Wang, Yufeng Cui, Jinsheng Wang, Fan Zhang, Yueze Wang, Xiaosong Zhang, Zhengxiong Luo, Quan Sun, Zhen Li, Yuqi Wang, et al. Multimodal learning with next-token prediction for large multimodal models. Nature , pages 1–7, 2026. [23] Jingxuan Wei, Siyuan Li, Yuhang Xu, Zheng Sun, Junjie Jiang, Hexuan Jin, Caijun Jia, Honghao He, Xinglong Xu, Chang Yu, et al. The trinity of consistency as a defining principle for general world models. arXiv preprint arXiv:2602.23152 , 2026. [24] Chengyue Wu, Xiaokang Chen, Zhiyu Wu, Yiyang Ma, Xingchao Liu, Zizheng Pan, Wen Liu, Zhenda Xie, Xingkai Yu, Chong Ruan, et al. Janus: Decoupling visual encoding for unified multimodal understanding and generation. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 12966–12977, 2025. [25] Jialong Wu, Xiaoying Zhang, Hongyi Yuan, Xiangcheng Zhang, Tianhao Huang, Changjing He, Chaoyi Deng, Renrui Zhang, Youbin Wu, and Mingsheng Long. Visual generation unlocks human-like reasoning through multimodal world models. arXiv preprint arXiv:2601.19834 , 2026. [26] Jinheng Xie, Weijia Mao, Zechen Bai, David Junhao Zhang, Weihao Wang, Kevin Qinghong Lin, Yuchao Gu, Zhijie Chen, Zhenheng Yang, and Mike Zheng Shou. Show-o: One single transformer to unify multimodal understanding and generation. In International Conference on Learning Representations , volume 2025, pages 28240–28264, 2025. [27] Jinheng Xie, Weijia Mao, Zechen Bai, David Junhao Zhang, Weihao Wang, Kevin Qinghong Lin, Yuchao Gu, Zhijie Chen, Zhenheng Yang, and Mike Zheng Shou. Show-o: One single transformer to unify multimodal understanding and generation. In International Conference on Learning Representations , volume 2025, pages 28240–28264, 2025. [28] Xinlei Yu, Zhangquan Chen, Yongbo He, Tianyu Fu, Cheng Yang, Chengming Xu, Yue Ma, Xiaobin Hu, Zhe Cao, Jie Xu, et al. The latent space: Foundation, evolution, mechanism, ability, and outlook. arXiv preprint arXiv:2604.02029 , 2026. [29] Kaizhi Zheng, Xuehai He, and Xin Eric Wang. Minigpt-5: Interleaved vision-and-language generation via generative vokens. arXiv preprint arXiv:2310.02239 , 2023. [30] Ziwei Zheng, Michael Yang, Jack Hong, Chenxiao Zhao, Guohai Xu, Le Yang, Chao Shen, and Xing Yu. Deepeyes: Incentivizing” thinking with images” via reinforcement learning. arXiv preprint arXiv:2505.14362 ,2025. [31] Yiyang Zhou, Haoqin Tu, Zijun Wang, Zeyu Wang, Niklas Muennighoff, Fan Nie, Yejin Choi, James Zou, Chaorui Deng, Shen Yan, et al. When visualizing is the first step to reasoning: Mira, a benchmark for visual chain-of-thought. arXiv preprint arXiv:2511.02779 , 2025. 
+
+12 Supervising Modality Transitions via Stepwise Reinforcement 
+
+# Appendix 
+
+# A Training Hyperparameter 
+
+We adopt Bagel-7B-MoT as our base model. All experiments, including Reflective SFT and Flow-GRPO, are conducted on 8×H200 GPUs. Specifically, the code for Reflective SFT is adapted from the official Bagel repository, and the Flow-GRPO code is sourced from its corresponding public code repository. We use Qwen3.5-27B as the judge model, which is deployed on two H200 GPUs via SGLang. In this section, we present the detailed hyperparameter configurations. Table 3: Reflective SFT experiment hyperparameters. 
+
+Parameter Value 
+
+expected num tokens 34560 max num tokens 34560 max num tokens per sample 17280 prefer buffer before 17280 total steps 3020 warmup steps 150 save every 300 lr scheduler cosine mse weight 10 ce weight 1
+
+Table 4: Flow GRPO experiment hyperparameters. 
+
+Parameter Value 
+
+judge model qwen3.5 27b train batch size 6num image per prompt 16 num batches per epoch 1learning rate 5e-6 beta 0.04 sde window size 3seed 42 noise level 1.3 
+
+# B Analysis of Multi-Objective Conflict 
+
+Table 5 reports the per-task modality transition rates before and after Flow-GRPO training. “Pre” denotes the model after Reflective SFT only; “Post” denotes the model after both Reflective SFT and Flow-GRPO. Rg2u measures generation-to-understanding fidelity (image →text), and Ru2g measures understanding-to-generation fidelity (text →image). Several observations emerge from the detailed breakdown: 
+
+Ru2g improves uniformly. All four tasks show positive gains after Flow-GRPO, with Manipulation exhibiting the largest improvement (+9.34). This is expected, as Flow-GRPO directly optimizes image generation fidelity to textual instructions. 13 Supervising Modality Transitions via Stepwise Reinforcement 
+
+Table 5: Comparison before and after Flow-GRPO. 
+
+Rg2u Ru2g                        
+
+> Task Pre Post Pre Post Sokoban 52.80 51.20 56.00 60.80 Maze 64.00 65.33 80.00 88.00 Manipulation 82.67 81.33 49.33 58.67 Ball 62.67 60.00 73.33 76.00 Average 65.53 64.47 64.66 70.87
+
+Rg2u degradation is bounded. The largest drop occurs on Ball Tracking (–2.67), while Maze actually improves (+1.33). We hypothesize that improved image quality indirectly benefits subsequent textual observation: when generated images are more faithful, the model’s “observation” step encounters less distributional shift, partially compensating for any forgetting of the Reflective SFT. 
+
+Net effect is strongly positive. The average Ru2g gain (+6.21) far exceeds the average Rg2u loss (–1.06), indicating that the two training stages are largely complementary. This supports our design choice of sequential optimization rather than joint multi-task training, which would require careful loss balancing. 
+
+# C Prompt Design 
+
+In this section, we present the prompt templates designed for our pipeline. These include: • (1) prompts for collecting Naive Interleaving Thinking SFT data, which specify the atomic operation cycle (Reason → Instruct → Draw → Observe) and format constraints tailored to each task domain; • (2) prompts for collecting Reflexion-augmented SFT data, where corrupted images are injected and the model is instructed to detect discrepancies and recover; • (3) prompts for the VLM-as-Judge reward function used to quantify modality transition loss (Ru2g and Rg2u). All prompts maintain a consistent meta-structure across tasks while adapting domain-specific evalua-tion criteria. 14 Supervising Modality Transitions via Stepwise Reinforcement Naive SFT Data Collection Prompt Template 
+
+**System Prompt:** You will receive a visual reasoning problem based on the {task name }
+
+environment, including: - A textual question - The original image - A set of raw reasoning steps - The correct answer - A set of intermediate auxiliary images generated during the process of solving the visual reasoning problem Your task is to combine the intermediate auxiliary images to generate an easy-to-understand, logically complete image-text interleaved reasoning process. Your reader will not have access to the intermediate materials (e.g., answer, raw reasoning steps, auxiliary images from the intermediate process). Your explanation will be used as a direct output to users, so it must read naturally and independently. Your output must follow this structure: place your reasoning process and answer be-tween the special tokens [ICOT_START] and [ICOT_END] .Example: 
+
+[ICOT_START] 
+
+reasoning process here ⟨image ⟩ (...and so on...) reasoning process here ⟨image ⟩ answer here 
+
+[ICOT_END] 
+
+**Guidelines:** We model the chain of thought with interleaved text and images as an explicit ”Observe and Reflect → Think and Decide → Plan to Draw → Draw” loop. In each reasoning process, first observe the image generated in the previous step, capture and analyze its visual elements in detail (or analyze the input query image at the first step). Then, based on the historical reasoning information and the visual feedback from drawing, provide a detailed reasoning process. Finally, using concise language, naturally derive an accurate and executable drawing plan based on the reasoning content. Please output a scontinuous, natural thinking narrative without explicit headings, bullet points, segmented labels, or rigid structural divisions. Integrate all stages naturally like human reasoning, rather than splitting them into separate labeled parts. **Attention:** - **Reasoning Style:** Simple restatement of the provided analysis is not allowed. Follow the long reasoning style of DeepSeek-R1. Elaborate every step of reasoning in full detail, do not skip intermediate derivations, and generate as much comprehensive reasoning content as possible. - **Strict Image Mapping:** You must include every provided intermediate auxiliary image exactly once, in their original order. Use the `<image> ` placeholder to insert them. Do not skip, reorder, or hallucinate images. - **No Spoilers:** Do not reveal the final solution or future steps prematurely. The reasoning must appear to unfold step-by-step. Your response must not imply that you possess prior knowledge of the answer or the raw reasoning steps. - **Final Synthesis:** After the last image, provide a summary. And put the final answer in the Latex symbol `\\boxed{} `.**User Prompt:** 
+
+15 Supervising Modality Transitions via Stepwise Reinforcement Reflective SFT Data Collection Prompt Template 
+
+You are helping create augmented training data for a multimodal reasoning model. This model performs interleaved text-image reasoning: it generates a text segment containing a drawing plan, then generates an image based on that plan, then continues with more text, and so on. Below is a multimodal problem and a partial reasoning chain. To simulate an image generation error for training purposes, one image has been deliberately replaced with a WRONG image. 
+
+---
+
+## Original Multimodal Problem 
+
+<img> {{question_text}} 
+
+## Completed Reasoning Steps **Step 1:** 
+
+{{step_1_text}} <img> 
+
+**Step 2:** 
+
+{{step_2_text}} <img> 
+
+... (repeat to step j-1) **Step {{j}} :** 
+
+{{step_j_text}} 
+
+## SIMULATED IMAGE GENERATION ERROR AT STEP {{j}} 
+
+The model attempted to generate an image based on the drawing plan in Step {{j}} , but the generation went wrong. Here is the WRONG image that was actually produced: 
+
+<img> 
+
+## Original Text That Followed Step {{j}} (for reference) 
+
+{{original_next_text}} ---
+
+## Your Task The wrong image shown above was generated instead of the correct one. You need to rewrite the text that follows this wrong image (replacing the original text shown above for reference). Your rewritten text must follow this three-part structure: 1. **Observe and describe the error**: Carefully examine the WRONG image. Describe what you actually see in it and explain specifically why it does NOT match what was expected based on Step {{j}} ’s reasoning and drawing plan. 2. **Continue reasoning**: Acknowledge that an image generation error occurred, but decide to move forward rather than redraw. Based on what the CORRECT image SHOULD have shown (as intended by Step {{j}} ), continue the logical reasoning for the next step. 3. **Drawing plan for the next step**: Provide a clear, executable drawing instruction for the NEXT image to generate. This drawing plan should be consistent with the original next step’s intended target. Write in first person. Use natural hesitation markers like ”Hmm...”, ”Wait,”, ”Let me look more closely...”, or ”Actually...” where appropriate. Please think carefully about the situation first. Analyze what the correct state should be vs. what the wrong image shows. Then provide your output in the JSON blob. 
+
+16 Supervising Modality Transitions via Stepwise Reinforcement 
+
+Ru2g
+
+## Role & Identity You are a strict visual verifier for the image generated in interleaved text-image reasoning content. ## Task Background Unified Generation and Understanding Models (UMM) natively integrate autoregressive text generation capability and flow-matching based image generation capability. For complex multimodal problem-solving (e.g., geometry reasoning), these models adopt an interleaved text-image multi-modal chain-of-thought (CoT) reasoning paradigm: they alternate between generating textual reasoning steps and auxiliary images in a cyclic reasoning process, to combine abstract symbolic reasoning from text and physical world intuition from images. This reasoning paradigm is defined as a generic ”think-decide -¿ drawing plan -¿ drawing -¿ observe-reflect” loop, wherein the textual reasoning generated in each round first observes and reflects upon the visual elements in the image produced in the previous step (if any) to assist subsequent reasoning and decision-making, and finally formulating a detailed drawing plan for the next step. The model receives an original multimodal problem and a completed text-image reasoning context. It must generate the next auxiliary image. The generated image is compared with a ground-truth auxiliary image. Your job is to produce one binary correctness judgment: whether the generated image is logically equivalent to the ground-truth image for this reasoning step. ## Core Evaluation Task You will be given: 1. The original multimodal problem image and problem text. 2. The full context of completed interleaved multi-modal CoT reasoning steps, where the corresponding images at their respective positions are represented by the ‘¡auxiliary-image¿‘ placeholder. 3. The image to be evaluated, which is generated following the explicit visualization instructions of the previous step’s textual reasoning. 4. The ground-truth image. ## Strict Evaluation Principles Focus only on correctness, not standalone aesthetic preference. The generated image does not need to be pixel-identical to the ground truth, but it must be logically equivalent for the current reasoning step. Score = 1 only if all of the following are true: - The generated image and the ground-truth image represent the same task state, same relevant objects, same spatial relations, same markings/annotations, and same action/result implied by the current step. - The generated image faithfully reflects the core intent of the immediately preceding textual drawing instruction in the reasoning context. - Non-target regions, objects, labels, or structural elements that should remain unchanged are logically preserved. - Any visual differences are only superficial style-level differences and do not alter the task-relevant meaning. - The image is clear enough that all task-relevant entities and relations can be reliably judged. Score = 0 if any task-relevant object, relation, state, annotation, action, or unchanged region differs from the ground truth. Also score 0 if the image is too blurry, distorted, incomplete, or artifact-corrupted to verify logical equivalence. Use the original problem and reasoning context only to understand what aspects are task-relevant. The final decision must be based on logical equivalence between the generated image and the ground-truth image. 17 Supervising Modality Transitions via Stepwise Reinforcement 
+
+Rg2u
+
+## Role & Identity You are a strict text verifier for the text generated in interleaved text-image reasoning content. ## Task Background Unified Generation and Understanding Models (UMM) natively integrate autoregressive text generation capability and flow-matching based image generation capability. For complex multimodal problem-solving (e.g., geometry reasoning), these models adopt an interleaved text-image multi-modal chain-of-thought (CoT) reasoning paradigm: they alternate between generating textual reasoning steps and auxiliary images in a cyclic reasoning process, to combine abstract symbolic reasoning from text and physical world intuition from images. This reasoning paradigm is defined as a generic ”think-decide -¿ drawing plan -¿ drawing -¿ observe-reflect” loop, wherein the textual reasoning generated in each round first observes and reflects upon the visual elements in the image produced in the previous step (if any) to assist subsequent reasoning and decision-making, and finally formulating a detailed drawing plan for the next step. The model receives an original multimodal problem and a completed text-image rea-soning context. It must generate the next reasoning text step. Your job is to produce one binary correctness judgment: whether the generated text correctly fulfills the requirements of this reasoning step. ## Core Evaluation Task You will be given: 1. The original multimodal problem image and problem text. 2. The full context of completed interleaved multi-modal CoT reasoning steps, where the corresponding images at their respective positions are represented by the ‘¡auxiliary-image¿‘ placeholder. 3. The image generated in the immediately preceding step (if any), which the model must observe and reflect upon. If there is no preceding image (i.e., this is the very first reasoning step), you will only see the problem image and must judge whether the model correctly observes the visual elements in the problem image instead. 4. The generated text to be evaluated. 5. The step type: ”non-final” (a <think>...</think> block ending with <create_image> ) or ”final” (an <ans>...</ans> block that concludes the entire reasoning chain). This is an intermediate reasoning step. The generated text must follow the format 
+
+<think>...</think> and end with <create_image> . Score = 1 only if ALL of the following are true: - The generated text is wrapped in <think>...</think> and ends with <create_image> .- The generated text correctly observes and describes the task-relevant visual elements from the immediately preceding image (or from the problem image, if this is the first step with no preceding image). The observations must be accurate and grounded in what is actually visible. - The reasoning is logically coherent, mathematically or spatially correct, and consistent with the problem rules and the preceding context. - The final part of the think block gives a clear, specific, and executable visual drawing/diagram instruction that faithfully follows from the reasoning. Score = 0 if the format is wrong, the visual observations are hallucinated or inaccurate, the reasoning is flawed or contradictory, the drawing instruction is missing or unreasonable, or the text is otherwise inadequate for guiding the next image generation step. Use the original problem and reasoning context only to understand what aspects are task-relevant. You must strictly follow the required JSON output format. 
+
+18 Supervising Modality Transitions via Stepwise Reinforcement 
+
+# D Task Examples and Model Responses 
+
+We synthesize all Interleaving Thinking reasoning chain data using Gemini3.1-Flash-Lite. For raw data generation (including questions and intermediate images), the code for Sokoban and Maze is adapted from Game-RL, while Ball Tracking and Multi-hop Manipulation are fully original implementations. In this section, we present all 4 tasks’ examples and examples of Interleaved Thinking reasoning chains generated by the trained models. Table 6: Detailed Dataset Information           
+
+> Task Size-RL Size-SFT
+> Sokoban 6074 15994 Maze 3945 14730 Manipulation 4034 16000 Ball Tracking 4615 16000
+
+Ball 
+
+Images 
+
+Question :**Rules:**1. There is a red ball and a green arrow; the arrow indicates the ball’s initial direction of motion; 2. At the top of the image, there are several rectangular holes arranged horizontally, numbered from left to right starting at 1; 3. The black boundaries of the image represent solid walls. When the ball hits a wall, it undergoes ideal reflection; 4. The red ball is considered a point mass-its size is negligible; 5. The ball reflects according to the following rules: - The component of velocity perpendicular to the wall is reversed in direction; - The component of velocity parallel to the wall remains unchanged; - The ball moves at a constant speed in an ideal environment until it enters one of the holes. **Question:** Estimate which hole the red ball will enter first during its motion. 
+
+19 Supervising Modality Transitions via Stepwise Reinforcement Multi-hop Manipulation Images 
+
+Question :You are given an initial arrangement of objects viewed from an oblique front perspective. In this view, objects closer to the camera are considered ’front,’ and the ’left’ and ’right’ sides of the scene correspond to the left and right of the frame.Perform the following operations in sequence: 1. Change the orange cylinder into a gray cylinder. 2. Change the blue sphere into a red cylinder. After completing all operations, what is the object in front of the red cuboid? Options: A. red cylinder B. purple sphere C. gray cylinder D. red cuboid 
+
+Sokoban Images 
+
+Question :This is a Sokoban puzzle where cartoon person is player, green X is target, brown box with X is box to push, brown tiles are walls, and light brown areas are movable spaces.The coordinates (x, y) in this puzzle represent the matrix format.What is the minimum number of moves needed to solve this puzzle? Output the option number instead of the num of steps Options: 
+
+[1] 15 [2] 12 
+
+[3] 11 [4] 14 
+
+[5] 21 [6] 17 
+
+[7] 13 [8] 16 
+
+20 Supervising Modality Transitions via Stepwise Reinforcement Model Responses Example 1 Model Response :
+
+<think> To begin solving this visual reasoning problem, I first need to examine the initial state of the scene. Looking at the original image, I can identify four distinct objects arranged on a neutral gray surface. Closest to the camera, or ¨front, ¨ıs a purple sphere. Directly behind it sits an orange cylinder. To the right of this column, there is a blue sphere, and further behind that blue sphere is a red cuboid. Based on the perspective provided, the purple sphere and blue sphere are on the same horizontal plane relative to the camera, while the orange cylinder and red cuboid are positioned further back. The first instruction is to change the orange cylinder into a gray cylinder. I observe the orange cylinder located in the middle-left area of the arrangement, positioned behind the purple sphere. To execute this change, I will mentally replace the color property of this specific object. I plan to visualize this by rendering the scene with the cylinder at that same position but with a gray matte finish instead of its original orange color. </think><create_image> 
+
+<think> With the first step complete, I observe the updated scene. We now have a gray cylinder where the orange one used to be. The next instruction is to change the blue sphere into a red cylinder. I look across to the right side of the frame where the blue sphere is located. This sphere is positioned directly in front of the red cuboid. My plan is to modify this object’s shape and color: the spherical geometry will be replaced by a cylindrical one, and the color will shift from blue to red. </think><create_image> 
+
+<ans> Now that both operations are finished, I need to analyze the final configuration to answer the question: ¨What is the object in front of the red cuboid? ¨Looking at the final image, I locate the red cuboid at the back right of the group. Directly in front of it, occupying the position where the blue sphere used to be, is the newly created red cylinder. On the left side of the scene, the purple sphere remains in the front, and the gray cylinder is behind it. Since the red cylinder is the object situated immediately between the red cuboid and the camera’s perspective line, it is the object in front of the red cuboid. The sequence of transformations changed the orange cylinder to gray and the blue sphere to a red cylinder. In the final state, the red cuboid is the furthest object in its column, and the object positioned directly in front of it is the red cylinder. Final Answer: The object in front of the red cuboid is the red cylinder. \\boxed{A} </ans> 
+
+21 Supervising Modality Transitions via Stepwise Reinforcement Model Responses Example 2 Images 
+
+Question :**Rules:**1. This is a maze mini-game.The player needs to navigate around obstacles to reach the destination and achieve victory. 2. The red circle represents the player, the green block is the goal and the blue blocks are obstacles. 3. The player can only move within the white blocks. 4. The coordinates are given in the format (row, col), where row represents the vertical position and col represents the horizontal position. Find the path to the finish and count the number of turns it takes to get there. 
+
+Model Response :
+
+<think> To solve the maze, I will start by identifying the player’s position at (9, 2) and the goal at (1, 7). The goal is to navigate the white paths while avoiding the blue obstacles. Initially, I will test the path to the left. I observe that moving from (9, 2) to (9, 1) and then upward leads to a dead end at (7, 1). </think><create_image> 
+
+<think> Since the first path is blocked, I will backtrack to the starting point at (9, 2) and explore the path to the right. Moving from (9, 2) to (9, 3), I then head upwards to (7, 3), turn right toward (7, 5), go down to (9, 5), and continue right to (9, 9). From there, I navigate upward along the right edge of the maze to (3, 9). Turning left, I proceed to (3, 5), then move up to (1, 5), and finally head right to reach the goal at (1, 7). By tracing this path and making turns whenever the direction changes, I count the total number of turns required to successfully reach the destination. </think><create_image> 
+
+<ans> The path taken involves several directional changes: starting from (9, 2), the turns occur at (9, 3), (7, 3), (7, 5), (9, 5), (9, 9), (3, 9), (3, 5), and (1, 5). Counting these navigation pivots, the total number of turns is 8. \\boxed{8} </ans> 
+
+22
