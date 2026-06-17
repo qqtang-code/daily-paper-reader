@@ -6,85 +6,101 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-15
-- 运行时间：2026-06-15 23:12:24 UTC
+- 最新运行日期：2026-06-17
+- 运行时间：2026-06-17 22:31:15 UTC
 - 运行状态：成功
-- 本次总论文数：21
-- 精读区：9
+- 本次总论文数：27
+- 精读区：15
 - 速读区：12
 
 ### 今日简报（AI）
-今日精选21篇论文，精读9篇，重点关注稀疏注意力与跨模态建模的前沿突破。  
-最值得关注的是满分论文《MiniMax Sparse Attention》与《HiST: A Hierarchical Sparse Transformer》，分别从高效稀疏注意力机制和跨模态空间转录组学建模给出创新方案。  
-建议普通读者优先精读这两篇满分工作，并速读《RoVE》与《Multi-Turn Reasoning》以拓展对位置编码和多步推理的理解。
-- 详情：[/202606/15/README](/202606/15/README)
+今日日报聚焦多模态大模型优化，精读10分论文《边界注意力校准压缩KV缓存》，速读涉及表格-图像适配器调优、视频幻觉修补及视觉原生智能搜索。最值得关注边界注意力校准（BAC）高效压缩KV缓存，以及视频标记修补（MultiToP）和主动视觉推理（Visual-Seeker）方向。建议优先研读BAC在内存受限场景的应用原理，同时跟进适配器调优与视觉搜索的实践方案。
+- 详情：[/202606/17/README](/202606/17/README)
 
 ### 精读区论文标签
-1. [MiniMax Sparse Attention](/202606/15/2606.13392v2-minimax-sparse-attention)  
+1. [Last But Not Least: Boundary Attention CalibratiON for Multimodal KV Cache Compression](/202606/17/2606.14782v1-last-but-not-least-boundary-attention-calibration-for-multimodal-kv-cache-compression)  
    标签：评分：10.0/10、query:sparse-attn
-   evidence：面向Transformer的块稀疏注意力机制
-2. [HiST: A Hierarchical Sparse Transformer for Cross-Modal Spatial Transcriptomics Modeling](/202606/15/2606.14251v1-hist-a-hierarchical-sparse-transformer-for-cross-modal-spatial-transcriptomics-modeling)  
+   evidence：多模态KV缓存压缩，使用边界注意力校准
+2. [Last But Not Least: Boundary Attention CalibratiON for Multimodal KV Cache Compression](/202606/17/2606.14782v2-last-but-not-least-boundary-attention-calibration-for-multimodal-kv-cache-compression)  
    标签：评分：10.0/10、query:sparse-attn
-   evidence：分层稀疏Transformer结合稀疏窗口注意力
-3. [CORA: Analyzing and bridging thinking-answer gap in Multimodal RLVR via Consistency-Oriented Reasoning Alignment](/202606/15/2606.14691v1-cora-analyzing-and-bridging-thinking-answer-gap-in-multimodal-rlvr-via-consistency-oriented-reasoning-alignment)  
-   标签：评分：10.0/10、query:mm-cot
-   evidence：面向一致性的推理对齐用于多模态RLVR，解决思考-答案不一致
-4. [Are Reasoning Vision-Language Models Robust to Semantic Visual Distractions?](/202606/15/2606.08894v1-are-reasoning-vision-language-models-robust-to-semantic-visual-distractions)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：评估推理型VLM对语义视觉干扰的鲁棒性
-5. [Inside the Latent Flow: Causal Deciphering of Attention Dynamics in Audio Separation Foundation Models](/202606/15/2606.10046v1-inside-the-latent-flow-causal-deciphering-of-attention-dynamics-in-audio-separation-foundation-models)  
+   evidence：多模态KV缓存压缩，使用边界注意力校准
+3. [miniReranker: Efficient Multimodal Reranking through Visual Cache Reuse and Interaction Sparsity](/202606/17/2606.10759v2-minireranker-efficient-multimodal-reranking-through-visual-cache-reuse-and-interaction-sparsity)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：针对音频模型的层选择性注意力缓存
-6. [Attention Amnesia in Hybrid LLMs: When CoT Fine-Tuning Breaks Long-Range Recall, and How to Fix It](/202606/15/2606.11052v1-attention-amnesia-in-hybrid-llms-when-cot-fine-tuning-breaks-long-range-recall-and-how-to-fix-it)  
+   evidence：多模态重排序中的视觉缓存重用与交互稀疏性
+4. [ARM: An AutoRegressive Large Multimodal Model with Unified Discrete Representations](/202606/17/2606.11188v1-arm-an-autoregressive-large-multimodal-model-with-unified-discrete-representations)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：统一多模态理解和生成模型
+5. [MultiToP: Learning to Patch Visual Tokens to Mitigate Hallucinations in Video Large Multimodal Models](/202606/17/2606.11792v1-multitop-learning-to-patch-visual-tokens-to-mitigate-hallucinations-in-video-large-multimodal-models)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：视觉令牌修补缓解视频大多模态模型中的幻觉
+6. [HYDRA-X: Native Unified Multimodal Models with Holistic Visual Tokenizers](/202606/17/2606.13289v1-hydra-x-native-unified-multimodal-models-with-holistic-visual-tokenizers)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：统一的视觉分词器多模态模型，融合图像和视频
+7. [PolyKV: Heterogeneous Retention and Allocation for KV Cache Compression](/202606/17/2606.15157v1-polykv-heterogeneous-retention-and-allocation-for-kv-cache-compression)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：逐层异构KV缓存压缩，包括方法选择和预算分配
+8. [DLWM: Diverse Latent World Models for Efficient Multimodal Reasoning](/202606/17/2606.15160v1-dlwm-diverse-latent-world-models-for-efficient-multimodal-reasoning)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：CoT微调降低长程召回并提出修复方案
-7. [Bridging Modal Isolation in Interleaved Thinking: Supervising Modality Transitions via Stepwise Reinforcement](/202606/15/2606.12886v1-bridging-modal-isolation-in-interleaved-thinking-supervising-modality-transitions-via-stepwise-reinforcement)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：多模态逐步推理与模态转换监督
-8. [Beyond the Commitment Boundary: Probing Epiphenomenal Chain-of-Thought in Large Reasoning Models](/202606/15/2606.13603v1-beyond-the-commitment-boundary-probing-epiphenomenal-chain-of-thought-in-large-reasoning-models)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：探测链式思维步骤的因果重要性
-9. [SuperThoughts: Reasoning Tokens in Superposition](/202606/15/2606.13862v1-superthoughts-reasoning-tokens-in-superposition)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：压缩CoT推理token以加速
+   evidence：多样潜在世界模型实现高效多模态推理，类似链式思维
+9. [Rethinking the Role of Efficient Attention in Hybrid Architectures](/202606/17/2606.15378v1-rethinking-the-role-of-efficient-attention-in-hybrid-architectures)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：混合架构中高效注意力的系统分析
+10. [Mitigating Visual Hallucinations in Multimodal Systems through Retrieval-Augmented Reliability-Aware Inference](/202606/17/2606.15782v1-mitigating-visual-hallucinations-in-multimodal-systems-through-retrieval-augmented-reliability-aware-inference)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：通过检索增强的可靠性感知推理缓解多模态系统视觉幻觉
+11. [Training-free sparse attention based on cumulative energy filtering](/202606/17/2606.16317v1-training-free-sparse-attention-based-on-cumulative-energy-filtering)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：基于累积能量滤波的训练无关稀疏注意力用于DiTs
+12. [Pareto LoRA: Mitigating Modality Imbalance in Unified Multimodal Models via Pareto-Optimal Gradient Integration](/202606/17/2606.17296v1-pareto-lora-mitigating-modality-imbalance-in-unified-multimodal-models-via-pareto-optimal-gradient-integration)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：统一多模态模型中的模态不平衡，提出帕累托最优梯度整合的LoRA方法
+13. [MODE-RAG: Manifold Outlier Diagnosis and Energy-based Retrieval-Augmented Generation Evaluation](/202606/17/2606.17449v1-mode-rag-manifold-outlier-diagnosis-and-energy-based-retrieval-augmented-generation-evaluation)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：通过多智能体系统检测和缓解多模态幻觉
+14. [AnchorKV: Safety-Aware KV Cache Compression via Soft Penalty with a Refusal Anchor](/202606/17/2606.17872v1-anchorkv-safety-aware-kv-cache-compression-via-soft-penalty-with-a-refusal-anchor)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：安全感知的KV缓存压缩
+15. [ConSA: Controllable Sparsity in Hybrid Attention via Learnable Allocation](/202606/17/2606.18056v1-consa-controllable-sparsity-in-hybrid-attention-via-learnable-allocation)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：混合注意力中的可学习稀疏分配
 
 ### 速读区论文标签
-1. [RoVE: Rotary Value Embeddings Attention for Relative Position-dependent Value Pathways](/202606/15/2606.11275v1-rove-rotary-value-embeddings-attention-for-relative-position-dependent-value-pathways)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：旋转值嵌入使注意力具有位置敏感性,提升效率
-2. [On Subquadratic Architectures: From Applications to Principles](/202606/15/2606.12364v1-on-subquadratic-architectures-from-applications-to-principles)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：比较亚二次架构作为变压器中二次注意力的高效替代方案
-3. [Multi-Turn Reasoning When Context Arrives in Pieces: Scalable Sharding and Memory-Augmented RL](/202606/15/2606.12941v1-multi-turn-reasoning-when-context-arrives-in-pieces-scalable-sharding-and-memory-augmented-rl)  
+1. [Parameter-Efficient Adapter Tuning for Tabular-Image Multimodal Learning](/202606/17/2606.11682v1-parameter-efficient-adapter-tuning-for-tabular-image-multimodal-learning)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：基于适配器的多模态学习微调，结合表格和图像数据
+2. [MultiToP: Learning to Patch Visual Tokens to Mitigate Hallucinations in Video Large Multimodal Models](/202606/17/2606.11792v2-multitop-learning-to-patch-visual-tokens-to-mitigate-hallucinations-in-video-large-multimodal-models)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：通过token修补缓解视频多模态模型幻觉
+3. [Visual-Seeker: Towards Visual-Native Multimodal Agentic Search via Active Visual Reasoning](/202606/17/2606.15231v1-visual-seeker-towards-visual-native-multimodal-agentic-search-via-active-visual-reasoning)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：主动视觉推理用于多模态搜索
+4. [From Frames to Temporal Graphs: In-Context Egocentric Action Recognition with Vision-Language Models](/202606/17/2606.15417v1-from-frames-to-temporal-graphs-in-context-egocentric-action-recognition-with-vision-language-models)  
    标签：评分：8.0/10、query:mm-cot
-   evidence：多轮推理结合记忆增强
-4. [MiniPIC: Flexible Position-Independent Caching in <100LOC](/202606/15/2606.13126v1-minipic-flexible-position-independent-caching-in-100loc)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：面向LLM推理的位置无关KV缓存
-5. [Momentum for Reasoning: Dense Intrinsic Signals in Policy Optimization](/202606/15/2606.08815v1-momentum-for-reasoning-dense-intrinsic-signals-in-policy-optimization)  
-   标签：评分：7.0/10、query:mm-cot
-   evidence：通过密集内在奖励信号进行长链推理
-6. [ARM: An AutoRegressive Large Multimodal Model with Unified Discrete Representations](/202606/15/2606.11188v1-arm-an-autoregressive-large-multimodal-model-with-unified-discrete-representations)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：统一多模态自回归模型与离散表示
-7. [Doc-to-Atom: Learning to Compile and Compose Memory Atoms](/202606/15/2606.12400v1-doc-to-atom-learning-to-compile-and-compose-memory-atoms)  
+   evidence：通过时间动作图实现少样本第一人称动作识别，支持链式推理
+5. [Boltzmann Attention: Learnable Ising Couplings for Cooperative Attention](/202606/17/2606.12478v1-boltzmann-attention-learnable-ising-couplings-for-cooperative-attention)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：组合记忆原子用于高效长上下文推理
-8. [PRISMR: Overcoming Parse Collapse in Multimodal Listwise Ranking via Parameterized Representation Internalization](/202606/15/2606.12942v1-prismr-overcoming-parse-collapse-in-multimodal-listwise-ranking-via-parameterized-representation-internalization)  
+   evidence：具有可学习成对耦合的新型注意力机制
+6. [PRISMR: Overcoming Parse Collapse in Multimodal Listwise Ranking via Parameterized Representation Internalization](/202606/17/2606.12942v1-prismr-overcoming-parse-collapse-in-multimodal-listwise-ranking-via-parameterized-representation-internalization)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多模态长上下文排序与参数化表示内化
-9. [AudioProcessBench: Benchmark for Identifying Process Errors in Audio-Grounded Reasoning](/202606/15/2606.09925v1-audioprocessbench-benchmark-for-identifying-process-errors-in-audio-grounded-reasoning)  
-   标签：评分：6.0/10、query:mm-cot
-   evidence：音频推理步骤级过程错误识别基准
-10. [The Periodic Table of LLM Reasoning: A Structured Survey of Reasoning Paradigms, Methods, and Failure Modes](/202606/15/2606.11470v1-the-periodic-table-of-llm-reasoning-a-structured-survey-of-reasoning-paradigms-methods-and-failure-modes)  
-   标签：评分：6.0/10、query:mm-cot
-   evidence：包含思维链的推理范式结构化综述
-11. [Kuramoto Attention: Synchronizing Self-Attention on the Torus](/202606/15/2606.11585v1-kuramoto-attention-synchronizing-self-attention-on-the-torus)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：基于角度表示的新型自注意力机制
-12. [Beyond Fully Random Masking: Attention-Guided Denoising and Optimization for Diffusion Language Models](/202606/15/2606.12273v1-beyond-fully-random-masking-attention-guided-denoising-and-optimization-for-diffusion-language-models)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：注意力引导的优化提升生成效率
+   evidence：解决多模态列表排序中的解析崩溃问题，与多模态理解相关
+7. [GIVE: Grounding Human Gestures in Vision-Language-Action Models](/202606/17/2606.13435v1-give-grounding-human-gestures-in-vision-language-action-models)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：在不改变模型架构的前提下将人类手势理解集成到VLA模型中
+8. [Context-aware Modality-Topology Co-Alignment for Multimodal Attributed Graphs](/202606/17/2606.14172v1-context-aware-modality-topology-co-alignment-for-multimodal-attributed-graphs)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：多模态属性图学习，任务自适应上下文对齐
+9. [AnyMod-LLVE: Low-Light Video Enhancement with Modality-Agnostic Inference](/202606/17/2606.11186v1-anymod-llve-low-light-video-enhancement-with-modality-agnostic-inference)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：处理缺失模态的多模态架构
+10. [Magnifying What Matters: Attention-Guided Adaptive Rendering for Visual Text Comprehension](/202606/17/2606.12898v1-magnifying-what-matters-attention-guided-adaptive-rendering-for-visual-text-comprehension)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：视觉文本理解中的多模态理解
+11. [An Attention-based Model for Robust Forecasting with Missing Modality](/202606/17/2606.13970v1-an-attention-based-model-for-robust-forecasting-with-missing-modality)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：基于注意力的缺失模态鲁棒多模态模型
+12. [Beyond Scalar Distances: Semantic Attribute Gradients from Frozen MLLMs for Visual Embeddings](/202606/17/2606.15134v1-beyond-scalar-distances-semantic-attribute-gradients-from-frozen-mllms-for-visual-embeddings)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：利用多模态大语言模型改进视觉嵌入
 
 
 <div class="dpr-home-promo-card">

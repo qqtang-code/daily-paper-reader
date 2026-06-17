@@ -1,0 +1,863 @@
+Title: MultiToP: Learning to Patch Visual Tokens to Mitigate Hallucinations in Video Large Multimodal Models
+
+URL Source: https://arxiv.org/pdf/2606.11792v2
+
+Published Time: Fri, 12 Jun 2026 00:31:24 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# MultiToP: Learning to Patch Visual Tokens to Mitigate Hallucinations in Video Large Multimodal Models 
+
+Yuansheng Gao 1, †,‡, Wenbin Xing 2, ‡, Jiahao Yuan 3, Kaiwen Zhou 1,Han Bao 1, §, Zonghui Wang 1, §, Wenzhi Chen 1
+
+> 1
+
+Zhejiang University, 2Sun Yat-sen University, 3East China Normal University 
+
+> †
+
+Email: y.gao@zju.edu.cn 
+
+> ‡
+
+Co-first authors §Corresponding authors 
+
+Abstract 
+
+Video Large Multimodal Models have achieved remarkable progress in video understanding, yet they remain prone to hallucinations, where generated responses are not faithfully sup-ported by the input video. In this paper, we propose MultiToP, a multimodal-context-aware visual token patching framework that miti-gates hallucinations by refining unreliable vi-sual tokens before language generation. Mul-tiToP introduces a lightweight Visual Token Patcher to predict token-level replacement dis-tributions and selectively substitute unreliable visual tokens with a dynamic global patch to-ken. To train the patcher effectively, we fur-ther propose information-guided rank calibra-tion, which uses answer-conditioned frame-level information cues derived from the back-bone to guide token replacement. Combined with ground-truth answer supervision and spar-sity regularization, MultiToP enables localized visual evidence refinement without modifying the original model. Extensive experiments demonstrate that MultiToP effectively reduces hallucinations on Vript-HAL with negligible inference overhead, improving the F1 scores of Qwen3-VL-4B-Instruct by 50.60% over the vanilla model. Meanwhile, MultiToP preserves general video understanding ability, yielding an 18.58% relative accuracy gain on ActivityNet-QA for Video-LLaVA-7B. 
+
+1 Introduction 
+
+Video Large Multimodal Models (VideoLMMs) have recently advanced rapidly, showing powerful understanding and reasoning capabilities (Bai et al., 2025b; Wang et al., 2025b). However, their practi-cal reliability is still limited by hallucination, where the generated responses appear plausible but are not faithfully supported by the input video (Bai et al., 2024; Sahoo et al., 2024). This issue is particularly critical for video understanding, as models must not only recognize visual entities but also track Fine -Tuning the  VideoLMM                       
+
+> Extra Consistent Data
+> (a) Data alignment
+> Original Video Perturbed Video
+> (b) Contrastive decoding
+> Semantic Cue Attention Score
+> (c) Visual grounding
+> logits1 logits2
+> (d) MultiToP (Ours)
+> Undesirable
+> Desirable
+> Video -LLaVA -7B (Vanilla)
+> + TCD +MotionCD
+> + Dino -Heal + TA -AE
+> +SmartSight +MultiToP
+> F1 :9.68%
+> F1: 4.92%
+> Avg. Infer. Time ( × 10 −2 s)
+> F1 Score
+> (e) Performance -efficiency comparison on Vript -HAL.
+> LLM backbone of the VideoLMM
+> Patcher
+> …The boy wearing
+> glasses is holding a
+> frying pan …
+> patch
+> unreliable
+> visual tokens
+
+Figure 1: Comparison of different mitigation strategies. Existing methods mainly operate at the data (a), video (b), or frame (c), while MultiToP (d) refines visual ev-idence at the token-level before generation. For (e), bubble size indicates average GPU memory, and the y-axis represents the normalized inference time per token. 
+
+actions, relations, and temporal dynamics across frames (Kong et al., 2025; Xing et al., 2026). Existing studies mitigate hallucinations from dif-ferent intervention levels, as shown in Figure 1. Some methods improve video-language alignment through supervised fine-tuning, preference opti-mization, or reinforcement learning (Bansal et al., 2024; Gao et al., 2025; Huang et al., 2025a; Ding et al., 2025; Li et al., 2026). Others perform inference-time intervention by contrasting origi-nal and perturbed videos (Leng et al., 2024; Zhang et al., 2024a; Kong et al., 2025), or enhance visual grounding by reweighting salient regions, injecting semantic cues, modifying internal activations, or exploiting attention signals (Li et al., 2025a; Wang et al., 2025a; Cai et al., 2026; Sun et al., 2026; Zhang et al., 2026). Although effective, these meth-
+
+> arXiv:2606.11792v2 [cs.CV] 11 Jun 2026
+
+ods mainly operate at the model, video, frame, or response level, leaving the fine-grained reliability of individual visual tokens insufficiently explored. This gap is important because visual tokens are the direct interface through which video evidence is consumed by the language model. In Vide-oLMMs, video inputs are encoded and projected into visual tokens before being fed into the lan-guage model (Zhang et al., 2023; Lin et al., 2024). However, not all visual tokens provide reliable evidence: some capture salient objects, actions, and temporal transitions, while others may encode background regions, redundant information, uncer-tain features, or imperfect visual-language align-ment (Gong et al., 2024; Woo et al., 2025; Bai et al., 2025a; Seo et al., 2026). Once unreliable tokens enter the language model, they may interact with biased attention patterns or strong language priors and be amplified during autoregressive gen-eration (Leng et al., 2024; Huang et al., 2024; Li et al., 2025b). Therefore, hallucinations can poten-tially be mitigated by repairing a small subset of misleading visual tokens before generation. Motivated by this insight, we propose Multi-ToP , a Multi modal-context-aware visual To ken 
+
+Patching framework for hallucination mitigation in VideoLMMs. MultiToP introduces a lightweight Visual Token Patcher that predicts token-level re-placement distributions and generates a dynamic global patch token for selective visual token sub-stitution. To train the patcher effectively, we fur-ther propose information-guided rank calibration, which uses answer-conditioned frame-level infor-mation cues derived from the VideoLMM itself to guide token replacement. Together with ground-truth prediction supervision and sparsity regulariza-tion, it enables effective optimization of the patcher. By refining unreliable visual tokens before lan-guage generation, MultiToP mitigates hallucina-tions without modifying the original VideoLMM and introduces negligible inference overhead. Our main contributions are summarized as follows: • We propose MultiToP, a multimodal-context-aware visual token patching framework that mitigates hallucinations in VideoLMMs by refining unreliable visual tokens. • We design a lightweight Visual Token Patcher that predicts token-level replacement distribu-tions and generates a dynamic global patch token for selective visual token substitution. • We propose information-guided rank calibra-tion, a training strategy that uses frame-level information cues to guide token replacement. • Extensive experiments show that MultiToP mitigates hallucinations with negligible in-ference overhead, improving F1 scores on Vript-HAL by 9.68% and 50.60% over vanilla Video-LLaVA-7B and Qwen3-VL-4B-Instruct, respectively, while yielding an 18.58% relative accuracy gain on ActivityNet-QA for Video-LLaVA-7B. 
+
+2 Related Work 
+
+2.1 Video Large Multimodal Models 
+
+VideoLMMs typically build upon Large Language Models (LLMs) (Zhao et al., 2026; Gao et al., 2026a; Yuan et al., 2026) by connecting them with visual or video encoders, thereby extending multi-modal understanding to temporally evolving visual sequences (Tang et al., 2025b). Early models estab-lished basic video instruction tuning and temporal modeling abilities (Zhang et al., 2023; Maaz et al., 2024; Lin et al., 2024), while recent architectures further improve efficiency, long-context modeling, and visual tokenization (Jin et al., 2024; Li et al., 2024; Xu et al., 2024). Despite the strong capa-bilities of frontier models such as Qwen3-VL (Bai et al., 2025b), hallucination remains a key obstacle to reliable video understanding (Sahoo et al., 2024; Gao et al., 2025). 
+
+2.2 Hallucinations in VideoLMMs 
+
+Hallucinations in VideoLMMs refer to responses that are inconsistent with the visual evidence in the input video (Bai et al., 2024; Rawal et al., 2025). They are often caused by language priors, biased vision-language correlations, or weak tem-poral modeling (Bansal et al., 2024; Zhang et al., 2024a). The dynamic spatiotemporal nature of videos further exacerbates this issue, making mod-els particularly vulnerable to compositional errors among entities, actions, and relations (Xing et al., 2026; Yang et al., 2026). To quantify these fail-ures, recent benchmarks have evaluated hallucina-tions from different perspectives: VideoHallucer fo-cuses on intrinsic and extrinsic errors (Wang et al., 2024), EventHallusion studies event-level discrep-ancies (Zhang et al., 2024a), VidHalluc targets tem-poral inconsistencies (Li et al., 2025a), and Video-Hallu evaluates counterfactual robustness with syn-thetic videos (Li et al., 2026). 2.3 Hallucination Mitigation 
+
+Existing hallucination mitigation for VideoLMMs broadly falls into three categories. The first improves model alignment via supervised fine-tuning (Bansal et al., 2024; Gao et al., 2025), pref-erence optimization (Huang et al., 2025a; Ding et al., 2025), or reinforcement learning (Huang et al., 2025b; Li et al., 2026), aiming to reduce the reliance on language priors and improve video-response consistency. However, these demand costly retraining and annotated data. The second employs inference-time contrastive decoding (Leng et al., 2024; Zhang et al., 2024a; Kong et al., 2025) to suppress predictions driven by spurious priors. Yet, predefined perturbations (e.g., sample and re-verse) and extra decoding passes make them less adaptive to diverse hallucinations and increase in-ference cost. The third is to enhance visual ground-ing. Some methods reweight salient regions (Li et al., 2025a), inject explicit semantic cues (Wang et al., 2025a), or modify temporal-aware internal activations (Cai et al., 2026). Others exploit at-tention signals more directly. SmartSight detects temporal attention collapse to select less halluci-nated candidate responses (Sun et al., 2026), while VERHallu reallocates frame-level attention around key events (Zhang et al., 2026). However, these typically depend on external estimators, multiple candidate generations, or coarse frame/response-level interventions, leaving fine-grained token-level visual evidence insufficiently refined. Concurrently, ViSSRes (Gao et al., 2026b) fo-cuses on representation-level video enhancement by learning a lightweight residual aligner with spa-tiotemporal and semantic consistency objectives. It differs from MultiToP in intervention granular-ity, optimization objective, and technical design. In contrast, MultiToP performs token-level inter-vention before language generation by predicting replacement distributions over visual tokens and selectively patching unreliable tokens. Moreover, MultiToP introduces information-guided rank cal-ibration to align token replacement with answer-conditioned frame-level information cues. 
+
+3 Methodology 
+
+3.1 Preliminary 
+
+We consider a VideoLMM parameterized by θ.Given an input video, the model first employs a visual encoder followed by a projector to trans-form the video into a sequence of visual tokens 
+
+v = {vm}Mm=1 ∈ RM ×D, where M denotes the number of visual tokens and D is the hidden di-mension of the VideoLMM. Meanwhile, the user question is tokenized into a sequence of textual tokens x = {xn}Nn=1 ∈ RN ×D, where N denotes the number of textual question tokens. At the t-th decoding step, the visual tokens v, tex-tual tokens x, and previously generated tokens y<t 
+
+are concatenated and fed into the LLM backbone of the VideoLMM. The next token is predicted in an autoregressive manner, formulated as: 
+
+yt ∼ pθ(yt | v, x, y <t )
+
+∝ exp( logit θ(yt | v, x, y <t )) , (1) where yt denotes the answer token at time step 
+
+t. During the decoding stage, hallucinations often occur when probability mass is incorrectly assigned to tokens that are inconsistent with the visual input. 
+
+3.2 Architecture of the Visual Token Patcher 
+
+MultiToP inserts a lightweight Visual Token Patcher before the autoregressive decoding stage. Given the visual tokens v and textual tokens x, we denote the multimodal token sequence as: 
+
+z = v ⊕ x ∈ R(M +N )×D, (2) where ⊕ denotes concatenation along the token dimension. The patcher takes z as input and pro-duces two outputs: a replacement distribution for identifying unreliable visual tokens, and a dynamic global patch token for token substitution. Although the patcher observes the full multimodal context, it is designed to patch only the visual token span while leaving textual tokens unchanged. Since visual token reliability depends on both token-level evidence and multimodal context, we use a lightweight Transformer encoder (Vaswani et al., 2017) to contextualize the input sequence: 
+
+h = T  ϕdown (z) ∈ R(M +N )×d, (3) where ϕdown denotes the token projection layer, T
+
+denotes the lightweight self-attention encoder, h
+
+is the contextualized hidden representation of the input sequence, and d is the hidden dimension. To combine local token evidence with global multimodal information, we split each token rep-resentation into two parts. The first half is used as the local representation hl, while the second half is averaged over the whole sequence to obtain a Video Encoder Question: How is the room                      
+
+> decorated in the video?
+> Projector LLM Tokeni zer
+> Visual Token Patcher
+> LLM Backbone of the VideoLMM
+> Answer: The
+> room has wood …
+> Compute the cross -entropy loss Lce using the ground -truth answers
+> Compute the ranking loss Lrank
+> Compute the sparsity loss Lsparse
+> 0101100-ρ)2(++++++
+> Attention Scores
+
+Figure 2: Overview of the proposed MultiToP framework. The original VideoLMM is frozen during training, while only the Visual Token Patcher is optimized. During inference, the trained patcher refines visual tokens before language generation with negligible additional overhead. 
+
+shared global context hg:
+
+hli = hi, 1: d
+
+> 2
+
+, hg = 1
+
+M + N 
+
+> M+N
+
+X
+
+> j=1
+
+hj, d 
+
+> 2+1: d
+
+. (4) The final context-aware representation is then de-fined as: ˜hi = [ hli; hg]. (5) Based on ˜hi, an output MLP predicts a two-dimensional logit vector for each token: 
+
+oi = ϕout (˜hi) ∈ R2, (6) where the first logit oi, 0 corresponds to the keep decision and the second logit oi, 1 corresponds to the replace decision. These logits define the binary replacement distribution used to determine whether each visual token should be preserved or patched. After obtaining the replacement distribution, we further generate a patch token for visual token sub-stitution. Instead of assigning an individual patch token to each replaced visual token, which would greatly enlarge the optimization space, we con-struct a dynamic global patch token shared by all replaced visual tokens within the same multimodal context. Specifically, the patch token is generated by combining the averaged visual token representa-tion with a contextual residual: 
+
+p = 1
+
+M
+
+> M
+
+X
+
+> m=1
+
+vm +ϕres 
+
+ 1
+
+M
+
+X
+
+> i∈V
+
+˜hi
+
+
+
+∈ R1×D, (7) where V denotes the positions of visual tokens and 
+
+ϕres (·) is a residual projection. The averaged visual representation anchors the patch token in the origi-nal space, while the contextual residual enables it to adapt to the current multimodal input. Overall, the Visual Token Patcher forms a lightweight multimodal-context-aware architecture that jointly predicts token replacement logits and generates a dynamic global patch token, providing the basis for reliable visual token patching in the subsequent training and inference procedure. 
+
+3.3 Visual Token Patching for Refinement 
+
+To achieve efficient visual token patching, we train the patcher to predict whether each visual token should be preserved or replaced. 
+
+3.3.1 Ground-Truth Answer Supervision 
+
+The main challenge in training the patcher lies in the non-differentiability of applying the arg max 
+
+operation to the replacement distribution. To address this issue, we employ the Gumbel-Softmax (Jang et al., 2016) with a temperature parameter τ to obtain a differentiable binary re-placement decision. Specifically, given the replace-ment logits oi ∈ R2 predicted by the patcher, we obtain the replacement indicator g through: 
+
+g = GumbelSoftmax( o, τ )1 ∈ { 0, 1}m×1, (8) where the subscript 1 denotes the replace dimen-sion. In practice, we adopt the straight-through estimator such that gi behaves as a binary decision in the forward pass while allowing gradients to be back-propagated through the relaxed Gumbel-Softmax distribution. When gi = 0 , it indicates that the original visual token is retained, and vice versa. Therefore, the patched visual token sequence 
+
+˜v is then obtained as: 
+
+˜v = (1 − g) · v + g × p. (9) The patched visual tokens are then fed into the original VideoLMM for answer generation. To directly optimize the replacement distribution and the global patch token for hallucination mitigation, we adopt the standard cross-entropy loss for next-token prediction on the ground-truth answer y:
+
+Lce = −
+
+> L
+
+X
+
+> t=1
+
+log pθ(yt | ˜v, x, y <t ), (10) where L denotes the length of the ground-truth answer sequence. 
+
+3.3.2 Information-Guided Rank Calibration 
+
+Although the cross-entropy loss in Equation 10 pro-vides answer-level supervision, it is insufficient to learn an accurate token replacement distribution over multi-frame videos. Since different frames contribute unequally to answering a question, we introduce frame-level information guidance to cal-ibrate the replacement distribution. Intuitively, frames containing less useful information should have a higher tendency to be patched. Instead of estimating frame relevance with CLIP-like matching (Tang et al., 2025a; Radford et al., 2021), which can be sensitive to explicit object mentions in the question, we derive information cues directly from the VideoLMM. Motivated by Jiang et al. (2025); Neo et al. (2025), we first run the original VideoLMM and collect attention maps from intermediate decoder layers within the nor-malized depth range of 0.25–0.75. Let Y denote the positions of the ground-truth answer tokens. We average the attention maps over the selected layers and heads, and extract the attention from answer tokens to visual tokens: 
+
+si = 1
+
+|Y| 
+
+X
+
+> q∈Y
+
+Aq,i , i ∈ V , (11) where Aq,i denotes the aggregated attention weight from answer token position q to visual token posi-tion i, and si is the token-level attention score. Question: How is the room decorated in the video?      
+
+> Answer: The room has wood paneling and an
+> American flag on the wall.
+> 1.42E -03 3.15E -04
+> 2.54E -04 1.56E -04
+> Average Question -to -Visual Attention Scores
+
+Figure 3: Answer-to-visual attention scores across frames with different levels of useful information. More informative frames receive higher attention (Qwen3-VL-4B-Instruct as the backbone). 
+
+After obtaining token-level attention scores, we compute the useful information score for each frame by averaging the top-K most attended vi-sual tokens within that frame. Let Vf ⊂ V denote the visual token positions of the f -th frame: 
+
+uf = 1
+
+K
+
+X 
+
+> i∈TopK( Vf)
+
+si, f = 1 , . . . , F, (12) where F is the number of frames. As shown in Figure 3, frames with more useful information tend to receive higher answer-to-visual attention. After that, we normalize the frame-level scores with a softmax function: 
+
+af = exp( uf )
+
+PFj=1 exp( uj ) , a = {af }Ff =1 , (13) where af is the useful information score of the f -th frame. Since these scores are derived from answer-to-visual attention, they are answer-conditioned and model-aware, rather than solely determined by surface-level question-frame similarity. We next define the frame-level replacement score from the patcher’s replacement logits. Given 
+
+oi ∈ R2, we average the replace-over-keep logit margin within each frame: 
+
+rf = 1
+
+|V f |
+
+X
+
+> i∈V f
+
+(oi, 1 − oi, 0) , (14) where a larger rf indicates a stronger tendency to replace visual tokens in the f -th frame. Rather than matching the absolute values of af ,we use a ranking objective to calibrate the relative replacement tendency across frames. We first de-fine the pairwise ranking weight between frame f
+
+and another frame f ′ as 
+
+wf,f ′ = ReLU( af − af ′ ), (15) which assigns larger weights to frame pairs with larger information gaps. The ranking loss is then formulated as: 
+
+Lrank =
+
+PFf =1 
+
+PFf ′=1 wf,f ′ ReLU( rf − rf ′ )
+
+PFf =1 
+
+PFf ′=1 wf,f ′ + ϵ ,
+
+(16) where ϵ is a small constant for numerical stabil-ity. The weight wf,f ′ emphasizes frame pairs with larger useful-information gaps, which provide more reliable ranking supervision, while down-weighting ambiguous pairs with similar scores. This objective encourages frames with more use-ful information to obtain lower replacement scores, while the opposite holds for frames with less use-ful information. Since it only enforces the relative order rather than the exact magnitudes of attention-derived scores, the calibration is less sensitive to noisy attention values and normalization effects. 
+
+3.3.3 Sparsity Regularization 
+
+To control the overall patching budget, we regular-ize the replacement ratio of visual tokens. Let ρ
+
+denote the target replacement ratio. The sparsity loss is defined as: 
+
+Lsparse = 1
+
+|V| 
+
+X
+
+> i∈V
+
+gi − ρ
+
+!2
+
+. (17) This regularization prevents excessive patching that may remove useful visual evidence, while encour-aging the patcher to replace a sparse subset of un-reliable visual tokens. 
+
+3.3.4 Training and Inference 
+
+We combine the above three objectives to train the Visual Token Patcher while keeping the original VideoLMM frozen. The final training objective is formulated as: 
+
+L = Lce + λrank Lrank + λsparse Lsparse , (18) where λrank and λsparse balance the rank calibra-tion loss and the sparsity constraint, respectively. During inference, the trained patcher directly predicts the replacement logits and generates the global patch token for each test video-question pair. The patched visual tokens are then fed into the frozen VideoLMM together with the textual tokens for autoregressive answer generation. Since no ground-truth answer or teacher attention compu-tation is required, MultiToP only introduces the lightweight overhead of the Visual Token Patcher. 
+
+4 Experiments 
+
+This section presents our key experimental results, covering hallucination mitigation, general capabil-ity preservation, ablation studies, computational efficiency, and the impact of cross-dataset train-ing. Additional experiments on robustness across model scales and case studies are provided in Ap-pendices B and C, respectively. 
+
+4.1 Experimental Settings Models and Baselines We use Video-LLaVA-7B (Lin et al., 2024) and Qwen3-VL-4B-Instruct (Bai et al., 2025b) as backbones, and compare MultiToP with a series of state-of-the-art (SOTA) inference-time intervention meth-ods, including TCD (Zhang et al., 2024a), Mo-tionCD (Kong et al., 2025), DINO-HEAL (Li et al., 2025a), SmartSight (Sun et al., 2026), and TA-AE (Cai et al., 2026). To ensure fairness, we adopt the original settings of these methods. 
+
+Evaluation Benchmarks We use VideoHal-lucer (Wang et al., 2024), Vript-HAL (Yang et al., 2024), and VidHalluc (Li et al., 2025a) to evaluate the hallucination mitigation capability. Meanwhile, Video-MMMU (Hu et al., 2025) and ActivityNet-QA (Yu et al., 2019) are used to assess the general video understanding ability. 
+
+Implementation Details We randomly sample 3,000 samples from LLaVA-Hound dataset (Zhang et al., 2024b) to train the Visual Token Patcher us-ing AdamW (Loshchilov and Hutter, 2017). The 
+
+K in Equation 12 is set to 32. The ρ in Equation 17 is set to 0.3 and 0.2 for Video-LLaVA-7B and Qwen3-VL-4B-Instruct, respectively. The λrank 
+
+and λsparse in Equation 18 are set to 1 and 100, respectively. Details can be found in Appendix A. 
+
+4.2 Performance Evaluation 
+
+We first evaluate the hallucination mitigation abil-ity of MultiToP, and the results are reported in Ta-ble 1. MultiToP consistently improves both vanilla models across the three hallucination benchmarks and achieves the best performance on most metrics. Method VideoHallucer Vript-HAL VidHalluc Overall Pct. Diff FP Ratio Recall Precision F1 BQA MCQ STH TSH Video-LLaVA-7B 16.39 0.38 0.94 25.45 54.00 34.60 23.88 65.18 30.12 28.83 + TCD 17.21 0.38 0.94 25.82 54.49 35.04 24.81 64.56 30.08 26.06 + MotionCD 23.16 0.27 0.81 25.94 55.26 35.31 24.74 64.00 28.60 25.92 + DINO-HEAL 18.14 0.37 0.94 25.82 52.44 34.60 24.96 65.76 36.57 29.24 + SmartSight 15.00 0.35 0.97 25.75 58.67 35.79 23.72 65.04 37.64 30.30 + TA-AE 14.45 0.33 0.92 25.94 59.74 36.17 23.86 65.41 38.90 30.48 + Ours 24.08 0.29 0.86 26.62 68.28 37.95 25.08 65.22 42.02 49.33                                                                       
+
+> Qwen3-VL-4B 47.69 -0.09 0.34 27.00 62.97 37.57 58.57 86.32 37.30 56.50 + TCD 50.47 -0.11 0.30 25.33 63.98 35.92 59.82 85.31 37.17 55.00 + MotionCD 42.79 -0.19 0.24 25.51 64.42 36.17 60.54 84.57 35.34 57.16 + DINO-HEAL 50.57 -0.33 0.16 26.54 63.73 37.10 61.08 86.90 38.10 58.30 + SmartSight 52.70 -0.08 0.36 28.51 64.51 39.32 59.05 85.95 40.10 58.84 + TA-AE 49.41 -0.10 0.32 29.11 61.77 39.09 61.39 86.53 41.67 60.00 + Ours 57.58 -0.03 0.44 48.21 70.68 56.58 74.64 89.08 61.35 86.83
+
+Table 1: Comparison results with SOTA inference-time intervention methods. Pct. Diff and FP Ratio are better when they are closer to 0 and 0.5, respectively, while higher values are better for all other metrics.           
+
+> Method Video-MMMU ActivityNet-QA Video-LLaVA-7B 13.44 40.90 + Ours 14.56 48.50
+> Qwen3-VL-4B 46.67 61.19 + Ours 47.22 62.18
+
+Table 2: Comparison between MultiToP and vanilla models on Video-MMMU (Overall) and ActivityNet-QA (Accuracy) benchmarks. 
+
+Notably, on Vript-HAL, MultiToP improves the F1 score over the best baseline by 4.92% with Video-LLaVA-7B and by 43.90% with Qwen3-VL-4B-Instruct. These results demonstrate the effective-ness of our MultiToP for hallucination mitigation. We further evaluate whether MultiToP preserves general video understanding ability. As shown in Table 2, MultiToP improves both vanilla models on Video-MMMU and ActivityNet-QA. For Video-LLaVA-7B, MultiToP increases the Overall score on Video-MMMU from 13.44 to 14.56 and im-proves the accuracy on ActivityNet-QA from 40.90 to 48.50. For Qwen3-VL-4B-Instruct, MultiToP also improves the Video-MMMU Overall score from 46.67 to 47.22 and the ActivityNet-QA accu-racy from 61.19 to 62.18. These results indicate that MultiToP mitigates hallucinations without sac-rificing the general video understanding ability of the original models. The complete metric results are provided in Appendix B. 
+
+4.3 Ablation Study 
+
+In this subsection, we ablate the most critical hyper-parameters, including ρ in Equation 17 and λrank                   
+
+> ρOverall Pct. Diff FP Ratio 0.4 55.02 -0.04 0.42 0.3 54.51 -0.04 0.41 0.2 57.58 -0.03 0.44
+> 0.1 57.07 -0.03 0.43 0.0 47.69 -0.09 0.34
+
+Table 3: Effect of ρ on VideoHallucer. Pct. Diff and FP Ratio are better when they are closer to 0 and 0.5, respectively, while higher values are better for Overall. 
+
+in Equation 18, with Qwen3-VL-4B-Instruct as the backbone. Ablations of Top-K in Equation 12 and 
+
+λsparse in Equation 18 are provided in Appendix B. 
+
+The effect of ρ As shown in Table 3, ρ has a clear impact on the final performance. Setting ρ = 0 re-moves target replacement and leads to the worst result, indicating that this component is necessary. Increasing ρ to 0.1 and 0.2 substantially improves the Overall score and moves Pct. Diff and FP Ratio closer to their ideal values. The best performance is achieved at ρ = 0 .2. However, larger values such as 0.3 and 0.4 lead to slight performance degrada-tion, suggesting that excessive target replacement may weaken the useful target signal. 
+
+The effect of λrank As shown in Table 4, λrank 
+
+affects the balance between the ranking loss and other training objectives. Without the ranking loss, the Overall score drops to 56.35, showing its posi-tive contribution. The best performance is achieved when λrank = 1 , with the highest Overall score of 57.58 and favorable Pct. Diff and FP Ratio val-ues. However, larger values such as 5 and 10 lead to lower Overall scores, indicating that an overly λrank Overall Pct. Diff FP Ratio 0 56.35 -0.03 0.44 0.5 55.33 -0.04 0.42 1 57.58 -0.03 0.44          
+
+> 256.97 -0.03 0.43 555.12 -0.04 0.41 10 55.53 -0.03 0.43
+
+Table 4: Effect of λrank on VideoHallucer. Pct. Diff and FP Ratio are better when they are closer to 0 and 0.5, respectively, while higher values are better for Overall.                                                           
+
+> Method Ave. Time/s Memory/GB Video-LLaVA-7B 3.37 ×10 −215.74 + TCD 7.11 ×10 −217.32 + MotionCD 6.93 ×10 −217.09 + DINO-HEAL 5.01 ×10 −220.62 + SmartSight 8.85 ×10 −228.55 + TA-AE 8.40 ×10 −216.82 + Ours 3.39 ×10 −216.52 Qwen3-VL-4B 3.79 ×10 −28.38 + TCD 8.78 ×10 −29.14 + MotionCD 9.15 ×10 −29.15 + DINO-HEAL 4.71 ×10 −210.67 + SmartSight 5.34 ×10 −213.54 + TA-AE 3.99 ×10 −28.97 + Ours 3.82 ×10 −29.10
+
+Table 5: Efficiency comparison on the Vript-HAL dataset. The average inference time is computed over all generated tokens, and the memory usage is averaged from samples collected every 2 seconds. 
+
+strong ranking constraint may disturb the balance of the overall objective. 
+
+4.4 Computational Efficiency Analysis 
+
+To evaluate the computational overhead of Multi-ToP, we report the efficiency comparison in Table 5. Our method introduces only negligible latency com-pared with the vanilla models. On Video-LLaVA-7B, MultiToP achieves a similar average inference time to the vanilla baseline ( 3.39 ×10 −2 vs. 3.37 ×
+
+10 −2 s/token), while being faster than all other en-hanced variants. On Qwen3-VL-4B-Instruct, it also maintains near-baseline latency and is faster than TCD, MotionCD, DINO-HEAL, SmartSight, and TA-AE. Although MultiToP slightly increases memory usage over the vanilla models, its mem-ory footprint remains comparable to lightweight baselines such as TCD, MotionCD, and TA-AE, and is much lower than DINO-HEAL and Smart-Sight. These results show that MultiToP improves robustness with minimal computational overhead.           
+
+> Training Dataset Vript-HAL ActivityNet-QA Vanilla 34.60 40.90 LLaVA-Hound 37.95 48.50
+> ShareGPT4Video 42.22 46.08 LLaVA-Video-178k 36.39 44.44
+
+Table 6: Cross-dataset training analysis on Vript-HAL (F1 score) and ActivityNet-QA (Accuracy) under the same training scale and settings. 
+
+4.5 Cross-Dataset Training Analysis 
+
+To examine whether MultiToP depends on a spe-cific training dataset, we train the patcher on differ-ent datasets with the same data scale and training settings. As shown in Table 6, MultiToP consis-tently improves the vanilla model across all train-ing datasets, suggesting that its effectiveness is not tied to a particular corpus. On Vript-HAL, all three training datasets substantially improve the F1 score, with ShareGPT4Video (Chen et al., 2024) achiev-ing the best result and LLaVA-Video-178k (Zhang et al., 2024c) also bringing a clear gain over the vanilla model. On ActivityNet-QA, all variants improve accuracy, where LLaVA-Hound performs best, while ShareGPT4Video and LLaVA-Video-178k still maintain better performance than the vanilla baseline. These results indicate that Multi-ToP is not tied to a specific training corpus, though dataset choice affects its balance between halluci-nation mitigation and general video understanding. The complete results are provided in Appendix B. 
+
+5 Conclusion 
+
+In this paper, we propose MultiToP, a multimodal-context-aware visual token patching framework for hallucination mitigation in VideoLMMs. Multi-ToP uses a lightweight Visual Token Patcher to refine unreliable visual tokens before language gen-eration. We further propose information-guided rank calibration to guide token replacement using answer-conditioned frame-level information cues derived from the VideoLMM itself. Experiments on multiple benchmarks demonstrate that MultiToP consistently outperforms existing inference-time intervention methods in hallucination mitigation while preserving the models’ general video under-standing ability. In terms of efficiency, MultiToP in-troduces only negligible additional inference over-head, achieving a favorable performance-efficiency trade-off. These findings highlight the effective-ness of token-level visual evidence refinement for building more reliable VideoLMMs. Limitations 
+
+Although MultiToP effectively mitigates halluci-nations in VideoLMMs, it relies on a predefined target replacement ratio in the sparsity regulariza-tion to control the patching budget. However, the optimal replacement ratio may vary across videos and questions, depending on factors such as vi-sual complexity, temporal dynamics, and visual-textual alignment reliability. As a result, using a fixed global replacement ratio may lead to insuf-ficient patching for samples with many unreliable visual tokens, or excessive replacement for sam-ples where most visual evidence is already reliable. This suggests that an adaptive patching budget may be beneficial for further improving MultiToP. 
+
+References 
+
+Jiaqi Bai, Hongcheng Guo, Zhongyuan Peng, Jian Yang, Zhoujun Li, Mohan Li, and Zhihong Tian. 2025a. Mitigating hallucinations in large vision-language models by adaptively constraining information flow. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, pages 23442–23450. Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wenbin Ge, Zhi-fang Guo, Qidong Huang, Jie Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhaohai Li, Mingsheng Li, and 45 others. 2025b. Qwen3-vl technical report. 
+
+arXiv preprint arXiv:2511.21631 .Zechen Bai, Pichao Wang, Tianjun Xiao, Tong He, Zongbo Han, Zheng Zhang, and Mike Zheng Shou. 2024. Hallucination of multimodal large language models: A survey. arXiv preprint arXiv:2404.18930 .Hritik Bansal, Yonatan Bitton, Idan Szpektor, Kai-Wei Chang, and Aditya Grover. 2024. Videocon: Robust video-language alignment via contrast captions. In 
+
+Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition , pages 13927– 13937. Jianfeng Cai, Jiale Hong, Zongmeng Zhang, Wengang Zhou, and Houqiang Li. 2026. Mitigating halluci-nation in videollms via temporal-aware activation engineering. Advances in Neural Information Pro-cessing Systems , 38:59982–60012. Lin Chen, Xilin Wei, Jinsong Li, Xiaoyi Dong, Pan Zhang, Yuhang Zang, Zehui Chen, Haodong Duan, Zhenyu Tang, Li Yuan, Yu Qiao, Dahua Lin, Feng Zhao, and Jiaqi Wang. 2024. Sharegpt4video: Im-proving video understanding and generation with bet-ter captions. Advances in Neural Information Pro-cessing Systems , 37:19472–19495. Xinpeng Ding, Kui Zhang, Jianhua Han, Lanqing Hong, Hang Xu, and Xiaomeng Li. 2025. Pami-vdpo: Miti-gating video hallucinations by prompt-aware multi-instance video preference learning. arXiv preprint arXiv:2504.05810 .Hongcheng Gao, Jiashu Qu, Jingyi Tang, Baolong Bi, Yue Liu, Hongyu Chen, Li Liang, Li Su, and Qingming Huang. 2025. Exploring hallucination of large multimodal models in video understanding: Benchmark, analysis and mitigation. arXiv preprint arXiv:2503.19622 .Yuansheng Gao, Peng Gao, Han Bao, Bin Li, Jixi-ang Luo, Zonghui Wang, and Wenzhi Chen. 2026a. Boosting large language models for mental manipula-tion detection via data augmentation and distillation. In Proceedings of the ACM Web Conference 2026 ,pages 9033–9043. Yuansheng Gao, Jinman Zhao, Tong Zhang, Xingguo Xu, Wenbin Xing, Han Bao, Zonghui Wang, and Wenzhi Chen. 2026b. Enhancing video representa-tions with spatiotemporal-semantic residual to miti-gate hallucinations in video large multimodal models. 
+
+Preprint , arXiv:2601.22574. Xuan Gong, Tianshi Ming, Xinpeng Wang, and Zhi-hua Wei. 2024. Damro: Dive into the attention mechanism of lvlm to reduce object hallucination. In Proceedings of the 2024 Conference on Empiri-cal Methods in Natural Language Processing , pages 7696–7712. Kairui Hu, Penghao Wu, Fanyi Pu, Wang Xiao, Yuan-han Zhang, Xiang Yue, Bo Li, and Ziwei Liu. 2025. Video-mmmu: Evaluating knowledge acquisition from multi-discipline professional videos. arXiv preprint arXiv:2501.13826 .Haojian Huang, Haodong Chen, Shengqiong Wu, Meng Luo, Jinlan Fu, Xinya Du, Hanwang Zhang, and Hao Fei. 2025a. Vistadpo: Video hierarchical spatial-temporal direct preference optimization for large video models. arXiv preprint arXiv:2504.13122 .Qidong Huang, Xiaoyi Dong, Pan Zhang, Bin Wang, Conghui He, Jiaqi Wang, Dahua Lin, Weiming Zhang, and Nenghai Yu. 2024. Opera: Alleviating hallucination in multi-modal large language models via over-trust penalty and retrospection-allocation. In 
+
+Proceedings of the IEEE/CVF Conference on Com-puter Vision and Pattern Recognition , pages 13418– 13427. Zhe Huang, Hao Wen, Aiming Hao, Bingze Song, Meiqi Wu, Jiahong Wu, Xiangxiang Chu, Sheng Lu, and Haoqian Wang. 2025b. Taming halluci-nations: Boosting mllms’ video understanding via counterfactual video generation. arXiv preprint arXiv:2512.24271 .Eric Jang, Shixiang Gu, and Ben Poole. 2016. Categori-cal reparameterization with gumbel-softmax. arXiv preprint arXiv:1611.01144 .Zhangqi Jiang, Junkai Chen, Beier Zhu, Tingjin Luo, Yankun Shen, and Xu Yang. 2025. Devils in middle layers of large vision-language models: Interpreting, detecting and mitigating object hallucinations via attention lens. In Proceedings of the IEEE/CVF Con-ference on Computer Vision and Pattern Recognition ,pages 25004–25014. Peng Jin, Ryuichi Takanobu, Wancai Zhang, Xiaochun Cao, and Li Yuan. 2024. Chat-univi: Unified visual representation empowers large language models with image and video understanding. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13700–13710. Ming Kong, Xianzhou Zeng, Luyuan Chen, Yadong Li, Bo Yan, and Qiang Zhu. 2025. Mhbench: De-mystifying motion hallucination in videollms. In 
+
+Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, pages 4401–4409. Sicong Leng, Hang Zhang, Guanzheng Chen, Xin Li, Shijian Lu, Chunyan Miao, and Lidong Bing. 2024. Mitigating object hallucinations in large vision-language models through visual contrastive decod-ing. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13872–13882. Chaoyu Li, Eun Woo Im, and Pooyan Fazli. 2025a. Vid-halluc: Evaluating temporal hallucinations in multi-modal large language models for video understand-ing. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13723–13733. Yanwei Li, Chengyao Wang, and Jiaya Jia. 2024. Llama-vid: An image is worth 2 tokens in large language models. In European Conference on Computer Vi-sion , pages 323–340. Springer. Zhuowei Li, Haizhou Shi, Yunhe Gao, Di Liu, Zhent-ing Wang, Yuxiao Chen, Ting Liu, Long Zhao, Hao Wang, and Dimitris N Metaxas. 2025b. The hid-den life of tokens: Reducing hallucination of large vision-language models via visual information steer-ing. arXiv preprint arXiv:2502.03628 .Zongxia Li, Xiyang Wu, Guangyao Shi, Yubin Qin, Hongyang Du, Tianyi Zhou, Dinesh Manocha, and Jordan Boyd-Graber. 2026. Videohallu: Evaluating and mitigating multi-modal hallucinations on syn-thetic video understanding. Advances in Neural In-formation Processing Systems , 38:76046–76078. Bin Lin, Yang Ye, Bin Zhu, Jiaxi Cui, Munan Ning, Peng Jin, and Li Yuan. 2024. Video-llava: Learning united visual representation by alignment before pro-jection. In Proceedings of the 2024 conference on empirical methods in natural language processing ,pages 5971–5984. Ilya Loshchilov and Frank Hutter. 2017. Decou-pled weight decay regularization. arXiv preprint arXiv:1711.05101 .Muhammad Maaz, Hanoona Rasheed, Salman Khan, and Fahad Khan. 2024. Video-chatgpt: Towards detailed video understanding via large vision and language models. In Proceedings of the 62nd An-nual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 12585– 12602. Lingchen Meng, Jianwei Yang, Rui Tian, Xiyang Dai, Zuxuan Wu, Jianfeng Gao, and Yu-Gang Jiang. 2024. Deepstack: Deeply stacking visual tokens is surpris-ingly simple and effective for lmms. Advances in Neural Information Processing Systems , 37:23464– 23487. Clement Neo, Luke Ong, Philip Torr, Mor Geva, David Krueger, and Fazl Barez. 2025. Towards interpret-ing visual information processing in vision-language models. In International Conference on Learning Representations , volume 2025, pages 57172–57189. Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sas-try, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. 2021. Learn-ing transferable visual models from natural language supervision. In International conference on machine learning , pages 8748–8763. PmLR. Ruchit Rawal, Reza Shirkavand, Heng Huang, Gowthami Somepalli, and Tom Goldstein. 2025. Ar-gus: Hallucination and omission evaluation in video-llms. In Proceedings of the IEEE/CVF Interna-tional Conference on Computer Vision , pages 20280– 20290. Pranab Sahoo, Prabhash Meharia, Akash Ghosh, Sri-parna Saha, Vinija Jain, and Aman Chadha. 2024. A comprehensive survey of hallucination in large language, image, video and audio foundation mod-els. Findings of the Association for Computational Linguistics: EMNLP 2024 , pages 11709–11724. Hoigi Seo, Dong Un Kang, Hyunjin Cho, Joohoon Lee, and Se Young Chun. 2026. On epistemic uncertainty of visual tokens for object hallucinations in large vision-language models. Advances in Neural Infor-mation Processing Systems , 38:130605–130660. Yiming Sun, Mi Zhang, Feifei Li, Geng Hong, and Min Yang. 2026. Smartsight: Mitigating hallucination in video-llms without compromising video understand-ing via temporal attention collapse. In Proceedings of the AAAI Conference on Artificial Intelligence ,volume 40, pages 9251–9259. Xi Tang, Jihao Qiu, Lingxi Xie, Yunjie Tian, Jianbin Jiao, and Qixiang Ye. 2025a. Adaptive keyframe sampling for long video understanding. In Proceed-ings of the Computer Vision and Pattern Recognition Conference , pages 29118–29128. Yunlong Tang, Jing Bi, Siting Xu, Luchuan Song, Susan Liang, Teng Wang, Daoan Zhang, Jie An, Jingyang Lin, Rongyi Zhu, Ali Vosoughi, Chao Huang, Zeliang Zhang, Pinxin Liu, Mingqian Feng, Feng Zheng, Jian-guo Zhang, Ping Luo, Jiebo Luo, and Chenliang Xu. 2025b. Video understanding with large language models: A survey. IEEE Transactions on Circuits and Systems for Video Technology .Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is all you need. Advances in neural information processing systems , 30. Bimei Wang, Fan Wen, Jisheng Dang, Huiguo He, Xi-wen Wang, Nannan Zhu, and Jiasi Weng. 2025a. Mit-igating hallucination in large video-language models with injected semantics. In 2025 IEEE International Conference on Multimedia and Expo (ICME) , pages 1–6. IEEE. Yi Wang, Xinhao Li, Ziang Yan, Yinan He, Jiashuo Yu, Xiangyu Zeng, Chenting Wang, Changlian Ma, Haian Huang, Jianfei Gao, Min Dou, Kai Chen, Wen-hai Wang, Yu Qiao, Yali Wang, and Limin Wang. 2025b. Internvideo2. 5: Empowering video mllms with long and rich context modeling. arXiv preprint arXiv:2501.12386 .Yuxuan Wang, Yueqian Wang, Dongyan Zhao, Ci-hang Xie, and Zilong Zheng. 2024. Videohal-lucer: Evaluating intrinsic and extrinsic hallucina-tions in large video-language models. arXiv preprint arXiv:2406.16338 .Sangmin Woo, Donguk Kim, Jaehyuk Jang, Yubin Choi, and Changick Kim. 2025. Don’t miss the forest for the trees: Attentional vision calibration for large vi-sion language models. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 1927–1951. Wenbin Xing, Quanxing Zha, Lizheng Zu, Mengran Li, Ming Li, and Junchi Yan. 2026. Learning to decode against compositional hallucination in video multimodal large language models. arXiv preprint arXiv:2602.00559 .Lin Xu, Yilin Zhao, Daquan Zhou, Zhijie Lin, See Kiong Ng, and Jiashi Feng. 2024. Pllava: Parameter-free llava extension from images to videos for video dense captioning. arXiv preprint arXiv:2404.16994 .Dongjie Yang, Suyuan Huang, Chengqiang Lu, Xi-aodong Han, Haoxin Zhang, Yan Gao, Yao Hu, and Hai Zhao. 2024. Vript: A video is worth thousands of words. Advances in Neural Information Processing Systems , 37:57240–57261. Sibei Yang, Ge Zheng, Jiajin Tang, Jiaye Qian, Hanzhuo Huang, and Cheng Shi. 2026. Discovering compo-sitional hallucinations in lvlms. Advances in Neural Information Processing Systems , 38:28846–28876. Zhou Yu, Dejing Xu, Jun Yu, Ting Yu, Zhou Zhao, Yuet-ing Zhuang, and Dacheng Tao. 2019. Activitynet-qa: A dataset for understanding complex web videos via question answering. In Proceedings of the AAAI Con-ference on Artificial Intelligence , volume 33, pages 9127–9134. Jiahao Yuan, Zhiqing Cui, Hanqing Wang, Yuansheng Gao, Yucheng Zhou, and Usman Naseem. 2026. Kardia-r1: Unleashing llms to reason toward un-derstanding and empathy for emotional support via rubric-as-judge reinforcement learning. In Proceed-ings of the ACM Web Conference 2026 , pages 9230– 9240. Hang Zhang, Xin Li, and Lidong Bing. 2023. Video-llama: An instruction-tuned audio-visual language model for video understanding. In Proceedings of the 2023 conference on empirical methods in natural language processing: system demonstrations , pages 543–553. Jiacheng Zhang, Yang Jiao, Shaoxiang Chen, Na Zhao, Zhiyu Tan, Hao Li, Xingjun Ma, and Jingjing Chen. 2024a. Eventhallusion: Diagnosing event hallucinations in video llms. arXiv preprint arXiv:2409.16597 .Ruohong Zhang, Liangke Gui, Zhiqing Sun, Yihao Feng, Keyang Xu, Yuanhan Zhang, Di Fu, Chun-yuan Li, Alexander Hauptmann, Yonatan Bisk, and Yiming Yang. 2024b. Direct preference optimiza-tion of video large multimodal models from language model reward. arXiv preprint arXiv:2404.01258 .Yuanhan Zhang, Jinming Wu, Wei Li, Bo Li, Zejun Ma, Ziwei Liu, and Chunyuan Li. 2024c. Llava-video: Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 .Zefan Zhang, Kehua Zhu, Shijie Jiang, Hongyuan Lu, Shengkai Sun, and Tian Bai. 2026. Verhallu: Eval-uating and mitigating event relation hallucination in video large language models. arXiv preprint arXiv:2601.10010 .Wayne Xin Zhao, Kun Zhou, Junyi Li, Tianyi Tang, Zican Dong, Yupeng Hou, Beichen Zhang, Yingqian Min, Junjie Zhang, Peiyu Liu, and 1 others. 2026. A survey of large language models. Frontiers of Computer Science , 20(12):2012627. 
+
+A Implementation Details 
+
+Additional Experimental Setup All experi-ments were conducted using 8 NVIDIA RTX A6000 48GB GPUs. During training, we use a batch size of 1 with 4-step gradient accumulation. The patcher is trained for 2 epochs with a learn-ing rate of 1 × 10 −5. To stabilize optimization, we further apply gradient clipping to the predictor parameters with a maximum norm of 1.0. When using Video-LLaVA-7B as the backbone, we set the number of frames for the visual token patcher to 8 during both training and inference. When us-ing Qwen3-VL-4B-Instruct as the backbone, due to resource constraints, we set the number of frames to 16 during training, while following the default setting during inference. When evaluating on Vript-HAL, we set the maximum number of tokens to 1024, while for the other datasets, we set it to 512. For datasets and metrics that require LLMs as eval-uators, we adopt the evaluator models and param-eter settings specified in their original papers. For all evaluations, we follow the standard evaluation protocols of the corresponding original papers. 
+
+Adaptation to Qwen3-VL Qwen3-VL adopts the DeepStack mechanism (Meng et al., 2024), where intermediate visual features are injected into early language layers. To keep the patched visual tokens consistent with these DeepStack features, we adapt MultiToP to perform replacement in the high-resolution visual token space. Specifically, the patcher still predicts replacement logits and a dynamic patch token from the multimodal input embeddings. The replacement logits are predicted over the LLM-side low-resolution visual token po-sitions, while the generated patch token is further mapped to the high-resolution visual token dimen-sion by an additional projection layer: 
+
+phr = ϕhr (p). (19) The low-resolution keep mask is then expanded according to the spatial merge unit and applied to the corresponding high-resolution visual tokens be-fore spatial merging. The patched high-resolution tokens are subsequently processed by the original Qwen3-VL vision encoder, producing both the final visual embeddings and the DeepStack visual fea-tures. Thus, MultiToP can be applied to Qwen3-VL with only a lightweight high-resolution projection layer added. 
+
+B Additional Experimental Results 
+
+B.1 Additional Ablation Study The effect of Top-K As shown in Table 7, Top-
+
+K affects the balance between informative candi-date selection and noise introduction. The best per-formance is obtained when Top-K = 32 , achiev-ing the highest Recall, Precision, and F1 scores. Smaller values may provide insufficient guidance, while a larger value such as 64 introduces more noisy candidates and leads to a noticeable perfor-mance drop. 
+
+The effect of λsparse As shown in Table 8, λsparse 
+
+affects the balance between sparse regularization                                           
+
+> Top-KRecall Precision F1 16 46.61 70.64 55.26 24 46.92 70.01 55.28 32 48.21 70.68 56.58
+> 48 46.39 70.37 55.00 64 44.19 69.38 53.09
+> Table 7: Effect of Top-Kon Vript-HAL. Higher values are better for all metrics.
+> λsparse Overall Pct. Diff FP Ratio 053.89 -0.05 0.41 10 51.02 -0.05 0.40 50 55.84 -0.04 0.41 100 57.58 -0.03 0.44
+> 200 55.43 -0.04 0.42 500 56.05 -0.04 0.41
+> Table 8: Effect of λsparse on VideoHallucer. Pct. Diff and FP Ratio are better when they are closer to 0 and 0.5, respectively, while higher values are better for Overall.
+
+and the main optimization objective. Without the sparse loss, the Overall score is only 53.89, show-ing its positive contribution. The best performance is obtained when λsparse = 100 , achieving the high-est Overall score of 57.58 and the best Pct. Diff and FP Ratio values. Larger weights such as 200 and 500 lead to lower performance, indicating that excessive sparse regularization may weaken other useful optimization signals. 
+
+B.2 Complete Results 
+
+The complete results for Table 6 are reported in Ta-ble 9. The complete results for Table 2 are reported in Table 10. 
+
+B.3 Robustness across Model Scales 
+
+To evaluate the robustness of MultiToP across dif-ferent model scales, we conduct experiments on VidHalluc using Qwen3-VL-2B-Instruct, Qwen3-VL-4B-Instruct, and Qwen3-VL-8B-Instruct. As shown in Table 11, MultiToP consistently improves performance across all model sizes. Specifically, it improves the average score across four metrics by 14.71, 18.30, and 9.51 points on the 2B, 4B, and 8B models, respectively. The gains are particularly pronounced on STH, where MultiToP improves the vanilla models by 33.43, 24.05, and 22.71 points across the three scales. These results demonstrate that MultiToP is not tied to a specific model size and can robustly mitigate hallucinations for both smaller and larger VideoLMMs. Dataset Vript-HAL ActivityNet-QA Recall Precision F1 Accuracy Score Vanilla 25.45 54.00 34.60 40.90 2.95 LLaVA-Hound 26.62 68.28 37.95 48.50 3.15 ShareGPT4Video 31.33 67.14 42.22 46.08 3.11 LLaVA-Video-178k 25.30 67.90 36.39 44.44 2.98 
+
+Table 9: Complete results of cross-dataset training analysis on Vript-HAL and ActivityNet-QA under the same training scale and settings. 
+
+Method Video-MMMU ActivityNet-QA Perception Comprehension Adaptation Overall Accuracy Score Video-LLaVA-7B 10.00 11.67 20.00 13.44 40.90 2.95 + Ours 12.00 11.33 20.33 14.56 48.50 3.15 
+
+Qwen3-VL-4B 62.00 47.00 31.00 46.67 61.19 3.36 + Ours 64.67 48.00 29.00 47.22 62.18 3.56 
+
+Table 10: Complete results of general video understanding evaluation on Video-MMMU and ActivityNet-QA. 
+
+Size Method BQA MCQ STH TSH 2B Vanilla 57.86 80.89 25.00 50.00 Ours 75.98 85.52 58.43 52.67 4B Vanilla 58.57 86.32 37.30 56.50 Ours 74.64 89.08 61.35 86.83 8B Vanilla 64.42 87.25 37.29 65.00 Ours 76.35 88.96 60.00 66.67 
+
+Table 11: Performance comparison across different Qwen3-VL model sizes on VidHalluc. 
+
+C Case Study 
+
+To provide an intuitive understanding of how Mul-tiToP mitigates hallucinations, we present represen-tative qualitative examples from multiple datasets. As shown in Figure 4, the model is tasked with determining whether a scene change occurs in the video and identifying the corresponding locations. The ground-truth clearly indicates a transition from an elevator to a room. However, the Vanilla model, alongside several baseline methods including TCD, MotionCD, and DINO-HEAL, completely fails to detect this temporal transition, incorrectly predict-ing that no scene change occurred. While Smart-Sight and TA-AE successfully recognize the exis-tence of a scene change, they suffer from severe object-level hallucinations regarding the specific locations: SmartSight generates a vague descrip-tion ("from one room to another"), and TA-AE outputs entirely incorrect semantics ("from gate to drawer"). In stark contrast, MultiToP accurately captures both the temporal transition and the pre-cise spatial locations, correctly outputting "from Question : Watch  the  given  video  and  determine  if  a                                                                           
+
+> scene change occurs .If no change occurs, respond :
+> 'Scene change :No, Locations :None' .If there is a
+> scene change, respond in the format :'Scene change :
+> Yes, Locations :from [location 1]to [location 2].’
+> Ground -truth :Scene change :Yes, from in an
+> elevator to in aroom .
+> Vanilla :Scene change :No, Locations :None .
+> TCD :No .
+> MotionCD :Scene change :No .
+> DINO -HEAL :Scene change :No, Locations :None .
+> SmartSight :Scene change :Yes, Locations :from one
+> room to another .
+> TA -AE :Scene change :Yes, Locations :from gate to
+> drawer .
+> MultiToP :Scene change :Yes, Locations :from the
+> elevator to the room .
+
+Figure 4: A representative case from the VidHalluc dataset using Qwen3-VL-4B-Instruct as the backbone. 
+
+the elevator to the room". Other representative cases are shown in Fig-ures 5, 6, 7, 8, and 9. These qualitative results further demonstrate the effectiveness of MultiToP. Ques tion : Based  on  the  video,  should  we  shake  the 
+
+bag  to  separate  it  out  when  we  make  calamari? 
+
+Answer  the  question  using  'yes'  or  'no’ .
+
+Ground -truth : no 
+
+All  baselines : yes  MultiToP : no Figure 5: A representative case from the VideoHallucer dataset using Qwen3-VL-4B-Instruct as the backbone. Question : Does  'the  guy  goes  over  the  bar  and  falls 
+
+safely  to  the  mat  below'  happen  earlier  than  'a  male 
+
+athlete  holding  a long  pole  runs  toward  a high  bar 
+
+inside  a gym’?  Answer  the  question  using  'yes'  or  'no’ .
+
+Ground -truth : no 
+
+All  baselines : yes  MultiToP : no 
+
+Figure 6: A representative case from the VideoHallucer dataset using Video-LLaVA-7B as the backbone. Question : Below  are  two  actions  in  the  video : Action 
+
+A. removing  a tire . Action  B. getting  a spare  tire  out .
+
+Sort  these  two  actions  in  the  order  they  occur  in  the 
+
+video . Only  return  AB  if  Action  A happens  before 
+
+Action  B,  BA  if  Action  B happens  before  Action  A,  A if 
+
+only  Action  A is  visible,  or  B if  only  Action  B is  visible .
+
+Ground -truth : BA 
+
+All  baselines : AB  MultiToP : BA 
+
+Figure 7: A representative case from the VidHalluc dataset using Video-LLaVA-7B as the backbone. Question : Describe  this  video  in  detail .
+
+Ground -truth : The  video  clip  appears  to  be  a screen  recording  of  a desktop  computer  interface . The  desktop  background 
+
+features  a colorful  fantasy -themed  illustration  with  a dragon  or  mythical  creature  in  dark  tones  of  green,  black,  and  purple .
+
+There  are  several  desktop  icons  on  the  left  side,  including  'Computer,'  'Recycle  Bin,'  'Games,'  'Programs,'  and  two 
+
+shortcuts  related  to  Connectify  software  – 'Connectify  Dispatch'  and  'Connectify  Hotspot .' The  taskbar  is  visible  at  the 
+
+bottom,  showing  open  software  and  the  system  clock  indicating  22 :42 , presumably  in  the  evening . The  main  focus  of  the 
+
+video  is  the  Connectify  Hotspot  application  window  in  the  center  of  the  screen . This  software  seems  to  be  used  for 
+
+sharing  an  internet  connection  by  turning  the  computer  into  a Wi -Fi  hotspot . The  application  window  shows  different  tabs 
+
+like  'Settings'  and  'Clients'  but  remains  on  the  default  'Settings'  tab  where  various  configurations  can  be  made . In  the  first 
+
+frame,  there's  a promotion  prompting  an  upgrade  to  Hotspot  PRO  with  a 70 % discount . As  the  frames  progress,  we  see 
+
+different  settings  options  within  the  application  like  'Internet  to  Share,'  which  allows  selection  of  the  internet  source,  and 
+
+firewall  options . Colors  in  these  application  windows  vary  from  white,  orange,  to  shades  of  blue . In  one  of  the  frames,  a
+
+dropdown  menu  is  clicked  revealing  network  options  such  as  'Realtek  PCIe  GBE  Family  Controller'  and  'TP -LINK  Wireless 
+
+USB  Adapter .' The  user's  voice -over  suggests  they  are  selecting  the  TP -LINK  adapter  as  their  internet  source  for  sharing .
+
+The  dropdown  menu  text  color  is  black  on  a white  background . Additionally,  there's  a recurring  notification  at  the  bottom 
+
+of  the  Connectify  window  stating  that  an  important  software  update  is  needed . No  human  characters  or  physical  actions 
+
+are  present ; it's  strictly  a digital  interaction  with  computer  software . The  style  of  the  interface  is  utilitarian  with  hints  of 
+
+personalization  in  wallpaper  choice . Lighting  is  consistent  across  frames  since  it's  a computer  screen  recording .",  "The 
+
+video  clip  is  a static  screen  recording  with  no  camera  movement,  focusing  closely  on  a computer  desktop  interface . The 
+
+desktop  background  features  an  artistic  fantasy -themed  image  with  vibrant  colors,  depicting  a dragon  or  creature  in 
+
+shades  of  green  and  dark  tones . The  scene  takes  place  within  a software  interface,  specifically  the  'Connectify  Hotspot' 
+
+application  window,  which  is  centered  on  the  screen  over  the  desktop  background . The  user  appears  to  be  configuring 
+
+internet  sharing  settings  within  the  Connectify  Hotspot  application . Various  icons  are  visible  on  the  desktop,  including 
+
+'Computer,'  'Recycle  Bin,'  'Games,'  'Programs,'  and  Connectify -related  icons . The  taskbar  is  at  the  bottom  with  start  menu 
+
+and  other  typical  Windows  icons  visible . The  computer's  clock  indicates  it's  22 :42 , and  the  language  setting  suggests  a
+
+Portuguese -speaking  user . The  user  navigates  through  different  options  within  the  application  window  to  set  up  an 
+
+internet  connection  for  sharing,  changing  from  a 'Realtek  PCIe  GBE  Family  Controller'  to  a 'TP -LINK  Wireless  USB  Adapter .'
+
+This  process  involves  selecting  the  correct  network  adapter  from  a dropdown  menu  within  the  application . A yellow 
+
+notification  at  the  bottom  of  the  Connectify  window  prompts  for  an  important  software  update . As  this  is  a tutorial  or 
+
+demonstration  video,  there  is  a voice -over  in  Portuguese  explaining  the  steps  being  taken . The  cursor  moves  to  various 
+
+settings  such  as  'Internet  to  Share,'  where  it  shows  'No  working  Internet'  before  changing  the  adapter  option,  and 
+
+'Hotspot  Name,'  which  has  been  pre -filled  with  a default  name . The  password  field  appears  to  be  populated,  with  an 
+
+option  to  generate  a new  password  or  show  the  current  one . Below  these  fields  are  firewall  options  for  allowing  internet 
+
+and  local  network  access . The  overall  style  of  the  video  clip  is  instructional,  with  straightforward  navigation  through  the 
+
+Connectify  Hotspot  settings,  accompanied  by  explanatory  voice -over  commentary . There  is  no  sound  other  than  the 
+
+voice -over,  and  no  other  characters  or  movements  occur  aside  from  cursor  navigation .
+
+Vanilla : The  video  begins  with  a desktop  screen  featuring  a dark,  fantasy -themed  wallpaper . On  the  desktop,  several  icons 
+
+are  visible,  including  "Computador ,"  "Jogos ,"  "Connectify  Dispatch,"  and  "Connectify  Hotspot ." The  main  focus  is  on  a
+
+window  titled  "Connectify  Hotspot,"  which  is  open  and  prominently  displayed  in  the  center  of  the  screen . The  window  has 
+
+a blue  header  with  tabs  labeled  "Settings,"  "Tools,"  "Help,"  and  "Upgrade  to  PRO ." The  "Settings"  tab  is  currently  selected, 
+
+showing  various  options  for  configuring  a Wi -Fi  hotspot . Below  this,  there  is  a section  titled  "Create  a... " with  two  options :
+
+"Wi -Fi  Hotspot"  and  "Wired  Router ." The  "Wi -Fi  Hotspot"  option  is  selected,  and  the  "Internet  to  Share"  section  shows  that 
+
+there  is  "No  working  Internet"  and  the  selected  adapter  is  "TP -LINK  Wireless  USB  Adapter ." Further  down,  there  is  a field 
+
+labeled  "Hotspot  Name"  with  the  text  "Connectify -nome  da  rede"  (Connectify -network  name)  and  a "Password"  field, 
+
+which  is  currently  obscured . Below  these  fields,  there  is  a "Firewall"  section  with  two  checkboxes : "Allow  Internet  Access" 
+
+and  "Allow  Local  Network  Access,"  both  of  which  are  unchecked . A prominent  orange  pop -up  window  appears  over  the 
+
+"Connectify  Hotspot"  window,  advertising  an  "Upgrade  to  Hotspot  PRO  Today!"  with  a "ONE  WEEK  SALE  - SAVE  70 %" offer .
+
+The  pop -up  includes  a field  for  entering  a "Custom  Hotspot  Name  (SSID)"  and  a "Generate  Password"  button . At  the  bottom 
+
+of  the  screen,  a red  warning  message  reads,  "YOUR  CONNECTIFY  SOFTWARE  NEEDS  AN  IMPORTANT  UPDATE . click  here ."
+
+The  system  tray  on  the  bottom  right  corner  shows  the  time  as  22 :42  and  various  system  icons,  including  the  volume  control 
+
+and  network  status . As  the  video  progresses,  the  orange  pop -up  window  disappears,  and  the  "Connectify  Hotspot"  window 
+
+remains  visible,  with  the  "Start  Hotspot"  button  still  inactive .Figure 8: A representative case from the Vript-HAL dataset using Qwen3-VL-4B-Instruct as the backbone. TCD : The  video  shows  someone  editing  photos  on  a computer  using  a graphics  program . The  user  opens  different  image 
+
+filters  and  adjusts  colors  on  a fantasy  wallpaper . Several  files  are  visible  on  the  desktop,  and  the  person  appears  to  be 
+
+preparing  a presentation  or  design  project . The  video  mainly  focuses  on  changing  the  look  of  the  desktop  background .
+
+MotionCD : The  video  is  a screen  recording  of  a Windows  desktop . A program  window  is  open  in  the  middle  of  the  screen, 
+
+and  the  user  clicks  on  a dropdown  menu . The  desktop  has  a dark  fantasy -style  wallpaper  and  some  shortcuts  on  the  left 
+
+side . The  video  appears  to  demonstrate  a software  setup  process .
+
+DINO -HEAL : The  video  is  a screen  recording  of  a Windows  desktop  with  a dark  fantasy  wallpaper . There  are  several  icons 
+
+on  the  left  side  of  the  desktop,  including  some  system  folders  and  Connectify -related  shortcuts . The  time  shown  on  the 
+
+taskbar  is  22 :42 . A Connectify  Hotspot  window  is  open  in  the  middle  of  the  screen . The  user  appears  to  be  adjusting 
+
+settings  for  creating  a Wi -Fi  hotspot . They  open  a dropdown  menu  in  the  internet  sharing  section  and  choose  a network 
+
+adapter,  including  an  option  related  to  TP -LINK . After  this,  the  program  shows  that  there  is  no  working  internet  connection .
+
+The  window  also  includes  fields  for  the  hotspot  name  and  password,  as  well  as  some  firewall  settings . A start  button  is 
+
+visible  near  the  bottom,  along  with  a notification  saying  the  software  needs  an  update . Overall,  the  video  seems  to  show 
+
+someone  trying  to  set  up  Connectify  Hotspot  on  a computer,  but  the  process  does  not  work  because  the  selected  internet 
+
+source  is  not  connected  properly .
+
+SmartSight : The  video  shows  a desktop  screen  with  a desktop  background  featuring  a dark,  fantasy -themed  image . In  the 
+
+center,  there  is  an  open  window  for  "Connectify  Hotspot,"  a software  application  used  to  create  a wireless  hotspot . The 
+
+window  is  divided  into  sections,  with  the  top  part  displaying  the  current  status  of  the  hotspot,  indicating  it's  not  active .
+
+Below,  there  are  various  settings  and  options  for  configuring  the  hotspot,  including  a list  of  available  network  adapters,  a
+
+field  for  entering  a hotspot  name,  a password  field,  and  options  for  setting  up  firewall  rules .
+
+TA -AE : The  video  shows  a Windows  desktop  screen  with  a dark  fantasy -style  wallpaper  in  the  background . Several  desktop 
+
+icons  are  visible  on  the  left  side,  including  “Computador ,”  “Lixeira ,”  “Jogos ,”  “Programas ,”  and  shortcuts  for  “Connectify 
+
+Dispatch”  and  “Connectify  Hotspot .” The  system  clock  in  the  bottom  right  shows  22 :42 . The  main  window  open  on  the 
+
+screen  is  the  “Connectify  Hotspot”  application . It  is  on  the  “Settings”  tab,  with  other  tabs  such  as  “Clients”  and  “Upgrade 
+
+to  PRO”  visible  near  the  top . The  software  appears  to  be  used  for  creating  or  configuring  a Wi -Fi  hotspot . In  the  “Internet 
+
+to  Share”  section,  the  user  opens  a dropdown  menu  to  choose  a network  adapter . Options  such  as  “Realtek  PCIe  GBE 
+
+Family  Controller”  and  “TP -LINK  Wireless  USB  Adapter”  are  visible . The  user  selects  the  TP -LINK  adapter,  but  the  program 
+
+shows  “No  working  Internet,”  suggesting  the  selected  connection  is  not  currently  usable . Below  that,  the  window  shows 
+
+fields  for  the  hotspot  name  and  password,  along  with  firewall  options  for  allowing  internet  and  local  network  access .
+
+There  is  also  a “Start  Hotspot”  button  near  the  bottom,  but  it  does  not  appear  ready  to  use . A message  at  the  bottom  of 
+
+the  software  says  that  Connectify  needs  an  important  update . Overall,  the  video  seems  to  be  a basic  screen -recorded 
+
+tutorial  about  configuring  Connectify  Hotspot  on  a Windows  computer,  though  the  setup  is  not  fully  successful  because 
+
+the  selected  adapter  does  not  have  a working  internet  connection .
+
+MultiToP : The  video  begins  with  a desktop  screen  featuring  a dark,  fantasy -themed  wallpaper  with  a large,  menacing 
+
+creature  in  the  background . The  desktop  has  several  icons,  including  "Computador ,"  "Lixeira ,"  "Jogos ,"  "Programas ," 
+
+"Connectify  Dispatch,"  and  "Connectify  Hotspot ." The  time  displayed  in  the  bottom  right  corner  is  22 :42 . The  main  focus 
+
+of  the  video  is  the  "Connectify  Hotspot"  software  window,  which  is  open  and  prominently  displayed . The  window  has  a
+
+blue  header  with  the  title  "Connectify  Hotspot"  and  tabs  labeled  "Settings,"  "Clients,"  and  "Upgrade  to  PRO ." The 
+
+"Settings"  tab  is  currently  selected,  and  the  window  is  divided  into  sections  for  creating  a Wi -Fi  hotspot . In  the  "Internet 
+
+to  Share"  section,  the  user  is  selecting  a network  adapter . The  dropdown  menu  shows  options  such  as  "Realtek  PCIe 
+
+GBE  Family  Controller,"  "Realtek  PCIe  GBE  Family  Controller  (PRO  feature),"  and  "TP -LINK  Wireless  USB  Adapter ." The 
+
+user  selects  "TP -LINK  Wireless  USB  Adapter,"  and  the  status  changes  to  "No  working  Internet,"  indicating  that  the 
+
+selected  adapter  is  not  connected  to  the  internet . The  "Hotspot  Name"  field  is  pre -filled  with  "Connectify -name  da 
+
+rede,"  and  the  "Password"  field  is  filled  with  a series  of  asterisks,  indicating  a password  has  been  set . The  "Firewall" 
+
+section  has  two  checkboxes : "Allow  Internet  Access"  and  "Allow  Local  Network  Access,"  both  of  which  are  checked . At 
+
+the  bottom  of  the  window,  there  is  a "Start  Hotspot"  button,  which  is  currently  disabled . A notification  at  the  bottom  of 
+
+the  window  reads,  "YOUR  CONNECTIFY  SOFTWARE  NEEDS  AN  IMPORTANT  UPDATE . Click  here ." The  video  appears  to  be 
+
+a tutorial  or  demonstration  of  setting  up  a Wi -Fi  hotspot  using  the  Connectify  software . The  user  is  likely  trying  to 
+
+configure  the  hotspot  settings,  but  the  selected  adapter  is  not  connected  to  the  internet,  which  is  preventing  the 
+
+hotspot  from  being  started . The  video  may  continue  with  the  user  attempting  to  resolve  the  internet  connection  issue 
+
+or  providing  additional  instructions  for  setting  up  the  hotspot .Figure 8: A representative case from the Vript-HAL dataset using Qwen3-VL-4B-Instruct as the backbone. Question : Describe  this  video  in  detail .
+
+Ground -truth : The  video  showcases  a turn  in  a Hearthstone  card  game  match  between  two  Warlock  players . The  game's 
+
+interface  is  detailed  and  colorful,  with  a fantasy -themed  design . The  bottom  player,  who  is  currently  taking  their  turn,  has 
+
+a hand  of  cards  displaying  various  creatures  and  spells  with  different  mana  costs  and  effects . They  have  a series  of  options 
+
+to  play  from  their  hand . The  player's  hero  portrait  is  shown  at  the  bottom  right  with  a health  count  of  30  at  the  start . The 
+
+top  player's  hero  portrait,  also  at  30  health,  is  at  the  top  left  corner  with  a mana  crystal  count  of  5/5. We  see  the  bottom 
+
+player  using  a 'Life  Tap'  ability,  costing  them  health  but  allowing  them  to  draw  a card,  depicted  by  the  character  striking 
+
+itself  and  a card  being  added  to  their  hand . Subsequently,  the  player  summons  an  'Arcane  Golem',  a blue -tinted  creature 
+
+with  'Charge',  and  attacks  the  opposing  hero  directly,  followed  by  casting  'Abusive  Sergeant',  which  gives  a temporary 
+
+attack  boost  to  another  minion . The  board  background  has  an  earthen  and  gear  motif  typical  of  the  Hearthstone  game 
+
+aesthetic,  with  deep  browns,  golds,  and  other  warm  colors  that  create  an  inviting,  game -friendly  environment . Text 
+
+appears  on  the  screen  detailing  the  Twitch  channel  and  Twitter  handle  of  @carrera_enzo  and  @titoenzoTV,  suggesting  this 
+
+footage  may  be  part  of  a live  stream  or  recorded  gameplay  session  intended  for  sharing  online . The  action  is  quick -paced 
+
+as  each  card's  effect  is  immediately  visualized  upon  play,  including  changes  in  health  totals,  attack  animations  with  bright 
+
+flashes  and  character  grunts  for  impacts,  and  summoning  effects  with  magical  glows  and  sound  effects  for  drama .",  "The 
+
+video  shows  a digital  card  game  interface  from  the  game  Hearthstone,  with  fantasy -themed  designs . On  the  bottom  half  of 
+
+the  screen,  the  player's  hand  is  visible  with  various  illustrated  cards  displaying  different  creatures  and  spells . The  cards 
+
+have  numbers  indicating  cost,  attack,  and  health  points . The  player  manages  resources,  represented  by  crystallized 
+
+numbers  on  the  bottom  right,  to  play  cards  onto  the  board . The  board  itself  is  a virtual  tabletop  with  intricate  designs 
+
+resembling  a castle  or  medieval  setting . Actions  on  the  board  are  animated ; for  example,  when  a card  attacks,  it  physically 
+
+strikes  another,  causing  numbers  to  appear  indicating  the  damage  dealt . When  a creature  is  destroyed,  it  breaks  apart  and 
+
+disappears  from  the  board . The  top  half  of  the  screen  shows  the  opponent's  side,  which  mirrors  the  player's  layout .
+
+There's  an  active  engagement  between  two  players,  each  trying  to  reduce  the  other's  life  total,  shown  as  red  crystals  with 
+
+numbers  at  the  bottom  for  the  player  and  top  for  the  opponent . Visual  effects  such  as  glowing  outlines  and  explosive 
+
+animations  accompany  card  actions,  adding  excitement  and  clarity  to  gameplay . The  dominant  colors  in  this  interface  are 
+
+browns,  reds,  and  golds  which  give  a warm  and  adventurous  atmosphere  typical  of  fantasy  games . The  UI  elements  are 
+
+adorned  with  metallic  and  stony  textures  reinforcing  the  game's  medieval  theme . Strategically  played  cards  shift  positions 
+
+on  the  board  indicating  their  active  or  inactive  states  through  visual  cues  like  glowing  borders  or  sleeping  'Zz ' symbols ."
+
+Vanilla : The  video  shows  a digital  card  game  being  played  on  a fantasy -style  board . The  interface  appears  to  be  from  a game 
+
+similar  to  Hearthstone,  with  two  players  facing  each  other  from  the  top  and  bottom  of  the  screen . The  bottom  player  has 
+
+several  cards  in  hand,  each  with  different  artwork,  numbers,  and  possible  effects . During  the  gameplay,  the  player  selects 
+
+cards  and  places  them  onto  the  board . Some  cards  appear  to  summon  creatures,  while  others  may  trigger  special  effects .
+
+The  board  has  a medieval  design  with  warm  colors,  including  brown,  gold,  and  red  tones . The  two  players  seem  to  be  taking 
+
+turns  trying  to  reduce  each  other's  health  totals . There  are  several  animations  when  cards  are  played,  including  glowing 
+
+effects  and  attack  motions . The  video  appears  to  be  a recorded  gameplay  clip,  possibly  from  a livestream,  since  there  is  text 
+
+on  the  screen  related  to  social  media  or  a channel  name .Figure 9: A representative case from the Vript-HAL dataset using Video-LLaVA-7B as the backbone. TCD : The  video  shows  someone  editing  photos  on  a computer  using  a graphics  program . The  user  opens  different  image 
+
+filters  and  adjusts  colors  on  a fantasy  wallpaper . Several  files  are  visible  on  the  desktop,  and  the  person  appears  to  be 
+
+preparing  a presentation  or  design  project . The  video  mainly  focuses  on  changing  the  look  of  the  desktop  background .
+
+MotionCD : The  video  features  a Hearthstone  match  with  a fantasy -themed  game  board  and  two  players  competing 
+
+against  each  other . The  player  at  the  bottom  is  taking  a turn  and  has  a hand  full  of  cards  with  different  mana  costs  and 
+
+creature  designs . The  opponent  is  shown  at  the  top  side  of  the  screen  with  their  hero  portrait  and  health  total . The  player 
+
+plays  a few  cards  from  their  hand  and  uses  them  to  attack  the  opposing  side . Some  minions  appear  on  the  board,  and  the 
+
+game  shows  visual  effects  when  they  are  summoned  or  when  they  attack . The  interface  includes  health  numbers,  mana 
+
+crystals,  and  colorful  fantasy  artwork . The  scene  gives  the  impression  of  a strategic  card  battle,  where  the  player  is  trying 
+
+to  build  pressure  on  the  opponent . However,  the  exact  names  and  effects  of  the  cards  are  not  very  clear  from  the  clip .
+
+DINO -HEAL : The  video  shows  a digital  collectible  card  game  match  taking  place  on  a detailed  board . The  board  is  split 
+
+between  two  players,  with  one  player  at  the  bottom  and  the  other  at  the  top . The  bottom  player  has  several  cards 
+
+available  and  appears  to  be  deciding  which  one  to  play  next . As  the  turn  continues,  the  player  uses  some  cards  and  causes 
+
+animated  effects  on  the  board . A creature  is  summoned  and  later  attacks,  creating  a flash  of  light  and  changing  the  health 
+
+numbers . The  overall  style  is  colorful  and  fantasy -based,  with  a medieval  tabletop  look . There  are  also  some  overlay  texts 
+
+on  the  screen,  suggesting  the  footage  may  come  from  an  online  stream  or  gaming  channel . The  video  mainly  focuses  on 
+
+the  player  making  moves  during  one  turn  of  the  card  game .
+
+SmartSight : The  video  presents  a turn  from  a Hearthstone -style  card  battle . Two  players  are  shown  on  opposite  sides  of  a
+
+fantasy  board,  and  the  bottom  player  is  actively  playing  cards  from  their  hand . The  cards  include  creatures  and  spells  with 
+
+different  numbers  for  cost  and  strength . The  player  seems  to  use  a hero  ability  and  then  plays  a minion  onto  the  board .
+
+The  minion  attacks  the  opponent,  and  the  game  displays  damage  through  quick  animations  and  glowing  effects . The 
+
+opponent's  side  remains  visible  at  the  top,  showing  that  both  players  are  still  in  the  match . The  board  has  a warm  brown 
+
+and  gold  design,  with  decorative  fantasy  elements . The  clip  looks  like  gameplay  footage  from  a livestream,  though  the 
+
+exact  strategy  being  used  is  not  fully  explained .
+
+TA -AE : The  video  shows  a fantasy  card  game  interface  where  two  players  are  competing  on  a virtual  board . The  lower 
+
+player  has  a group  of  cards  in  hand  and  uses  some  of  them  during  the  turn . The  cards  show  illustrated  characters  and 
+
+numbers,  suggesting  different  costs  and  abilities . The  player  plays  a creature  card  and  then  makes  an  attack  toward  the 
+
+opponent . Bright  effects  appear  when  the  attack  happens,  and  the  health  values  seem  to  change  afterward . The  game 
+
+interface  includes  hero  portraits,  resource  counters,  and  animated  card  effects . The  overall  scene  is  fast -paced  and 
+
+strategic,  with  the  player  trying  to  gain  an  advantage . The  video  appears  to  be  from  a Hearthstone  match  or  a similar 
+
+online  card  game,  with  some  streamer  information  displayed  on  the  screen .
+
+MultiToP : This  video  vividly  captures  a live  Hearthstone  match  between  two  Warlock  players . The  entire  game  interface 
+
+features  an  iconic  medieval  fantasy  style,  blending  textures  of  stone,  metal,  and  mechanical  gears  on  the  board .
+
+Complemented  by  warm  tones  like  deep  browns,  golden  yellows,  and  dark  reds , it  creates  a highly  immersive  digital 
+
+tabletop  card  game  atmosphere . The  top  and  bottom  of  the  screen  display  the  hero  portraits  for  both  players . Both 
+
+Warlocks  start  at  a full  30  health  points , represented  by  red  health  crystals,  and  the  opponent  at  the  top  currently  has  a
+
+full  5/5 mana  crystals . The  perspective  is  primarily  focused  on  the  bottom  player,  whose  hand  is  filled  with  various 
+
+beautifully  illustrated  minion  and  spell  cards . Each  card  clearly  displays  its  required  mana  cost,  attack  power,  and  health 
+
+points . During  their  turn,  the  bottom  player  first  activates  the  Warlock  hero  power,  "Life  Tap ." Accompanied  by  a close -
+
+up  animation  of  the  character  attacking  itself,  the  player  sacrifices  a portion  of  their  health  to  draw  a new  card .
+
+Immediately  after,  they  play  a blue -glowing  "Arcane  Golem ." Thanks  to  its  "Charge"  trait,  the  minion  launches  a direct 
+
+attack  on  the  enemy  hero  as  soon  as  it  enters  the  board . Subsequently,  the  player  casts  "Abusive  Sergeant,"  using  its 
+
+effect  to  provide  a temporary  attack  boost  to  another  friendly  minion . The  gameplay  is  fast -paced,  supported  by  highly 
+
+intuitive  visual  cues  and  audio  feedback . Newly  summoned  minions  float  with  a "Zz " symbol  to  indicate  a sleeping  state 
+
+where  they  cannot  attack,  while  cards  ready  to  act  feature  glowing  borders . When  cards  attack,  there  are  physical 
+
+striking  motions  and  popping  damage  numbers ; destroyed  minions  shatter  and  vanish  with  an  explosive  animation . All 
+
+spells  and  attacks  are  paired  with  brilliant  magical  glows  and  character  impact  sounds . Additionally,  Twitch  channel  and 
+
+Twitter  handle  details  (@carrera_enzo  and  @titoenzoTV)  are  prominently  overlaid  on  the  screen,  suggesting  this  clip  is 
+
+likely  sourced  from  a live  stream  or  recorded  gameplay  session  intended  for  online  sharing .Figure 9: A representative case from the Vript-HAL dataset using Video-LLaVA-7B as the backbone.

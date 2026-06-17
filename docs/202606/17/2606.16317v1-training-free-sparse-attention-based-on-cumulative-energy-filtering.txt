@@ -1,0 +1,427 @@
+Title: Training-free sparse attention based on cumulative energy filtering
+
+URL Source: https://arxiv.org/pdf/2606.16317v1
+
+Published Time: Tue, 16 Jun 2026 02:19:35 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Training-Free Sparse Attention Based on Cumulative Energy Filtering 
+
+Chunlu Li ∗, Yixuan Pan ∗, Bai Du ∗, Zhenyuan Chen ∗, Yanzhao Li ∗, Hui Dong ∗
+
+Hui Wang ∗, Zhiqiang Zou ∗
+
+* Huawei Technologies 
+
+# Abstract 
+
+Sparse attention accelerates Diffusion Transformers (DiTs) for video gen-eration by computing only the important tokens while skipping the rest. The token selection strategy is key to balancing sparsity and accuracy. We formulate the token filtering process as a dual-goal optimization problem: maximizing sparsity and minimizing accuracy degradation. Existing algo-rithms cannot fulfill both objectives simultaneously. For example, Top-p only considers the accuracy constraint, while Top-k maintains a fixed com-putational budget but loosens the accuracy constraint. This paper demonstrates that maintaining a fixed recall rate is sufficient for ensuring accuracy, whereas a fixed threshold is suboptimal for reducing computational cost. Therefore, we propose a dynamic thresholding scheme to improve sparsity while maintaining the same level of accuracy. Fur-thermore, our algorithm is deeply integrated with Flash Attention (FA), eliminating the need for any additional masking computation overhead. Experimental results on Wan 2.2 validate that, compared to the BLASST algorithm which is also integrated with FA, our dynamic thresholding strat-egy enhances sparsity from 61.42% to 82% with a VBench metric drop of less than 5%. This results in an approximate 15% in attention computation and a 1.61 × increase in computational efficiency, which is 1.18x higher than that of BLASST. 
+
+# 1 Introduction 
+
+A major limitation of DiT-based vision generation models is that the computational cost of attention scales quadratically with sequence length. Sparse attention has emerged as a mainstream approach for accelerating inference. By filtering out tokens that contribute minimally to the output, it reduces computational overhead while maintaining acceptable accuracy. Since Flash Attention 2 [D] is proposed, attention has been reformulated into tile-based computation by iterating over the combination of Qi and Kj tiles for better parallelism. Sparse attention leverages this by involving only a subset of these Qi and Kj combinations, skipping the rest to achieve acceleration. Existing methods can be categorized into static and dynamic paradigms, depending on whether the sparsity decisions are determined offline or online. 
+
+Sparse attention with static pattern assumes that each attention head exhibits specific patterns indicating which tokens contribute less to the final attention. Consequently, a set of masks can be predefined to calculate the patterns for each head. During inference, the selected mask or a combination of these masks can be directly applied. SVG [X] first proposes that attention heads can be divided into spatial and temporal heads. The former 
+
+38th Conference on Neural Information Processing Systems (NeurIPS 2024). 
+
+> arXiv:2606.16317v1 [cs.CV] 15 Jun 2026
+
+focuses on the correlations between tokens within a single frame, while the latter pays more attention to the correlation among tokens across temporal frames correspond to the same spatial location. By comparing the errors using different masking patterns, the mask type for each attention head is determined offline. During online inference, the masking pattern is directly applied to determine whether to skip the computation of tokens. Methods such as RainFusion and Sparse-VDiT [C; C] have increased the variety of masks. Some methods have made the process of setting static masks dynamic. For example, Efficient V-DiT [D] designed parameterized masks, which increased the degree of freedom in mask changes and reduced the loss in accuracy. Other methods have shifted from offline mask selection to online methods. VORTA [S] uses a routing mechanism to select appropriate masks during inference. These static or semi-static methods cannot generalize well on different modes, prompts, layers and diffusion steps. 
+
+Dynamic Sparse Attention To enhance the generalization, dynamic sparse attention make online token selection. Dynamic attentions can be further divided into two streams according to the timing of the selection. The first category estimates a mask before entering the FA loop. Generally, Q and K are first compressed into Q’ and K’. Then, the most important K blocks for each Q block are selected based on a score computed with Q’and K’. The FA inner loop decides whether to skip a tile by querying the mask result. For example, VSA [X] represents Q and K sequences with the mean of Q(K) blocks and use S′ = Q′K′T to approximates the S matrix. Then, it keeps the Top-K largest elements and skip the rest blocks. Feature compression reduces the overhead of mask computation. The most widely used is the block mean. Other variants include: X attention [X] uses the average value of the diagonal elements in a block to represent the entire block. The DSV algorithm [T] projects a sequence into a low-dimensional space using a learnable low-rank matrix. To make the compressed features more representative, some methods use reordering to group similar tokens into the same block. Currently, the mainstream is to rearrange the 1D sequence to the time-space dimension of [h, w, t], e.g. PAROAttention, BSA, etc. [Z; T; Z]. This method groups tokens that are close in time and space together so as to reducing the variance within a block. SVG2 [Y] proposes to use K-means for clustering and use the center to represent each cluster. Sparge [Z] employs Hilbert reordering and uses the cosine similarity to determine whether the average value is representative. For blocks that cannot be represented by the average value, all tokens are selected for further attention computation. The most prevalent element selection methods are Top-K and Top-P. The Top-P algorithm performs computation on an approximated P’ matrix. This algorithm first sorts the elements in descending order and then truncates the distribution at the point where the cumulative probability surpasses a specific threshold.. Methods such as SVG2 and XAttention use Top-P on the P matrix, while methods such as SLA, BSA in LongCat, and AdaSpa use Top-K on the QK T matrix. In addition to the Top-P and Top-K algorithms, the BSA algorithm [Z] calculates a dynamic K based on statistical values to improve the accuracy. FlashPrefill [F] uses the weighted maximum αmax (QK T ) as the threshold to filter out unimportant elements. SSTA [W] in HunyuanVideo 1.5 is based on the prior importance of the elements on the main diagonal of the QKT matrix. It integrates the SWA with Top-K to prevent missing important elements. The second category of dynamic sparsity algorithms decides whether to skip certain blocks within the FA loop. A typical example is the BLASST algorithm [Y]. In the inner loop, 
+
+ˆmi − m(j) 
+
+> i
+
+is used as an indicator of the importance of each tile, where ˆmi is the maximum of the current tile and m(j) 
+
+> i
+
+is the running max. When this indicator is below a certain threshold, subsequent computations are skipped. The essence of this method is similar to thresholding with the weighted maximum αmax (QK T ), while the global max is replaced by running max for engineering convenience. This approach does not require additional mask computation and can reduce the overall computational complexity. LiteAttention further incorporate a mask reuse mechanism to further reduce the cost of threshold judgment. Compared to the first category of dynamic sparse attention, it requires no mask computation overhead. 2The core of dynamic sparsity is how to select appropriate tokens to ensure low computa-tional cost without compromising accuracy. However, existing algorithms cannot fulfill the two objectives simultaneously. The widely adopted Top-K strategy maintains a fixed com-putational budget but loosens the accuracy constraint. Conversely, Top-P only considers the accuracy and ignores the former goal. This paper demonstrates that maintaining a fixed recall rate is sufficient for ensuring ac-curacy. However, it is not optimal for reducing computational cost. Starting with the dual-goal optimization problem, we propose a dynamic threshold calculation scheme based on cumulative energy, i.e. DynSparse , that improves sparsity under the same accuracy. Besides, our algorithm is deeply integrated with the FA algorithm and does not introduce extra computation overhead. Specifically, we propose thresholding the tokens based on the accumulated energy ℓ(j) 
+
+> i
+
+. In FA, 
+
+ℓ(j) 
+
+> i
+
+represents the probability of selected tokens accumulated so far. It implies the upper bound of the potential contribution of subsequent elements to the softmax-normalized P
+
+matrix. Consequently, it serves as a more effective metric for assessing the importance of incoming tokens. Furthermore, the cumulative nature of ℓ(j) 
+
+> i
+
+ensures that as its value increases, fewer tokens are selected, thereby enhancing sparsity. Similar to BLASST, this method is deeply integrated with FA. It is also worthy to note that ℓ(j) 
+
+> i
+
+is contained naturally in the FA operator, thereby minimizing additional overhead. Experiments on Wan 2.2 verifies that, our training-free method can achieve a sparsity of 82.14% on a 14B model with block size 128, representing an improvement of 20.72% com-pared to the BLASST baseline. On a 5B model, our method can achieve a sparsity of 81.38%. The ablation study also validates the robustness of the proposed method. 
+
+# 2 Sparse Attention Anaysis 
+
+2.1 Sparse Attention as an Optimization Problem 
+
+We first formulate the sparse attention as an optimization problem and explain the defect of existing methods. Through derivation, we then verified that the selection criterion, ∆P < ϵ ,is a sufficient condition to ensure accuracy. However, to ensure optimal sparsity ϵ varies under different P matrix distributions. 
+
+2.1.1 Problem Statement 
+
+The objective of sparse attention can be defined as: 
+
+min (cost compute ), s.t.dist (O, O′) < θ 
+
+, where O and O′ are the outputs of full attention and sparse attention. dist denotes the error between the two inputs. Assume the elements vj of V are i.i.d and employ |O − O′| to reflect the error. Let S1 =∑ 
+
+> j∈S
+
+pj ≤ ϵ, where S denotes the set of discarded elements. The error variable E consists of two parts: 
+
+E = ∑
+
+> j∈S
+
+pj vj
+
+︸ ︷︷ ︸
+
+> loss due to discarding
+
+− S1
+
+1 − S1
+
+∑
+
+> j∈K
+
+pj vj
+
+︸ ︷︷ ︸
+
+> amplified bias due to renormalization
+
+(1) The existing methods are all simplifications of the optimization objectives. 1) Top-P: Assume that vj has an upper bound |V |. By ensuring ∑ 
+
+> j∈S
+
+pj < ϵ , it can be guaranteed that |O − O′| < ϵ |V |. However, this method does not ensure least computational cost. 2) Top-K maintains a fixed computational budget and loosens the accuracy constraint. 3) Truncating tokens below the weighted P matrix maximum [F] cannot guarantee optimal accuracy and sparsity using a fixed threshold weight. Assume the sequence length is L,S =
+
+3{Pj |Pj < αP max } are the skipped K tokens. the sum of these retained tokens are γP max ,retained probability sum is ∑  
+
+> j/∈C
+
+= γ(N − K)Pmax . To determine the upper bound of the precision error, we assumed that the discarded tokens share the same value of αP max . In such situation, to achieve the maximum sparsity while satisfying the precision error, it is required that: α =   
+
+> ∑
+> i∈Spi
+> 1−∑
+> i∈Spi
+> L−KK
+
+. It suggests that the optimal threshold α is related to the distribution of the P matrix. Since the α used in this method is generally fixed, the sparsity and precision may not meet expectations in certain cases. 4) BLASST replaces the global max with a running max for engineering optimization so as to integrate deeply with FA. Since the running max may include some tokens with lower importance that do not contribute substantially to accuracy when it has not yet reached the global maximum, Relative Thresholding serves as the upper bound for the accuracy-sparsity tradeoff in BLASST. The theoretical accuracy-sparsity upper bound is the same as using the global max. 
+
+2.2 Theoretical Derivation of Optimization Objectives 
+
+First, we verify that the Top-P strategy, which uses the recall rate as a threshold ，i.e. ∆P < ϵ ,for selection can strictly ensure the upper bound of error yet ϵ should vary according to the distribution of the P matrix. Note that ensuring a lower sparsity equivalents to selecting a higher ϵ.The mathematical expectation of the error in Eq. 1, E[E] = 0 , means that performing Soft-max re-normalization is an unbiased truncation operation. The variation can be formulated as Var (E) = σ2
+
+∑
+
+> j∈S
+
+p2 
+
+> j
+
++
+
+( S1
+
+1 − S1
+
+)2 ∑
+
+> j∈K
+
+p2
+
+> j
+
+ (2) According to the Central Limit Theorem or Chebyshev’s inequality, the precision require-ment can be rewritten as: E[E] + Var (E) = Var (E) ≤ δ · θ2, where δ is a constant related to the confidence level. Substituting S1 = ϵ into the variance formula, we obtain the constraint: 
+
+∑
+
+> j∈S
+
+p2 
+
+> j
+
++ ϵ2
+
+(1 − ϵ)2
+
+∑
+
+> j∈K
+
+p2 
+
+> j
+
+≤ δ · θ2
+
+σ2 = Θ (3) Since ϵ is small, a first-order Taylor approximation gives ϵ 
+
+> 1−ϵ
+
+≈ ϵ. Moreover, we denote the squared 2-norm of the vectors as ∥PS ∥22 = ∑ 
+
+> j∈S
+
+p2 
+
+> j
+
+and ∥PK∥22 = ∑ 
+
+> j∈K
+
+p2 
+
+> j
+
+, and ϵub is the theoretical upper bound of ϵ, satisfying the following condition: 
+
+∥PS ∥22 + ϵ2
+
+> ub
+
+∥PK∥22 = Θ (4) Eq. 4 indicates that the optimal value of ϵ is related to the distribution of P . ∑ p2 
+
+> j
+
+(i.e., the squared L2 norm) statistically measures the sharpness of the distribution. We discuss two extreme cases: Extremely flat distribution: The probability of discarding tokens reaches ϵ. However, ∥PS ∥22
+
+and ∥PK∥22 will be extremely small. For example, under a uniform distribution, the upper bound of both is 1/ L, where L is the sequence length, which is typically on the order of 1e5 in video generation. In this case, even if you choose a larger ϵ, the error |E| will not exceed the threshold. Therefore, you can set a larger ϵ and aggressively discard more tokens. For peaky and concentrated distribution, the attention is highly concentrated on a few tokens, and ∥PK∥22 is large. In this case, even a slightly larger ϵ can cause the output of the retained tokens after renormalization to fluctuate beyond the threshold θ. For example, when 1k tokens share almost 99% of the attention, ∥PK∥22 ≈ 1e − 3. Therefore, under a sharp distribution, the penalty for renormalization is significant, and a very small ϵ (or even no discarding) must be set. In summary, ϵ is highly correlated with the distribution of the 
+
+P matrix. 4Using a fixed ϵ can strictly ensure the accuracy error, but it cannot achieve the optimal sparsity. Strictly ensuring ∆P < ϵ is a sufficient condition for accuracy, but not a necessary one. In Sec. A.1, we used recall values on Wan 2.2 to reflect the value of ϵ and compared the relationship between MAE and recall under different distributions, validating the above analysis. 
+
+2.3 Sources of Computation Reduction 
+
+According to Sec. 2.1.1, when the distribution is relatively flat, a more aggressive value of ϵ
+
+can be set. To analyze the theoretical benefits in this case, we assume P tends toward a uniform distribution. Assuming K elements are retained, and δ is the standard deviation of V, the upper bound of the error in the standard deviation is: 
+
+std = δ
+
+√K
+
+√ N − KN − 1
+
+For Wan 2.2 5B, Nseq = 27280 , with a block size of 128. When Nblk = ceil (Nseq /128) = 214 ,only 80 % of the blocks need to be retained, and the std error is 3.4% of δ. When 95% is retained, the std error is 1.6% of δ. It can be seen that when sparsity increases from 0.05 to 0.2, the std difference is approximately 2 times, with no significant difference in the error distribution. As the sequence length N increases, this sparsity improvement becomes more pronounced. For example, in Wan 2.2 14B, Nseq = 75600 , Bc = 128 , and the standard deviation difference is acceptable after sparsity increases from 0.05 to 0.6. 
+
+# 3 Method 
+
+Section 2 indicates that filtering tokens (blocks) using ∑ pj < ϵ could not reach optimal sparsity with a fixed ϵ. Instead, the selection should follow Eq. 4 in which ϵ should be set to its upper bound ϵub . The process of mask computation should follow: Given an upper tolerance limit for the error variance Θ ∝ θ2/σ2. Sort Pj in ascending order. Initialize S = ∅, K = {1 . . . N }. Sequentially move the smallest pj from K to S, and dynamically update S1 = ∑ 
+
+> S
+
+pj . Calculate the current error variance metric in real time, and sTop-the computation when the condition represented by Eq. 3 is met. Although this method can achieve the desired accuracy and optimal sparsity, it requires softmax computation, sorting, and dynamic decision-making before FA. Therefore, it is difficult to achieve significant performance gains in practice. 
+
+3.1 DynSparse 
+
+We propose a metric for selecting tokens, similar to the BLASST algorithm, which can filter tokens during the FA process: 
+
+tji = ˆ mi − ln ℓ(j−1)  
+
+> i
+
+− m(j−1)  
+
+> i
+
+= ˆ mi − LSE (j−1)  
+
+> i
+
+(5) Here, ˆmi represents the local maximum value of each tile, and m(j−1)  
+
+> i
+
+represents the cumu-lative maximum value. The cumulative energy (Log-Sum-Exp) after (j − 1) blocks is: LSE (j−1)  
+
+> i
+
+= ln 
+
+ ∑ 
+
+> k≤j−1,k /∈J i
+
+eSki −m(j−1) 
+
+> i
+
+ + m(j−1)  
+
+> i
+
+= ln ℓ(j−1)  
+
+> i
+
++ m(j−1)  
+
+> i
+
+. (6) We use tji as the decision metric and define a global threshold λ. If ti,j < λ , the j-th block is considered energetically insignificant and thus its computation is skipped. First, we verify that this method can strictly guarantee the constraint ∆recall = ∆ P < ϵ .For a single tile i that is about to be skipped, its contribution to ∆recall is as follows: 
+
+∆recall i = eAi
+
+∑ 
+
+> i∈[1 ,L ]
+
+eAi ≤ e ˆmi
+
+∑ 
+
+> i∈K
+
+eAi = eti
+
+5Since our screening condition constrains ti < λ , the contribution of each token to the recall is recall ≤ eλ < ϵ . In the worst-case scenario, assuming that the error contribution of each token reaches the upper bound of the error, we can set λ = ln (ϵ/L) to ensure that the constraint is strictly not violated. This worst-case scenario corresponds to the case where the P matrix is uniformly distributed. Combining the analysis from the previous section, we can ensure that this method guarantees the sufficient condition for accuracy, ∆P < ϵ ,based on this. Further, we explain how DynSparse ensures optimal sparsity under the condition of maintain-ing accuracy. In high-entropy distributions (uniform distributions), as the sequence length increases, LSE (log-sum estimate) also increases, making the threshold ˆm(j) 
+
+> i
+
+< LSE (j−1)  
+
+> i
+
++ λ
+
+increasingly stringent, thereby allowing aggressive pruning of dilution blocks that do not significantly alter the attention output. In low-entropy (spiky) distributions, once a global maximum (”winner”) is encountered, LSE rises sharply, causing all subsequent low-scoring blocks’ ti,j to immediately fall below λ, triggering early exit. It is worth noting that our method does not require additional computation to estimate the mask, as all variables ( ˆm(j) 
+
+> i
+
+, ℓ (j−1)  
+
+> i
+
+, m (j−1)  
+
+> i
+
+) are already maintained by the online softmax algorithm in FA. 
+
+Hyperparameter Selection The threshold λ has a clear physical interpretation: it repre-sents the logarithm of the ratio of the potential energy of a tile to the accumulated mass. A reasonable starting point is to assume a uniform distribution under maximum entropy, where the expected relative contribution of each tile is Bc/L. We suggest setting λ slightly above this ”noise floor” value to distinguish informative tiles from negligible ones: In prac-tice, we recommend: 
+
+λ = ln (Preal ) + ln 
+
+( Bc
+
+L
+
+)
+
+, (7) where Preal is a calibration constant that acts as a significance multiplier (peak-to-average ratio). This formula takes into account the ”heavy-tailed” nature of attention distributions in large-scale models. Specifically, ln (Preal ) determines the position of the pruning bound-ary within the distribution: High-amplitude regions ( Preal ≫ 2): Retain dominant ”heavy-head tiles” that define semantic alignment. Transition regions ( Preal ≈ 1.5): 
+
+Capture moderately informative tokens that preserve fine-grained structural details. Noise tails ( Preal < 1): Prune tokens with energy below the average expectation, which are likely to be unimportant. For the Wan 2.2 14B model ( L = 75600 , B c = 128 ), setting λ to -6 pro-vides a robust balance, significantly reducing FLOPs across varying content densities while maintaining high-quality generation. Furthermore, mapping the one-dimensional sequence back to its original spatiotemporal dimensions before processing (as done in other sparse attention methods [Z; W]) can enhance the correlation within tiles. 
+
+# 4 Experimental Results 
+
+4.1 Settings Baseline. For video generation models, we consider Wan2.2-5B and Wan2.2-A14B [W]. FlashAttention3 (FA3) [S], SparseVideoGen (SVG) [X], RadialAttention (Radial) [L], LiteAttention, BLASST comparison baseline. Generated video quality is evaluated using VBench [H] across the metrics Aesthetic Quality 
+
+(AQ), Background Consistency (BC), Dynamic Degree (DD), Imaging Quality (IQ), Sub-ject Consistency (SC), Temporal Flickering (TF), and Temporal Style (TS). All values are averaged over the dataset. For DynSparse , sparsity (Sps) denotes the fraction of computa-tions skipped relative to full attention, averaged over the generation process. For all other methods, we report the sparsity values they report. 6Table 1: Comparison of DynSparse ’s video quality (VBench), attention sparsity (Sps), and runtime (Run) compared with FlashAttention3 (FA3), SparseVideoGen, and RadialAtten-tion over Wan2.2-5B and Wan2.2-14B. Best results are in bold and second best in italic .                                                                                                                                                    
+
+> Wan2.2-14B Method AQ ↑BC ↑DD ↑IQ ↑OC ↑SC ↑TF ↑TS ↑Sps ↑SpeedUp ↑
+> FA3 0.695 0.976 0.807 0.709 0.278 0.911 0.986 0.255 01SVG 0.689 0.962 ----0.952 -66 1.44 Radial 0.682 0.974 ----0.947 -66 1.22 Lite 0.698 0.977 ----0.953 -32 1.65
+> BLASST 0.657 0.000 0.571 0.693 0.251 0.888 0.988 0.262 61.42 1.32
+> DynSparse 0.697 0.961 0.786 0.665 0.276 0.879 0.981 0.253 82.14 1.61 Wan2.2-5B Method AQ ↑BC ↑DD ↑IQ ↑OC ↑SC ↑TF ↑TS ↑Sps ↑SpeedUp ↑
+> FA3 0.666 0.966 0.638 0.700 0.279 0.936 0.994 0.258 01Top-K ( K= 0 .8)0.656 0.961 0.571 0.674 0.279 0.896 0.992 0.256 0.8006 -Top-P ( P= 0 .9)0.655 0.950 0.750 0.670 0.278 0.905 0.990 0.257 0.7958 -BLASST 0.651 0.967 0.667 0.695 0.255 0.905 0.995 0.250 74.41 1.41
+> DynSparse 0.652 0.972 0.695 0.662 0.283 0.905 0.993 0.248 81.38 1.61
+
+4.2 Quantitative Results 4.2.1 Effectiveness and Efficiency 
+
+The metrics on VBench are presented in Tab.1. The numerical results for SVG Liter and Radial are excerpted from the Lite paper. Since the values of DD, IQ, OC, SC, and TS in the FA3 baseline vary significantly, their data are not used. The table shows that the method proposed in this paper can ensure that the quality metric loss remains within an acceptable range of less than 5% for sparsity levels exceeding 80%. For the Wan 2.2 14B model, when the sparsity level of the BLASST algorithm exceeds 60%, the AQ, DD, and OC metrics drop significantly, exceeding the acceptable range. Therefore, it can be concluded that compared to the BLASST algorithm, our dynamic thresholding approach can increase the sparsity level from 61.42% to 82.14% on the 14B model. For the 5B model, we increased the sparsity level from 74.41% to 81.38%. This is because the sequence length is shorter and the information redundancy is lower, thus the sparsity improvement is more limited. We set a block size of 128 for the 14B model and 32 for the 5B model to reach comparable sparsity. At similar sparsity levels, Top-P ( p = 0 .9) and Top-K ( k = 0 .8), although the metrics of our method are lower, the DD of Top-P is abnormally high. This is because the generated frames by these two algorithms exhibit jitter, resulting in poor video quality. For more details, refer to Sec. 4.3 and the results in Fig. 5 in the Appendix. The abnormally low DD of Top-K also reflects the insufficient quality of the generated videos. 
+
+4.2.2 Sparsity across timesteps and layers 
+
+Fig. 1 shows the sparsity of BLASST and our method under the same prompt, as a func-tion of timestep and layer, for the Wan 2.2 5B and 14B models. Overall, the sparsity of 
+
+DynSparse is higher than that of BLASST, and the variance in sparsity between differ-ent layers (at different timesteps) is reduced. It is worth noting that, whether using the BLASST or DynSparse algorithm, certain layers of Wan2.2 exhibit lower sparsity. For ex-ample, layers 5-8 and 20-25 in the 5B model, and layers 5-10 and 25-30 in the 14B model. This phenomenon may indicate that these layers are more sensitive to accuracy. Similarly, the denoising process is more sensitive to accuracy in the early stages and becomes more robust in the later stages. 7(a) Wan 2.2 5B + BLASST (a) Wan 2.2 5B + ours (a) Wan 2.2 14B + BLASST (a) Wan 2.2 14B + ours Figure 1: Sparsity across timesteps and layers. 
+
+Figure 2: Prompt:A tranquil tableau of at the edge of the Arabian Desert, the ancient city of Petra beckoned with its enigmatic rock-carved facades. From Top-to bottom: FA3, Top-P (sparsity 0.7732), Top-K (0.8), BLASST (sparsity 78.5%), and DynSparse (sparsity 82.1%). 
+
+4.3 Qualitative Results 
+
+Fig. 2 shows the screenshots of the generated videos, with the results of FA3, Top-P, Top-K, BLASST, and DynSparse displayed from Top-to bottom. As shown in Fig. 2, at similar sparsity levels, Top-P, Top-K, and BLASST exhibit some artifacts. Additionally, the camera movement in the video generated by Top-P is rapid. In contrast, the artifacts in the 
+
+DynSparse results are fewer, and the camera movement is more similar to that of the FA3 baseline. Fig. 5 in the appendix reveals more visual results. 
+
+4.3.1 Visualization of the Masks 
+
+We visualize the masks of different methods to compare the differences between them. Fig. 3 shows the first five columns where all activation values are similar. In this case, the Top-P method needs to retain more elements to ensure that the cumulative cdf value exceeds the threshold. For the BLASST method, its mask depends not only on the distribution of the P matrix elements but also on the position of the maximum value. For example, in the 4th column, the maximum value in each row of the P matrix appears at the first token position, so the subsequent selection ratio drops significantly, while the 3rd column shows the opposite. In contrast, our method can effectively select the most important elements. 8Top K (80%) Top P (98%) BLASST Ours P matrix Figure 3: Comparison of mask differences under different P matrix distributions using various methods. From Top-to bottom, the results are the mask calculations for Top-K, Top-P, BLASST, and the method proposed in this paper. The last row shows the visualization results of the P matrix. The 6th to 9th columns show cases where some elements have larger activation values. In this case, the sparsity of the Top-P method improves. For the BLASST algorithm, since the maximum value in each row is on the diagonal, BLASST retains more elements in the lower-left corner. In contrast, DynSparse achieves faster LSE accumulation during the computation, thus retaining fewer elements in the lower-left corner and the right side. The last four columns show cases with fewer extreme values in the activation values. In this case, most methods perform effectively. The redundancy of Top-K is significantly reduced. BLASST and DynSparse show similar performance. Overall, under the same precision, DynSparse achieves better overall sparsity in the mask. The experimental results are consistent with the analysis in Sec. 2. 
+
+4.4 Ablation Study 
+
+Table 2: Comparison of DynSparse ’s video quality (VBench), attention sparsity (Sps), and runtime (Run) compared with FlashAttention3 (FA3) over Wan2.2-5B. Best results are in 
+
+bold and second best in italic .
+
+Method AQ ↑ BC ↑ DD ↑ IQ ↑ OC ↑ SC ↑ TF ↑ TS ↑ Sps[%] ↑
+
+Wan2.2-5B 
+
+FA3 0.666 0.966 0.638 0.700 0.279 0.936 0.994 0.258 NaN -6 0.355 0.961 0.714 0.521 0.161 0.840 0.963 0.151 0.9211 -8 0.620 0.943 0.500 0.630 0.232 0.864 0.994 0.209 0.8533 -9 0.652 0.972 0.695 0.662 0.283 0.905 0.993 0.248 0.8138 -11 0.685 0.967 0.694 0.661 0.273 0.927 0.994 0.255 0.6786 -13 0.647 0.973 0.600 0.682 0.254 0.917 0.997 0.259 0.5076 
+
+Table 2 shows the results of our method with different parameter settings. It can be seen that the sparsity increases as the parameter increases. When λ = −8, the loss in each metric is less than 5%, which is acceptable, and the sparsity can reach 85.3%. When λ ≤ − 6, the accuracy loss is unacceptable. This result demonstrates that the threshold of this method has a certain degree of robustness. 
+
+# 5 Conclusion 
+
+For sparse attention, we first reformulate the sparsity attention problem as a dual-goal op-timization problem and reveal the limitation of the existing methods: the most commonly 9used Top-K, Top-P cannot fulfill both goals simultaneously. Similarly, we prove that filter-ing tokens with the maximum weighted by a fixed value is sub-optimal as well. Starting with the optimization problem, we verify that the optimal solution should involve the cumulative energy of the selected tokens and thus propose our DynSparse algorithm. The effectiveness of our method is proven with the results on the Wan 2.2 vision generation model: DynSparse 
+
+reaches 82.14% sparsity with acceptable accuracy, which is 20.72% than the BLASST base-line. Moreover, it excels Top-K and Top-P in visual quality under the same sparsity. It is also worth noting that this method is closely integrated with the FA algorithm and can be further combined with other methods such as pre-compute masks before FA, feature reuse, and quantization for further acceleration. This method can also be used as a plug-in for existing models and is compatible with post-training to achieve higher accuracy. 
+
+# References 
+
+[Chen et al.(2025)Chen, Dong, Li, Lin, Tian, Yao, and Wang] Aiyue Chen, Bin Dong, Jin-gru Li, Jing Lin, Kun Tian, Yiwu Yao, and Gongyi Wang. Rainfusion: Adaptive video generation acceleration via multi-dimensional visual redundancy. arXiv preprint arXiv:2505.21036 , 2025. [Chen et al.(2026)Chen, Zeng, Zhao, Shen, Cheng, Yu, and Chen] Pengtao Chen, Xianfang Zeng, Maosen Zhao, Mingzhu Shen, Wei Cheng, Gang Yu, and Tao Chen. Sparse-vdit: Unleashing the power of sparse attention to accelerate video diffusion transformers. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 2957–2965, 2026. [Dao(2023)] Tri Dao. Flashattention-2: Faster attention with better parallelism and work partitioning. arXiv preprint arXiv:2307.08691 , 2023. [Ding et al.(2025)Ding, Li, Su, Zhang, Deng, Stoica, and Zhang] Hangliang Ding, Dacheng Li, Runlong Su, Peiyuan Zhang, Zhijie Deng, Ion Stoica, and Hao Zhang. Efficient-vdit: Efficient video diffusion transformers with attention tile. arXiv preprint arXiv:2502.06155 , 2025. [Fan et al.(2026)Fan, Huang, Wu, Wang, Wang, and He] Qihang Fan, Huaibo Huang, Zhiy-ing Wu, Juqiu Wang, Bingning Wang, and Ran He. Flashprefill: Instantaneous pat-tern discovery and thresholding for ultra-fast long-context prefilling. arXiv preprint arXiv:2603.06199 , 2026. [Huang et al.(2024)Huang, He, Yu, Zhang, Si, Jiang, Zhang, Wu, Jin, Chanpaisit, et al.] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, et al. Vbench: Comprehen-sive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 21807–21818, 2024. [Li et al.(2025)Li, Li, Cai, Xi, Yang, Lin, Zhang, Yang, Hu, Peng, et al.] Xingyang Li, Muyang Li, Tianle Cai, Haocheng Xi, Shuo Yang, Yujun Lin, Lvmin Zhang, Songlin Yang, Jinbo Hu, Kelly Peng, et al. Radial attention: O (nlog n) sparse attention with energy decay for long video generation. arXiv preprint arXiv:2506.19852 , 2025. [Shah et al.(2024)Shah, Bikshandi, Zhang, Thakkar, Ramani, and Dao] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. Flashattention-3: Fast and accurate attention with asynchrony and low-precision. Advances in Neural Information Processing Systems , 37:68658–68685, 2024. [Sun et al.(2025)Sun, Tu, Ding, Jin, Liao, Liu, and Tao] Wenhao Sun, Rong-Cheng Tu, Yifu Ding, Zhao Jin, Jingyi Liao, Shunyu Liu, and Dacheng Tao. Vorta: Efficient video diffusion via routing sparse attention. arXiv preprint arXiv:2505.18809 , 2025. [Tan et al.(2025)Tan, Chen, Jiang, Chen, Yan, Duan, Zhu, Jiang, and Xu] Xin Tan, Yue-tao Chen, Yimin Jiang, Xing Chen, Kun Yan, Nan Duan, Yibo Zhu, Daxin Jiang, and Hong Xu. Dsv: Exploiting dynamic sparsity to accelerate large-scale video dit training. arXiv preprint arXiv:2502.07590 , 2025. 10 [Team et al.(2025)Team, Cai, Huang, Kang, Li, Liang, Ma, Ren, Wei, Xie, et al.] Meituan LongCat Team, Xunliang Cai, Qilong Huang, Zhuoliang Kang, Hongyu Li, Shijun Liang, Liya Ma, Siyu Ren, Xiaoming Wei, Rixu Xie, et al. Longcat-video technical report. arXiv preprint arXiv:2510.22200 , 2025. [Wan et al.(2025)Wan, Wang, Ai, Wen, Mao, Xie, Chen, Yu, Zhao, Yang, et al.] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 , 2025. [Wu et al.(2025)Wu, Zou, Li, Huang, Yang, Tan, Peng, Wu, Xiong, Jiang, et al.] Bing Wu, Chang Zou, Changlin Li, Duojun Huang, Fang Yang, Hao Tan, Jack Peng, Jianbing Wu, Jiangfeng Xiong, Jie Jiang, et al. Hunyuanvideo 1.5 technical report. arXiv preprint arXiv:2511.18870 , 2025. [Xi et al.(2025)Xi, Yang, Zhao, Xu, Li, Li, Lin, Cai, Zhang, Li, et al.] Haocheng Xi, Shuo Yang, Yilong Zhao, Chenfeng Xu, Muyang Li, Xiuyu Li, Yujun Lin, Han Cai, Jintao Zhang, Dacheng Li, et al. Sparse videogen: Accelerating video diffusion transformers with spatial-temporal sparsity. arXiv preprint arXiv:2502.01776 , 2025. [Xu et al.(2025)Xu, Xiao, Huang, Guo, and Han] Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han. Xattention: Block sparse attention with an-tidiagonal scoring. arXiv preprint arXiv:2503.16428 , 2025. [Yang et al.(2025)Yang, Xi, Zhao, Li, Zhang, Cai, Lin, Li, Xu, Peng, et al.] Shuo Yang, Haocheng Xi, Yilong Zhao, Muyang Li, Jintao Zhang, Han Cai, Yujun Lin, Xiuyu Li, Chenfeng Xu, Kelly Peng, et al. Sparse videogen2: Accelerate video generation with sparse attention via semantic-aware permutation. arXiv preprint arXiv:2505.18875 ,2025. [Yuan et al.(2025)Yuan, Shinn, Xu, Cui, Klimiashvili, Xiao, Zheng, Li, Zhou, Ye, et al.] Jiayi Yuan, Cameron Shinn, Kai Xu, Jingze Cui, George Klimiashvili, Guangxuan Xiao, Perkz Zheng, Bo Li, Yuxin Zhou, Zhouhai Ye, et al. Blasst: Dynamic blocked attention sparsity via softmax thresholding. arXiv preprint arXiv:2512.12087 , 2025. [Zhan et al.(2025)Zhan, Li, Shen, Zhang, Wu, and Zhang] Chenlu Zhan, Wen Li, Chuyu Shen, Jun Zhang, Suhui Wu, and Hao Zhang. Bidirectional sparse attention for faster video diffusion training. arXiv preprint arXiv:2509.01085 , 2025. [Zhang et al.(2025)Zhang, Xiang, Huang, Wei, Xi, Zhu, and Chen] Jintao Zhang, Chen-dong Xiang, Haofeng Huang, Jia Wei, Haocheng Xi, Jun Zhu, and Jianfei Chen. Spargeattention: Accurate and training-free sparse attention accelerating any model inference. arXiv preprint arXiv:2502.18137 , 2025. [Zhao et al.(2025)Zhao, Hong, Yang, Xiao, Li, Ling, Xie, Chen, Zhu, Zhang, et al.] Tianchen Zhao, Ke Hong, Xinhao Yang, Xuefeng Xiao, Huixia Li, Feng Ling, Ruiqi Xie, Siqi Chen, Hongyu Zhu, Yichong Zhang, et al. Paroattention: Pattern-aware reordering for efficient sparse and quantized attention in visual generation models. arXiv preprint arXiv:2506.16054 , 2025. 11 A Appendix / supplemental material 
+
+A.1 Accuracy vs Recall 
+
+Figure 4: Mean Absolute Error vs Recall rate under different distribution of the P matrix. In this section, we verify our statements in Sec. 2 with experimental results on Wan 2.2-5B. We sample random rows from the P matrix and apply Top-K with diffent K values to ablate the recall rate. Excess Kurtosis is used to measure the ’tailedness’ of a data distribution. The higher the Excess Kurtosis, the ’peakier’ the distribution is. Fig. 4 shows how the Mean Absolute Error (MAE) changes with Recall rate under different distributions of the P matrix. The results are consistent with our analysis: For flat distri-bution, a lower recall rate, which is equivalant to a higher ϵ, does not degrade the accuracy significantly. Conversely, as the distribution gets more highly peaked, maintaining a lower 
+
+ϵ becomes critical. Table 3: Statistical Analysis of MAE and Recall by Kurtosis Bins Kurtosis Range MAE at recall ≈ 0.8 (μ ± σ) Recall at M AE ≈ 0.05 (μ (var)) 
+
+[−∞ , 0] 0.0006 ± 0.0000 N/A 
+
+(0 , 1] 0.0000 ± 0.0000 N/A 
+
+(1 , 3] 0.0001 ± 0.0002 N/A 
+
+(3 , 10] 0.0004 ± 0.0010 0.0007 (0.0000) 
+
+(10 , 30] 0.0007 ± 0.0023 0.0272 (0.0038) 
+
+(30 , 100] 0.0035 ± 0.0071 0.2087 (0.0814) 
+
+(100 , 300] 0.0066 ± 0.0153 0.3482 (0.0945) 
+
+(300 , 1000] 0.0060 ± 0.0112 0.5493 (0.0968) 
+
+(1000 , 3000] 0.0172 ± 0.0727 0.6910 (0.0744) 
+
+[3000 , 10000] 0.0325 ± 0.1745 0.8965 (0.0517) 
+
+[10000 , ∞] 1.9932 ± 2.4200 0.9386 (0.0201) Table 3 collects the mean and variance of the MAE loss under fixed recall within 0.8 ±
+
+0.01 , the recall rate when MAE = 0.05 ± 0.005 . As can be seen from the table, when the error threshold is fixed, the recall must be maintained at a relatively high value when the distribution becomes more peaked. However, when the distribution of P becomes flatter, a lower recall can be used without causing significant loss in accuracy. 
+
+A.2 Qualitative Comparison 
+
+Fig. 5 shows screenshots of different generation results and the overall sparsity of the video. We controlled the sparsity to be around 80%, and in terms of image quality, visual con-sistency, temporal consistency, and realism, DynSparse demonstrates the best performance. 12 FA3 Top P (P=90%) Ours BLASST Top K (K=80%) Figure 5: Qaulitative comparison of video frames generated by Wan 2.2 5B with sparsity strategy of Top-P, Top-K, BLASST and DynSparse . Note that the sparsity of some Top-K values is displayed as N/A, and the actual sparsity is 80%. 13
