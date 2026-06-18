@@ -1,0 +1,602 @@
+Title: QK-Normed MLA: QK normalization without full key caching
+
+URL Source: https://arxiv.org/pdf/2606.16310v1
+
+Published Time: Tue, 16 Jun 2026 01:49:17 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# QK-N ORMED MLA: QK N ORMALIZATION WITHOUT 
+
+# FULL KEY CACHING 
+
+Yizhou Han 1,2 Yao Zhao 2 Jun Zhou 2
+
+223040226@link.cuhk.edu.cn nanxiao.zy@antgroup.com jun.zhoujun@antgroup.com 
+
+Longfei Li 2∗ Ruoyu Sun 1* 
+
+longyao.llf@antgroup.com sunruoyu@cuhk.edu.cn 
+
+## ABSTRACT 
+
+Query-key (QK) normalization stabilizes attention by controlling the scale of queries and keys before the dot product, but is not immediately compatible with Multi-head Latent Attention (MLA). MLA achieves efficient decoding by caching low-dimensional latent states instead of full keys, whereas post-projection QK RMSNorm appears to require the fully projected key for every cached token. We show this apparent incompatibility is an implementation artifact, not an architec-tural constraint. RMSNorm decomposes into a static affine weight and a dynamic scalar RMS statistic. The static key-side weight can be absorbed into the MLA query-side projection; the dynamic key statistic reduces to one inverse-RMS scalar per token and KV group. The resulting formulation is exactly equivalent to explicit post-projection QK RMSNorm in exact arithmetic and preserves MLA’s latent de-code path. In our 400M runs trained for up to 100B tokens, QK-Normed MLA achieves lower training loss and better downstream accuracy than QK clipping, while H800 decode benchmarks show less than 2% latency overhead up to 256k context. These results make QK normalization a practical stabilization option for MLA models without requiring full-key caching. 
+
+## 1 INTRODUCTION 
+
+Two practical pressures shape modern language-model attention. The first is KV-cache efficiency. Standard multi-head attention (Vaswani et al., 2017) stores a key and value vector for every previous token in every layer, making KV-cache memory and bandwidth central costs in long-context infer-ence. Multi-query attention and grouped-query attention reduce the number of KV heads (Shazeer, 2019; Ainslie et al., 2023). Multi-head Latent Attention (MLA) goes further: it caches a compact latent state and recovers the effect of full content keys by moving the key up-projection to the query side during decoding (DeepSeek-AI, 2024a;b). The second pressure is training stability. QK normalization controls attention-logit scale by normal-izing queries and keys along the per-head feature dimension before forming their dot product (Henry et al., 2020). This is attractive because uncontrolled query/key scale can lead to saturated attention, loss spikes, or hard training instabilities. A different practical response is to clip large QK log-its, as in MuonClip/QK-Clip (Kimi Team, 2025). Clipping acts after the dot product, while QK normalization removes a scale degree of freedom before the attention geometry is formed. This creates a practical compatibility gap between two increasingly important ingredients. QK nor-malization is a direct stabilizer for large-scale training, while MLA is a memory-saving attention design for efficient decoding and long-context use. The missing piece is that post-projection QK RMSNorm appears to require exactly the full keys that MLA is designed not to cache. Concretely, the efficient MLA decode path avoids caching full content keys, but post-up-projection QK RM-
+
+> ∗
+
+Corresponding authors. 
+
+> 1
+
+School of Data Science, The Chinese University of Hong Kong, Shenzhen. 
+
+> 2
+
+Ling Team, AI@Ant Group. 
+
+1
+
+> arXiv:2606.16310v1 [cs.LG] 15 Jun 2026
+
+SNorm seems to require normalizing the key 
+
+k0 
+
+> t,g
+
+= ctW Kg
+
+for every cached token t and KV group g. A direct implementation would either materialize nor-malized full keys or expand the cache in a way that gives up much of MLA’s memory advantage. The question is whether MLA can use standard post-projection QK RMSNorm without abandoning latent decoding. We show that this is possible. The key observation is that RMSNorm separates into a static feature-wise affine weight and a dynamic scalar RMS statistic: 
+
+RMSNorm( z) = z ⊙ γS(z) , S(z) = 
+
+vuut 1
+
+d
+
+> d
+
+X
+
+> j=1
+
+z2 
+
+> j
+
++ ϵ. 
+
+The static key-side weight γ can be absorbed into the query-side MLA projection. The dynamic scale S(z) cannot be absorbed into a fixed matrix, but for keys it is only one scalar per token and KV group. Therefore the decode cache can keep the original latent state ct and add a small inverse-RMS scalar cache. During attention, the latent dot product is multiplied by the corresponding query and key RMS factors before softmax. This gives the same logits as explicitly materializing the post-up-projection key and applying QK RMSNorm, up to ordinary floating-point roundoff. This paper makes three contributions. • We derive an exact formulation of post-up-projection QK RMSNorm that is compatible with MLA’s latent decode path. • We give a cache layout and decode data flow that preserve the latent KV cache as the dominant state, adding only one scalar key RMS statistic per token and KV group. • We observe lower training loss and better downstream accuracy for QK-Normed MLA over QK clipping in 400M models trained for 100B tokens, while adding less than 2% decode latency in our H800 benchmark. The main claim is algebraic and implementation-oriented: standard post-projection QK RMSNorm is compatible with efficient MLA decoding. We use max-logit control as a mechanism-level diagnos-tic, but evaluate the method primarily through training loss, downstream accuracy, and decode-time overhead. 
+
+## 2 BACKGROUND 
+
+2.1 QUERY -K EY NORMALIZATION 
+
+For a query head h attending to a key group g, standard scaled dot-product attention forms logits 
+
+ℓi,t,h = qi,h · kt,g (h)
+
+√dh
+
+,
+
+where i is the query position, t is a key position, and g(h) maps a query head to its KV head or group. QK normalization instead normalizes q and k along the per-head feature dimension before the dot product (Henry et al., 2020). In the RMSNorm form (Zhang & Sennrich, 2019), this is 
+
+ˆqi,h = q0 
+
+> i,h
+
+⊙ γq
+
+Sqi,h 
+
+, ˆkt,g = k0 
+
+> t,g
+
+⊙ γk
+
+Skt,g 
+
+, (1) with 
+
+Sqi,h =
+
+vuut 1
+
+dhdhX
+
+> j=1
+
+(q0 
+
+> i,h,j
+
+)2 + ϵ, Skt,g =
+
+vuut 1
+
+dhdhX
+
+> j=1
+
+(k0 
+
+> t,g,j
+
+)2 + ϵ. 
+
+In common implementations, the RMS statistic is per token and per head, while the affine weight 
+
+γq , γ k ∈ Rdh is shared across heads and broadcast over the head axis. 22.2 MULTI -HEAD LATENT ATTENTION 
+
+MLA introduces a low-dimensional latent cache. For each token t, an input hidden state xt is projected to a latent vector 
+
+ct = xtWD , ct ∈ Rr , (2) where r is smaller than the total full-key dimension. A content key for KV group g is obtained by an up projection 
+
+k0,c t,g = ctW Kg , W Kg ∈ Rr×dc . (3) Ignoring RoPE for the moment, a content attention score is 
+
+ℓci,t,h = q0,c i,h · k0,c t,g (h) = q0,c i,h · (ctW Kg(h)).
+
+By associativity, 
+
+q0,c i,h · (ctW Kg(h)) = 
+
+
+
+q0,c i,h (W Kg(h))⊤
+
+· ct. (4) Thus decoding can transform the current query into latent space and dot it with the cached ct, without storing the materialized full key k0,c t,g for every past token. 
+
+## 3 METHOD 
+
+3.1 KEY -S IDE RMSN ORM WITHOUT CACHING FULL KEYS 
+
+Consider post-up-projection key RMSNorm on the MLA content key: 
+
+ˆkct,g = (ctW Kg ) ⊙ γck
+
+Skt,g 
+
+, (5) where 
+
+Skt,g =
+
+vuut 1
+
+dcdcX
+
+> j=1
+
+(ctW Kg )2 
+
+> j
+
++ ϵ. 
+
+The normalized-key content score is 
+
+ℓci,t,h = q0,c i,h · ˆkct,g (h).
+
+Substituting equation 5, 
+
+ℓci,t,h = q0,c i,h · (ctW Kg(h)) ⊙ γck
+
+Skt,g (h)
+
+=
+
+
+
+(q0,c i,h ⊙ γck)( W Kg(h))⊤
+
+· ct · 1
+
+Skt,g (h)
+
+. (6) Define 
+
+˜qci,h = ( q0,c i,h ⊙ γck)( W Kg(h))⊤, αkt,g = 1
+
+Skt,g 
+
+. (7) Then 
+
+ℓci,t,h = (˜ qci,h · ct)αkt,g (h). (8) Equation 8 is the key observation. The affine RMSNorm weight γck is static and enters the query-side projection. The only key-dependent runtime quantity that remains is the scalar αkt,g .Therefore the decode cache does not need normalized full keys. It stores 
+
+Ccache = {ct}Tt=1 , Ak 
+
+> cache
+
+= {αkt,g }T,G t=1 ,g =1 ,
+
+where G is the number of KV groups. The additional state is T G scalars per layer, small compared with caching T Gd c full content keys. 33.2 QUERY -S IDE RMSN ORM 
+
+Query RMSNorm can be handled in the same factorized logit form. For the content query, 
+
+ˆqci,h = q0,c i,h ⊙ γcq
+
+Sqi,h 
+
+, αqi,h = 1
+
+Sqi,h 
+
+. (9) Combining query and key RMSNorm gives 
+
+ℓci,t,h = ˆ qci,h · ˆkct,g (h)
+
+=
+
+
+
+(q0,c i,h ⊙ γcq ⊙ γck)( W Kg(h))⊤ · ct
+
+
+
+αqi,h αkt,g (h). (10) Equivalently, an implementation may first compute the normalized query ˆqci,h and then form 
+
+˜qci,h = (ˆ qci,h ⊙ γck)( W Kg(h))⊤.
+
+This avoids computing the query projection twice. The scalar αqi,h is known for the current token and can be applied to all logits for head h.3.3 CONTENT AND ROPE C OMPONENTS 
+
+In MLA-style architectures, the per-head query and key dimensions are often split into a content component and a RoPE component: 
+
+q0 
+
+> i,h
+
+= [ q0,c i,h ; q0,r i,h ], k0 
+
+> t,g
+
+= [ k0,c t,g ; k0,r t ],
+
+with dimensions dc and dr . The RoPE key component is materialized because it is small and shared across heads or KV groups. We therefore use a blockwise normalization scheme that follows the natural systems boundary of MLA. Normalize the content and RoPE blocks separately: 
+
+ˆqc = RMSNorm cq (q0,c ), ˆkc = RMSNorm ck(k0,c ),
+
+ˆqr = RMSNorm rq (q0,r ), ˆkr = RMSNorm rk(k0,r ).
+
+The content path uses the absorbed latent formulation derived above. The RoPE path uses ordinary materialized normalized vectors. The resulting score is 
+
+ℓi,t,h =  ˜qci,h · ct
+
+ αq,c i,h αk,c t,g (h) + ˆ qri,h · ˆkrt . (11) This is not the only algebraically possible normalization. One could normalize the concatenated content–RoPE vector with a unified RMS statistic. We do not use that variant because it is a poor fit for efficient training implementations: unified normalization introduces a synchronization point between the content and RoPE compute paths, complicating the fused kernel structure that makes MLA efficient. Appendix B gives the detailed systems rationale. In the main method, the important point is that blockwise QK RMSNorm preserves the implementation boundary that makes MLA efficient: the content component remains latent, while the RoPE component remains small and materialized. 3.4 DECODE -T IME DATA FLOW 
+
+The absorbed formulation changes where normalization statistics are stored and where the scalar factors are applied, but it does not change the dominant cache object. For each new token t, QK-Normed MLA writes the cache as follows. 1. Compute the latent state ct = xtWD and store it in Ccache .2. Compute the temporary content-key matrix K0,c t = ctW K ∈ RG×dc in the same dense projection used by the content path, reduce each group to obtain Sk,c t,g , and discard K0,c t .3. Store αk,c t,g = 1 /S k,c t,g in the scalar cache. 44. Normalize the small materialized RoPE key component inside the RoPE path and store it as in standard MLA. The temporary content-key matrix in the second step is used only to compute RMS statistics; it is not written as a historical key cache. In common layouts, the key up-projection is a dense matrix 
+
+W K ∈ Rr×Gd c ,
+
+whose output is reshaped to G × dc only for the reduction that produces the RMS scalars. The cache writer therefore keeps the large operation in the dense GEMM path and stores only the latent vector plus G scalar inverse RMS values. For a later query position i, compute the content-query RMS statistics αq,c i,h and form the latent-space query with the static RMSNorm weights absorbed: 
+
+˜qci,h =
+
+
+
+q0,c i,h ⊙ γcq ⊙ γck
+
+
+
+(W Kg(h))⊤.
+
+The raw content score tile is then 
+
+Lc, raw  
+
+> h,t
+
+= ˜ qci,h · ct,
+
+and the normalized content score is obtained by row–column scaling: 
+
+Lch,t = Lc, raw  
+
+> h,t
+
+αq,c i,h αk,c t,g (h). (12) This row–column scaling is best fused into the attention-score kernel, before the online softmax max/sum update. The kernel loads a tile of Ccache , the matching tile of Ak
+
+> cache
+
+, and the current query scalar αq,c i,h ; after the latent dot-product accumulator is formed, it applies these factors and then continues with the ordinary attention computation. The scalar cache should remain separate from the latent cache. Since Sk,c t,g differs across KV groups, absorbing it into the cached latent vector would expand the cache from T ×r to T ×G×r, eliminating much of MLA’s memory advantage. The scalar formulation keeps the large cache latent and pays only a small score-stage scaling cost. 
+
+## 4 ANALYSIS 
+
+4.1 CACHE AND COMPUTE COST 
+
+The transformation preserves the dominant memory structure of MLA. Relative to standard absorbed MLA decoding, QK-Normed MLA adds only the scalar cache 
+
+Ak 
+
+> cache
+
+∈ RT ×G.
+
+The dominant content cache remains the latent cache 
+
+Ccache ∈ RT ×r.
+
+Since r ≫ G in typical MLA configurations, the extra state is small. For example, when r = 512 
+
+and G = 8 , the key-RMS cache is 1.56% of the latent content cache before accounting for values or RoPE state. The extra compute is also localized. Relative to a purely absorbed MLA decode path, the cache writer must form the temporary current-token projection K0,c t = ctW K sufficiently to compute the groupwise RMS statistics. This projection is independent of the historical sequence length T . At-tention over the prefix still uses latent dot products with Ccache ; the only additional prefix-dependent operation is scalar multiplication of the score accumulator. 4.2 WHY THIS CONTROLS LOGIT SCALE 
+
+We do not claim that QK RMSNorm by itself defines an optimization theory, but it gives a direct mechanism for controlling a common failure mode. Without normalization, a content logit can grow with the product of the raw query and key norms: 
+
+|ℓci,t,h | ≤ ∥ q0,c i,h ∥2∥k0,c t,g (h)∥2.
+
+5RMSNorm removes this direct dependence on the raw vector RMS. After normalization, the effec-tive norms are controlled primarily by the learned affine weights: 
+
+∥ˆqci,h ∥2 ≈ ∥ γcq ∥2, ∥ˆkct,g ∥2 ≈ ∥ γck∥2,
+
+up to the directions of the unnormalized vectors and the ϵ term. This is why we treat max-logit statis-tics as mechanism-level diagnostics: they indicate whether the normalization is doing the intended scale control, while validation loss and downstream evaluation remain the primary outcomes. 4.3 NUMERICAL EQUIVALENCE 
+
+In exact arithmetic, the absorbed formulation is identical to explicitly materializing the post-up-projection key and applying QK RMSNorm before the dot product. In floating-point arithmetic, the two paths may differ slightly because they use different multiplication and reduction orders, as fused and unfused attention kernels already do. We therefore test implementation correctness by comparing explicit and absorbed logits on random tensors before running training experiments; the reference test is described in Appendix E. 
+
+## 5 EXPERIMENTS 
+
+The experiments evaluate three questions. First, can QK RMSNorm improve MLA training relative to QK clipping under a controlled training setup? Second, does the method produce the intended attention-scale behavior? Third, does the scalar cache preserve MLA’s decode efficiency in long-context settings? Training experiments use 400M-parameter MLA models trained for 100B tokens. 5.1 TRAINING LOSS 
+
+We compare QK-Clip and QK-Normed MLA using the same architecture, training budget, data mixture, optimizer schedule, and attention backend. The intended difference is the attention stabi-lization mechanism: QK-Clip rescales Q/K weights when the observed maximum logit exceeds a fixed threshold, whereas QK-Normed MLA applies blockwise post-up-projection RMSNorm to the content and RoPE QK components. A concise configuration summary is provided in Appendix A. 0 5000 10000 15000 20000 
+
+> Training step
+> 2.4
+> 2.5
+> 2.6
+> 2.7
+> 2.8
+> 2.9
+> LM loss
+
+400M / 100B Training Loss 
+
+> QK Clip
+> QK Norm
+
+Figure 1: Training loss of 400M MLA models trained for 100B tokens. QK-Normed MLA maintains consistently lower loss than QK-Clip throughout training. Figure 1 shows the training loss over the full 100B-token run. QK-Normed MLA reaches lower loss throughout, and the gap persists over the entire training horizon. This supports the view that QK normalization provides a persistent training benefit over post-hoc clipping in this MLA setting. Diagnostic curves for maximum attention logit and gradient norm (Appendix C) are consistent with 6the mechanism in Section 4.2: QK-Normed MLA keeps logits in a lower range without post-hoc intervention. 5.2 DOWNSTREAM EVALUATION 
+
+We evaluate 3-shot downstream performance with a standard language-model evaluation suite. Ta-ble 1 reports accuracy for each task, except LAMBADA where we report accuracy and separately report perplexity. QK-Normed MLA improves seven of eight reported tasks, raises the average score from 44 .75 to 46 .33 , and reduces LAMBADA perplexity from 16 .28 to 14 .18 .Table 1: Downstream evaluation of 400M/100B checkpoints. Perplexity (lower is better) is reported separately; the average is computed over accuracy tasks only.                               
+
+> Variant Lamb. ppl ↓ARC-C ARC-E BoolQ HSwag Lamb. OBQA PIQA Wino Avg. ↑
+> QK-Clip 16.28 22.61 53.07 59.51 38.32 42.40 18.20 70.67 53.20 44.75 QK-Normed MLA 14.18 24.66 56.69 62.20 38.94 43.92 19.60 70.89 53.75 46.33
+
+5.3 DECODE -T IME OVERHEAD 
+
+We benchmark a single DeepSeek-V3-width MLA layer on H800 GPUs using BF16 and 
+
+torch.compile(mode="reduce-overhead") . The simulated TP=8 local view has 16 query heads, r = 512 latent KV rank, dc = 128 content dimension, and dr = 64 RoPE dimen-sion. The QK-normalized path stores the same latent KV cache and RoPE cache as standard MLA, plus a local scalar RMS cache. Per layer and per GPU, this adds 2MB to a 72MB MLA cache, a 
+
+2.8% cache-size increase. Table 2: Decode-time overhead of adding QK RMS statistics to MLA. Times are milliseconds per layer for batch size 4. Context MLA +QK-Normed MLA Overhead 4k 1.715 1.740 1.41% 8k 1.891 1.909 0.95% 16k 2.082 2.121 1.87% 32k 2.486 2.511 1.03% 64k 3.217 3.253 1.12% 128k 5.427 5.517 1.66% 192k 7.271 7.392 1.66% 256k 13.082 13.274 1.46% Across context lengths from 4k to 256k, the measured decode overhead ranges from 0.95% to 
+
+1.87% , with an average overhead of 1.40% . This supports the systems claim that, in this bench-mark, the scalar cache and score-stage scaling do not materially change MLA decode efficiency. 5.4 HIGH -L EARNING -R ATE STRESS TEST 
+
+As an additional instability test, we train an MLA model with an intentionally large learning rate of 
+
+2 × 10 −2. Under this stress setting, QK-Clip diverges with gradient NaNs at step 884, as shown in Figure 2. Before divergence, its maximum attention logit grows rapidly and its loss fails to decrease beyond the initial transient. QK-Normed MLA remains stable over the same run and continues to reduce loss. We use this only as a stress test; it is not intended as a recommended training recipe. 70 500 1000 1500 2000     
+
+> Training step
+> 2.5
+> 3.0
+> 3.5
+> 4.0
+> 4.5
+> LM loss
+> (a) Training loss
+> QK Clip
+> QK Norm
+> 0500 1000 1500 2000
+> Training step
+> 0
+> 200
+> 400
+> 600
+> 800
+> 1000
+> 1200
+> Max logit
+> (b) Maximum attention logit
+> QK Clip
+> QK Norm
+
+Figure 2: High-learning-rate stress test ( lr = 2 × 10 −2). QK-Clip diverges at step 884; QK-Normed MLA remains stable over the same run. 
+
+## 6 RELATED WORK 
+
+KV-efficient attention and serving. Transformer decoding is often limited by KV-cache band-width and capacity. Multi-query attention shares one KV head across query heads (Shazeer, 2019), and grouped-query attention interpolates between multi-head and multi-query attention (Ainslie et al., 2023). Orthogonal systems work improves attention execution and cache management through IO-aware kernels and paged KV allocation (Dao et al., 2022; Kwon et al., 2023). MLA reduces the cache itself by storing a low-dimensional latent state and moving the key up-projection to the query side during decoding (DeepSeek-AI, 2024a;b). Our work keeps this latent-cache design and asks how to combine it with post-projection QK normalization. 
+
+QK normalization and attention-logit control. QK normalization was proposed to reduce soft-max saturation by normalizing queries and keys before attention (Henry et al., 2020). Related large-model recipes use QK normalization or logit control to improve training stability, including ViT-22B and Gemma 2 (Dehghani et al., 2023; Gemma Team, 2024). RMSNorm provides an efficient nor-malization form widely used in modern language models (Zhang & Sennrich, 2019). QK-Clip, used in MuonClip, directly clips attention logits to improve stability at large scale (Kimi Team, 2025). We compare against QK-Clip because it targets the same high-logit failure mode but acts after the dot product, whereas QK RMSNorm changes the query/key geometry before logits are formed. 
+
+MLA with positional components. MLA separates a latent content path from a small material-ized positional path, which is typically implemented with rotary position embeddings (Su et al., 2021; DeepSeek-AI, 2024a;b). Existing absorbed decode formulations focus on avoiding full-key materialization by transforming queries into the latent key space. Our contribution is to show that post-up-projection QK RMSNorm can be expressed in the same absorbed form with only an addi-tional scalar cache, while keeping the RoPE component materialized and locally normalized. 
+
+## 7 LIMITATIONS 
+
+The empirical comparison uses 400M-parameter models trained for up to 100B tokens—sufficient to test algebraic compatibility, implementation feasibility, and behavior over a long token horizon, but not to establish frontier-scale behavior. Larger models are needed to test whether the training-loss advantage persists at billion-parameter scale. The logit-scale analysis is a mechanism-level explana-tion rather than a complete optimization theory. Finally, although the transformation is algebraically exact, practical speed depends on kernel integration: the per-query and per-key scalar factors should be fused into the attention path to avoid unnecessary memory traffic. 88 CONCLUSION 
+
+We showed that post-up-projection QK RMSNorm is compatible with efficient MLA decoding. The static RMSNorm affine weights can be absorbed into the MLA query-side projection, while the dy-namic key RMS statistics become a small per-token, per-KV-group scalar cache. This preserves MLA’s latent cache while enabling QK normalization as a training-stability mechanism. In our 400M runs trained for up to 100B tokens, QK-Normed MLA achieves lower training loss and bet-ter downstream accuracy than QK-Clip, and H800 decode benchmarks show less than 2% latency overhead across contexts up to 256k tokens. 
+
+## REFERENCES 
+
+Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebron, and Sumit Sanghai. GQA: Training generalized multi-query transformer models from multi-head check-points. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Pro-cessing , 2023. Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher R´ e. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Process-ing Systems , 2022. DeepSeek-AI. DeepSeek-V2: A strong, economical, and efficient mixture-of-experts language model. arXiv preprint arXiv:2405.04434 , 2024a. DeepSeek-AI. DeepSeek-V3 technical report. arXiv preprint arXiv:2412.19437 , 2024b. Mostafa Dehghani, Josip Djolonga, Basil Mustafa, Piotr Padlewski, Jonathan Heek, Justin Gilmer, Andreas Steiner, Mathilde Caron, Robert Geirhos, Ibrahim Alabdulmohsin, et al. Scaling vision transformers to 22 billion parameters. In Proceedings of the 40th International Conference on Machine Learning , 2023. Gemma Team. Gemma 2: Improving open language models at a practical size. arXiv preprint arXiv:2408.00118 , 2024. Alex Henry, Prudhvi Raj Dachapally, Shubham Pawar, and Yuxuan Chen. Query-key normalization for transformers. arXiv preprint arXiv:2010.04245 , 2020. Kimi Team. Kimi K2: Open agentic intelligence. arXiv preprint arXiv:2507.20534 , 2025. Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with PagedAttention. In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles , 2023. Noam Shazeer. Fast transformer decoding: One write-head is all you need. arXiv preprint arXiv:1911.02150 , 2019. Jianlin Su, Yu Lu, Shengfeng Pan, Ahmed Murtadha, Bo Wen, and Yunfeng Liu. RoFormer: En-hanced transformer with rotary position embedding. arXiv preprint arXiv:2104.09864 , 2021. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Infor-mation Processing Systems , 2017. Biao Zhang and Rico Sennrich. Root mean square layer normalization. In Advances in Neural Information Processing Systems , 2019. 
+
+## A EXPERIMENTAL CONFIGURATION 
+
+Table 3 summarizes the model configuration used in our training experiments. Table 4 lists the few training and stabilization hyperparameters that differ from the default recipe or are needed to reproduce the comparison. 9Table 3: Model configuration.             
+
+> Size Layers Heads Hidden size Head dim. (dc+dr)
+> 400M 12 16 1536 128 + 64
+
+Table 4: Training and stabilization hyperparameters for the 400M runs.          
+
+> Setting Value Optimizer Muon Muon learning rate 2×10 −3
+> LR schedule WSD, minus-sqrt decay QK-Clip threshold 100 QK-Clip αclip 0.5
+
+## B BLOCKWISE VERSUS UNIFIED QK RMSN ORM 
+
+The main method uses blockwise QK RMSNorm because it matches the natural boundary between MLA’s latent content path and its small materialized RoPE path. A more literal full-head variant would normalize the concatenated vector: 
+
+ˆq = RMSNorm q ([ q0,c ; q0,r ]) , ˆk = RMSNorm k([ k0,c ; k0,r ]) .
+
+This remains algebraically compatible with MLA, since the key statistic is still one scalar per token and KV group: 
+
+Skt,g =
+
+s
+
+∥k0,c t,g ∥22 + ∥k0,r t ∥22
+
+dc + dr
+
++ ϵ. 
+
+However, unified normalization is less suitable as a training-time implementation target in the effi-cient MLA stack considered here. We explain why below. 
+
+Training forward pass: synchronization point. In an efficient MLA training forward pass, the content path and the RoPE path are computed by independent fused kernels with different tensor layouts, arithmetic intensity, and memory-access patterns. The content path computes ct = xtWD
+
+and K0,c t = ctW K via dense GEMMs. The RoPE path computes k0,r t = xtWKR , applies rotary embeddings, and writes the small materialized RoPE cache. These two paths proceed independently and can be overlapped or fused into separate pipeline stages. Unified key RMSNorm introduces a data dependency: the normalized content key ˆk0,c t,g cannot be written until the RoPE path produces ∥k0,r t ∥22. This forces a synchronization point between two otherwise independent compute streams. In practice, this means either (1) serializing the two paths, which eliminates kernel-fusion opportunities and exposes pipeline bubbles, or (2) launching an ad-ditional synchronization kernel that waits for both partial norms, which adds kernel-launch overhead and occupancy fragmentation on every token at every layer. For a model with L layers processing 
+
+T tokens, unified normalization would insert LT additional synchronization points into the forward pass. 
+
+Score-computation coupling. Even setting aside cache-writer synchronization, unified normal-ization also makes score computation less local. The final logit would take the form 
+
+ℓi,t,h =
+
+
+
+ℓc, raw  
+
+> i,t,h
+
++ ℓr, raw 
+
+> i,t,h
+
+
+
+αqi,h αkt,g (h), (13) where ℓc, raw is produced by an absorbed latent dot product and ℓr, raw by a materialized RoPE dot product. The scalar factor must be applied after the content and RoPE reductions meet, rather than locally within each component’s natural score path. In fused attention kernels (e.g. FlashAttention-style online softmax), this means the content and RoPE score tiles cannot be nor-malized independently—they must be summed before the per-element scalar multiplication, com-plicating the natural tiling strategy. 10 Summary. Blockwise normalization avoids both costs: the content RMS statistic depends only on ctW Kg (available within the content GEMM path), and the RoPE vector is materialized and can be normalized directly with no cross-path dependency. This is an implementation constraint in our target stack: unified QK RMSNorm does not fit as cleanly with the fused, pipelined kernel structure that makes MLA training efficient. We therefore use blockwise QK RMSNorm as the implementation-compatible choice rather than treating unified normalization as the primary ablation target. 
+
+## C OPTIMIZATION DIAGNOSTICS (400M / 100B) 
+
+Figures 3 and 4 show the maximum attention logit and gradient norm for the 400M/100B runs. QK-Normed MLA keeps logits in a lower range than QK-Clip and produces a smoother gradient-norm profile, consistent with the mechanism described in Section 4.2. 2000 4000 6000 8000 10000 12000 14000 16000 
+
+> Training step
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> 300
+> 350
+> Max logit
+
+Maximum attention logit (400M / 100B) 
+
+> QK Clip
+> QK Norm
+
+Figure 3: Maximum attention logit for the 400M/100B run. QK-Clip fluctuates near its clipping threshold; QK-Normed MLA remains lower. 2000 4000 6000 8000 10000 12000 14000 16000 
+
+> Training step
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> Grad norm
+
+Gradient norm (400M / 100B) 
+
+> QK Clip
+> QK Norm
+
+Figure 4: Gradient norm for the 400M/100B run. QK-Normed MLA exhibits fewer large spikes than QK-Clip. The y-axis is capped at 3 for readability. 11 D QK-N ORMED MAX -L OGIT GROWTH 
+
+Figure 5 shows the maximum attention logit of QK-Normed MLA over training. The curve grows sublinearly in early training and converges to a stable plateau, consistent with QK normalization controlling attention-logit scale. The residual growth is expected: RMSNorm removes the depen-dence on raw query and key RMS values, but the learned affine weights γq ⊙γk can still grow slowly during training. 0 2000 4000 6000 8000 10000 12000 14000 16000 
+
+> Training step
+> 10
+> 15
+> 20
+> 25
+> 30
+> Max attention logit
+
+QK-Normed MLA maximum attention logit 
+
+> QK Norm
+
+Figure 5: Maximum attention logit of QK-Normed MLA over training. The growth is sublinear and converges, consistent with affine-weight growth rather than raw query/key norm growth. For one block of QK RMSNorm, write 
+
+ˆq = q0 ⊙ γq
+
+S(q0) , ˆk = k0 ⊙ γk
+
+S(k0) .
+
+Let 
+
+uq = q0
+
+S(q0) , uk = k0
+
+S(k0) .
+
+The normalized logit can be written as 
+
+ℓ = ˆ q⊤ ˆk =
+
+> d
+
+X
+
+> j=1
+
+uq,j uk,j γq,j γk,j .
+
+Therefore 
+
+|ℓ| ≤ 
+
+> d
+
+X
+
+> j=1
+
+|uq,j uk,j || γq,j γk,j |.
+
+Since the RMS-normalized directions uq and uk have controlled RMS, the remaining learned source of logit-scale growth is the affine product γq ⊙ γk. Thus a slow increase in the maximum logit is ex-pected as parameter norms and RMSNorm weights grow during training. The important distinction is that the growth is mediated by learned affine weights rather than by uncontrolled raw query/key norms. 
+
+## E REFERENCE EQUIVALENCE TEST 
+
+For implementation testing, we compare two paths on random tensors. The explicit path computes 
+
+k0,c t,g = ctW Kg , ˆqci,h = q0,c i,h ⊙ γcq
+
+Sqi,h 
+
+, ˆkct,g = k0,c t,g ⊙ γck
+
+Skt,g 
+
+,
+
+12 and then forms 
+
+ℓci,t,h = ˆ qci,h · ˆkct,g (h).
+
+The absorbed path computes 
+
+˜qci,h = ( q0,c i,h ⊙ γcq ⊙ γck)( W Kg(h))⊤,
+
+and then 
+
+ℓci,t,h = (˜ qci,h · ct)αqi,h αkt,g (h).
+
+The maximum absolute difference between the two logits should be at floating-point roundoff level. 13

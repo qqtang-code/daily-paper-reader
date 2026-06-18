@@ -1,0 +1,267 @@
+Title: Dual Dimensionality for Local and Global Attention
+
+URL Source: https://arxiv.org/pdf/2606.18587v1
+
+Published Time: Thu, 18 Jun 2026 00:25:39 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Dual Dimensionality for Local and Global Attention 
+
+Zhiyuan Wang 
+
+UC Santa Barbara 
+
+zwang796@ucsb.edu 
+
+Xuan Luo 
+
+UC Santa Barbara 
+
+xuan_luo@cs.ucsb.edu 
+
+Sirui Zeng 
+
+UC Santa Barbara 
+
+sirui_zeng@ucsb.edu 
+
+Xifeng Yan 
+
+UC Santa Barbara 
+
+xyan@cs.ucsb.edu 
+
+# Abstract 
+
+Decoder-only Transformers compute attention over the KV cache of preceding tokens. Keys (and Values) are typically represented with the same dimensionality, regardless of its distance from the prediction target. In natural language, however, the next word is most strongly influenced by the immediately preceding tokens. We hypothesize that local and distant tokens impose asymmetric demands on represen-tational capacity: local tokens are more critical for predicting immediate outputs and thus require richer representations, whereas distant tokens primarily serve as long-range memory, for which lower-dimensional representations may suffice. We formalize this idea as Distance-Adaptive Representation (DAR), implemented in a controlled setting that preserves full-dimensional representations within a local context window while assigning reduced-dimensional representations (e.g. 1/4 of the original dimensionality) to tokens beyond that window. Across multiple pretraining scales (70M to 410M parameters), as well as continued supervised fine-tuning on a 1B-scale model, this approach closely matches the performance of full-dimensional baselines. In contrast, uniformly reducing dimensionality across all token positions leads to worse performance. These results challenge the com-mon assumption that key and value dimensionality should be uniform across token positions. Our findings suggest a new direction for designing attention architectures that adaptively allocate representational capacity across sequences, enabling further reductions in KV cache during inference. 
+
+# 1 Introduction 
+
+The success of Transformer-based language models is largely attributed to the self-attention mecha-nism [ 29 ], which allows each token to attend to all preceding context. In standard implementations, every previous token contributes key and value states of the same dimensionality, regardless of its distance from the current prediction target. This reflects an implicit architectural assumption that the representational capacity required of past tokens does not depend on how far they are from the position being predicted. We revisit this assumption motivated by a simple observation about natural language. When producing a sequence of words, the most recent context has direct effects on the next word, such as avoiding immediate repetition, following local grammatical rules, and keeping sentiment consistent, while more distant context provides long range memory and context. This asymmetry suggests that local and distant tokens may contribute different kinds of information to next-token prediction. Formally, we hypothesize that local tokens near the prediction target carry rich, fine-grained information. This information is sensitive to subtle distinctions, and benefits from high-dimensional representations. If 
+
+> Preprint.
+> arXiv:2606.18587v1 [cs.CL] 17 Jun 2026
+
+Figure 1: Tokens within a local window of size w (including the current token xn) are represented at dimensionality d, while tokens beyond the window are represented at a lower dimensionality ddown .The current token attends to all preceding tokens. this hypothesis holds, can we reduce the dimensionality of attention representations as token distance increases without substantially harming model performance? While prior studies have extensively explored the KV cache reduction problem, none of them has addressed the aforementioned question directly. We categorize the relevant literature into two distinct categories. The first maintains a local context window while sparsifying attention over distant tokens. Specifically, KV cache eviction methods, e.g., sliding-window attention [ 5 ], StreamingLLM [ 30 ], and H2O [ 33 ]—systematically discard past tokens based on varying importance criteria. All of them, however, retain a span of recent tokens that are guaranteed not to be evicted, suggesting that information carried by local tokens is relatively more important for prediction. The second approach modifies the model architecture itself to reduce representational dimensionality. Multi-head Latent Attention (MLA) [ 22 ], proposed by DeepSeek, applies uniform low-rank compression across all past tokens, allowing the model to adapt to this low-rank regime through pretraining. Although MLA reduces memory overhead, its uniform latent dimensionality treats local and distant tokens identically. Compressed Sparse Attention (CSA) in DeepSeek-V4 [ 10 ] reduces KV cache further by compressing multiple tokens horizontally into one token. Taken together, prior work has yet to characterize how token distance influences the dimensionality required for attention. This motivates our investigation of the hypothesis that representational capacity should be allocated based on token distance rather than applied uniformly . We refer to this principle as Distance-Adaptive Representation (DAR). To verify this hypothesis, we adopt a simple implementation of DAR that maintains full-dimensional attention representations for local tokens and lower-dimensional representations for distant tokens, illustrated in Figure 1. Our main findings are as follows: • At a fixed model scale, the dimensionality assigned to distant tokens can be substantially reduced with minimal loss of perplexity, and degrades only below a critical threshold. The same reduction applied uniformly across all token distances degrades more sharply, indicating that local tokens require a higher minimum dimensionality than distant tokens. • The hypothesized dimensional asymmetry holds across multiple pretraining scales (70M, 160M, and 410M parameters), where distance-adaptive dimensionality achieves perplexity comparable to full-dimensional baseline at every scale. • The hypothesis extends beyond pretraining perplexity: when applied as continued supervised fine-tuning on a 1B-scale model, distance-adaptive dimensionality preserves downstream task performance. 
+
+# 2 Distance-Adaptive Representation 
+
+In this work, we use a two-regime partition scheme to evaluate Distance-Adaptive Representation (DAR), a principle in which the representational capacity allocated to a token in attention varies with its distance from the prediction target. Under this scheme, full dimensionality is assigned to neighboring tokens within a local window, while a fixed lower dimensionality is used for all tokens outside the window. 22.1 Bottleneck Representation for Distant Tokens 
+
+For each token at position j, let hj ∈ Rd denote its hidden state. To test the two-regime partition, we keep the original hidden state hj for tokens within a window of w recent positions, and produce a lower-dimensional alternative for tokens beyond the window through a lightweight projection: 
+
+hDj = hj Wdown , (1) where Wdown ∈ Rd×ddown . The bottleneck dimensionality ddown < d controls the representational capacity available to distant tokens and is the central hyperparameter of our design. We use hDj as the underlying representation for distant tokens whenever they are accessed in attention. This treatment is consistent with MLA [ 22 ]; hDj can be interpreted as compressed latent vector. The key difference is that tokens within the sliding window retain full dimensionality (though, in principle, they could also use a compressed representation). We additionally evaluated a variant that applies a sigmoid nonlinearity after the down-projection in Eq. (1). Empirically, we observed comparable performance to the linear formulation. We therefore adopt the simpler linear projection throughout the paper. 
+
+2.2 Hybrid Attention over Two Representations 
+
+Given a query qi at position i, the model attends to the keys and values of all preceding tokens. Because tokens within and beyond the local window are represented at different dimensionalities ( d
+
+and ddown , respectively), the attention computation proceeds along two paths: a local path for tokens within the window and a global path for tokens beyond it. To allow both paths to share the same key and value projections WK and WV , we lift the bottlenecked representation hDj back to the model dimension d before computing keys and values along the global path. For clarity, we present the formulation with a single attention head and omit standard operations such as layer normalization; multi-head attention follows directly by replicating the construction across heads. For tokens beyond the window, the bottlenecked representation hDj is first projected back to dimension 
+
+d:
+
+h′ 
+
+> j
+
+= hDj Wup , (2) where Wup ∈ Rddown ×d. This up-projection does not restore information lost in the bottleneck: the resulting representation has dimensionality d but its information content is bounded by the bottleneck dimension ddown . Its purpose is solely to align the global path’s representation with the projection space expected by WK and WV .For each preceding position j, the keys and values used in attention are then computed based on its distance from the query position i:
+
+kj =
+
+RoPE( hj WK ), if i − j < w, 
+
+RoPE( h′ 
+
+> j
+
+WK ), otherwise, vj =
+
+hj WV , if i − j < w, 
+
+h′ 
+
+> j
+
+WV , otherwise, (3) where RoPE( ·) applies rotary position embeddings and w is the size of the local window. The attention output for query qi is then computed in the standard way: 
+
+oi = Softmax 
+
+ qiK⊤
+
+> i
+
+√dk
+
+
+
+Vi, (4) where Ki = [ k1; . . . ; ki], Vi = [ v1; . . . ; vi], and dk is the per-head key dimensionality of the underlying multi-head attention. As in standard attention, the query is computed as qi = hiWQ,and the attention output oi is further projected by an output projection WO before being passed to the next layer. The window size w thus serves as the boundary between the two paths, determining whether a preceding token is attended to via the original representation or via the bottlenecked representation. 
+
+2.3 Training and Inference 
+
+During training, each past token maintains two representations. Each query attends to all past tokens, with the appropriate key/value representations selected based on distance (Eq. (3) ). The standard next-token prediction objective is used: 
+
+L = −
+
+> T
+
+X
+
+> t=1
+
+log P (xt | x<t ; θ), (5) 310 1 10 2 10 3 10 4  
+
+> Document length (tokens)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> 128 256 2048
+> FineWeb-Edu
+> WikiText-103
+> C4
+
+Figure 2: Document-length distribution (CDF) of three perplexity evaluation corpora, tokenized with the Pythia tokenizer. The vertical dashed lines mark the local window size ( w = 128 ) and the training sequence length ( 2, 048 ). The distribution shows that the majority of evaluation tokens lie well beyond the w = 128 window, rigorously stressing our model’s reliance on the global path. where xt is the t-th token, x<t denotes all preceding tokens, T is the sequence length, and θ
+
+denotes all model parameters. No auxiliary losses or additional supervision signals are introduced; backpropagation updates the bottleneck projections Wdown and Wup from positions where the query attends to the global path. During inference, our current experiments maintain both sets of key and value states for each token, mirroring the training setup. This is not necessary for inference, since for each query, every past token contributes through exactly one path based on distance. However, this does not affect the validation of our hypothesis. Section 5 discusses more efficient implementations and further optimizations, including the use of Decoupled Rotary Position Embedding from MLA [22]. 
+
+# 3 Experiments 
+
+We conduct pretraining and supervised fine-tuning experiments to validate the two-regime partition scheme described above. If DAR is effective, the two-regime partition scheme should perform close to full-dimensional attention, and substantially better than uniform lower-dimensional attention applied to all tokens. 
+
+Pretraining experiments. For both the hypothesis validation experiments and the scaling analysis, we pretrain models from scratch following the Pythia training recipe [ 2, 7], with a maximum sequence length of 2,048 tokens. The hypothesis validation experiments use the Pythia-70M architecture, while the scaling analysis additionally includes Pythia-160M and Pythia-410M. All models are trained on a 10B-token subset of the Pile [ 6 , 12 ], well above the compute-optimal token count for models at these scales [ 15 ]. Batch sizes vary across experiments due to GPU availability and are reported in each section. Performance is evaluated by perplexity on a subset of FineWeb-Edu [ 23 ], WikiText-103 [ 24 ]and C4 [ 26 ]; as shown in Figure 2, most evaluation sequences are substantially longer than the local window size w, ensuring that the global path is activated throughout evaluation. Note that for documents exceeding the maximum training sequence length, we employ a rolling evaluation strategy to ensure full sequence coverage, meaning no token is discarded. 
+
+Supervised fine-tuning experiments. To assess whether our findings generalize to task-level evaluation, we adopt the instruction-tuned OLMo-2-1B-SFT [ 25 ] as a starting point and perform additional supervised fine-tuning with our architectural modification. Training proceeds in two stages, each consisting of one epoch over the OLMo-specific variant of the Tülu 3 dataset used for OLMo-2-1B-SFT [ 19 ]. In the first stage, only the bottleneck parameters {Wdown , Wup } are trained while the rest of the model is frozen, allowing the bottleneck to learn an effective lower-dimensional representation of distant tokens before the rest of the model adapts to it. In the second stage, all parameters are trained jointly so that the model as a whole adjusts to the two-path attention 4computation. We use the AdamW optimizer with a linear learning rate schedule (warmup ratio 
+
+0.03 ), a batch size of 512 and a maximum sequence length of 2,048 . The first stage uses a learning rate of 3 × 10 −4, and the second uses 3 × 10 −5. We start from a model that has already been instruction-tuned because this allows us to evaluate downstream task capability without additional pretraining, which would have exceeded our compute budget. Performance is evaluated using 
+
+lm-evaluation-harness [ 13 ] on six downstream benchmarks, covering knowledge-intensive reasoning, commonsense, mathematical reasoning, code generation, and long-context summarization (detailed in Section 3.4). Our experiments were conducted on NVIDIA 8xA100 and 4xGH200 GPUs. 
+
+3.1 Core Hypothesis Validation 
+
+We test the hypothesis at the Pythia-70M scale using a batch size of 256 , for a total of 19 , 073 training steps over our 10B token budget. We vary the bottleneck dimension ddown under a fixed window size 
+
+w = 128 , and comparing against two reference points: (i) a full-dimensional baseline ( d = 512 ,"Vanilla"), and (ii) a uniform reduction baseline that applies the same lower dimensionality ddown to all tokens regardless of distance. This second baseline isolates the effect of the distance-aware design from the effect of lower-dimensional representations alone. Table 1 reports perplexity across the three evaluation corpora. Two observations support the hy-pothesis. First, DAR with ddown = 256 and ddown = 128 outperforms the full-dimensional baseline (Rel. 98.57% and 99.61%, respectively); only at ddown = 64 does noticeable degradation appear (Rel. 101.99%). This suggests that distant tokens do not require the full dimensionality, and that representational capacity beyond a certain threshold may not be necessary for attention over distant context. The improvement at ddown = 256 and ddown = 128 is consistent with this interpretation: removing redundant capacity in distant representations does not hurt prediction. Second, when the lower-dimensional representations are applied uniformly across all token positions, performance degrades more sharply: at ddown = 128 , uniform reduction reaches Rel. 105.49% while DAR remains at 99.61%; at the more aggressive ddown = 64 , uniform reduction degrades to Rel. 111.30%, while DAR only reaches 101.99%. The difference between DAR and uniform reduction isolates the value of preserving full dimensionality for local tokens, providing direct evidence that local tokens require higher representational capacity than distant ones. Figure 3 shows the relative perplexity trajectory across pretraining. In the early stages, all variants exhibit elevated perplexity relative to Vanilla, but the gap closes at different rates. DAR with 
+
+ddown ∈ { 128 , 256 } converges to Vanilla by the end of training, while DAR with ddown = 64 
+
+remains slightly above. Uniform reduction remains above Vanilla throughout training across all 
+
+ddown values, with the gap widening as ddown decreases. At each ddown , DAR outperforms Uniform reduction throughout pretraining, demonstrating that the dimensional asymmetry holds across the entire training trajectory. Table 1: DAR validation at the Pythia-70M scale. DAR is run with window size w = 128 across all bottleneck dimensions. Perplexity is reported on three evaluation corpora: a subset of FineWeb-Edu, C4 and WikiText-103. Rel. is the average per-dataset perplexity ratio relative to Vanilla, reported as a percentage (smaller is better).                                   
+
+> Model Config FineWeb-Edu C4 WikiText-103 Rel.(%)
+> Vanilla d=512 120.41 146.91 53.22 100.00 DAR
+> ddown =256 118.88 144.05 52.64 98.57
+> ddown =128 120.02 144.65 53.58 99.61
+> ddown =64 123.03 148.10 54.81 101.99 Uniform reduction
+> ddown =256 124.37 150.49 54.36 102.63
+> ddown =128 127.38 155.35 55.84 105.49
+> ddown =64 135.36 162.61 58.96 111.30
+
+3.2 Generalization Across Pretraining Scales 
+
+To examine whether the same observation holds at larger pretraining scales, we extend the experiment to Pythia-160M and Pythia-410M using a batch size of 896 , for a total of 5, 450 training steps over our 10B token budget. We compare DAR against the corresponding full-dimensional baselines at 5512 1k 2k 4k 8k 10k 14k 19k             
+
+> Training step (log scale)
+> 100
+> 110
+> 120
+> 130
+> 140
+> Rel. (%)
+> Vanilla
+> Uniform, ddown = 256
+> Uniform, ddown = 128
+> Uniform, ddown = 64
+> DAR, ddown = 256
+> DAR, ddown = 128
+> DAR, ddown = 64
+
+Figure 3: Average perplexity ratio relative to Vanilla (= 100%, shown as horizontal line) across training steps at the Pythia-70M scale. Table 2: Generalization of DAR across pretraining scales. DAR uses w = 128 and ddown = d/ 4 at each scale. Perplexity is reported on a subset of FineWeb-Edu, C4 and WikiText-103. Rel.(%) is the average per-dataset perplexity ratio relative to the Vanilla model at the same scale (smaller is better). 
+
+Model Config FineWeb-Edu C4 WikiText-103 Rel.(%) 
+
+Pythia-70M Vanilla ( d=512 ) 120.41 146.91 53.22 100.00 DAR ( ddown =128 ) 120.02 144.65 53.58 99.61 Pythia-160M Vanilla ( d=768 ) 94.84 115.94 43.03 100.00 DAR ( ddown =192 ) 95.47 116.25 43.77 100.88 Pythia-410M Vanilla ( d=1024 ) 81.74 99.69 37.90 100.00 DAR ( ddown =256 ) 79.59 97.72 37.35 97.98 
+
+each scale. The bottleneck dimension is fixed at ddown = d/ 4 across all scales, matching the moderate compression setting at which DAR closely matched Vanilla at the 70M scale. As shown in Table 2, DAR matches or outperforms the full-dimensional baseline across all three scales we evaluate. DAR slightly outperforms Vanilla at 70M (Rel. 99.61%), remains essentially equal at 160M (Rel. 100.88%), and outperforms Vanilla more clearly at 410M (Rel. 97.98%). This indicates that the dimensional asymmetry between local and distant tokens is not limited to the 70M setting and continues to hold as both the model and its capacity grow. The results suggest that, within the evaluated scale range, DAR can preserve competitive performance using the same relative ratio, 
+
+ddown = d/ 4. This provides preliminary evidence that distant-token representations may not require full dimensionality, although larger-scale experiments are needed to determine how this trend holds more generally. 
+
+3.3 Window Size Ablation 
+
+To verify that DAR is robust to the choice of window size w, we sweep w ∈ { 0, 1, 4, 16 , 64 , 128 , 256 }
+
+at the Pythia-70M scale with ddown = 128 . Table 3 shows that DAR remains close to Vanilla across a wide range of window sizes. Performance is largely unchanged for w ≥ 4, degrades only slightly at 
+
+w = 1 , and drops noticeably when w = 0 . These results suggest that only a small number of nearby tokens require full-dimensional representations, consistent with our hypothesis that high-dimensional representations are primarily needed for nearby tokens. Since performance is stable across a broad range of window sizes, we use w = 128 in all subsequent experiments as a conservative default within the plateau region, while remaining much smaller than the sequence length. 6Table 3: Effect of window size w on DAR at the Pythia-70M scale with ddown =128 . Perplexity is reported on three evaluation corpora: a subset of FineWeb-Edu, C4 and WikiText-103. Rel. is the average per-dataset perplexity ratio relative to Vanilla, reported as a percentage (smaller is better).                                       
+
+> Model wFineWeb-Edu C4 WikiText-103 Rel.(%)
+> Vanilla –120.41 146.91 53.22 100.00 DAR 256 120.85 145.90 53.79 100.25 128 120.02 144.65 53.58 99.61 64 119.77 144.55 52.94 99.11 16 120.72 145.31 53.67 100.01 4120.90 145.68 52.02 100.36 1122.26 145.64 54.16 100.86 0127.38 155.35 55.84 105.49
+
+3.4 Effect on Downstream Tasks 
+
+To further examine whether DAR preserves task-level performance, we evaluate it on a suite of downstream benchmarks under different bottleneck dimensions ddown , while keeping the window size fixed at w = 128 . To isolate the effect of ddown from the effect of introducing the bottleneck module itself, we use the same DAR architecture across all configurations and treat the setting 
+
+ddown = d = 2048 as the no-bottleneck baseline; this configuration includes the same down-projection and up-projection modules as the other configurations, but applies no actual dimensionality reduction. We evaluate on MMLU [ 14 ] for massive multitask understanding, HellaSwag [ 32 ] for common-sense inference, CommonsenseQA [ 28 ] for commonsense question answering, GSM8K [ 8] for mathematical reasoning, MBPP [ 3] for code generation, and Multi-News from LongBench [ 4] for multi-document summarization. We employ a 5-shot setting for MMLU, HellaSwag, Common-senseQA, and GSM8K, a 3-shot setting for MBPP, and a zero-shot setting for Multi-News. The reported metrics are accuracy (Acc) on MMLU and CommonsenseQA, normalized accuracy (Acc-norm) on HellaSwag, flexible-extract match on GSM8K, Pass@1 on MBPP, and ROUGE scores on Multi-News. To ensure the global path is engaged during evaluation, we exclude samples whose input context is shorter than the window size. The average input context lengths for the six tasks are 
+
+742 , 532 , 332 , 939 , 673 , and 1,394 tokens, respectively. Table 4: Downstream task evaluation. All configurations use the DAR architecture with w = 128 .The first row, with ddown = d = 2048 , applies no actual dimensionality reduction and serves as the no-bottleneck baseline; subsequent rows progressively reduce ddown . Avg. is the average across the six benchmarks. Rel.(%) is the average of task-specific relative scores compared to the no-bottleneck baseline (smaller is worse).                                                         
+
+> Config MMLU HellaSwag CSQA GSM8K MBPP Multi-News Avg. Rel.(%)
+> ddown =2048 0.4044 0.6502 0.5315 0.4450 0.1320 0.1653 0.3881 100.00
+> ddown =1024 0.3989 0.6493 0.5214 0.4496 0.1420 0.1675 0.3881 101.09
+> ddown =512 0.4051 0.6462 0.5304 0.4114 0.1440 0.1855 0.3871 102.19
+> ddown =256 0.3978 0.6440 0.5228 0.4182 0.1180 0.1867 0.3812 98.68
+> ddown =128 0.4067 0.6375 0.5209 0.4008 0.0780 0.1388 0.3638 88.29
+> ddown =64 0.3891 0.6338 0.5012 0.3907 0.0300 0.1545 0.3499 82.00
+
+Table 4 reports the per-task scores. DAR maintains or slightly exceeds the no-bottleneck baseline at moderate reductions: at ddown = 1024 (d/ 2), ddown = 512 (d/ 4), and ddown = 256 (d/ 8), Rel. reaches 101.09%, 102.19%, and 98.68% respectively. Performance degrades sharply at more aggressive reductions: Rel. drops to 88.29% at ddown = 128 and 82.00% at ddown = 64 . This indicates that for the evaluated tasks, distant-token representations can tolerate dimensionality reduction up to roughly 
+
+d/ 8, but below this threshold, distant-token information becomes insufficient. 74 Related Work 
+
+Prior studies have extensively explored KV cache reduction, with many approaches focusing on uniform compression strategies such as low-rank projection, quantization, key-value sharing, latent attention, and compressed sparse attention. These methods primarily aim to reduce memory footprint and inference latency under fixed architectural assumptions. Beyond uniform compression, other approaches explore more dynamic mechanisms such as sparse attention and dynamic KV cache evic-tion. While these methods improve efficiency by selectively reducing stored or accessed information, they typically rely on heuristic sparsity structures. 
+
+4.1 Sliding Window Attention 
+
+Local window mechanisms have been adopted in many different forms. Sliding window attention [ 5]restricts attention to a window of local tokens, and StreamingLLM [ 30 ] extends this design with a small set of attention sinks to maintain generation quality over long contexts. H2O [ 33 ], SnapKV [ 20 ], etc. observe that a small subset of tokens, termed heavy hitters, contribute disproportionately to attention scores, and proposes a dynamic policy that retains both local tokens and these heavy hitters. SKVQ [ 11 ] preserves local tokens at full numerical precision while applying low-bit quantization to tokens outside the window, motivated by the observation that local tokens tend to receive higher at-tention weights. Frameworks like XAttention [ 31 ] and MInference [ 16 ] could dramatically accelerate long-context inference using sparse attention. These methods are primarily motivated by reducing the cost of attention or its inference-time footprint. They are training-free and applied at inference time to already-pretrained models. They do not develop the dual dimensionality proposed in this work. 
+
+4.2 Multi-head Latent Attention 
+
+Recent architectures reduce the size of key and value representations directly during pretraining. Multi-Query Attention (MQA) [ 27 ] and Grouped-Query Attention (GQA) [ 1 ] reduce the number of independent key and value heads, sharing them across queries to lower memory and computation costs. In contrast, Multi-head Latent Attention (MLA) [ 22 ] compresses per-token representations into a low-rank latent space, yielding key and value states with substantially lower dimensionality than standard multi-head attention. Compressed Sparse Attention (CSA) [ 10 ] reduces KV cache further by compressing hidden states of multiple tokens into one. Since these designs are introduced during pretraining, the model can adapt its representations to operate effectively under the imposed constraints. Among these methods, MLA is most closely related to our work, as it directly modifies the dimen-sionality of attention representations. Our work explores a different aspect of this design space: rather than applying a uniform reduction, we ask whether the required dimensionality should vary with a token’s distance from the prediction target. This perspective suggests an adaptive allocation of representational capacity. 
+
+4.3 Multi-Granularity Representation 
+
+Recent advances in representation learning have explored embedding information at multiple levels of granularity within a single vector. Matryoshka Representation Learning (MRL) [ 17 ] introduces a nested structure that allows a single embedding to be truncated to various sizes while maintaining high accuracy. This concept was then extended to the KV cache in MatryoshkaKV [ 21 ], which enables dynamic capacity adjustment during inference through trainable orthogonal projections. These methods typically aim for resource-agnostic flexibility, where the dimensionality is adjusted based on external computational constraints. Our work shifts the focus from such external flexibility to an intrinsic structural principle to study the dimensionality of token representations with distance. 
+
+# 5 Limitations 
+
+Direct lower-dimensional global attention. We currently project hDj back to dimension d via Wup 
+
+before computing keys and values for the global path, even though the global path conceptually 8operates on lower-dimensional information. An alternative design would perform the global-path attention entirely in ddown -dimensional space, with separate query, key, and value projections operating on hDj . We do not pursue this here, as our primary goal is to validate the hypothesis under a setup that closely mirrors standard attention. 
+
+Compute and memory efficiency. In our current implementation, two sets of key and value states are stored for each token, doubling the KV cache memory compared to vanilla attention. For inference, a more efficient cache scheme is possible: by absorbing Wup into WK and WV , the global-path key and value can be computed on demand directly from hDj . Under this scheme, tokens beyond the window only need to cache hDj ∈ Rddown , while tokens within the window cache the full-dimensional key and value alongside hDj . This reduces the memory complexity from O(T d ) to O(T d down + wd ),which scales as O(T d down ) since w is independent of sequence length. Further absorption of WK and 
+
+WV into WQ and WO is possible through the decoupled RoPE formulation introduced in MLA [ 22 ]. Practical deployment would also require integration with hardware-aware attention implementations such as FlashAttention [ 9 ] and serving frameworks like vLLM [ 18 ]. We view this as a promising direction enabled by our findings, but not a contribution of the present work. 
+
+Model scale and architecture coverage. Due to limited resource, our experiments cover decoder-only Transformer models from 70M to 410M parameters in pretraining and 1B parameters in supervised fine-tuning, trained on the Pile and the Tülu 3 SFT mixture, respectively. We encourage future studies to extend the DAR framework to substantially larger scales and validate its efficacy across varied model architectures and training data. 
+
+# 6 Conclusion 
+
+We hypothesized that the representational dimensionality required for a token in attention varies with its distance from the prediction target, and introduced Distance-Adaptive Representation (DAR), a principle that allocates representational capacity according to this distance. Through controlled pretraining and supervised fine-tuning experiments, we show that distant tokens can be represented with substantially lower dimensionality without significantly degrading perplexity or downstream task performance, whereas applying the same reduction uniformly across all tokens leads to noticeable performance loss. These results provide direct evidence for an asymmetric demand on representational capacity and challenge the common assumption that attention representations should be uniform across token positions. We hope this work motivates further investigation into more sophisticated allocations of representational capacity in attention. 
+
+# Acknowledgements 
+
+Xuan Luo was partially supported by the BioPACIFIC MIP of the National Science Foundation under Award No. DMR-1933487. We would like to thank Meta for donating the A100-40G GPUs used in our experiments. We also gratefully acknowledge the generous support of the NVIDIA Academic Grant Program and NCSA DeltaAI through allocation CIS260864 from the Advanced Cyberinfrastructure Coordination Ecosystem: Services & Support (ACCESS) program, which is supported by U.S. National Science Foundation. 
+
+# References 
+
+[1] Joshua Ainslie, James Lee-Thorp, Michiel De Jong, Yury Zemlyanskiy, Federico Lebrón, and Sumit Sanghai. GQA: Training generalized multi-query transformer models from multi-head checkpoints. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 4895–4901, 2023. [2] Alex Andonian, Quentin Anthony, Stella Biderman, Sid Black, Preetham Gali, Leo Gao, Eric Hallahan, Josh Levy-Kramer, Connor Leahy, Lucas Nestler, Kip Parker, Michael Pieler, Jason Phang, Shivanshu Purohit, Hailey Schoelkopf, Dashiell Stander, Tri Songz, Curt Tigges, Benjamin Thérien, Phil Wang, and Samuel Weinbach. GPT-NeoX: Large scale autoregressive language modeling in pytorch, 9 2023. 9[3] Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al. Program synthesis with large language models. arXiv preprint arXiv:2108.07732 , 2021. [4] Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. LongBench: A bilingual, multitask benchmark for long context understanding. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 3119–3137, Bangkok, Thailand, August 2024. Association for Computational Linguistics. [5] Iz Beltagy, Matthew E Peters, and Arman Cohan. Longformer: The long-document transformer. 
+
+arXiv preprint arXiv:2004.05150 , 2020. [6] Stella Biderman, Kieran Bicheno, and Leo Gao. Datasheet for the pile. arXiv preprint arXiv:2201.07311 , 2022. [7] Stella Biderman, Hailey Schoelkopf, Quentin Gregory Anthony, Herbie Bradley, Kyle O’Brien, Eric Hallahan, Mohammad Aflah Khan, Shivanshu Purohit, USVSN Sai Prashanth, Edward Raff, et al. Pythia: A suite for analyzing large language models across training and scaling. In 
+
+International Conference on Machine Learning , pages 2397–2430. PMLR, 2023. [8] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Jacob Hilton, Reiichiro Nakano, Christo-pher Hesse, and John Schulman. Training verifiers to solve math word problems, 2021. [9] Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. Flashattention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems , 35:16344–16359, 2022. [10] DeepSeek-AI. DeepSeek-V4: Towards highly efficient million-token context intelligence. Technical Report, April 2026. [11] Haojie Duanmu, Zhihang Yuan, Xiuhong Li, Jiangfei Duan, Xingcheng Zhang, and Dahua Lin. SKVQ: Sliding-window key and value cache quantization for large language models. arXiv preprint arXiv:2405.06219 , 2024. [12] Leo Gao, Stella Biderman, Sid Black, Laurence Golding, Travis Hoppe, Charles Foster, Jason Phang, Horace He, Anish Thite, Noa Nabeshima, et al. The Pile: An 800gb dataset of diverse text for language modeling. arXiv preprint arXiv:2101.00027 , 2020. [13] Leo Gao, Jonathan Tow, Baber Abbasi, Stella Biderman, Sid Black, Anthony DiPofi, Charles Foster, Laurence Golding, Jeffrey Hsu, Alain Le Noac’h, Haonan Li, Kyle McDonell, Niklas Muennighoff, Chris Ociepa, Jason Phang, Laria Reynolds, Hailey Schoelkopf, Aviya Skowron, Lintang Sutawika, Eric Tang, Anish Thite, Ben Wang, Kevin Wang, and Andy Zou. A framework for few-shot language model evaluation, September 2021. [14] Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt. Measuring massive multitask language understanding. Proceedings of the International Conference on Learning Representations (ICLR) , 2021. [15] Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza Rutherford, DDL Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al. Training compute-optimal large language models. arXiv preprint arXiv:2203.15556 , 10, 2022. [16] Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H. Abdi, Dongsheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. MInference 1.0: Accelerating pre-filling for long-context LLMs via dynamic sparse attention. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. [17] Aditya Kusupati, Gantavya Bhatt, Aniket Rege, Matthew Wallingford, Aditya Sinha, Vivek Ra-manujan, William Howard-Snyder, Kaifeng Chen, Sham Kakade, Prateek Jain, et al. Matryoshka representation learning. Advances in Neural Information Processing Systems , 35:30233–30249, 2022. 10 [18] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large lan-guage model serving with pagedattention. In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles , 2023. [19] Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, Faeze Brahman, Lester James V Miranda, Alisa Liu, Nouha Dziri, Shane Lyu, et al. Tulu 3: Pushing frontiers in open language model post-training. arXiv preprint arXiv:2411.15124 , 2024. [20] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. SnapKV: LLM knows what you are looking for before generation. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. [21] Bokai Lin, Zihao Zeng, Zipeng Xiao, Siqi Kou, Tianqi Hou, Xiaofeng Gao, Hao Zhang, and Zhijie Deng. MatryoshkaKV: Adaptive kv compression via trainable orthogonal projection. 
+
+arXiv preprint arXiv:2410.14731 , 2024. [22] Aixin Liu, Bei Feng, Bin Wang, Bingxuan Wang, Bo Liu, Chenggang Zhao, Chengqi Dengr, Chong Ruan, Damai Dai, Daya Guo, et al. Deepseek-V2: A strong, economical, and efficient mixture-of-experts language model. arXiv preprint arXiv:2405.04434 , 2024. [23] Anton Lozhkov, Loubna Ben Allal, Leandro von Werra, and Thomas Wolf. FineWeb-Edu: the finest collection of educational content, 2024. [24] Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. Pointer sentinel mixture models, 2016. [25] Team OLMo, Pete Walsh, Luca Soldaini, Dirk Groeneveld, Kyle Lo, Shane Arora, Akshita Bhagia, Yuling Gu, Shengyi Huang, Matt Jordan, Nathan Lambert, Dustin Schwenk, Oyvind Tafjord, Taira Anderson, David Atkinson, Faeze Brahman, Christopher Clark, Pradeep Dasigi, Nouha Dziri, Michal Guerquin, Hamish Ivison, Pang Wei Koh, Jiacheng Liu, Saumya Ma-lik, William Merrill, Lester James V. Miranda, Jacob Morrison, Tyler Murray, Crystal Nam, Valentina Pyatkin, Aman Rangapur, Michael Schmitz, Sam Skjonsberg, David Wadden, Christo-pher Wilhelm, Michael Wilson, Luke Zettlemoyer, Ali Farhadi, Noah A. Smith, and Hannaneh Hajishirzi. 2 OLMo 2 Furious. 2024. [26] Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J Liu. Exploring the limits of transfer learning with a unified text-to-text transformer. Journal of machine learning research , 21(140):1–67, 2020. [27] Noam Shazeer. Fast transformer decoding: One write-head is all you need. arXiv preprint arXiv:1911.02150 , 2019. [28] Alon Talmor, Jonathan Herzig, Nicholas Lourie, and Jonathan Berant. CommonsenseQA: A question answering challenge targeting commonsense knowledge. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguis-tics: Human Language Technologies, Volume 1 (Long and Short Papers) , pages 4149–4158, Minneapolis, Minnesota, June 2019. Association for Computational Linguistics. [29] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. [30] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. arXiv preprint arXiv:2309.17453 , 2023. [31] Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han. XAttention: Block sparse attention with antidiagonal scoring. In Forty-second International Conference on Machine Learning , 2025. [32] Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. HellaSwag: Can a machine really finish your sentence? In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics , 2019. 11 [33] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. H2O: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Processing Systems , 36:34661–34710, 2023. 12
