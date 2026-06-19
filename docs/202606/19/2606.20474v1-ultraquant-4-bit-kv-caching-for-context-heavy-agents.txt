@@ -1,0 +1,338 @@
+Title: UltraQuant: 4-bit KV Caching for Context-Heavy Agents
+
+URL Source: https://arxiv.org/pdf/2606.20474v1
+
+Published Time: Fri, 19 Jun 2026 01:15:03 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# UltraQuant: 4-bit KV Caching for Context-Heavy Agents 
+
+Inesh Chakrabarti *,1,2 David Limpus ∗,1,3 Aditi Ghai Rana ∗,1
+
+Bowen Bao 1 Spandan Tiwari 1 Thiago Crepaldi 1 Ashish Sirasao 11Advanced Micro Devices 2University of California, Los Angeles 3Purdue University 
+
+inesh33@g.ucla.edu dlimpus@purdue.edu {aditi.rana, bowen.bao, spandan.tiwari, thiago.crepaldi, ashish.sirasao}@amd.com 
+
+Abstract 
+
+Context-heavy agents place unusual pressure on the key–value (KV) cache: long prefixes are reused across many short turns, while con-currency determines whether the serving sys-tem can keep GPUs utilized. We study 4-bit KV-cache compression for this setting, using TurboQuant-style rotation and codebook quan-tization (Zandieh et al., 2026) as a quality an-chor and vLLM FP8 KV caching as the de-ployment anchor. We report three contribu-tions. First, we frame 4-bit KV caching around multi-round agent workloads where task qual-ity, cache residency, and serving throughput must be measured jointly. Second, we describe the practical design choices needed to make the 4-bit path robust, including asymmetric K/V treatment, Walsh–Hadamard rotation (Walsh, 1923; Hadamard, 1893), QJL removal (Zandieh et al., 2024), and block-scale variants. Third, we present serving optimizations on AMD GPUs, including optimized decode-attention kernels and UltraQuant , an FP4 approxima-tion path that uses FP8 queries, FP4 KV ten-sors, UE8M0 group scales, and native scaled-MFMA support on CDNA4. On a long-context, multi-turn agentic workload, UltraQuant cuts P50 time-to-first-token by 3.47 × in the cache-pressured late rounds ( 2.3× across all rounds) and raises output throughput by 1.63 × over the FP8 KV baseline. 
+
+1 Introduction 
+
+Large language models have evolved from chat-bots with short context windows into agents that browse the web, inspect repositories, invoke tools, and complete substantial software-engineering tasks (Yao et al., 2022; Schick et al., 2023; Zhou et al., 2023; Yang et al., 2024a). These workflows require long-running memory: the model must re-tain system instructions, tool definitions, retrieved documents, codebase context, and the evolving 
+
+> *∗Equal contribution.
+
+plan across many turns. As model releases push context windows toward one million tokens and be-yond (Gemini Team, 2024; Ding et al., 2024), the KV cache grows linearly with context length and becomes a first-order consumer of high-bandwidth memory (HBM). This has driven two complementary lines of work: One line changes the model architecture or attention mechanism to reduce KV state directly, in-cluding multi-head latent attention (DeepSeek-AI, 2024a,b) and linear or state-space alternatives (Gu and Dao, 2023; Dao and Gu, 2024; Yang et al., 2024c,b). Another line treats the memory hier-archy as a systems problem, using cache reuse, offloading, and paged-memory management to keep scarce HBM occupied by the most useful state (Kwon et al., 2023; Zheng et al., 2023; Zhang et al., 2024). KV quantization adopts the first ap-proach: we preserve the standard interface while reducing memory overhead. Compression leads to some challenges; a de-ployable 4-bit method must offer more than just compression, but rather must retain answer quality on long-context workloads, integrate with paged serving, and dispatch efficiently through GPU ma-trix cores. FP8 KV caching is a strong deploy-ment baseline in vLLM, giving roughly 2× com-pression at near-lossless quality with native hard-ware support. TurboQuant (Zandieh et al., 2026), a data-oblivious 4-bit scalar-plus-rotation method, provides a strong 4-bit quality point but relies on codebook lookup and software dequant. We study two endpoints on AMD Instinct GPUs. 
+
+Ultra-TQ keeps the TurboQuant representation and closes the kernel gap through layout, lookup, and MFMA scheduling optimizations, along with ac-curacy improvements through calibrated centroids for each model. UltraQuant replaces the code-book with an FP4 micro-tensor approximation so the dequantization is folded into native CDNA4 scaled-MFMA instructions. 
+
+> arXiv:2606.20474v1 [cs.LG] 18 Jun 2026
+
+Our goal is a deployment-oriented account of low-bit KV caching for context-heavy agents: which quantization choices preserve quality, how those choices interact with decode-attention ker-nels, and when the serving system benefits from the additional resident context. 
+
+2 Related Work 
+
+2.1 KV-Cache Quantization 
+
+The KV-compression landscape has converged on a few recurring design ideas. Keys and values are treated asymmetrically because key errors perturb the softmax distribution differently from value er-rors, a pattern established by KIVI (Liu et al., 2024) and KVQuant (Hooper et al., 2024). QJL (Zandieh et al., 2024) and TurboQuant (Zandieh et al., 2026) use rotation and codebook methods to improve rate–distortion at small bit widths, and TurboQuant in particular has seen community reimplementa-tion (TheTom, 2026; Chakrabarti et al., 2026). However, the use of the codeboook introduces lookup and irregular-access costs (Chakrabarti et al., 2026). These methods are useful algorithmic anchors for 4-bit quality, but their most accurate representations are not automatically efficient serv-ing formats. 
+
+2.2 Rotation and Codebook Quantization 
+
+TurboQuant-style rotation (Kurti´ c et al., 2026) spreads outlier energy across channels so scalar quantizers see a more Gaussian-like distribu-tion. Calibrated centroids fit via per-model Lloyd– Max (Lloyd, 1982; Max, 1960) or its per-block vari-ant (LMPB) then provide a strong 4-bit codebook for the rotated distribution. In this paper, those codebooks are background and motivation rather than the deployed format: UltraQuant uses them to explain why FP4 is plausible after rotation, then re-places arbitrary centroids with the hardware-native FP4 grid. 
+
+2.3 Serving Systems and Hardware-Native Low Precision 
+
+vLLM-style paged serving (Kwon et al., 2023) makes KV-cache residency a systems concern, not only a compression metric. Hardware-native for-mats such as FP8 already benefit from direct matrix-core support. UltraQuant extends this serving-first lens to 4-bit KV caching by targeting the CDNA4 scaled-F8F6F4 MFMA path, where FP4 operands         
+
+> Metric UltraQuant vs. FP8 KV
+> P50 TTFT — warm rounds (r2–3) 0.86 ×(FP8 faster) P50 TTFT — late rounds (r4–6) 3.47 ×
+> P50 TTFT — all rounds 2.3×
+> Output throughput 1.63 ×
+> Table 1: Agentic serving results on MiniMax-M2.5, TP = 2 , AMD MI355X, reported as UltraQuant relative to the FP8 KV baseline (higher is better except where noted). The advantage appears in the late rounds, where long per-client prefixes exceed the effective resident-cache capacity of FP8: TTFT improves 3.47 ×and is recovered through cache residency rather than re-prefill.
+
+and UE8M0 scales are consumed by the matrix core itself. 
+
+3 Agentic Workflow and Concurrency Analysis 
+
+Agentic workloads are long-running sessions with a large shared prefix and many shorter follow-up turns. In this setting, compression matters because it increases the number of useful prefixes that re-main resident on device. Compression alone, how-ever, does not guarantee better serving outcomes: the overhead introduced by quantization and de-quantization can degrade token latency, making end-to-end serving measurement essential. We characterize serving efficiency through two metrics: time-to-first-token (TTFT) and time-per-output-token (TPOT). To simulate agentic memory pressure, we adopt vLLM’s native multi-turn benchmark with con-versation data from the ShareGPT dataset, which consists of real human–LLM conversations in user/assistant role format. We serve 32 concur-rent chat sessions and report P50 TTFT and P50 TPOT, capturing the efficiency of each KV-cache scheme in a single run. Table 1 shows the memory-pressure regime that motivates this evaluation. With long per-client pre-fixes and high concurrency, FP8 KV caching repeat-edly evicts useful state, while UltraQuant keeps substantially more prefixes resident; the advantage is largest in the late rounds, where TTFT improves 
+
+3.47 ×. The per-round latency breakdown in Fig. 1 makes the effect concrete: UltraQuant holds both time-to-first-token and time-per-output-token low across all six conversation rounds, while FP8 de-grades as accumulated context exceeds its resident-cache capacity. (a) Time-to-first-token. 
+
+> (b) Time-per-output-token.
+> Figure 1: Per-round serving latency (relative to BF16; lower is better) on the multi-turn agentic workload for FP8, UltraQuant, and Ultra-TQ. UltraQuant keeps prefixes resident, so both (a) time-to-first-token and (b) time-per-output-token stay low across all rounds, while FP8 degrades as accumulated context exceeds its resident-cache capacity.
+
+4 Ultra-TurboQuant 
+
+Ultra-TurboQuant (Ultra-TQ) is our optimized im-plementation of TQ 4/4, the 4-bit TurboQuant KV-cache scheme (4-bit keys and 4-bit values). It starts from the same observation that motivates Turbo-Quant: the raw KV-cache distribution is a poor tar-get for a small scalar codebook, but a fixed Walsh– Hadamard rotation spreads outlier energy across channels, pushing each coordinate toward the light-tailed, near-Gaussian regime where a 4-bit scalar quantizer is a reasonable approximation. In Sec-tion A, we present further efficient implementation details. 
+
+4.1 Calibrated Centroids 
+
+We begin with the observation that calibrating Tur-boQuant centroids is model agnostic. The produc-tion Lloyd–Max centroids are fit under the theoret-ical assumption that post-rotation, post-normfold key coordinates follow Beta(( d−1) /2, (d−1) /2) ,the exact law of a randomly rotated unit-vector co-ordinate. On real activations this assumption is only approximate: the empirical distribution de-viates slightly from this ideal, so the theoretical centroids are slightly misplaced. Refitting the same 16-entry Lloyd–Max table on captured key activa-tions corrects this. Calibration is cheap — a single forward pass over ∼20 vectors randomly sampled from a sphere on each rotated layer yields 16 FP32 levels — and deployment is a drop-in table swap with zero inference overhead. Note in our real im-plementation, we only do this for 10% of layers that show higher per-element quantizaiton MSE. Fitting to the model is the strongest pure-codebook lever we measured: against an apples-to-apples fakequant control, it lowers per-element K quantization MSE by 10 .3% (1.32 × 10 −4 →
+
+1.18 × 10 −4) and improves GPQA by +1 .20 pp. The empirical centroids are compressed relative to the theoretical ones (largest |c| at d = 64 falls from 
+
+0.342 to 0.288 ), reflecting the slight deviation of real activations from the ideal. Rotation remains essential and is not substitutable by the codebook: fit on the un-rotated distribution, even model-tuned centroids leave roughly 2.3× the rotated MSE, sug-gesting that centroid placement cannot replicate rotation’s whitening effect. The gain from cali-brating centroids is real but modest; we ablate the source of the benefits in Section B.1. 
+
+5 UltraQuant 
+
+A calibrated codebook, however good, must be de-coded at every attention step: each tile loads the packed indices, gathers the corresponding centroids through a lookup table, and reconstructs the keys and values in registers before the QK and PV prod-ucts (Guo et al., 2024). This gather is irregular and grows with context length, making it a key bottle-neck for long-context decode. UltraQuant stores the cache as a fixed FP4 E2M1 grid with UE8M0 scales that the matrix core reads natively, making dequantization a single exponent shift folded into the instruction rather than a software gather. Each group needs a scale to map its values onto the FP4 grid. UltraQuant derives this scale from a single constant, chosen once to minimize quantization error on the rotated distribution. This constant is calibrated offline and model-agnostic. 
+
+5.1 Cache Layout 
+
+UltraQuant stores keys and values in an FP4– UE8M0 group-32 cache layout, an FP4 represen-tation aligned to the AMD matrix core. The head dimension is partitioned into contiguous groups of 32 channels, with each group encoded as 32 FP4 E2M1 codes, packed two codes per byte, plus one UE8M0 scale. A group occupies 32 × 4 bits +8 bits = 16 B + 1 scale = 17 B per 32 channels, i.e. 4.25 bits per element — within 6% of an ideal 4-bit representation, while retaining a scale format the matrix core consumes natively. 
+
+5.2 Dequantization 
+
+The dequantization rule is conceptually simple: 
+
+value = code ×2scale , scale = byte −127 .
+
+(1) Because the scale is a power-of-two exponent, this is not a floating-point multiply: it shifts the ex-ponent of the FP4 codepoint, and the operation folds directly into the scaled-MFMA accumula-tor. The AMD MFMA_SCALE_F32_*_F8F6F4 in-struction takes the FP4 codes and the UE8M0 byte as native operands (Advanced Micro Devices, Inc., 2024), so keys and values are never materialized in BF16. Queries are Hadamard-rotated into the key basis and rounded to FP8 E4M3 before QK, so the attention products run on the same FP8 × FP4 scaled-MFMA path. The per-group scale is stored in this UE8M0 byte, so it is a power of two s = 2 E ,and the constant c (Section 5.3) enters through the encoder rule E = round(log 2(c · m)) rather than as a runtime multiply. 
+
+5.3 Constant-Optimized Scaling 
+
+Lloyd–Max centroids for the rotated-unit-vector distribution are symmetric, concentrated near zero, and increasingly wide in the tails; this is the pat-tern FP4 must approximate. The d=64 compar-ison in Fig. 2 shows Lloyd–Max placing levels more densely in the high-probability body than a uniform INT4 grid while preserving tail cover-age. FP4 E2M1 has a fixed, hardware-defined spacing instead; its appeal is that the matrix core understands that spacing directly. Plain per-32-group FP4 is consistently worse than Lloyd– Max in MSE (D’Alberto, 2026), but the constant-optimized per-block scale below recovers most of  
+
+> Figure 2: 4-bit codebook level placement for the rotated-unit-vector distribution at d=64 . Lloyd–Max centroids provide the algorithmic reference; FP4 E2M1 is the hardware-native approximation; symmetric INT4 is in-cluded as a uniform baseline.
+> Figure 3: Codebook distortion on the rotated-unit-vector distribution. FP4 has higher MSE than analytical Lloyd– Max, but constOpt per-block scaling closes much of the gap while preserving a hardware-native FP4 representa-tion.
+
+that gap while keeping the FP4 code grid, as quan-tified in Fig. 3 and ablated in Section B.2. Each group of 32 channels is mapped onto the FP4 grid by a single scale s = c · m, where m =max i |xi| is the group’s absolute maximum and c
+
+is one global constant shared across every group, head, and model. We also drop the per-token ℓ2
+
+normalization (K-norm) used by the codebook path: because each block’s scale is derived from its own absmax, the blocks are self-scaling and a separate per-token norm is redundant. A per-token factor cannot be folded into the attention score in any case — it does not pass through the softmax — so keeping it would add a stored scalar and a runtime multiply with no quality gain. The per-group absmax m already absorbs all per-token, per-head, and per-model magnitude vari-ation: dividing each group by m maps it into 
+
+[−1, 1] regardless of the model or input. What remains is only the shape of the normalized co-ordinates, and after Hadamard rotation that shape is approximately Beta(( d − 1) /2, (d − 1) /2) , de-pending only on the head dimension d. This model-independence is why a single constant can work: the one remaining degree of freedom is where this fixed shape sits against the fixed E2M1 grid, i.e. the ratio c = s/m . In effect, the per-group absmax together with the constant c takes over the role of TurboQuant’s per-token K-norm: where the code-book path rescales each token by a stored ℓ2 norm, UltraQuant rescales each 32-channel block by its own absmax and the shared c, so the same normal-ization is achieved with no per-token state and no extra runtime multiply. We choose c to minimize the reconstruction error of the E2M1 grid on that distribution. With q(·) the nearest-codepoint rounding onto 
+
+F = {0, ±0.5, ±1, ±1.5, ±2, ±3, ±4, ±6}, the optimum is 
+
+c∗ = arg min  
+
+> c
+
+E
+
+h z − c m q (z/ (c m )) 2i
+
+. (2) This one-dimensional minimization is solved once, offline. We evaluate the expectation on captured rotated key activations (a single forward pass over a small calibration set), since real activations deviate slightly from the ideal Beta. The minimizer on the captured keys is c = 0 .156 , the value we deploy. Note that the distribution post rotation is similar enough that this single fit transfers across models at a given head. To ablate, we consider alternative constants in Section B.2; Figure 3 shows the corresponding codebook-level MSE gap. 
+
+6 Accuracy Results 
+
+All results use boundary-layer protection: the first and last two attention layers retain BF16 KV caches (n=2 ). Table 2 reports the production accuracy matrix across three models and four benchmarks. UltraQuant is stable on MATH500 and competitive on GPQA and LCB-128K, but shows a material re-gression on AIME25 ( −13 .3 pp for Qwen3.5-A3B, 
+
+−10 .0 pp for MiniMax-M2.5). We present this as a real limitation rather than hiding it behind an average: the current accuracy story is benchmark-dependent rather than uniformly near-lossless. 
+
+7 Performance Results 
+
+We measure UltraQuant’s decode throughput and per-token latency against four baselines: vLLM OSS TurboQuant (Kurti´ c et al., 2026), BF16 AITER (AMD ROCm, 2025) FlashAttention, hard-ware FP8 KV, and Ultra-TQ, on MiniMax-M2.5,   
+
+> Figure 4: UltraQuant throughput (relative to BF16) vs. BF16, FP8 KV, and Ultra-TQ on MiniMax-M2.5 (TP =2,2×MI355X).
+> Figure 5: Median time per output token (relative to BF16) for the MiniMax-M2.5 32K/1K, C=64 , TP = 2
+> serving configuration.
+
+TP = 2 , 2×MI355X, 32K/1K at concurrency 64 .All results are reported relative to the BF16 AITER FlashAttention baseline ( = 1 .00 ×). Folding de-quantization into the MFMA gives UltraQuant nearly the same instruction mix as the FP8 ker-nel, so it tracks the FP8 throughput ceiling while halving the KV-cache footprint. Figure 4 reports throughput across the kernels: at C=64 UltraQuant reaches 1.38 × the BF16 output throughput, match-ing hardware FP8 KV ( 1.37 ×) to within ∼1% ,while serving twice the KV footprint per unit of HBM. The FP4 path largely removes software dequan-tization from the critical path while retaining the memory-capacity benefit of a 4-bit KV cache. Ul-traQuant delivers 1.38 × the BF16 baseline through-put, on par with the hardware FP8 KV-cache path (1.37 ×) while using half the KV bytes per element. On per-token latency, BF16 has no dequant, so all 4-bit kernels sit above it; UltraQuant’s median TPOT is 1.40 × BF16, within ∼2% of the hard-ware FP8 KV-cache path ( 1.37 ×) and well ahead of Ultra-TQ ( 1.58 ×) and vLLM OSS TurboQuant (5.56 ×) (Fig. 5). The advantage grows with context length. Fig-Model Benchmark BF16 TQ 4/4 Ultra-TQ UltraQuant UltraQuant − BF16                                                             
+
+> Qwen3.5-A3B GPQA-Diamond 79 .80 78 .28 –79 .80 +0 .00
+> MiniMax-M2.5 GPQA-Diamond 84 .34 83 .33 83 .84 82 .32 −2.02
+> Qwen2.5-72B GPQA-Diamond 49 .49 52 .53 52 .53 51 .01 +1 .52
+> Qwen3.5-A3B LCB-128K 76 .54 79 .01 78 .38 74 .07 −2.47
+> MiniMax-M2.5 LCB-128K 75 .82 74 .73 76 .00 71 .43 −4.39
+> Qwen3.5-A3B AIME25 90 .00 83 .33 83 .33 76 .67 −13 .33
+> MiniMax-M2.5 AIME25 86 .67 80 .00 83 .33 76 .67 −10 .00
+> Qwen2.5-72B AIME25 20 .00 16 .67 –16 .67 −3.33
+> Qwen3.5-A3B MATH500 86 .00 86 .60 87 .00 86 .80 +0 .80
+> MiniMax-M2.5 MATH500 78 .40 80 .40 80 .40 78 .40 +0 .00
+
+Table 2: Production accuracy matrix. Accuracy is reported as percent correct over valid items; Qwen2.5-72B cells for LCB-128K are absent due to model context limitations. 
+
+Figure 6: Inter-token latency (relative to BF16; lower is better) versus input context length for FP8, UltraQuant, and Ultra-TQ on MiniMax-M2.5 (TP = 2 , 2×MI355X). 
+
+ure 6 sweeps inter-token latency against input context from 8K to 64K: UltraQuant improves monotonically relative to BF16, reaching ∼0.5× at 64K, while FP8 stays near 1.3–1.5× and Ultra-TQ only catches up at the longest contexts. The half-precision KV footprint is what lets UltraQuant sus-tain longer contexts before HBM pressure forces re-prefill. 
+
+8 Conclusions 
+
+Context-heavy agents make KV-cache capacity a deployment constraint: long prefixes must remain reusable across many turns, and serving systems must support enough concurrent sessions to keep GPUs utilized. We presented a 4-bit KV-cache study centered on this setting. On the quality side, TurboQuant-style rotation and codebook methods provide a strong 4-bit anchor, with calibration and block-scale choices determining how much accuracy is retained. On the systems side, Ultra-TQ shows that careful layout, LUT, and MFMA scheduling can close much of the gap between codebook quantization and production serving. Ul-traQuant goes further by approximating the rotated codebook path with FP4 micro-tensors and UE8M0 scales so CDNA4 matrix cores perform the dequan-tization directly. The broader lesson is that low-bit KV caching should be evaluated as an end-to-end serving mech-anism, not only as an offline compression method. For agent workloads, the relevant outcome is the joint effect on task success, cache residency, throughput, and interactivity. Our results indi-cate that 4-bit KV caching can retain the context-capacity benefits of aggressive compression while approaching the deployability of hardware-native FP8 KV caching. 
+
+9 Discussion 
+
+Several directions remain open. The algorithmic path needs a fuller comparison of fixed, calibrated, and learned rotations under the same agent bench-mark. The systems path needs broader coverage across model families, context lengths, and concur-rency regimes. Finally, the UltraQuant approx-imation raises an important question for future hardware-aware quantization: when a slightly less optimal codebook maps directly to matrix-core in-structions, the end-to-end serving optimum may favor hardware-native formats over analytically op-timal representations. 
+
+10 Limitations 
+
+We present the three following limitations: 1. Although we deploy a single constant c =0.156 for all models and heads, there may be a more efficient constant that can be calibrated layer-wise for better accuracy. We also do not consider the case that the constant is chosen depending on the distribuition of activations We ommit this out of simplicty and leave this for future work. 2. UltraQuant’s benefits in in speed versus FP8 are only observed when the context length is long enough to exceed the resident cache capacity of the FP8 baseline, meaning for shorter context lengths, the benefits of the al-gorithm are not realized. Note that this is not the case when compared to Ultra-TQ, where performance benefits are always realized. 3. Ultra-TQ style centroid calibration is only ap-plied to 10% of layers for a small benefit; on most layers, such centroid calibration does not seem to provide any benefit. 
+
+Acknowledgements 
+
+We would like to express our thanks to our col-leagues Jiangyong Ren, Jiaxin Wang, Zhao Lin, Wei Luo, Chao Li, Xinjun Niu, and the AMD Quark Team, for their insightful feedback and tech-nical assistance, which helped inform parts of this work. We also thank Paolo D’Alberto, Devleena Das, Rajeev Patwari, and Elliott Delaye for valu-able technical discussions. 
+
+References 
+
+Advanced Micro Devices, Inc. 2024. AMD Instinct CDNA4 Instruction Set Architecture .AMD ROCm. 2025. AITER: AI tensor engine for ROCm. AMD ROCm Blogs. Inesh Chakrabarti, David Limpus, Aditi Ghai Rana, Bowen Bao, Spandan Tiwari, Thiago Crepaldi, and Ashish Sirasao. 2026. Productionizing TurboQuant on AMD GPUs for KV-cache-bound LLM inference. AMD ROCm Blogs. Paolo D’Alberto. 2026. Statistical inference and qual-ity measures of KV cache quantisations inspired by TurboQuant. Preprint , arXiv:2605.08114. Tri Dao and Albert Gu. 2024. Transformers are SSMs: Generalized models and efficient algorithms through structured state space duality. Preprint ,arXiv:2405.21060. DeepSeek-AI. 2024a. DeepSeek-V2: A strong, eco-nomical, and efficient mixture-of-experts language model. Preprint , arXiv:2405.04434. DeepSeek-AI. 2024b. DeepSeek-V3 technical report. 
+
+Preprint , arXiv:2412.19437. Yiran Ding, Li Lyna Zhang, Chengruidong Zhang, Yuanyuan Xu, Ning Shang, Jiahang Xu, Fan Yang, and Mao Yang. 2024. LongRoPE: Extending LLM context window beyond 2 million tokens. Preprint ,arXiv:2402.13753. Gemini Team. 2024. Gemini 1.5: Unlocking multi-modal understanding across millions of tokens of context. Preprint , arXiv:2403.05530. Albert Gu and Tri Dao. 2023. Mamba: Linear-time sequence modeling with selective state spaces. 
+
+Preprint , arXiv:2312.00752. Han Guo, William Brandon, Radostin Cholakov, Jonathan Ragan-Kelley, Eric P. Xing, and Yoon Kim. 2024. Fast matrix multiplications for lookup table-quantized LLMs. In Findings of the Association for Computational Linguistics: EMNLP 2024 , pages 12419–12433. Jacques Hadamard. 1893. Résolution d’une question rel-ative aux déterminants. Bulletin des Sciences Mathé-matiques , 17:240–246. Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W. Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. 2024. KVQuant: To-wards 10 million context length LLM inference with KV cache quantization. In Advances in Neural Infor-mation Processing Systems (NeurIPS) .Eldar Kurti´ c, Michael Goin, and Alexandre Marques. 2026. A first comprehensive study of TurboQuant: Accuracy and performance. vLLM Blog. Red Hat AI. Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gon-zalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serv-ing with PagedAttention. In Proceedings of the 29th Symposium on Operating Systems Principles (SOSP) .Fan Li, Siyuan Feng, Chen Huang, Dake Wang, Hong-bin Yang, Peng Sun, and Emad Barsoum. 2026. Fly-DSL: Expert GPU kernel development with the ease of MLIR Python native DSL on AMD GPUs. AMD ROCm Blogs. Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. 2024. KIVI: A tuning-free asymmetric 2bit quantization for KV cache. In International Confer-ence on Machine Learning (ICML) .Stuart P. Lloyd. 1982. Least squares quantization in PCM. IEEE Transactions on Information Theory ,28(2):129–137. Joel Max. 1960. Quantizing for minimum distortion. 
+
+IRE Transactions on Information Theory , 6(1):7–12. Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language models can teach themselves to use tools. 
+
+Preprint , arXiv:2302.04761. TheTom. 2026. TurboQuant+: community llama.cpp port and exploration of TurboQuant. GitHub reposi-tory. Joseph L. Walsh. 1923. A closed set of normal orthog-onal functions. American Journal of Mathematics ,45(1):5–24. John Yang, Carlos E. Jimenez, Alexander Wettig, Kil-ian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press. 2024a. SWE-agent: Agent-computer interfaces enable automated software engineering. 
+
+Preprint , arXiv:2405.15793. Songlin Yang, Jan Kautz, and Ali Hatamizadeh. 2024b. Gated delta networks: Improving Mamba2 with delta rule. Preprint , arXiv:2412.06464. Songlin Yang, Bailin Wang, Yu Zhang, Yikang Shen, and Yoon Kim. 2024c. Parallelizing linear transform-ers with the delta rule over sequence length. Preprint ,arXiv:2406.06484. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2022. ReAct: Synergizing reasoning and acting in language models. Preprint , arXiv:2210.03629. Amir Zandieh, Majid Daliri, Mojtaba Hadian, and Va-hab Mirrokni. 2026. TurboQuant: Online vector quantization with near-optimal distortion rate. In In-ternational Conference on Learning Representations (ICLR) .Amir Zandieh, Majid Daliri, and Insu Han. 2024. QJL: 1-bit quantized JL transform for KV cache quantiza-tion with zero overhead. Preprint , arXiv:2406.03482. Yichi Zhang, Bofei Gao, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Baobao Chang, Junjie Hu, Wen Xiao, and 1 others. 2024. PyramidKV: Dynamic KV cache compression based on pyramidal informa-tion funneling. arXiv preprint arXiv:2406.02069 .Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E. Gonzalez, Clark Barrett, and Ying Sheng. 2023. SGLang: Efficient execution of structured language model programs. 
+
+Preprint , arXiv:2312.07104. Shuyan Zhou, Frank F. Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng, Tianyue Ou, Yonatan Bisk, Daniel Fried, Uri Alon, and Gra-ham Neubig. 2023. WebArena: A realistic web envi-ronment for building autonomous agents. Preprint ,arXiv:2307.13854. 
+
+Algorithm 1 FP4-ConstOpt KV encoding (Ultra-Quant) 
+
+Require: K, V (BF16); rotation R; group size 
+
+g=32 ; E2M1 levels F ; global constant c (Sec-tion 5.3). 
+
+Write:  
+
+> 1:
+
+K ← R · K ▷ rotate keys; V unrotated  
+
+> 2:
+
+split K, V into 32-channel groups  
+
+> 3:
+
+per group: m ← max i |xi|; E ←
+
+round(log 2(c · m)) ▷ UE8M0 exponent; no per-token norm, no search  
+
+> 4:
+
+per coord: code ← q(xi/2E ) ▷ q : round to nearest level in F 
+
+> 5:
+
+store 2 FP4 codes/byte + 1 UE8M0 byte ( E)per group 
+
+Decode:  
+
+> 6:
+
+Q ← R · Q; Q ← cast _fp8 _e4m3( Q) 
+
+> 7:
+
+load codes + UE8M0 byte; ˆx ← code ·
+
+2(byte −127)  
+
+> 8:
+
+QK via scaled FP8 ×FP4 MFMA; PV via FP4/scale path 
+
+Output: hardware-native FP4+UE8M0 KV cache; dequant folds into the MFMA scale operand. 
+
+A Kernel Implementation in vLLM 
+
+We implement two serving endpoints in vLLM: 
+
+Ultra-TQ , an optimized TurboQuant kernel that preserves the codebook representation, and Ultra-Quant , an FP4 approximation path in which the KV cache is stored as raw FP4 micro-tensors with UE8M0 group scales and the dequantization is per-formed by the matrix core itself. The implementation targets the CDNA4 scaled-MFMA family, especially 
+
+v_mfma_scale_f32_16x16x128_f8f6f4 . The QK product reads FP4 keys, FP8 queries, and UE8M0 scales together in one instruction. The V path similarly avoids a software LUT by converting FP4 codes and UE8M0 scales through hardware-supported low-precision operations. Relative to a TurboQuant codebook kernel, the key systems change is removing dequantization from the critical path: the query operand is pre-rounded to FP8 outside the K-tile inner loop, and the grouped scale layout used by the cache is arranged to match the MFMA scale operand layout. Algorithm 1 gives the UltraQuant cache-encoding path; the codebook-based Ultra-TQ encoding it replaces is in Section C. Figure 7: Ultra-TQ optimization ladder for the decode-attention kernel. 
+
+A.1 Ultra-TQ Kernel Ladder 
+
+TurboQuant compresses the KV cache to 4 bits per element, storing keys and values in a code-book format. The cache is dequantized on the fly, making decode memory-bandwidth-bound. Our kernels are inspired by FLUTE (Guo et al., 2024), which restructures quantized matrices offline to reduce bit-manipulation overhead during unpack-ing and uses vectorized LUT access to reduce shared-memory pressure. We adapt these ideas to the vLLM decode-attention path by adding GQA-aware tiling, a structure-of-arrays KV cache layout, and AMD-specific MFMA dispatch. The Ultra-TQ optimization ladder has three tiers. First, an improved Triton kernel fixes the GQA, LUT, and layout pathologies of the open-source TurboQuant baseline. Second, a native-ISA imple-mentation issues matrix-core instructions through AMD GCN intrinsics, giving direct control over operand layout and instruction selection. Third, a FlyDSL (Li et al., 2026) implementation JIT-compiles to AMD GCN ISA without per-device source files and exposes MFMA operand layouts so we can select wider MFMA variants. 
+
+A.2 UltraQuant Kernel Ladder 
+
+The UltraQuant kernel takes the FP4 plus UE8M0 cache layout described in Section 5 and adds three CDNA4-native operations to the same DSL implementation. First, the QK product is issued through the scaled F8F6F4 MFMA 
+
+> Figure 8: UltraQuant optimization ladder for the FP4 decode-attention kernel.
+
+(v_mfma_scale_f32_16x16x128_f8f6f4 ), which reads FP4 keys, FP8 queries, and their UE8M0 scales together in one instruction; BF16 keys never have to be materialized. Second, the V-dequant LUT is replaced by a hardware conversion path that turns FP4 codes and UE8M0 scales directly into BF16. This removes software dequantization from the critical path. Third, the FP8 query operand is lifted out of the K-tile inner loop so every tile reuses the same pre-quantized query, reducing re-dundant packing and easing register pressure. 
+
+B Ablations 
+
+B.1 Per-Block Scale 
+
+This ablation isolates the contribution of the per-block-absmax scale from that of the calibrated codebook, on GPT-OSS-20B GPQA (medium ef-fort, single seed; 1σ ≈ 1.7 pp). Two effects stand out. First, switching the adaptation statistic from a single per-token ℓ2 norm to a per-block absmax (groups of 32) is the load-bearing change: it is what recovers accuracy, independent of the code-book. Second, with the per-block scale in place the codebook itself barely matters — replacing the calibrated Lloyd magnitudes with a uniform grid stays within single-seed noise. Together, these jus-tify the deployed design: keep the per-block scale, and use the fixed FP4 grid in place of a calibrated, model-specific codebook. Configuration Adaptation Codebook GPQA               
+
+> TQ-t4nc (production) per-token ℓ2Lloyd (calib.) 0.6503
+> K+V Lloyd, per-token per-token ℓ2Lloyd (calib.) 0.6237
+> LMPb full per-block absmax Lloyd (calib.) 0.6559
+> Variant E per-block absmax uniform (RTN) 0.6528
+
+Table 3: Per-block scale ablation (GPT-OSS-20B GPQA, medium, single seed). Holding rotation on, the per-token → per-block adaptation moves 0.6237 →
+
+0.6559 on the both-Lloyd configs; with per-block scal-ing fixed, Lloyd versus uniform codebook ( 0.6559 vs. 
+
+0.6528 ) is within noise. Codebook and adaptation are co-fit, so the swap is not a perfectly clean A/B, but the direction is consistent across variants.                      
+
+> Scheme Accuracy vs. FP8 baseline
+> FP8 (8-bit baseline) 63 .0% —fp4 c= 0 .156 (default) 67 .4% +4 .4pp fp4 c= 0 .195 63 .0% 0.0pp fp4 c= 1 .0(no shrinkage) 58 .7% −4.3pp
+
+Table 4: Global-constant ablation. The default c =0.156 is MSE-optimal and the only setting that improves on FP8; larger c erases the gain and c = 1 .0 (raw abs-max) regresses below the 8-bit baseline. 
+
+B.2 Global Constant 
+
+Figure 3 quantifies the codebook approximation: plain per-32-group FP4 sits above the analyti-cal Lloyd–Max floor, but the constOpt per-block scale closes most of that MSE gap while keep-ing the hardware-native FP4 grid, across d ∈{64 , 128 , 256 }.We also sweep the global scaling constant c
+
+against the FP8 (8-bit) baseline, on the same evalu-ation. The default c = 0 .156 is the MSE-optimal value derived in Section 5.3, and the data confirm it: it beats FP8 by +4 .4 pp. Raising c to 0.195 
+
+(the power-of-two-optimal value, see Section 10) gives up the gain entirely and lands exactly at the FP8 baseline, and c = 1 .0 (raw absmax with no MSE shrinkage) falls 4.3 pp below FP8. Accuracy is monotonic in the distance from the MSE-optimal constant. 
+
+B.3 Cache-Pressure (GMU) Regime 
+
+We report the per-round latency at two GPU-memory-utilization (GMU) operating points to show how the relative ranking shifts with cache pressure. Figure 9 stacks both regimes: the top row is GMU =0 .60 (the main-text operating point) and the bottom row is the lower-pressure GMU =0 .65 .At GMU =0 .60 the resident-cache budget is tight, so FP8 degrades in the later rounds while Ultra-Quant stays low; at GMU =0 .65 the budget is large   
+
+> (a) TTFT, GMU =0 .60 .(b) TPOT, GMU =0 .60 .
+> (c) TTFT, GMU =0 .65 .(d) TPOT, GMU =0 .65 .
+
+Figure 9: Per-round serving latency (relative to BF16; lower is better) at two cache-pressure regimes. Top row: GMU =0 .60 (main-text operating point), where FP8 degrades in later rounds. Bottom row: GMU =0 .65 ,where the larger resident-cache budget keeps all three schemes close. 
+
+enough that FP8 no longer degrades and all three schemes track closely. The main-text results use the more cache-pressured GMU =0 .60 regime, where the UltraQuant residency advantage is largest. 
+
+C Calibrated LUT int4 KV Encoding (Ultra-TQ) 
+
+For reference, Algorithm 2 gives the codebook-based encoding path that UltraQuant replaces. It is the TurboQuant-style scheme: a calibrated 4-bit codebook per side with a per-token norm scalar on the key side, dequantized through a lookup table on read. UltraQuant (Algorithm 1) keeps the rotation but drops the codebook and the per-token norm in favor of a fixed FP4 grid with a per-block UE8M0 scale, so the dequantization folds into the matrix core. Algorithm 2 Calibrated LUT int4 KV encoding (Ultra-TQ) 
+
+Require: K, V (BF16); rotation R; group size g;codebook CK .
+
+Write:  
+
+> 1:
+
+K ← R · K ▷ rotate keys; V unrotated  
+
+> 2:
+
+split K, V into g-channel blocks  
+
+> 3:
+
+K: store block norm; encode each coord to nearest CK index  
+
+> 4:
+
+V: store block (scale, zero); encode each coord to 4-bit uniform 
+
+Decode:  
+
+> 5:
+
+Q ← R · Q 
+
+> 6:
+
+load K/V codes + metadata per tile  
+
+> 7:
+
+K: dequant via CK · norm ; V: dequant via scale · code + zero  
+
+> 8:
+
+compute QK and PV on dequantized K, V 
+
+Output: rotated-codebook K + uniform V cache; dequant paid on read.
