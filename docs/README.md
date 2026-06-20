@@ -6,77 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-19
-- 运行时间：2026-06-19 21:36:57 UTC
+- 最新运行日期：2026-06-20
+- 运行时间：2026-06-20 21:40:45 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今天的19篇论文聚焦多模态推理与高效模型设计，其中精读的《DLWM》和《Gen-VCoT》在多样化世界模型与生成式视觉链式推理上表现突出。最值得关注的两个方向：利用潜在世界模型提升多模态推理效率，以及基于扩散模型生成RGB中间表示增强视觉推理。建议后续多关注多模态大模型的轻量化与推理能力平衡。
-- 详情：[/202606/19/README](/202606/19/README)
+今天精读了两篇9分论文，聚焦视觉推理链与Transformer剪枝，速读涵盖边缘端LoRA显存优化、VLM视觉上下文演化等方向。  
+最值得关注的是《Gen-VCoT》的扩散RGB中间表示实现可视化思维链，以及《Complementary Attention Head Pruning》的互补注意力头剪枝方法。  
+建议优先精读这两篇高分论文，把握视觉推理新范式和Transformer高效化技巧，对实际模型压缩与多模态理解有直接启发。
+- 详情：[/202606/20/README](/202606/20/README)
 
 ### 精读区论文标签
-1. [DLWM: Diverse Latent World Models for Efficient Multimodal Reasoning](/202606/19/2606.15160v1-dlwm-diverse-latent-world-models-for-efficient-multimodal-reasoning)  
+1. [Gen-VCoT: Generative Visual Chain-of-Thought Reasoning via Diffusion-Based RGB Intermediate Representations](/202606/20/2606.16783v1-gen-vcot-generative-visual-chain-of-thought-reasoning-via-diffusion-based-rgb-intermediate-representations)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：多样化潜在世界模型用于高效多模态多步推理
-2. [Gen-VCoT: Generative Visual Chain-of-Thought Reasoning via Diffusion-Based RGB Intermediate Representations](/202606/19/2606.16783v1-gen-vcot-generative-visual-chain-of-thought-reasoning-via-diffusion-based-rgb-intermediate-representations)  
-   标签：评分：9.0/10、query:mm-cot
-   evidence：提出通过RGB中间表示进行视觉链式推理
-3. [See First, Answer Later: Visual Evidence Pre-Alignment via Sufficiency-Driven RL](/202606/19/2606.17678v1-see-first-answer-later-visual-evidence-pre-alignment-via-sufficiency-driven-rl)  
+   evidence：提出了Gen-VCoT，使用RGB中间表示进行视觉链式推理；直接匹配多模态链式推理要求
+2. [Complementary Attention Head Pruning for Efficient Transformers](/202606/20/2606.19150v1-complementary-attention-head-pruning-for-efficient-transformers)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：面向高效Transformer的注意力头剪枝
+3. [Language-Instructed Vision Embeddings for Controllable and Generalizable Perception](/202606/20/2606.19584v1-language-instructed-vision-embeddings-for-controllable-and-generalizable-perception)  
    标签：评分：9.0/10、query:multimodal
-   evidence：通过视觉证据预对齐缓解多模态幻觉
-4. [SAC: Disaggregated KV Cache System for Sparse Attention LLMs with CXL](/202606/19/2606.19746v1-sac-disaggregated-kv-cache-system-for-sparse-attention-llms-with-cxl)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：提出针对稀疏注意力LLM优化的分离式KV缓存系统
-5. [StreamKL: Fast and Memory-Efficient KL Divergence for Boosting Attention Distillation](/202606/19/2606.20005v1-streamkl-fast-and-memory-efficient-kl-divergence-for-boosting-attention-distillation)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：用于注意力KL散度的融合GPU原语，支持高效稀疏注意力训练
-6. [Spectral Query-Key Product Weight Steering for Training-Free VLM Hallucination Mitigation](/202606/19/2606.20419v1-spectral-query-key-product-weight-steering-for-training-free-vlm-hallucination-mitigation)  
+   evidence：语言指导的视觉嵌入减少多模态模型幻觉
+4. [Timage: A Generative Text-in-Image Paradigm for Fine-Tuning Vision-Language Models](/202606/20/2606.19944v1-timage-a-generative-text-in-image-paradigm-for-fine-tuning-vision-language-models)  
    标签：评分：9.0/10、query:multimodal
-   evidence：无训练方法减少VLM物体幻觉
-7. [UltraQuant: 4-bit KV Caching for Context-Heavy Agents](/202606/19/2606.20474v1-ultraquant-4-bit-kv-caching-for-context-heavy-agents)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：面向上下文密集型智能体的4比特KV缓存压缩
+   evidence：通过在输入层对齐文本与图像来提升多模态理解
+5. [DLWM: Diverse Latent World Models for Efficient Multimodal Reasoning](/202606/20/2606.15160v1-dlwm-diverse-latent-world-models-for-efficient-multimodal-reasoning)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：多样潜在世界模型用于高效多模态推理
+6. [Seeing Before Reasoning: Decoupling Perception and Reasoning for Shortcut-Resilient Multimodal On-Policy Self-Distillation](/202606/20/2606.19120v1-seeing-before-reasoning-decoupling-perception-and-reasoning-for-shortcut-resilient-multimodal-on-policy-self-distillation)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：解耦感知与推理，实现多模态自我蒸馏中的逐步推理
+7. [PerceptionDLM: Parallel Region Perception with Multimodal Diffusion Language Models](/202606/20/2606.19534v1-perceptiondlm-parallel-region-perception-with-multimodal-diffusion-language-models)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多模态扩散语言模型实现并行区域感知
 
 ### 速读区论文标签
-1. [Stepwise Token Selection for Efficient Multimodal Large Language Models](/202606/19/2606.16067v1-stepwise-token-selection-for-efficient-multimodal-large-language-models)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：直接针对多模态大模型的效率问题，通过视觉token选择减少计算
-2. [Gaussian Mixture Attention: Linear-Time Sequence Mixing via Probabilistic Latent Routing](/202606/19/2606.18283v1-gaussian-mixture-attention-linear-time-sequence-mixing-via-probabilistic-latent-routing)  
+1. [Techniques for Peak Memory Reduction for LoRA Fine-tuning of LLMs on Edge Devices](/202606/20/2606.19528v1-techniques-for-peak-memory-reduction-for-lora-fine-tuning-of-llms-on-edge-devices)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：高斯混合注意力以线性时间概率路由替代点积注意力
-3. [SAMA: Semantic Anchor-aligned Augmentation for Unified Low-Resource Multimodal Information Extraction](/202606/19/2606.18780v1-sama-semantic-anchor-aligned-augmentation-for-unified-low-resource-multimodal-information-extraction)  
+   evidence：提出了基于令牌子集的softmax近似（稀疏）和激活缓存；直接减少大语言模型微调的内存占用
+2. [The Hidden Evolution of Disguised Visual Context inside the VLM](/202606/20/2606.20077v1-the-hidden-evolution-of-disguised-visual-context-inside-the-vlm)  
    标签：评分：8.0/10、query:multimodal
-   evidence：多模态信息抽取与语义锚定增强
-4. [Benchmarking Large Vision-Language Models on Fine-Grained Image Tasks: From Evaluation to Diagnosis](/202606/19/2606.19053v1-benchmarking-large-vision-language-models-on-fine-grained-image-tasks-from-evaluation-to-diagnosis)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：大视觉语言模型细粒度图像任务基准
-5. [PRISMR: Overcoming Parse Collapse in Multimodal Listwise Ranking via Parameterized Representation Internalization](/202606/19/2606.12942v1-prismr-overcoming-parse-collapse-in-multimodal-listwise-ranking-via-parameterized-representation-internalization)  
+   evidence：VLM集成架构对视觉上下文影响的比较
+3. [One Layer's Trash is Another Layer's Treasure: Adaptive Layer-wise Visual Token Selection in LVLMs](/202606/20/2606.14277v1-one-layers-trash-is-another-layers-treasure-adaptive-layer-wise-visual-token-selection-in-lvlms)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：自适应逐层视觉令牌剪枝以提升LVLM效率
+4. [Stepwise Token Selection for Efficient Multimodal Large Language Models](/202606/20/2606.16067v1-stepwise-token-selection-for-efficient-multimodal-large-language-models)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：逐步视觉令牌选择提升多模态大语言模型效率
+5. [Mixtures of Subspaces for Bandwidth Efficient Context Parallel Training](/202606/20/2606.16384v1-mixtures-of-subspaces-for-bandwidth-efficient-context-parallel-training)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：针对上下文并行的压缩方法，利用低秩结构
+6. [MMDiff: Extending Diffusion Transformers for Multi-Modal Generation](/202606/20/2606.16673v1-mmdiff-extending-diffusion-transformers-for-multi-modal-generation)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多模态列表排序与长上下文
-6. [Deep Residual Injection for Full-Spectrum Forensic Signal Perception in Multimodal Large Language Models](/202606/19/2606.15880v1-deep-residual-injection-for-full-spectrum-forensic-signal-perception-in-multimodal-large-language-models)  
+   evidence：扩展扩散变换器用于多模态生成，与多模态架构相关
+7. [Context-Aware RL for Agentic and Multimodal LLMs](/202606/20/2606.17053v1-context-aware-rl-for-agentic-and-multimodal-llms)  
    标签：评分：7.0/10、query:multimodal
-   evidence：残差注入增强多模态大模型的取证信号感知
-7. [LOCUS: Local Visual Cue Search for Enhancing Fine-Grained Perception in Multimodal Large Language Models](/202606/19/2606.16586v1-locus-local-visual-cue-search-for-enhancing-fine-grained-perception-in-multimodal-large-language-models)  
+   evidence：提出了上下文感知强化学习以改进多模态推理和长程锚定能力
+8. [VL-MemKnG: Hybrid Memory with a Spatio-Temporal Knowledge Graph for Question Answering over Long Egocentric Navigation Trajectories](/202606/20/2606.17183v1-vl-memkng-hybrid-memory-with-a-spatio-temporal-knowledge-graph-for-question-answering-over-long-egocentric-navigation-trajectories)  
    标签：评分：7.0/10、query:multimodal
-   evidence：增强多模态大模型的细粒度感知能力
-8. [MMDiff: Extending Diffusion Transformers for Multi-Modal Generation](/202606/19/2606.16673v1-mmdiff-extending-diffusion-transformers-for-multi-modal-generation)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：将扩散Transformer扩展到多模态生成，与多模态模型相关
-9. [A theoretical model for task routing in mixture-of-expert transformers](/202606/19/2606.14398v2-a-theoretical-model-for-task-routing-in-mixture-of-expert-transformers)  
+   evidence：混合记忆与时空知识图用于长视频问答
+9. [RepFusion: Leveraging Multimodal Priors for Denoising in Representation Space](/202606/20/2606.14700v1-repfusion-leveraging-multimodal-priors-for-denoising-in-representation-space)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：利用MLLM作为噪声表征编码器用于文本到图像生成中的去噪
+10. [RATS! Patches Talk Through Registers: Emergent Parts in Register Attention Transformers](/202606/20/2606.14701v1-rats-patches-talk-through-registers-emergent-parts-in-register-attention-transformers)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：MoE Transformer中任务路由的理论分析，与稀疏激活相关
-10. [MAF: Multimodal Adaptive Few-shot Prompting for Sentiment Analysis with MLLMs](/202606/19/2606.15694v1-maf-multimodal-adaptive-few-shot-prompting-for-sentiment-analysis-with-mllms)  
+   evidence：提出了带压缩-通信-广播注意力模式的注册注意力变换器；与高效注意力相关
+11. [Cascaded Sparse Autoencoders Learn Multi-Level Visual Concepts in Multimodal LLMs](/202606/20/2606.16193v1-cascaded-sparse-autoencoders-learn-multi-level-visual-concepts-in-multimodal-llms)  
    标签：评分：6.0/10、query:multimodal
-   evidence：提出自适应少样本提示用于多模态情感分析
-11. [VL2Spike: Spike-driven Distillation from VLMs for Low-Power Visual Perception in Embodied AI](/202606/19/2606.15898v1-vl2spike-spike-driven-distillation-from-vlms-for-low-power-visual-perception-in-embodied-ai)  
+   evidence：级联稀疏自编码器学习多模态大语言模型中的层次视觉概念
+12. [Attention Alignment Between Humans and Vision-Language Models](/202606/20/2606.17410v1-attention-alignment-between-humans-and-vision-language-models)  
    标签：评分：6.0/10、query:multimodal
-   evidence：视觉语言模型蒸馏到脉冲神经网络用于具身AI视觉感知
-12. [Context-Aware RL for Agentic and Multimodal LLMs](/202606/19/2606.17053v1-context-aware-rl-for-agentic-and-multimodal-llms)  
-   标签：评分：6.0/10、query:mm-cot
-   evidence：上下文感知强化学习提升长程推理和多模态性能
+   evidence：视觉语言模型中的注意力对齐
 
 
 <div class="dpr-home-promo-card">
