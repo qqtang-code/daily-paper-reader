@@ -1,0 +1,867 @@
+Title: MLLMs Get It Right, Then Get It Wrong: Tracing and Correcting Late-Layer Textual Bias
+
+URL Source: https://arxiv.org/pdf/2606.17953v1
+
+Published Time: Wed, 17 Jun 2026 01:05:21 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# MLLMs Get It Right, Then Get It Wrong: Tracing and Correcting Late-Layer Textual Bias 
+
+## Xingming Li 1 , Ao Cheng 1 , Qiyao Sun 1 , Xixiang He 1 , Xuanyu Ji 1 , Runke Huang 2 and Qingyong Hu 3∗
+
+1National University of Defense Technology, changsha, China 
+
+2Chinese University of Hong Kong, Shenzhen, China 
+
+3Intelligent Game and Decision Lab, Beijing, China 
+
+## {lixingming, chengao18, sunqiyao18, hexixiang, jixuanyu18 }@nudt.edu.cn, runkehuang@cuhk.edu.cn, huqingyong15@outlook.com 
+
+## Abstract 
+
+When vision contradicts text, multimodal large language models (MLLMs) consistently favor text—even when images provide clear evidence otherwise. This bias poses risks for applications requiring visual grounding, yet its cause remains unclear. In this paper, we uncover a surprising find-ing: models often get it right initially , forming cor-rect vision-based predictions in their intermediate layers, before changing their minds and favoring text in the final output. We call this “ late-layer tex-tual override ”. The visual information is encoded, it simply does not survive to the output. More in-triguingly, we find that how predictions change re-veals whether they’re correct: 85% of failures shift toward text, while 89% of successes shift toward vision. This directional signature enables a simple but powerful intervention: when we detect a confi-dent visual prediction being suppressed, we restore it. We propose CALRD ( Conflict-Aware Layer 
+
+Reference Decoding), a training-free method that recovers overridden predictions at inference time. Experiments across five MLLMs of varying archi-tectures demonstrate up to 9.4% absolute improve-ments on conflict benchmarks while largely pre-serving standard performance, without training or external knowledge. It recovers what the model al-ready knew but failed to preserve. 
+
+## 1 Introduction 
+
+Multimodal AI systems are moving into real-world use. They help diagnose diseases, moderate content, and assist drivers. This growing deployment raises a pointed question: can we trust what they see? Imagine a radiologist reviewing a chest X-ray with an AI assistant. The system receives both the im-age and the radiologist’s preliminary notes. If those notes contain an error, will the AI catch it by looking at the image? Or will it simply echo the mistake? Unfortunately, the evidence points to the second outcome. Show a model an image of a red car alongside text claiming 
+
+> ∗
+
+Corresponding author. (a) Conflict Sample (Input)  (b) Layer-wise Prediction Trajectory                    
+
+> Input image Visual: ‘red’ Text: ‘blue ’
+> Context: "The image shows ablue car …"
+> Model Output: “blue ”
+> Question:
+> "What color is the car?"
+> 𝐿𝐿 1𝐿𝐿 2𝐿𝐿 𝑡𝑡rans 𝐿𝐿 N
+> -3
+> -2
+> -1
+> 0
+> 1
+> 2
+> 3
+> Transition Point
+> Modal Dominance Ratio (MDR)
+> MDR
+> (c) Transition Direction Determines Correctness
+> ΔMDR > 0 (toward visual) ΔMDR < 0 (toward text)
+> Non-Conflict Conflict-Correct Conflict-Incorrect
+> 15% 85% 89% 11% 91% 9%
+> Beneficial Resisted Harmful
+> ··· ···
+
+Figure 1: How predictions shift under visual-textual conflict. (a) The model sees a red car but outputs the text-suggested answer. (b) Modal Dominance Ratio (MDR) across layers: early layers favors vision, but late layers override toward text. (c) Shift direction pre-dicts correctness—text-ward shifts correlate with failures. 
+
+“the car is blue,” and most MLLMs will confidently answer “blue” [Liu et al. , 2025b; Liu et al. , 2025a; Wu et al. , 2024]. They trust the text over their own visual perception. This pattern appears across different model families [Liu et al. ,2023b; Dai et al. , 2023; Bai et al. , 2025b; Bai et al. , 2025a; Chen et al. , 2024] and benchmarks [Zhang et al. , 2025b; Jia et al. , 2025; Qian et al. , 2024]. In safety-critical appli-cations [Bannur et al. , 2024; Hou et al. , 2025], such blind trust in text could cause serious harm. 
+
+Why does this happen? Prior work describes the behavior 
+
+but not the mechanism [Liu et al. , 2025b; Zhang et al. ,2025b]. The failure could arise because visual information is poorly encoded, lost during cross-modal fusion, or correctly processed but later overwritten. Understanding the failure mode matters: different causes require different solutions. To find out, we trace how a model’s predictions evolve across its layers. Following [Elbayad et al. , 2020; Schuster 
+
+et al. , 2022], we project hidden states at each layer to output probabilities. This lets us observe what the model “prefers” at each depth, and what we find is surprising. Surprisingly, in many conflict failures, the model assigns higher probability to the correct visual answer in intermediate layers . It then reverses course and outputs the text answer (Figure 1(a-b)). 
+
+> arXiv:2606.17953v1 [cs.CV] 16 Jun 2026
+
+We term this phenomenon late-layer textual override . To measure it, we introduce Modal Dominance Ratio (MDR), which quantifies vision-versus-text preference at each layer. In failure cases, MDR starts positive (visual) and flips nega-tive (textual) in later layers. The visual information was there; it simply didn’t survive the full forward pass. Not every late-layer shift is harmful. Such prediction shift occurs in successful cases too [Wang et al. , 2025b], not just failures. What distinguishes the two outcomes is the direc-tion of the shift. We quantify this using the change in MDR across the transition point. As shown in Figure 1(c), in fail-ures, 85% of transitions move toward text. In successes, 89% move toward vision. Late layers sometimes help; they some-times hurt. The key is knowing which. This directional asymmetry points to a practical solution. If a model holds a confident visual prediction at the transi-tion layer but abandons it by the final layer, we suspect harm-ful override. We capture this with two signals derived from our analysis. Anchor confidence measures how certain the transition-layer prediction is. Prediction retention captures whether it survives to the output. High anchor confidence paired with low retention is the signature of harmful override. Recovering what was known. These observations moti-vate Conflict-Aware Layer Reference Decoding (CALRD), a training-free method that restores intermediate predictions when override is detected. Our core insight is that predictions at the transition layer still carry the vision-grounded answer before it gets overwritten. By blending transition-layer log-its back into the final distribution, we can recover it. CALRD first locates the layer where the output distribution shifts most sharply. It then uses anchor confidence and prediction re-tention to set correction strength: when both signals point to harmful override, CALRD blends in the transition-layer log-its; otherwise, it leaves the output unchanged. CALRD is straightforward. The model already has the right answer in its intermediate layers; we are helping it re-member. No external knowledge or modules are involved. This points to a shift in perspective: improving MLLM reli-ability may be less about teaching models to see better and more about helping them retain what they have already seen. We evaluate CALRD on five MLLMs, from Instruct-BLIP [Dai et al. , 2023] to Qwen3-VL [Bai et al. , 2025a]. The results suggest that late-layer override is not tied to a specific architecture. Our contributions are as follows: • We introduce Modal Dominance Ratio to trace layer-wise modal preference and uncover late-layer textual override as a characteristic failure pattern. We show that transition direction, not mere occurrence, predicts correctness. • We propose CALRD, a training-free method that detects harmful overrides through complementary signals and ap-plies adaptive correction, preserving beneficial processing. • Experiments show CALRD achieves up to 9.4% gains on conflict tasks while largely preserving standard per-formance. We also contribute Conflict-VQA, a diagnos-tic benchmark with explicit visual-textual annotations for mechanistic analysis. Structured  
+
+> data GPT-4
+> 𝑪𝑪 conflict
+> 𝑪𝑪 factual
+> Human Check
+> Conflict-VQA
+> Data Sample
+> 𝑪𝑪 conflict
+> Q: Is the apple red?
+> A: No, green.
+> 𝑪𝑪 factual
+> A: Yes, red.
+> VrR -VG
+> TDIUC
+> Filter
+> QA Proc.
+> SG Proc.
+
+Figure 2: Conflict-VQA construction pipeline. We process images from VrR-VG and questions from TDIUC, use GPT-4o to generate 
+
+𝐶 factual and 𝐶 conflict , and verify all samples manually.         
+
+> InstructBLIP LLaVA-1.5 LLaVA-1.6 Qwen2.5-VL Qwen3-VL 2,017 1,212 2,506 3,940 5,252
+
+Table 1: Competent subset size per model. Total samples: 5,969. A sample is competent if the model answers correctly in all five trials under non-conflict context. 
+
+## 2 Related Work 
+
+Multimodal knowledge conflicts. When informa-tion sources disagree, which should a model trust? Prior work has explored this question for text-only lan-guage models [Chen and others, 2022; Xu et al. , 2024; Xie and others, 2023]. The problem becomes more pro-nounced in multimodal settings, where visual perception and textual claims can point to different answers. A number of recent benchmarks document this challenge. Hallusion-Bench [Guan and others, 2024], AutoHallusion [Wu et al. ,2024], and PhD [Liu et al. , 2025a] report that MLLMs often follow textual context even when it contradicts what is visible in the image. Subsequent analyses suggest this behavior is systematic rather than accidental: models tend to rely on language priors or internal knowledge when facing conflicting evidence [Liu et al. , 2025b; Nguyen et al. , 2025; Deng et al. , 2025]. More targeted benchmarks explicitly construct multimodal conflicts and measure which modality dominates, further confirming this tendency [Jia et al. , 2025; Zhang et al. , 2025a; Zhu et al. , 2024]. While these studies clearly establish the phenomenon, they mostly describe it at the output level without explaining how conflicts are resolved inside the model. Our work addresses this gap by examining how visual and textual signals interact across layers, showing that many failures occur after visual information has already been encoded correctly. 
+
+Hallucination mitigation in MLLMs. Various inference-time methods have been proposed to reduce hallucinations. Contrastive decoding is a common strategy: VCD suppresses tokens preferred under distorted images [Liu et al. , 2023a], ICD contrasts standard versus perturbed instructions [Wang 
+
+et al. , 2024c], and OPERA penalizes attention over-trust pat-terns [Huang and others, 2024]. Recent variants refine these ideas through explicit attention steering [Wang et al. , 2025c], multi-stage contrast with selective visual inputs [Park et al. ,2025], and probabilistic detection that avoids a second for-ward pass [Fieback et al. , 2025]. A separate line of work exploits model depth. DoLa compares predictions from shal-5 10 15 20 25 30      
+
+> Layer Index
+> 5
+> 05100 0100
+> Percentage (%)
+> 91% 9%
+> 89% 11% 15% 85%
+> MDR<0 MDR>0
+> Non-Conflict Conflict-Correct Conflict-Incorrect
+> Average MDR
+
+Figure 3: Layer-wise MDR analysis on LLaVA-1.6-7B. Left: 
+
+Non-Conflict and Conflict-Correct samples maintain positive MDR, while Conflict-Incorrect samples reverse from positive to negative in late layers. Right: Text-ward shifts ( ΔMDR <0) dominate failures (85%), vision-ward shifts ( ΔMDR >0) dominate correct predictions (89–91%). Shading: ±1 std. 
+
+low and deep layers to recover factual signals [Chuang et al. , 2024]. DeCo, SHIFT, and related decoders rely on the observation that intermediate layers preserve stronger visual grounding [Wang et al. , 2025a; Wang et al. , 2025b; Tong and others, 2025]. Training-based approaches reduce hallucina-tions through preference optimization or contrastive learning but require supervision [Wang et al. , 2024a; Yu et al. , 2024; Jiang et al. , 2024]. Most methods correct uniformly, with-out distinguishing helpful from harmful late-layer processing. Our finding that transition direction predicts correctness en-ables selective intervention only when needed. As we show in Section 5, uniform correction methods like DoLa can degrade performance when applied indiscriminately. 
+
+Layer-wise Analysis of Multimodal Models. Recent stud-ies examine visual information flow in MLLMs, finding that visual signals peak in intermediate layers and weaken in deeper ones [Wang et al. , 2024b; Wang and others, 2025; Yin et al. , 2025]. Others identify failure modes such as atten-tion drift and modality imbalance that reduce visual ground-ing [Jiang et al. , 2025; Chen et al. , 2025]. These findings help explain why models capture visual details early but produce text-driven answers at the end. Our work extends this line of research. We show that the direction of layer-wise transitions predicts final correctness, allowing us to intervene only when late-layer processing undermines visual evidence. 
+
+## 3 Diagnosing Late-Layer Textual Override 
+
+To understand why models favor text over vision under con-flict, we need to trace how their predictions evolve during the forward pass. Does textual bias arise because visual in-formation is never properly encoded? Or is it encoded but subsequently discarded? This section presents a layer-wise analysis that reveals a surprising answer. 
+
+3.1 Experimental Framework 
+
+Task and data. We study visual question answering where inputs consist of image 𝐼 , context 𝐶 , and question 𝑄 . Let 𝑤 vis 
+
+and 𝑤 text denote answers supported by the image and con-text respectively. A knowledge conflict occurs when 𝑤 vis ≠
+
+𝑤 text . We categorize samples into three groups based on con-text type and model output. Non-Conflict : the context is 0.00 0.25 0.50 0.75       
+
+> JSD
+> Non-Conflict Conflict-Incorrect 0510 15 20 25 30
+> Layer Index
+> 10
+> 010
+> MDR
+
+Figure 4: JSD and MDR trajectories on LLaVA-1.6-7B. JSD spikes align across categories, while MDR shifts toward vision in Non-Conflict and toward text in Conflict-Incorrect. 
+
+consistent with the image and the model answers correctly. 
+
+Conflict-Correct : context contradicts image but the model follows visual evidence. Conflict-Incorrect : the context con-tradicts the image and the model follows textual claims. Existing conflict benchmarks lack the (𝑤 vis , 𝑤 text ) anno-tations required for layer-wise analysis. To address this, we construct Conflict-VQA : 5,969 samples with paired consistent and conflicting contexts. We source images from VrR-VG [Liang and others, 2019] and questions from TDIUC [Kafle and Kanan, 2017], covering six question types: object presence, color, attribute, counting, spatial rea-soning, and activity recognition. All contexts are generated using GPT-4o and manually verified. Construction details are provided in Appendix A. For mechanistic analysis, we filter each model’s competent subset, defined as samples an-swered correctly under consistent context across five trials. This filtering ensures that observed failures under conflict re-flect conflict resolution process rather than basic visual per-ception errors. 
+
+Layer-wise projection. Following early-exit methods [El-bayad et al. , 2020; Schuster et al. , 2022], we project hidden states at each layer 𝑙 to the output vocabulary via the language model head 𝑊 head : 𝑃 (𝑙 ) 
+
+> 𝑡
+
+= softmax (𝑊 head ℎ(𝑙 ) 
+
+> 𝑡
+
+), where ℎ(𝑙 ) 
+
+> 𝑡
+
+is the hidden state at the answer token position and 𝑃 (𝑙 ) 
+
+> 𝑡
+
+(𝑤 ) is the scalar probability assigned to vocabulary token 𝑤 . This lets us observe the model’s “preference” at each depth. 
+
+3.2 Visual Predictions Emerge, Then Fade 
+
+When models fail under conflict, is visual information absent from their representations, or present but ultimately ignored? To answer this, we introduce Modal Dominance Ratio (MDR) , quantifying modal preference at each layer: MDR (𝑙 ) = log 𝑃 (𝑙 ) 
+
+> 𝑡
+
+(𝑤 vis )
+
+𝑃 (𝑙 ) 
+
+> 𝑡
+
+(𝑤 text ) (1) Positive MDR indicates preference for the visual answer; negative indicates textual preference. 0.00 0.25 0.50 0.75 1.00 
+
+> Dconf
+
+0.00 0.25 0.50 0.75 1.00   
+
+> No-Conflict Conflict-Correct Conflict-Incorrect
+
+Figure 5: Detection signal distribution on LLaVA-1.6-7B. Conflict-Incorrect samples (red) exhibit high 𝐷 conf but low 𝜌 . Non-Conflict (blue) and Conflict-Correct (green) maintain high 𝜌 .
+
+Figure 3 shows MDR trajectories averaged across sample categories. Non-Conflict and Conflict-Correct samples main-tain positive MDR throughout all layers, reflecting consistent visual preference. Conflict-Incorrect samples tell a different story: MDR is positive in early and middle layers, then reverses to negative in late layers. 
+
+This pattern indicates that in failure cases, models assign higher probability to the visual answer in intermediate layers before shifting toward the textual answer. In other words, the visual information is present in intermediate representations but does not survive to the final output. We term this phe-nomenon late-layer textual override . This observation sug-gests that the failure mechanism lies in late-layer processing rather than in early-layer encoding. 
+
+3.3 Transition Direction Predicts Success 
+
+The late-layer reversal in Conflict-Incorrect samples might suggest a straightforward fix: simply use intermediate-layer predictions. But prediction transitions also occur when mod-els answer correctly. In these cases, late-layer processing ap-pears to refine the answer rather than override it. To intervene selectively, we need a way to tell these two situations apart. 
+
+Detecting transitions. Layer-wise predictions show high entropy in early layers and lower entropy in deeper layers as predictions converge. We define the stability onset 𝐿 start as the layer with the largest entropy drop: 
+
+𝐿 start = arg max  
+
+> 𝑙
+
+[𝐻 (𝑙 −1) 
+
+> 𝑡
+
+− 𝐻 (𝑙 ) 
+
+> 𝑡
+
+], (2) where 𝐻 (𝑙 ) 
+
+> 𝑡
+
+= − Í𝑤 𝑃 (𝑙 ) 
+
+> 𝑡
+
+(𝑤 ) log 𝑃 (𝑙 ) 
+
+> 𝑡
+
+(𝑤 ). Across our models, 
+
+𝐿 start falls between 25% and 40% of model depth. After stability onset, we detect abrupt distributional shifts using Jensen-Shannon divergence between adjacent layers: JSD (𝑙 ) = 12
+
+h
+
+𝐷 KL (𝑃 (𝑙 ) 
+
+> 𝑡
+
+∥𝑀 ) + 𝐷 KL (𝑃 (𝑙 +1) 
+
+> 𝑡
+
+∥𝑀 )
+
+i
+
+, (3) Conflict Input           
+
+> What color is the car?
+> Context: “...shows ablue car...”
+> The Internal Tug-of-War
+> 0%
+> 25%
+> 40%
+> 60%
+> 80%
+> Layer 1
+> Transition Layer 𝐿𝐿 𝑡𝑡𝑡𝑡 ans
+> Visual 'Red' prob.
+> Visual ‘Blue' prob.
+> ···
+> ···
+> Layer N
+> CALRD Intervention
+> Final Layer Distribution
+> Anchor Distribution
+> Corrected Distribution
+> blue red
+> blue red
+> blue red
+> 𝟏𝟏−𝝀𝝀
+> 𝝀𝝀
+> “Red”
+> 𝝋𝝋 ′
+> =𝟏𝟏 − 𝝀𝝀 ⋅ 𝝋𝝋 (𝑵𝑵 )+𝝀𝝀 ⋅ 𝝋𝝋 𝑳𝑳 𝒕𝒕𝒕𝒕 𝒂𝒂𝒂𝒂𝒂𝒂
+
+Figure 6: Overview of CALRD. Under visual-textual conflict, pre-dictions shift from vision toward text across layers. CALRD detects this override and restores the transition-layer prediction. 
+
+where 𝑀 = 12 (𝑃 (𝑙 ) 
+
+> 𝑡
+
++ 𝑃 (𝑙 +1) 
+
+> 𝑡
+
+). The transition layer is: 𝐿 trans =
+
+arg max 𝑙 ∈ [ 𝐿 start , 𝑁 −1] JSD (𝑙 ) .
+
+Transition direction distinguishes success from failure. 
+
+Figure 4 shows that both Non-Conflict and Conflict-Incorrect samples have JSD spikes at similar depths, so transitions alone do not distinguish the two groups. What does differ is the direction of the shift. We quantify this via MDR change across the transition: 
+
+ΔMDR = MDR after − MDR before (4) where bars denote averages over pre/post-transition layers. 
+
+Finding. In 85% of Conflict-Incorrect cases, ΔMDR is neg-ative, indicating a shift toward text. The pattern reverses for correct predictions: 89% of Conflict-Correct and 91% of Non-Conflict samples show positive ΔMDR, shifting toward vision or holding steady. Transitions occur in all groups, but only the direction correlates with correctness. 
+
+## 4 Conflict-Aware Layer Reference Decoding 
+
+The analysis in Section 3 shows that harmful overrides are characterized by a late-layer shift from visual to textual pref-erence, and that the direction of this shift distinguishes fail-ures from successes. However, the MDR analysis relies on ground-truth (𝑤 vis , 𝑤 text ) labels, unavailable at inference. Can we detect harmful overrides without labels? In this sec-tion, we develop practical detection signals and a decoding strategy that recovers overridden predictions without requir-ing such labels. Specifically, we propose Conflict-Aware Layer Reference Decoding (CALRD), a training-free method. CALRD first identifies when a confident transition-layer prediction is being suppressed, then adjusts the output distribution to restore it. Since prediction transitions also occur in correct outputs, the intervention must be selective: we modulate its strength based on how strongly the override signature is present. 
+
+4.1 Detecting Harmful Override 
+
+The MDR analysis shows that Conflict-Incorrect samples hold confident predictions at 𝐿 trans that do not survive to the final layer (section 3). This observation motivates two simple signals. Let 𝑤 ∗ = arg max 𝑤 𝑃 (𝐿 trans ) 
+
+> 𝑡
+
+(𝑤 ) be the top prediction at transition. Our detection signals are: Anchor confidence. A higher transition-layer probability for 𝑤 ∗ indicates a stronger intermediate preference: 
+
+𝐷 conf = 𝑃 (𝐿 trans ) 
+
+> 𝑡
+
+(𝑤 ∗) (5) 
+
+Prediction retention. To quantify survival, we use the final-to-transition probability ratio; 𝜌 ≈ 1 indicates preser-vation, while 𝜌 ≈ 0 indicates override: 
+
+𝜌 = min 1, 𝑃 ( 𝑁 ) 
+
+> 𝑡
+
+(𝑤 ∗)
+
+𝑃 (𝐿 trans ) 
+
+> 𝑡
+
+(𝑤 ∗)
+
+!
+
+(6) Figure 5 shows how these signals distribute across sam-ple types. Conflict-Incorrect samples cluster in the high-
+
+𝐷 conf , low-𝜌 region: confident predictions that get overrid-den. Non-Conflict and Conflict-Correct samples maintain high 𝜌 , meaning their predictions persist. This separation al-lows us to detect harmful overrides at test time. 
+
+4.2 Adaptive Intervention 
+
+Not all prediction transitions are harmful. As shown in Sec-tion 3.3, transitions toward vision correlate with correct out-puts, while transitions toward text correlate with failures. To avoid disrupting beneficial late-layer processing, intervention strength must adapt to override severity. We define: 
+
+𝜆 = 𝐷 conf · ( 1 − 𝜌 ) (7) The multiplicative form ensures that 𝜆 is substantial only when both conditions hold: a confident transition-layer pre-diction exists ( 𝐷 conf high) and it is being suppressed ( 𝜌 low). When 𝐷 conf is low, there is no preference to recover, so 𝜆 
+
+stays small regardless of retention. When 𝜌 is high, the pre-diction survives to the output, so intervention is unnecessary. Only when a confident prediction gets discarded does 𝜆 be-come large enough to affect decoding. This design is mo-tivated by the asymmetry in Section 3.3: harmful cases are likely to exhibit confident intermediate predictions that are later suppressed, whereas correct cases tend to preserve them. 
+
+4.3 Transition-Layer Guided Decoding 
+
+Given 𝜆 , we adjust the output logits by combining final-layer and transition-layer predictions. Let 𝜙 (𝑙 ) 
+
+> 𝑡
+
+= 𝑊 head · ℎ(𝑙 ) 
+
+> 𝑡
+
+denote the unnormalized logits at layer 𝑙 . The adjusted logits are: 
+
+𝜙 ′ 
+
+> 𝑡
+
+= (1 − 𝜆 ) · 𝜙 ( 𝑁 ) 
+
+> 𝑡
+
++ 𝜆 · 𝜙 (𝐿 trans ) 
+
+> 𝑡
+
+(8) with output distribution 𝑃 ′ 
+
+> 𝑡
+
+= softmax (𝜙 ′ 
+
+> 𝑡
+
+). When 𝜆 = 0, this reduces to standard decoding. As 𝜆 increases, the transition-layer prediction receives more weight, recovering the vision-grounded answer that would otherwise be lost. For samples without override signatures, 𝜆 remains near zero and the out-put is largely unchanged. CALRD works at each token position independently. For multi-token generation, we recompute 𝐿 trans , 𝐷 conf , and 𝜌 at each step, allowing the intervention strength to vary across the sequence. The logit-level operation makes CALRD com-patible with greedy, beam search, and nucleus sampling with-out modification. Note that CALRD does not introduce exter-nal knowledge or require additional training. The correction comes entirely from the model’s own intermediate represen-tations. As our analysis shows, the vision-grounded answer is often already present at the transition layer; CALRD simply helps it survive to the output. 
+
+## 5 Experiments 
+
+We evaluate CALRD on two questions: (1) Does it improve conflict resolution? (2) Does it hurt non-conflict scenarios? Experiments cover five MLLMs with different architectures and capability levels. For each model, we report results on conflict benchmarks where context contradicts the image, as well as standard hallucination benchmarks. 
+
+5.1 Experimental Setup 
+
+Models. We evaluate five MLLMs: InstructBLIP-7B [Dai 
+
+et al. , 2023], LLaVA-1.5-7B, LLaVA-1.6-7B [Liu et al. ,2023b], Qwen2.5-VL-7B [Bai et al. , 2025b], and Qwen3-VL-8B [Bai et al. , 2025a]. These models span different ar-chitectures and capability levels. 
+
+Benchmarks. We evaluate on two complementary bench-mark groups. (1) For conflict resolution, we use Conflict-VQA (Section 3.1), which contains 5,969 samples requir-ing open-ended answers, and PhD-icc [Liu et al. , 2025a], the incorrect-context subset of PhD containing 16,844 yes/no question pairs. Both benchmarks include contexts that contra-dict visual evidence, and we report accuracy. (2) For standard hallucination without explicit conflicts, we use POPE [Li et al. , 2023] and CHAIR [Rohrbach et al. , 2018]. POPE probes object hallucination by asking “Is there a <object> in the image?” across random, popular, and adversarial splits. It covers 500 MSCOCO images with six questions per image for each split, and we report F1 score. CHAIR measures cap-tion hallucination against ground-truth object annotations, re-porting instance-level C 𝐼 and sentence-level C 𝑆 (lower is bet-ter). Following [Huang and others, 2024], we evaluate on 500 MSCOCO images with the same captioning prompt “Please describe this image in detail.” for consistency. 
+
+Baselines. We compare against four representative meth-ods. DoLa [Chuang et al. , 2024] contrasts logits from later layers against earlier layers to surface factual knowledge. VCD [Leng et al. , 2024] contrasts outputs from original and distorted visual inputs to reduce over-reliance on language priors. OPERA [Huang and others, 2024] penalizes over-trust patterns in self-attention and uses rollback to re-select tokens. DeCo [Wang et al. , 2025a] adaptively selects preced-ing layers where visual information is stronger and integrates their predictions into the final output. We test CALRD with greedy, beam search, and nucleus sampling. Since not all baselines are designed for every decoding strategy, we eval-uate each method under the decoding regimes supported by its official implementation and compare CALRD against the same vanilla decoder in each regime. All experiments are run on NVIDIA H100 GPUs. 
+
+5.2 Main Results 
+
+Conflict resolution. Table 2 shows results on conflict benchmarks. CALRD outperforms all baselines across mod-els and decoders. Gains are largest on PhD-icc: LLaVA-1.5 improves from 27.72% to 36.35% (+8.63%), LLaVA-1.6 from 28.23% to 36.52% (+8.29%), and InstructBLIP from 41.08% to 49.62% (+8.54%). On Conflict-VQA, improve-ments reach up to 7.4%. Conflict-VQA (Acc ↑) PhD-icc (Acc ↑)Decoding Method InstructBLIP LLaVA-1.5 LLaVA-1.6 Qwen2.5-VL Qwen3-VL InstructBLIP LLaVA-1.5 LLaVA-1.6 Qwen2.5-VL Qwen3-VL Greedy Vanilla 39.61 36.20 42.35 65.61 75.58 41.08 27.72 28.23 51.30 60.32 DoLa 32.72 40.10 44.59 66.22 76.06 32.65 29.78 28.73 51.08 58.00 DeCo 41.31 38.03 43.38 63.79 75.33 42.12 31.00 33.65 51.65 62.25                                                                                                                         
+
+> CALRD (Ours) 44.12 ↑4.5 41.90 ↑5.7 49.51 ↑7.2 70.15 ↑4.5 77.42 ↑1.8 49.62 ↑8.5 36.35 ↑8.6 36.52 ↑8.3 56.20 ↑4.9 63.68 ↑3.4 Beam Vanilla 39.98 38.88 43.99 65.49 75.94 40.73 28.25 28.80 51.11 62.53 OPERA 40.12 39.00 43.74 68.49 76.43 39.78 28.93 29.95 53.70 62.62 DeCo 40.83 38.15 43.01 63.55 75.46 42.15 31.07 34.63 51.13 61.25
+> CALRD (Ours) 44.49 ↑4.5 44.47 ↑5.6 50.79 ↑6.8 70.25 ↑4.8 79.34 ↑3.4 49.75 ↑9.0 36.58 ↑8.3 37.40 ↑8.6 56.70 ↑5.6 64.60 ↑2.1 Nucleus Vanilla 23.94 38.76 41.92 61.48 73.39 39.23 29.33 30.08 51.05 62.23 VCD 23.05 42.40 46.35 64.04 75.50 40.01 31.87 31.70 53.83 63.40 DeCo 24.91 38.45 45.44 63.55 74.79 41.83 31.25 32.90 51.62 61.50
+> CALRD (Ours) 28.07 ↑4.1 43.40 ↑4.6 48.72 ↑6.8 68.91 ↑7.4 76.55 ↑3.2 48.62 ↑9.4 34.95 ↑5.6 34.12 ↑4.0 55.83 ↑4.8 64.52 ↑2.3
+
+Table 2: Performance comparison on knowledge conflict benchmarks, where textual context contradicts visual evidence. We evaluate five MLLMs with three decoding strategies. Best results are in bold . ↑: improvement over Vanilla. 
+
+Larger gains on PhD-icc. The two benchmarks differ in question format: PhD-icc uses binary yes/no questions, while Conflict-VQA requires open-ended answers. We suspect the binary format creates conditions where textual bias is more pronounced. When context strongly suggests “yes” or “no,” the model may be more easily swayed away from visual ev-idence. In contrast, open-ended questions require generating specific content, making it harder for context alone to over-ride perception. 
+
+Baseline accuracy and improvement. An interesting pat-tern emerges when we rank models by their vanilla accuracy on PhD-icc: LLaVA-1.5 (27.72%) < LLaVA-1.6 (28.23%) <
+
+InstructBLIP (41.08%) < Qwen2.5-VL (51.30%) < Qwen3-VL (60.32%). The gains from CALRD roughly follow the in-verse order, with weaker models seeing larger improvements. This pattern is expected: stronger models already resolve more conflicts correctly in their late layers, leaving fewer overridden predictions for CALRD to recover. The adap-tive nature of our intervention naturally accommodates this— when predictions survive to the output ( 𝜌 remains high), 𝜆 
+
+stays small and CALRD leaves the output largely unchanged. For Qwen3-VL, the +3.36% absolute gain corresponds to an 8.5% relative error reduction, indicating that even well-calibrated models contain recoverable failures. 
+
+Comparison with other layer-based methods. DeCo and DoLa also leverage information from earlier layers, but their performance is less consistent. DoLa improves some con-figurations but hurts others: on InstructBLIP, Conflict-VQA accuracy drops from 39.61% to 32.72%. DeCo shows more stable behavior but still underperforms CALRD across the board. One possible explanation is that these methods ap-ply corrections more uniformly, without distinguishing cases where late-layer processing is beneficial. CALRD’s detection signals allow it to intervene selectively, reducing the risk of disrupting predictions that were already on track. 
+
+Non-conflict scenarios. Textual override is not identical to all hallucinations, so we also test CALRD on standard object-centric hallucination benchmarks without explicit conflicts. A method that improves conflict resolution but degrades stan-dard performance would have limited practical value. Ta-bles 3 and 4 show that CALRD largely avoids this trade-off.                                                                                   
+
+> POPE (F1 ↑)Dec. Method InstructBLIP LLaVA-1.5 LLaVA-1.6 Qwen2.5-VL Qwen3-VL
+> Greedy Vanilla 80.0 82.2 85.4 80.8 88.5 DoLa 83.4 83.2 87.1 82.1 88.6 DeCo 84.9 83.8 87.6 81.4 90.6
+> CALRD (Ours) 85.4 ↑5.4 84.5 ↑2.3 88.2 ↑2.8 82.3 ↑1.5 91.6 ↑3.1
+> Beam Vanilla 84.4 84.9 87.1 80.7 88.6 OPERA 84.8 85.4 87.5 80.8 89.3 DeCo 84.9 86.7 87.9 81.4 91.2
+> CALRD (Ours) 84.7 ↑0.3 86.9 ↑2.0 88.3 ↑1.2 82.6 ↑1.9 91.9 ↑3.3
+> Nucleus Vanilla 79.8 83.1 85.5 80.8 88.7 VCD 79.9 83.1 85.6 80.9 88.9 DeCo 81.8 84.8 87.3 81.3 91.2
+> CALRD (Ours) 83.4 ↑3.6 85.9 ↑2.8 87.5 ↑2.0 81.9 ↑1.1 91.4 ↑2.7
+
+Table 3: Results on POPE object hallucination benchmark. CALRD results are highlighted. ↑: improvement over Vanilla. 
+
+POPE results (Table 3). CALRD maintains or improves F1 across all configurations. Under greedy decoding, In-structBLIP improves from 80.0 to 85.4, and Qwen3-VL from 88.5 to 91.6. POPE probes object hallucination without ex-plicit visual-textual conflicts, so these results suggest that late-layer override may occur more broadly than just in con-flict settings. The key is that CALRD does not intervene in-discriminately: when 𝜌 is high, indicating the prediction is stable, 𝜆 stays near zero and the output remains unchanged. 
+
+CHAIR results (Table 4). Captioning differs from VQA in that it requires extended sequences rather than short answers. Hallucinations accumulate over multiple tokens, making it a useful stress test. CALRD reduces both C 𝐼 and C 𝑆 in most configurations. InstructBLIP shows the largest improvement: C𝐼 drops from 23.7 to 14.6 (38% relative reduction) and C 𝑆 
+
+from 58.8 to 40.2. These results indicate that recomputing de-tection signals at each token position allows CALRD to adapt throughout the sequence, rather than a fixed correction. 
+
+5.3 Analysis 
+
+Ablation study. Table 5 examines the contribution of each component using LLaVA-1.6 with greedy decoding. Re-moving 𝐷 conf drops Conflict-VQA accuracy from 49.5% to 47.3%, while removing 𝜌 causes a larger drop to 45.1%. This suggests that retention is the more informative signal for de-tecting harmful override, which makes sense: a prediction can be confident at the transition layer for various reasons, but a sharp drop in retention specifically indicates that something changed in late-layer processing. Using a fixed layer at 75% depth instead of dynamic 𝐿 trans InstructBLIP LLaVA-1.5 LLaVA-1.6 Qwen2.5-VL Qwen3-VL Decoding Method C𝑆 ↓ C𝐼 ↓ C𝑆 ↓ C𝐼 ↓ C𝑆 ↓ C𝐼 ↓ C𝑆 ↓ C𝐼 ↓ C𝑆 ↓ C𝐼 ↓                                                                                                                                                      
+
+> Greedy Vanilla 58.8 23.7 45.0 14.7 37.6 12.7 40.8 9.7 52.4 10.1 DoLa 48.4 15.9 47.8 13.8 35.3 8.7 36.5 9.2 55.6 9.8 DeCo 41.2 14.4 37.8 11.1 35.8 10.4 37.6 9.1 51.2 9.6
+> CALRD (Ours) 40.2 ↓18.6 14.6 ↓9.1 35.7 ↓9.3 10.3 ↓4.4 33.6 ↓4.0 9.3 ↓3.4 35.5 ↓5.3 9.5 ↓0.2 50.7 ↓1.7 9.3 ↓0.8 Beam Vanilla 55.6 15.8 48.8 13.9 36.0 12.1 38.9 9.4 53.6 9.7 OPERA 46.4 14.2 44.6 12.8 35.3 12.9 39.1 10.2 54.7 11.3 DeCo 43.8 12.7 32.0 9.7 34.4 9.0 38.2 8.5 52.0 9.3
+> CALRD (Ours) 38.4 ↓17.2 11.4 ↓4.4 34.7 ↓14.1 10.9 ↓3.0 32.8 ↓3.2 8.7 ↓3.4 33.4 ↓5.5 8.2 ↓1.2 40.6 ↓13.0 7.9 ↓1.8 Nucleus Vanilla 54.6 24.8 48.8 14.2 36.8 10.5 40.4 10.7 54.2 10.2 VCD 58.0 17.0 54.0 16.0 41.2 10.2 42.9 12.3 53.4 11.0 DeCo 43.6 12.9 42.8 13.2 36.1 10.1 40.4 9.5 54.8 9.9
+> CALRD (Ours) 42.7 ↓11.9 12.1 ↓12.7 37.6 ↓11.2 12.8 ↓1.4 34.8 ↓2.0 11.5 ↓-1.0 38.6 ↓1.8 9.1 ↓1.6 53.6 ↓0.6 9.5 ↓0.7
+
+Table 4: Results on CHAIR caption hallucination benchmark. Lower is better. ↓: reduction over Vanilla. 
+
+Configuration C-VQA ↑ POPE ↑
+
+Vanilla (Greedy) 42.3 85.4 CALRD (Full) 49.5 88.2 
+
+w/o 𝐷 conf 47.3 87.5 w/o 𝜌 45.1 86.6 w/ Fixed Layer (75%) 45.9 87.1 
+
+Table 5: Ablation study on LLaVA-1.6 with greedy decoding. We evaluate the contribution of each component. 
+
+detection reduces accuracy to 45.9%. The value corresponds to the median transition layer observed in our analysis (Sec-tion 3.3), so this comparison uses the most representative fixed position rather than an arbitrary choice. The accuracy drop indicates that transition points vary substantially across samples, and a single fixed layer cannot capture this varia-tion. We also observe that POPE follows a similar pattern, with both signals contributing to the overall improvement. These results support the multiplicative design 𝜆 = 𝐷 conf ·(1 − 𝜌 ): both signals provide useful information, but neither is sufficient alone. The product ensures that substantial inter-vention occurs only when a confident prediction exists and is being suppressed by late-layer processing. 
+
+Efficiency. Figure 7 compares latency and memory usage across methods using LLaVA-1.5 on a single H100 GPU. CALRD adds modest overhead: 19.8 ms/token compared to 18.3 ms/token for vanilla decoding, with only 80 MB ad-ditional memory. VCD nearly doubles latency due to its dual-stream requirement, and OPERA is approximately 10 ×
+
+slower because of iterative rollback. DeCo falls in between. These results suggest CALRD is practical for deployment scenarios where efficiency matters. 
+
+## 6 Conclusion 
+
+We studied why multimodal models favor text over vision when the two conflict, and found that the problem is not poor visual encoding. In many failure cases, models assign higher probability to the correct visual answer in intermedi-ate layers, only to override it with the textual answer in deeper layers. We call this late-layer textual override. Importantly, the direction of prediction change distinguishes failures from 25 50 75 100 125 150 175 200 
+
+Latency (ms/token)   
+
+> 14000 15000 16000 17000 18000 19000
+> Memory (MB)
+> OPERA
+> Vanilla CALRD (Ours) DECO VCD OPERA 20 25 30 13800 14000 14200 14400 14600 14800
+> Vanilla
+> Ours
+> DECO VCD
+
+Figure 7: Inference Efficiency on LLaVA-1.5-7B. Latency vs. GPU memory trade-off measured on a single H100 GPU. Our CALRD achieves a superior balance, staying closest to the Vanilla baseline compared to DECO, VCD, and OPERA. 
+
+successes: shifts toward text correlate with incorrect out-puts, while shifts toward vision correlate with correct ones. This observation motivates CALRD, a training-free decod-ing method that restores intermediate predictions when over-ride signatures are detected. Experiments on five MLLMs show up to 9.4% improvements on conflict benchmarks while largely preserving performance on standard tasks. Our results suggest that improving reliability under conflict may require not better visual encoding, but better preservation of visual information through the forward pass. 
+
+Limitations and future work. Our work opens several av-enues for future research. A natural next step is to examine how late-layer dynamics interact with model scale and pre-training data composition—questions that require controlled experiments with access to training corpora, beyond the scope of our mechanistic study. Additionally, exploring whether similar override patterns emerge across other modality pairs (e.g., audio-text) may reveal general principles of multimodal integration. We view our mechanistic analysis as a foundation for such investigations. Acknowledgments 
+
+This work was supported by the National Natural Science Foundation of China under Grant 62306331, 62407037, and CAAI Youth Talent Lifting Project under Grant CAAI2023-2025QNRC001. 
+
+## References 
+
+[Bai et al. , 2025a] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Ke-qin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wenbin Ge, Zhi-fang Guo, et al. Qwen3-vl technical report. CoRR ,abs/2511.21631, 2025. [Bai et al. , 2025b] Shuai Bai, Keqin Chen, et al. Qwen2. 5-vl technical report. arXiv preprint arXiv:2502.13923 , 2025. [Bannur et al. , 2024] Shruthi Bannur, Kenza Bouzid, et al. Maira-2: Grounded radiology report generation. arXiv preprint arXiv:2406.04449 , 2024. [Chen and others, 2022] Hung-Ting Chen et al. Rich knowl-edge sources bring complex knowledge conflicts: Recali-brating models to reflect conflicting evidence. In Proceed-ings of the 2022 Conference on Empirical Methods in Nat-ural Language Processing , pages 2292–2307, 2022. [Chen et al. , 2024] Zhe Chen, Jiannan Wu, Wenhai Wang, et al. Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks. In Proceedings of the conference on computer vision and pattern recogni-tion , pages 24185–24198, 2024. [Chen et al. , 2025] Haoran Chen, Junyan Lin, Xinghao Chen, Yue Fan, Jianfeng Dong, Xin Jin, Hui Su, Jinlan Fu, and Xiaoyu Shen. Multimodal language models see bet-ter when they look shallower. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 6688–6706, 2025. [Chuang et al. , 2024] Yung-Sung Chuang, Yujia Xie, Hongyin Luo, Yoon Kim, James R. Glass, and Pengcheng He. Dola: Decoding by contrasting layers improves factuality in large language models. In ICLR , 2024. [Dai et al. , 2023] Wenliang Dai, Junnan Li, Dongxu Li, An-thony Tiong, Junqi Zhao, Weisheng Wang, Boyang Li, Pascale N Fung, and Steven Hoi. Instructblip: Towards general-purpose vision-language models with instruction tuning. Advances in neural information processing sys-tems , 36:49250–49267, 2023. [Deng et al. , 2025] Ailin Deng, Tri Cao, et al. Words or vi-sion: Do vision-language models have blind faith in text? In Proceedings of the Computer Vision and Pattern Recog-nition Conference , pages 3867–3876, 2025. [Elbayad et al. , 2020] Maha Elbayad, Jiatao Gu, Edouard Grave, et al. Depth-adaptive transformer. In International Conference on Learning Representations , 2020. [Fan et al. , 2025] Yingqi Fan, Anhao Zhao, Jinlan Fu, Jun-long Tong, Hui Su, Yijie Pan, Wei Zhang, and Xiaoyu Shen. Visipruner: Decoding discontinuous cross-modal dynamics for efficient multimodal llms. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 18896–18913, 2025. [Fieback et al. , 2025] Laura Fieback, Nishilkumar Balar, et al. Ecd: Efficient contrastive decoding with proba-bilistic hallucination detection. In Joint European Con-ference on Machine Learning and Knowledge Discovery in Databases , pages 21–38. Springer, 2025. [Guan and others, 2024] Tianrui Guan et al. Hallusionbench: an advanced diagnostic suite for entangled language hallu-cination and visual illusion in large vision-language mod-els. In Proceedings of the Conference on Computer Vision and Pattern Recognition , pages 14375–14385, 2024. [Hou et al. , 2025] Benjamin Hou, Pritam Mukherjee, Vivek Batheja, Kenneth C Wang, Ronald M Summers, and Zhiy-ong Lu. One year on: assessing progress of multimodal large language model performance on rsna 2024 case of the day questions. Radiology , 316(2):e250617, 2025. [Huang and others, 2024] Qidong Huang et al. Opera: Alle-viating hallucination in multi-modal large language mod-els via over-trust penalty and retrospection-allocation. In 
+
+Proceedings of the Conference on Computer Vision and Pattern Recognition , pages 13418–13427, 2024. [Jia et al. , 2025] Yifan Jia, Kailin Jiang, Yuyang Liang, Qi-han Ren, Yi Xin, Rui Yang, Fenze Feng, Mingcai Chen, Hengyang Lu, Haozhe Wang, et al. Benchmarking mul-timodal knowledge conflict for large multimodal models. 
+
+arXiv preprint arXiv:2505.19509 , 2025. [Jiang et al. , 2024] Chaoya Jiang, Haiyang Xu, Mengfan Dong, et al. Hallucination augmented contrastive learn-ing for multimodal large language model. In Proceedings of the Conference on Computer Vision and Pattern Recog-nition , pages 27036–27046, 2024. [Jiang et al. , 2025] Zhangqi Jiang, Junkai Chen, Beier Zhu, Tingjin Luo, Yankun Shen, and Xu Yang. Devils in mid-dle layers of large vision-language models: Interpreting, detecting and mitigating object hallucinations via attention lens. In Proceedings of the Computer Vision and Pattern Recognition Conference , pages 25004–25014, 2025. [Kafle and Kanan, 2017] Kushal Kafle and Christopher Kanan. An analysis of visual question answering al-gorithms. In Proceedings of the IEEE international conference on computer vision , pages 1965–1973, 2017. [Leng et al. , 2024] Sicong Leng, Hang Zhang, et al. Mitigat-ing object hallucinations in large vision-language models through visual contrastive decoding. In Proceedings of the Conference on Computer Vision and Pattern Recognition ,pages 13872–13882, 2024. [Li et al. , 2023] Yifan Li, Yifan Du, Kun Zhou, Jinpeng Wang, Wayne Xin Zhao, and Ji-Rong Wen. Evaluating ob-ject hallucination in large vision-language models. In Pro-ceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 292–305, 2023. [Liang and others, 2019] Yuanzhi Liang et al. Vrr-vg: Re-focusing visually-relevant relationships. In Proceedings of the international conference on computer vision , pages 10403–10412, 2019. [Liu et al. , 2023a] Fuxiao Liu, Kevin Lin, Linjie Li, Jianfeng Wang, Yaser Yacoob, and Lijuan Wang. Mitigating hallu-cination in large multi-modal models via robust instruction tuning. arXiv preprint arXiv:2306.14565 , 2023. [Liu et al. , 2023b] Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. Visual instruction tun-ing. Advances in neural information processing systems ,36:34892–34916, 2023. [Liu et al. , 2025a] Jiazhen Liu, Yuhan Fu, et al. Phd: Achatgpt-prompted visual hallucination evaluation dataset. In Proceedings of the Computer Vision and Pattern Recog-nition Conference , pages 19857–19866, 2025. [Liu et al. , 2025b] Xiaoyuan Liu, Wenxuan Wang, et al. In-sight over sight: Exploring the vision-knowledge conflicts in multimodal llms. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 17825–17846, 2025. [Nguyen et al. , 2025] Trang Nguyen, Jackson Michaels, Madalina Fiterau, and David Jensen. Challenges in un-derstanding modality conflict in vision-language models. 
+
+arXiv preprint arXiv:2509.02805 , 2025. [Park et al. , 2025] Woohyeon Park, Woojin Kim, Jaeik Kim, and Jaeyoung Do. Second: Mitigating perceptual hallu-cination in vision-language models via selective and con-trastive decoding. arXiv preprint arXiv:2506.08391 , 2025. [Qian et al. , 2024] Yusu Qian, Haotian Zhang, Yinfei Yang, and Zhe Gan. How easy is it to fool your multimodal llms? an empirical analysis on deceptive prompts. arXiv preprint arXiv:2402.13220 , 2(7), 2024. [Rohrbach et al. , 2018] Anna Rohrbach, Lisa Anne Hen-dricks, Kaylee Burns, Trevor Darrell, and Kate Saenko. Object hallucination in image captioning. In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , pages 4035–4045, 2018. [Schuster et al. , 2022] Tal Schuster, Adam Fisch, et al. Con-fident adaptive language modeling. Advances in Neural Information Processing Systems , 35:17456–17472, 2022. [Tong and others, 2025] Bingkui Tong et al. Mitigating hal-lucination in multimodal llms with layer contrastive de-coding. arXiv preprint arXiv:2509.25177 , 2025. [Wang and others, 2025] Sudong Wang et al. Towards under-standing how knowledge evolves in large vision-language models. In Proceedings of the Computer Vision and Pat-tern Recognition Conference , pages 29858–29868, 2025. [Wang et al. , 2024a] Fei Wang, Wenxuan Zhou, et al. mDPO: Conditional preference optimization for multi-modal large language models. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 8078–8088, 2024. [Wang et al. , 2024b] Jiaqi Wang, Yifei Gao, and Jitao Sang. Valid: Mitigating the hallucination of large vision lan-guage models by visual layer fusion contrastive decoding. 
+
+arXiv preprint arXiv:2411.15839 , 2024. [Wang et al. , 2024c] Xintong Wang, Jingheng Pan, Liang Ding, and Chris Biemann. Mitigating hallucinations in large vision-language models with instruction contrastive decoding. In Findings of the Association for Computa-tional Linguistics , pages 15840–15853, 2024. [Wang et al. , 2025a] Chenxi Wang, Xiang Chen, Ningyu Zhang, Bozhong Tian, Haoming Xu, Shumin Deng, and Huajun Chen. MLLM can see? dynamic correction decod-ing for hallucination mitigation. In The Thirteenth Inter-national Conference on Learning Representations , 2025. [Wang et al. , 2025b] Sudong Wang, Yunjian Zhang, Yao Zhu, Enci Liu, Jianing Li, Yanwei Liu, and Xiangyang Ji. Shift: Smoothing hallucinations by information flow tuning for multimodal large language models. In Proceed-ings of the International Conference on Computer Vision ,pages 3639–3649, 2025. [Wang et al. , 2025c] Yujun Wang, Jinhe Bi, Soeren Pirk, Yunpu Ma, et al. Ascd: Attention-steerable contrastive de-coding for reducing hallucination in mllm. arXiv preprint arXiv:2506.14766 , 2025. [Wu et al. , 2024] Xiyang Wu, Tianrui Guan, Dianqi Li, Shuaiyi Huang, Xiaoyu Liu, Xijun Wang, Ruiqi Xian, Abhinav Shrivastava, Furong Huang, Jordan Lee Boyd-Graber, et al. Autohallusion: Automatic generation of hal-lucination benchmarks for vision-language models. arXiv preprint arXiv:2406.10900 , 2024. [Xie and others, 2023] Jian Xie et al. Adaptive chameleon or stubborn sloth: Revealing the behavior of large language models in knowledge conflicts. In The International Con-ference on Learning Representations , 2023. [Xu et al. , 2024] Rongwu Xu, Zehan Qi, Zhijiang Guo, Cunxiang Wang, Hongru Wang, Yue Zhang, and Wei Xu. Knowledge conflicts for LLMs: A survey. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 8541–8565, 2024. [Yin et al. , 2025] Hao Yin, Guangzong Si, and Zilei Wang. Lifting the veil on visual information flow in mllms: Un-locking pathways to faster inference. In Proceedings of the Computer Vision and Pattern Recognition Conference ,pages 9382–9391, 2025. [Yu et al. , 2024] Tianyu Yu, Yuan Yao, et al. Rlhf-v: To-wards trustworthy mllms via behavior alignment from fine-grained correctional human feedback. In Proceedings of the Conference on Computer Vision and Pattern Recog-nition , pages 13807–13816, 2024. [Zhang et al. , 2025a] Yu Zhang, Jinlong Ma, et al. Evaluat-ing and steering modality preferences in multimodal large language model. arXiv preprint arXiv:2505.20977 , 2025. [Zhang et al. , 2025b] Zongmeng Zhang, Wengang Zhou, Jie Zhao, and Houqiang Li. Robust multimodal large lan-guage models against modality conflict. arXiv preprint arXiv:2507.07151 , 2025. [Zhu et al. , 2024] Tinghui Zhu, Qin Liu, Fei Wang, Zhengzhong Tu, and Muhao Chen. Unraveling cross-modality knowledge conflicts in large vision-language models. arXiv preprint arXiv:2410.03659 , 2024. Appendix Overview 
+
+Due to space constraints in the main text, we provide supple-mentary materials in this appendix. Appendix A details the construction of Conflict-VQA, the diagnostic benchmark in-troduced in Section 3.1 for evaluating visual-textual conflict resolution. Appendix B provides the complete pseudocode for CALRD, complementing the method description in Sec-tion 4. Appendix C offers additional analysis of the late-layer textual override phenomenon, including a representative case study and discussion of potential causes. The remaining sec-tions present additional experimental results (Appendix D), formal definitions of evaluation metrics (Appendix E), imple-mentation details for reproducibility (Appendix F), and qual-itative examples illustrating CALRD’s behavior (Appendix G). 
+
+## A Conflict-VQA: Benchmark Construction 
+
+This section details the construction of Conflict-VQA, the diagnostic benchmark introduced in Section 3.1. Conflict-VQA is designed to evaluate how MLLMs resolve conflicts between visual evidence and textual context, with explicit an-notations of both vision-grounded ( 𝑤 vis ) and text-suggested (𝑤 text ) answers. 
+
+A.1 Data Sources and Preprocessing 
+
+We construct Conflict-VQA by combining images from VrR-VG [Liang and others, 2019] with questions from TDIUC [Kafle and Kanan, 2017], matching samples by 
+
+image id . We focus on six question types where visual-textual conflicts can be unambiguously defined: object pres-ence, color, attribute, counting, positional reasoning, and ac-tivity recognition. VrR-VG provides scene graphs that we use to ground con-text generation. However, these annotations require prepro-cessing before use. Object identifiers are often inconsis-tent—the same object may appear under different names or be split into multiple entries. We normalize these by map-ping synonyms to canonical names and merging duplicates while preserving count and attribute information. Relations are converted to readable {subject , predicate , object } triples. This preprocessing yields a structured scene representation that grounds the subsequent context generation step. 
+
+A.2 Answer Pair and Context Generation 
+
+Each sample requires two answers: 𝑤 vis (the vision-grounded answer) and 𝑤 text (the text-suggested conflicting answer). The original TDIUC answer serves as 𝑤 vis . We construct 𝑤 text 
+
+based on question type: flipping yes/no for presence ques-tions, substituting with a plausible alternative for color and attribute questions, perturbing counts by ±1 or ±2 for count-ing questions, flipping spatial relations for positional ques-tions, and substituting with similar actions for activity ques-tions. We discard cases where the constructed 𝑤 text would be implausible given the scene. For each sample, we prompt GPT-4o to generate two con-texts (see Figure 10 for the complete prompt template). The Model Non-conf. Conf. Competent Acc. Acc. Ratio 𝑛 
+
+InstructBLIP 50.7 39.6 33.8 2,017 LLaVA-1.5 38.7 36.2 20.3 1,212 LLaVA-1.6 54.9 42.4 42.0 2,506 Qwen2.5-VL 81.2 65.6 66.0 3,940 Qwen3-VL 91.3 75.6 88.0 5,252   
+
+> Table 6: Accuracy under non-conflict and conflict conditions. Com-petent subset: correct in all five trials under 𝐶 factual (𝑁 =5,969).
+
+factual context 𝐶 factual accurately describes the scene and sup-ports 𝑤 vis , while the conflict context 𝐶 conflict is nearly iden-tical but contains exactly one statement supporting 𝑤 text in-stead. Both contexts are 3–5 sentences of natural prose, ref-erence 2–3 real objects from the scene, use confident declar-ative language without hedging, and introduce no fabricated objects. 
+
+A.3 Quality Control and Evaluation Protocol 
+
+Two researchers independently verified all samples, check-ing that 𝐶 factual accurately describes the image, that 𝐶 conflict 
+
+differs only in the intended contradictory statement, and that both contexts are fluent and natural. Disagreements were re-solved through discussion, resulting in approximately 8% of initial candidates being filtered out. Table 6 reports three metrics for each model. Non-conflict accuracy measures baseline performance under 𝐶 factual . Con-flict accuracy measures performance under 𝐶 conflict ; the gap between the two reflects how much the misleading context hurts. The competent ratio is stricter: it requires a model to answer correctly in all five trials under 𝐶 factual . We use the competent subset for mechanistic analysis in Section 3, en-suring that studied failures reflect conflict resolution rather than poor visual perception. The main-paper evaluation uses the full dataset. 
+
+## B CALRD Algorithm 
+
+This section provides the complete pseudocode for Conflict-Aware Layer Reference Decoding (CALRD), the training-free decoding method proposed in Section 3.4. Algorithm 1 details the three-stage procedure executed at each step. 
+
+Stage 1: Transition Layer Localization. CALRD first identifies the stability onset 𝐿 start by finding the layer with maximum entropy drop, then locates the transition layer 𝐿 trans 
+
+by computing Jensen-Shannon Divergence (JSD) between adjacent layer distributions. JSD is defined as: JSD (𝑃 ∥𝑄 ) = 12 𝐷 KL (𝑃 ∥𝑀 )+ 12 𝐷 KL (𝑄 ∥𝑀 ), 𝑀 = 12 (𝑃 +𝑄 )
+
+(9) where 𝐷 KL denotes Kullback-Leibler divergence. 
+
+Stage 2: Override Detection. Using the transition layer distribution, CALRD computes two signals: anchor confi-dence (how certain the transition-layer prediction is) and pre-diction retention (whether it survives to the final layer). The Input image 
+
+Question: What is the man hair color that is wearing the black shirt? 
+
+# 𝑪𝑪 𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄 
+
+In the kitchen, the man wearing the black shirt is standing next to a silver chair and holding a white bowl. His hair appears to be blonde , contrasting with the gray walls. 
+
+# 𝑪𝑪 𝒄𝒄 𝒇𝒇 𝒄𝒄𝒄𝒄 𝒇𝒇𝒇𝒇 𝒄𝒄 
+
+In the kitchen, the man wearing the black shirt is standing next to a silver chair and holding a white bowl. His hair appears to be gray , contrasting with the gray walls. 
+
+Input image 
+
+Question: What shape is the plate? 
+
+# 𝑪𝑪 𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄𝒄 
+
+On the wooden table, there's a plate alongside the brown bun. This plate appears to have a unique square design, matching the aesthetic of the scene. 
+
+# 𝑪𝑪 𝒄𝒄 𝒇𝒇 𝒄𝒄𝒄𝒄 𝒇𝒇𝒇𝒇 𝒄𝒄 
+
+On the wooden table, there's a plate alongside the brown bun. This plate appears to have a unique round design, matching the aesthetic of the scene. Figure 8: Examples from Conflict-VQA. 𝐶 conflict contains a false claim (red) that contradicts the image, while 𝐶 factual states the correct answer (green). Other parts of the two contexts remain identical. 
+
+correction strength 𝜆 is high when confidence is high but re-tention is low—the signature of harmful override. 
+
+Stage 3: Adaptive Correction. CALRD interpolates be-tween final-layer and transition-layer logits, weighted by 𝜆 .When no override is detected, 𝜆 ≈ 0 and output remains un-changed. 
+
+## C Understanding Late-Layer Override 
+
+This section provides additional analysis of the late-layer tex-tual override phenomenon introduced in Section 3.1. We first present a detailed case study, then discuss potential causes of this behavior. 
+
+C.1 A Representative Case 
+
+Figure 9 illustrates a failure case from LLaVA-1.6. The in-put image shows a yellow banana next to brown donuts on a white plate. The accompanying context falsely states that the banana appears brown. When asked about the banana’s color, the model outputs “brown,” ignoring the visual evidence. 
+
+MDR trajectory. Figure 9(a): The Modal Dominance Ra-tio (MDR), introduced in the main paper, remains positive through early and middle layers, peaking around layer 15. This indicates preference for the visual answer during most of the forward pass. After layer 21 (marked as 𝐿 trans ), MDR drops below zero and stays negative, indicating the model’s preference has flipped from vision to text. 
+
+Token ranking. Figure 9(b): The correct answer “yellow” consistently outranks “brown” in shallow layers. By layers 19–21, “yellow” reaches rank 1—the model has encoded the correct answer. However, after 𝐿 trans , “brown” takes the top position while “yellow” falls to around rank 10. This case exemplifies our central finding: the failure is not one of perception but of preservation. The model correctly encoded the visual information in intermediate layers but did not maintain it through the output. 
+
+C.2 Why Does Late-Layer Override Occur? 
+
+We hypothesize that late-layer override stems from train-ing asymmetries in MLLMs. The language model back-bone is pretrained on vastly more text than image-text pairs, and visual instruction tuning typically freezes the vision en-coder while updating only the connector and LLM [Liu et al. , 2023b; Bai et al. , 2025b; Bai et al. , 2025a]. Conse-quently, deeper layers—shaped primarily by text-only pre-training—retain strong linguistic priors. Supporting evidence comes from recent hallucination re-search: Question: What is the banana's main color? 
+
+## Context: 
+
+## On the white, round plate next to the brown donuts, the banana appears brown, blending in with the other items on the table. Its color matches the darker tones of the donuts and stands out against the white plate and the sugar nearby. 
+
+## 𝑴𝑴𝑴𝑴𝑴𝑴𝑴𝑴𝑴𝑴 𝒂𝒂𝒂𝒂𝒂𝒂𝒂𝒂 𝑴𝑴 𝒂𝒂 : 𝐛𝐛𝐛𝐛𝐛𝐛𝐛𝐛𝐛𝐛 .Input image 
+
+## (a) Modal Dominance Ratio  (b) Token Ranking Figure 9: Case study of late-layer textual override. The model is given an image of a yellow banana with context falsely describing it as brown, and outputs the incorrect answer. (a) MDR trajectory shows visual dominance in early layers before declining after 𝐿 trans . (b) Token ranking confirms “yellow” reaches rank 1 but is overridden by “brown” in later layers. 
+
+• Wang et al. [Wang et al. , 2025a] find that MLLMs recog-nize objects correctly in earlier layers, but this recognition is suppressed by language priors in deeper layers. • VisiPruner [Fan et al. , 2025] observes that cross-modal fu-sion peaks in middle layers, while deep layers shift toward linguistic processing. Our results align with this view. Override occurs after the stability onset, where linguistic reasoning dominates [Jiang 
+
+et al. , 2025]. Models with weaker visual grounding show larger CALRD gains (Table 2), consistent with stronger text priors leaving more room for override. The directional asym-metry we identify—text-ward shifts correlating with failures, vision-ward shifts with successes—is what enables CALRD to intervene selectively. 
+
+## D Additional Experiments 
+
+This section presents experimental results that complement the main-paper evaluation. 
+
+D.1 Comparison with SHIFT 
+
+SHIFT [Wang et al. , 2025b] also leverages intermediate lay-ers to reduce hallucinations. Since their code is not publicly available, we compare against results reported in their paper. Table 8 shows that CALRD outperforms SHIFT in most con-figurations on the CHAIR benchmark. We note that experi-mental setups differ between the two works, so this compari-son should be interpreted with appropriate caution. 
+
+D.2 Inference Efficiency 
+
+Table 7 compares inference efficiency across decoding meth-ods on llava-1.5. CALRD adds minimal overhead compared to vanilla decoding, while VCD (Visual Contrastive Decod-ing) and OPERA incur substantially higher costs due to dual-stream computation and iterative rollback, respectively. 
+
+## E Evaluation Metrics 
+
+We use the CHAIR (Caption Hallucination Assessment with Image Relevance) metric [Rohrbach et al. , 2018] to evaluate object hallucination in generated captions. CHAIR compares Algorithm 1 Conflict-Aware Layer Reference Decoding (CALRD) 
+
+Input: MLLM with 𝑁 layers, input (𝐼, 𝐶, 𝑄 ), LM head 
+
+𝑊 head 
+
+Output: Generated response 𝑦 1: 𝑇 
+
+1: for each decoding step 𝑡 do 
+
+2: {ℎ(𝑙 ) 
+
+> 𝑡
+
+}𝑁 𝑙 =1 ← FORWARD (𝐼, 𝐶, 𝑄, 𝑦 <𝑡 )
+
+⊲ Stage 1: Locate Transition Layer 
+
+3: for 𝑙 = 1 to 𝑁 do 
+
+4: 𝑃 (𝑙 ) 
+
+> 𝑡
+
+← softmax (𝑊 head · ℎ(𝑙 ) 
+
+> 𝑡
+
+) ⊲ layer-wise distribution 
+
+5: 𝐻 (𝑙 ) ← − Í𝑤 𝑃 (𝑙 ) 
+
+> 𝑡
+
+(𝑤 ) log 𝑃 (𝑙 ) 
+
+> 𝑡
+
+(𝑤 ) ⊲ entropy 
+
+6: end for 
+
+7: 𝐿 start ← arg max 𝑙 
+
+ 𝐻 (𝑙 −1) − 𝐻 (𝑙 )  ⊲ stability onset 
+
+8: for 𝑙 = 𝐿 start to 𝑁 − 1 do 
+
+9: 𝑀 ← 12 (𝑃 (𝑙 ) 
+
+> 𝑡
+
++ 𝑃 (𝑙 +1) 
+
+> 𝑡
+
+)
+
+10: JSD (𝑙 ) ← 12 𝐷 KL (𝑃 (𝑙 ) 
+
+> 𝑡
+
+∥𝑀 ) + 12 𝐷 KL (𝑃 (𝑙 +1) 
+
+> 𝑡
+
+∥𝑀 )
+
+11: end for 
+
+12: 𝐿 trans ← arg max 𝑙 ∈ [ 𝐿 start , 𝑁 −1] JSD (𝑙 ) ⊲ transition layer 
+
+⊲ Stage 2: Detect Override & Compute Correction Strength 
+
+13: 𝑤 ∗ ← arg max 𝑤 𝑃 (𝐿 trans ) 
+
+> 𝑡
+
+(𝑤 ) ⊲ anchor prediction 
+
+14: 𝐷 conf ← 𝑃 (𝐿 trans ) 
+
+> 𝑡
+
+(𝑤 ∗) ⊲ anchor confidence 
+
+15: 𝜌 ← min 
+
+
+
+1, 𝑃 ( 𝑁 ) 
+
+> 𝑡
+
+(𝑤 ∗)/ 𝑃 (𝐿 trans ) 
+
+> 𝑡
+
+(𝑤 ∗)
+
+
+
+⊲ retention 
+
+16: 𝜆 ← 𝐷 conf · ( 1 − 𝜌 ) ⊲ correction strength 
+
+⊲ Stage 3: Adaptive Logit Interpolation 
+
+17: 𝜙 ( 𝑁 ) 
+
+> 𝑡
+
+← 𝑊 head · ℎ( 𝑁 ) 
+
+> 𝑡
+
+⊲ final-layer logits 
+
+18: 𝜙 (𝐿 trans ) 
+
+> 𝑡
+
+← 𝑊 head · ℎ(𝐿 trans ) 
+
+> 𝑡
+
+⊲ transition-layer logits 
+
+19: 𝜙 ′ 
+
+> 𝑡
+
+← ( 1 − 𝜆 ) · 𝜙 ( 𝑁 ) 
+
+> 𝑡
+
++ 𝜆 · 𝜙 (𝐿 trans )
+
+> 𝑡
+
+20: 𝑦 𝑡 ∼ softmax (𝜙 ′ 
+
+> 𝑡
+
+)
+
+21: end for 
+
+22: return 𝑦 1: 𝑇 
+
+mentioned objects against ground-truth annotations and re-ports two variants: 
+
+Sentence-level. 𝐶 𝑆 : the fraction of generated sentences containing at least one hallucinated object: 
+
+𝐶 𝑆 = |{ sentences with hallucinated objects }| |{ all sentences }| (10) 
+
+Instance-level. 𝐶 𝐼 : the fraction of object mentions that are hallucinations: 
+
+𝐶 𝐼 = |{ hallucinated object mentions }| |{ all object mentions }| (11) Lower values indicate fewer hallucinations. 
+
+## F Implementation Details 
+
+All experiments are conducted on NVIDIA H100 GPUs. De-fault decoding settings are as follows: 
+
+Table 7: Inference efficiency comparison on LLaVA-1.5 (single H100 GPU).                
+
+> Metric Vanilla CALRD (Ours) DeCo VCD OPERA Latency (ms/token) 18.26 19.78 22.80 29.75 196.00 GPU Memory (MB) 13,994 14,077 14,590 14,343 18,906
+
+InstructBLIP LLaVA-1.5 Decoding Method C𝑆 ↓ C𝐼 ↓ C𝑆 ↓ C𝐼 ↓
+
+Greedy SHIFT † 44.0 19.9 43.8 12.4 CALRD 40.2 14.6 35.7 10.3 
+
+Beam SHIFT † 39.0 13.3 36.7 10.5 
+
+CALRD 38.4 11.4 34.7 10.9 Nucleus SHIFT † 47.0 19.3 42.0 11.6 
+
+CALRD 42.7 12.1 37.6 12.8 
+
+Table 8: Comparison with SHIFT on CHAIR benchmark. †Results cited from [Wang et al. , 2025b]. Experimental settings may differ. 
+
+Greedy decoding. Used by default unless otherwise speci-fied 
+
+Beam search. Beam size = 5 
+
+Nucleus sampling. 𝑝 = 0.9, temperature 𝑇 = 1.0
+
+For 𝐿 start detection, we use relative entropy drop rather than absolute thresholds, making the method robust across models with varying layer counts. Our code and the Conflict-VQA dataset will be publicly released upon publication. 
+
+## G Qualitative Examples 
+
+Figures 11 and 12 show example outputs from InstructBLIP and LLaVA-1.5 on image captioning tasks. We compare baseline outputs with CALRD under three decoding strate-gies (greedy, beam search, nucleus sampling). Hallucinated content in baseline outputs is highlighted in red. These ex-amples illustrate how CALRD reduces hallucinations across different models and decoding configurations. Unified Prompt for Conflict Data Generation 
+
+Task: Generate a pair of contexts for the same image: one factual (supporting the visual answer) and one misleading (supporting a wrong answer). 
+
+Input: 
+
+• Question: {question }
+
+• Visual Answer: {answer }
+
+• Question Type: {question type }
+
+• Scene Type: {scene type }
+
+• Objects in Scene: {objects }
+
+• Relationships: {relationships }
+
+• Scene Description: {description }
+
+Step 1: Generate a Plausible Wrong Answer 
+
+The wrong answer (text answer) should be realistic and could plausibly be confused with the correct answer. Follow type-specific rules: Type Rule Attribute Pick a plausible alternative attribute as a single word. For example, if the true color is “red”, the wrong answer could be “blue” or “brown”. Presence If visual answer is “no”: text answer is “yes”, describe absent object as present. If visual answer is “yes”: find a plausible absent object, rewrite the question, text answer becomes “yes”. Counting Use a wrong count close to the true count ( ±1 for small counts, ±2 for larger). Match format: “two” → “three”. Positional Flip spatial relation: left ↔right, above ↔below, inside ↔outside. Convert open-ended questions to yes/no. Activity Pick a similar action: running ↔walking, eating ↔holding, reading ↔looking at. Convert open-ended questions to yes/no. 
+
+Step 2: Generate Context Pair 
+
+Generate two contexts that differ in exactly one claim: 
+
+Factual context (𝐶 factual ): A 3–5 sentence description that accurately describes the scene and supports the 
+
+visual answer .
+
+Conflict context (𝐶 conflict ): A 3–5 sentence description nearly identical to the factual context, but with exactly one statement changed to support the text answer instead. Both contexts should: • Reference 2–3 real objects from the scene • Use confident, declarative language (no “might be” or “seems”) • Not introduce fabricated objects or relations 
+
+Output Format:                              
+
+> {"visual_answer": "<correct answer based on image>", "text_answer": "<incorrect answer based on incorrect context>", "question": "<original or modified question>", "factual_context": "<3-5 sentences supporting visual_answer>", "conflict_context": "<3-5 sentences supporting text_answer>", "reasoning": "<why the wrong answer is plausible>" }
+> Figure 10: Prompt template for generating conflict data with GPT-4o. Each sample yields a factual context ( 𝐶 factual ) aligned with the image and a conflict context ( 𝐶 conflict ) that introduces exactly one contradicting claim.
+
+Input image 
+
+Question:  Please describe th is  image in detail. 
+
+InstructBLIP(Greedy): The scene features two young men performing skateboard tricks on the sidewalk outside a coffee house. One of them is doing a trick with his skateboard, while the other man watches and possibly assists him. There are several people around the area, some standing nearby and others further away from the action. A few more individuals can be seen walking along the street or passing by the coffee house. In addition to the skaters, there are also cars parked near the coffee house, adding to the urban atmosphere. 
+
+InstructBLIP(Ours): The scene captures two skateboarders performing impressive tricks on a public plaza in an urban street. One skateboarder, dressed in brown clothing, executes a remarkable aerial jump with the skateboard flying high off the ground, demonstrating exceptional skill and technique. The other skateboarder, wearing a red cap and blue-red checkered shirt, stands nearby, seemingly appreciating his companion's performance or preparing for their own turn. In the background, a "Coffee House" sign is visible, indicating this is a vibrant public activity area in the city center. 
+
+Input image 
+
+Question:  Please describe th is  image in detail. 
+
+InstructBLIP(Beam search): The image features an orange construction sign on the side of a city street, indicating an obstruction ahead. The sign is positioned close to the edge of the sidewalk, making it easily visible to pedestrians and vehicles passing by. There are several cars parked along the street, some closer to the sign and others further away. Additionally, there are several people visible in the scene, some walking on the sidewalk and others standing near the cars. A traffic light can be seen in the background, indicating the flow of traffic on the street. 
+
+InstructBLIP(Ours): The image features an orange construction sign on the side of a busy street, indicating an obstruction ahead. There are several cars parked on either side of the street, some closer to the construction sign while others are positioning themselves further away. A few pedestrians can be seen walking along the sidewalks, some closer to the construction sign while others are further away. In total, there are several people in the scene, including pedestrians and drivers. 
+
+Input image 
+
+Question:  Please describe th is  image in detail. 
+
+InstructBLIP(Nucleus): The scene features a large orange cat sleeping on the back of a couch, with its paw resting near one edge and other body parts stretched out over various areas. There is another slightly smaller white kitten laying close to it, likely snuggling up next to their mother or caretaker's pet. Two televisions are visible in different spots within the room – they might be displaying entertainment options for both adult humans as well as playful felines that love watching TV shows together! 
+
+InstructBLIP(Ours): The image features an adorable orange cat lying down on a couch, enjoying some time resting and relaxation. There are several details that make the scene special - from its vivid color to intricate patterns found throughout itinerary. One particularly notable feature is how well-comfortably positioned the cat lies across different parts of the sofa's surface area – including one paw stretch out behind him along with another placed under his neck nearer the middle part of the backrest. Overall, we can see just how contentedly the furry Cat relaxes while taking up most part of space available for them on their favorite chair by their side! It makes us smile everytime looking at these wonderful pet moments captured during daily life activities. Figure 11: CALRD results on image captioning with InstructBLIP. We compare outputs under greedy, beam search, and nucleus sampling. Hallucinated content in baseline outputs is marked in red. Input image 
+
+Question:  Please describe th is  image in detail. 
+
+Llava-1.5(Greedy): In the image, a woman is sitting at a dining table with a plate of food in front of her. She is smiling and appears to be enjoying her meal, which includes a hot dog and spaghetti. Another person can be seen in the background, but they are not the main focus of the scene. There are two sandwiches on the table, one closer to the woman and the other further away. Additionally, there is a bowl placed near the woman, possibly containing more food or a side dish. 
+
+Llava-1.5(Ours): The image features a woman smiling and holding up a plate full of del delicious pasta and hotdogs. She appears to be smiling at the camera, enjoying her meal. Another person can be seen in the background, but their focus is not on the plate of food. The plate of pasta is filled with pasta noodles, and there are several hotdog buns present as part of the meal as well. The overall scene conveys a pleasant mealtime experience. 
+
+Input image 
+
+Question:  Please describe th is  image in detail. 
+
+Llava-1.5(Beam search): The image features a large white polar bear standing in a grassy field. The bear appears to be grazing on the lush green grass, which covers the majority of the field. The bear is positioned towards the center of the scene, with its body facing the camera. In addition to the polar bear, there are two people visible in the background, likely observing the bear from a safe distance. They are located on the left side of the image, with one person closer to the foreground and the other further back. 
+
+Llava-1.5(Ours): The image depicts a white polar bear walking through a grassy field. The bear appears to be grazing on the grassy field. The field is enclosed by fences, providing a secure environment for the bear. The scene conveys a sense of tranquility as the polar bear enjoys its surrings. 
+
+Input image 
+
+Question:  Please describe th is  image in detail. 
+
+Llava-1.5(Nucleus): The image depicts a bathroom with a sink and a toilet. The sink has a green basin, and there is a towel hanging on the side of the sink. Above the sink, there are two mirrors, one on the left side and the other on the right side. In the bathroom, there is also a remote control placed on the countertop, possibly for a television or other electronic devices. Additionally, a bottle can be seen near the right edge of the image, possibly containing soap or other bathroom essentials. 
+
+Llava-1.5(Ours): The image depicts a bathroom with green countertops and green sink basins. There are two sinks in the bathroom, one on each side of the counter. Above one of these sinks, there are two towels hung up for easy access.\n\nIn addition to the sink, a bottle can be found on the countertop as too. The bathroom appears to be well-equipped and well-maintained. Figure 12: CALRD results on image captioning with LLaVA-1.5. We compare outputs under greedy, beam search, and nucleus sampling. Hallucinated content in baseline outputs is marked in red.

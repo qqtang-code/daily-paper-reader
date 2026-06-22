@@ -1,0 +1,753 @@
+Title: CARE: Competence-Aware Reward Shaping for Adaptive Reasoning Length in Video-MLLMs
+
+URL Source: https://arxiv.org/pdf/2606.19927v1
+
+Published Time: Fri, 19 Jun 2026 00:37:08 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# CARE: Competence-Aware Reward Shaping for Adaptive Reasoning Length in Video-MLLMs 
+
+Chengwen Liu 1 Hao Peng 1 Jisheng Dang 1,† Hong Peng 1,† Bin Hu 2,† Tat-Seng Chua 3
+
+> 1
+
+School of Information Science and Engineering, Lanzhou University, Lanzhou, China 
+
+> 2
+
+School of Medical Technology, Beijing Institute of Technology, Beijing, China 
+
+> 3
+
+School of Computing, National University of Singapore, Singapore 
+
+> †
+
+Corresponding authors: Jisheng Dang, Hong Peng, and Bin Hu. 
+
+# Abstract 
+
+In multimodal video reasoning, reinforcement learning-based methods typically rely on simplistic and inflexible reasoning-length control strategies that fail to adapt to the model’s evolving competence. This mismatch may suppress necessary exploration at early stages, while en-couraging redundant reasoning and inefficient decoding once the model becomes more competent. In this pa-per, we propose CARE , a competence-aware reward 
+
+shaping framework for adaptive reasoning length opti-mization in multimodal reasoning. Specifically, CARE maintains a smoothed competence estimate via an ex-ponential moving average of pass rates, and uses it to route training into progressive stages that shift the reward preference from exploration-oriented long-form reasoning to efficiency-oriented concise reasoning. To avoid con-flating verbosity with intrinsic task complexity, CARE further normalizes reasoning effort with batch-level statis-tics, and introduces a posterior amplifier to strengthen reward signals for unexpectedly strong performance on historically difficult samples. The proposed mechanism is seamlessly integrated into the GRPO training pipeline and incurs no additional inference-time overhead. Ex-tensive experiments on multiple video reasoning and gen-eral video understanding benchmarks demonstrate that CARE consistently improves reasoning accuracy, stabi-lizes reinforcement learning, and significantly enhances token efficiency. Moreover, CARE exhibits a characteristic inverted-U trajectory of reasoning length during train-ing, and yields shorter yet more informative reasoning traces at convergence, indicating effective adaptive allo-cation of reasoning budget. We provide the source code for our proposed CARE framework and experiments at 
+
+https://github.com/1Pansy/Video-CARE .
+
+Keywords: Reinforcement learning, multimodal learning, video multimodal large language models, chain-of-thought reasoning. 
+
+# 1 Introduction 
+
+Large multimodal language models (MLLMs) have re-cently shown strong performance on reasoning tasks that require jointly processing heterogeneous inputs such as images, documents, charts, and videos [1, 2]. Among these settings, video question answering (VideoQA) is particu-larly demanding because successful prediction depends not only on recognizing visual content, but also on tracking temporal changes, associating evidence across frames, and composing multiple intermediate inferences over a dynamic visual stream. To improve reliability in such compositional problems, recent post-training methods increasingly en-courage models to produce explicit chain-of-thought (CoT) rationales before giving the final answer. This shifts infer-ence from direct answer prediction to an explicit reasoning process, and has led to substantial gains in multimodal reasoning performance [1, 3]. Once explicit reasoning is introduced, however, post-training no longer optimizes answer correctness alone. It also shapes how much reasoning computation the model is encouraged to spend before committing to an answer. In this sense, reasoning length becomes a training-time control variable rather than a superficial property of the output. Recent studies on reasoning models have shown that longer reasoning does not monotonically produce bet-ter solutions: models may overthink simple instances with unnecessarily verbose derivations, while still underthinking difficult ones by failing to allocate sufficient computation when additional reasoning is required [4, 5]. These ob-servations indicate that reasoning length should not be treated as a fixed proxy for reasoning quality. Instead, it should be viewed as a controllable reasoning budget whose desirable allocation depends on both model competence and instance difficulty [6, 7]. This issue is more consequential in multimodal reason-ing, where the usefulness of extended reasoning must be balanced against the need to remain grounded in percep-tual evidence. In vision-language settings, long reasoning traces can increase the risk of drifting away from the under-lying visual signal, thereby amplifying hallucinations and 1             
+
+> arXiv:2606.19927v1 [cs.CV] 18 Jun 2026 1. Motivation: Competence evolves during training
+> Phase 1: Divergent exploration (low competence)
+> →Maximize reasoning space Phase 2: Convergent distillation (high competence)
+> →Optimize information density
+> Evolving competence makes static length control suboptimal
+> Static floor
+> Mild Length Penalty
+> Master ( )Novice ( )
+> Strong Length Incentive
+> Explorer ( )Proficient ( )
+> Mild Length Incentive Strong Brevity Enforcement
+> Training Steps Training Steps Baseline
+> 4.Emergent Outcomes & Verification
+> Efficiency CARE Baseline Adaptivity hard easy CARE
+> TempCompass MVBench
+> Stronger Accuracy
+> Denser reasoning, adaptive length, better performance
+> 2. Why Static Length Fails?
+> Token Length
+> 1: Premature Truncation Static Limit ( )Cut-off Loss
+> Reward Signal
+> (-*)/ redundant tokens 2: Enforced Padding
+> Needed reasoning ( *)
+> Competence Monitor
+> Amplifier
+> (Overrides Length Penalties on Hard Cases)
+> Stabilizer Floor
+> Normalization stability guardrail
+> 3. CARE: Competence-Aware Routing
+> (Novice) (Explorer)
+> (FLOOR = 300)
+> Policy
+
+Figure 1: Motivation of CARE. As model competence evolves during reinforcement learning, a fixed preference over reasoning length becomes increasingly mismatched to the policy’s needs: it can truncate useful exploration early in training, yet preserve redundant reasoning after the policy becomes more competent. CARE addresses this problem by evolving the reward preference over reasoning effort according to competence, encouraging exploration when competence is limited and progressively favoring concise, information-dense reasoning as competence improves. over-reliance on language priors [8 – 11]. For video reason-ing, this tension is even sharper because the model must integrate temporally distributed evidence while maintain-ing consistency over a longer observation horizon. Recent reinforcement learning (RL) methods have demonstrated that RL can improve temporal and compositional reason-ing in MLLMs [3], but they still leave a central question insufficiently addressed: as the policy becomes more capa-ble during training, how should the preferred amount of reasoning change? Existing approaches usually regulate reasoning length with static control strategies, such as fixed rewards, penal-ties, or thresholds. Although these designs can suppress obvious verbosity, they also assume that the preferred reasoning budget should remain unchanged throughout training. This assumption is difficult to justify in RL, where model competence evolves continuously. Early in training, when reasoning ability is still limited, longer trajectories can be useful because they enlarge the space of candidate inference paths, expose more intermediate states, and support exploration. Later in training, once the policy has acquired stronger reasoning ability, the same preference for long trajectories can instead preserve redundant narration, repeated self-verification, or padding behaviors that consume tokens without improving the so-lution. The key problem is therefore not merely excessive length or insufficient brevity, but a competence–constraint mismatch: static reward design imposes a fixed preference on a behavior whose utility changes as the policy improves. As summarized in Fig. 1, this mismatch and the in-tuition that follows from it highlight how fixed length preferences can create two opposite optimization failures during training. If the reward favors brevity too early, the policy may prematurely truncate trajectories that are still useful for exploration and error correction. If the reward continues to tolerate or encourage long reasoning after competence has improved, the policy may retain redundant reasoning that contributes little beyond token overhead. The same output length therefore has different implications at different stages of learning. More broadly, static designs judge reasoning effort in isolation, with-out accounting for whether the current behavior arises from a weak or strong policy, whether the instance is easy or difficult, or whether a successful long trajectory is merely routine or genuinely informative under the current competence level. These observations suggest that reasoning-length con-trol should be formulated as competence-aware reasoning budget allocation rather than static regularization. Based on this view, we propose CARE, short for Competence-Aware Reward Shaping, a training-time reward frame-work that adapts how reasoning effort is valued during RL for multimodal video reasoning. CARE maintains a smoothed estimate of model competence, uses this es-timate to route optimization into progressively different behavioral regimes, calibrates reasoning effort relative to batch context instead of raw length alone, and further amplifies behaviors that are unexpectedly successful under 2the current competence level. In this way, CARE does not rely on a separate inference-time controller. Instead, it reshapes the reward landscape during training so that an adaptive reasoning policy emerges naturally: more reason-ing is preserved when difficult cases still require it, while easier cases are gradually compressed into more concise and information-dense solutions. We summarize the main contributions of this work as follows: 1. We identify a competence–constraint mismatch in multimodal reasoning RL: static reasoning-length re-wards implicitly impose a fixed reasoning-budget pref-erence throughout training, despite the fact that the desirable budget is inherently non-stationary as model competence evolves. 2. We propose CARE, a competence-aware reward shap-ing framework that progressively adjusts reasoning incentives from exploration-oriented long-form rea-soning to efficiency-oriented concise reasoning, im-plemented through competence-based stage routing, difficulty-aware modulation, and posterior reward am-plification. 3. We show that CARE induces an emergent competence-aware reasoning policy without any ex-plicit inference-time controller: the trained model self-organizes to allocate more reasoning to hard in-stances and less to easy ones, yielding improved ac-curacy, lower token consumption, and more stable training dynamics across multiple video reasoning benchmarks. 
+
+# 2 related work 
+
+2.1 RL for Video Reasoning in MLLMs 
+
+Recent progress in multimodal post-training has increas-ingly extended reinforcement learning from text and image reasoning to the video domain. A representative line of work shows that RL can substantially strengthen video reasoning in MLLMs by improving temporal understand-ing, compositional inference, and generalization beyond supervised chain-of-thought distillation alone [3, 12]. In particular, Video-R1 is among the first frameworks to sys-tematically adapt the R1-style reinforcement paradigm to video reasoning, highlighting two central challenges in this setting: temporal modeling and the scarcity of high-quality video reasoning data [3]. VideoRFT further demonstrates that reinforcement fine-tuning can effectively incentivize human-like video reasoning when combined with scalable construction of video CoT data [12]. Beyond the video domain specifically, recent multimodal reinforcement fine-tuning methods also provide important foundations for video reasoning. Visual-RFT shows that rule-based verifiable rewards can effectively transfer the RFT paradigm to visual perception and multimodal rea-soning tasks [13], while Reason-RFT demonstrates that GRPO-based reinforcement learning improves the gen-eralization and data efficiency of visual reasoning mod-els compared with purely supervised CoT training [14]. Point-RFT further suggests that visually grounded CoT is more effective than text-only reasoning for multimodal reasoning, underscoring the importance of grounding the reasoning process in visual evidence rather than treating reasoning as purely linguistic elaboration [15]. These de-velopments collectively indicate that RL is becoming a practical paradigm for strengthening multimodal reason-ing, especially when reward design and reasoning traces are made compatible with visual evidence. At the same time, the video setting introduces distinc-tive challenges that make reasoning control more difficult than in static-image or text-only tasks. Benchmarks such as V-STaR show that video reasoning requires jointly mod-eling what objects are present, when events occur, and where they are located, making spatio-temporal reasoning a first-class challenge rather than a byproduct of general video understanding [16]. Existing RL-based video rea-soning methods therefore mainly focus on temporal-aware optimization, reasoning data construction, or grounding-oriented reward design [3, 12]. However, they pay less attention to another important dimension of post-training: how much reasoning budget the model should be encour-aged to spend at different stages of learning. In other words, while prior work has substantially improved the reasoning content of video MLLMs, it has rarely modeled how the preferred amount of reasoning should evolve as the model becomes more competent. Our work addresses this gap by formulating reasoning-length regulation as a competence-aware and non-stationary budget allocation problem during RL. 
+
+2.2 Reasoning Efficiency and Budget Al-location 
+
+As reasoning models become stronger, improving reasoning efficiency has emerged as an important research problem rather than a secondary deployment concern. Recent studies show that longer reasoning does not monotonically lead to better performance: models may overthink simple problems by generating unnecessarily verbose chains, yet underthink harder ones by failing to extend reasoning when additional computation is needed [4, 5]. This obser-vation has motivated a growing body of work on efficient reasoning, including response compression, shorter reason-ing distillation, dynamic early stopping, and reward-based length control [5]. A first line of work improves efficiency mainly at inference time through post-hoc control over generated reasoning. These methods reduce redundant computation by compressing intermediate thoughts, ter-minating reasoning early, or encouraging shorter outputs after reasoning capabilities have already been acquired. While such strategies are effective for lowering inference 3C Auto-Adapted Reasoning (inference only)            
+
+> Internalized Multimodal Reasoning Logic
+> Adaptive Allocation
+> Final Answer Fewer Tokens Accuracy Preserved
+> Compact Reasoning
+> (easy-case mode)
+> Extended Reasoning
+> (hard-case mode)
+> A Video-Conditioned Policy Rollouts
+> Video-question input
+> Rollout signals for controller training Behavior internalized into the policy Each cell is one sampled reasoning trajectory
+> Video-LLM policy
+> Warm-up Expansion Refinement
+> BCARE Controller for Adaptive Reasoning Scheduling (training-time only)
+> Adaptive Reasoning Behavior Scheduler
+> group pass rate reasoning length competence est. EMA ( )Acc ( )Len ( )
+> ··· Lower compute Less Padding
+> Reward routing GRPO update
+> Strong Explore Stage 1 longer reasoning favored
+> Mild Explore
+> Explorer
+> Length Bar Visualization
+> Stage 2
+> Mild Compress
+> Length Bar Visualization
+> Stage 3 clearly left-shifted
+> Strong Compress
+> Length Bar Visualization
+> strongly left-shifted
+> moderately longer reasoning Stage 4
+> Proficient Master Novice
+> Length Bar Visualization
+
+Figure 2: Overview of CARE. (A) The video-conditioned policy rollouts produce reasoning trajectories. (B) The CARE controller dynamically routes reward incentives according to competence estimates during reinforcement learning. (C) This training-time regulation internalizes the adaptive reasoning behavior, enabling auto-adapted allocation of compact or extended reasoning during inference. Overall, this framework establishes a principled balance between reasoning exploration and execution efficiency. cost, they primarily operate on completed or partially gen-erated trajectories, and therefore treat reasoning length as an output-side phenomenon to be corrected after the reasoning policy has already been learned [5]. A second line of work brings efficiency considerations into training by explicitly shaping rewards with respect to reasoning length. For example, a method proposes adaptive rewards to better balance answer accuracy and reasoning length during optimization [6], while LASER formulates efficient reasoning methods under a unified length-based reward shaping framework and uses target-length-controlled step rewards to improve the Pareto trade-off between performance and efficiency [7]. These methods move beyond purely post-hoc adjustment by recognizing that reasoning efficiency should be learned during training rather than corrected only at inference time. Despite this progress, existing training-time approaches still typically regulate reasoning efficiency through fixed targets, local heuristics, or sample-level adjustments. As a result, they do not explicitly model a key property of re-inforcement learning for reasoning: the preferred amount of reasoning is itself non-stationary during training. Areasoning budget that is beneficial when the model is still exploring candidate solution paths may become wasteful once the model has acquired stronger reasoning compe-tence. In this sense, the core challenge is not merely to shorten reasoning, but to adapt the reward preference over reasoning length as the model evolves. Our work addresses this gap by framing reasoning efficiency as a competence-aware and non-stationary budget allocation problem in multimodal RL training. 
+
+# 3 Method 
+
+CARE is a training-time reward controller integrated into the GRPO optimization loop. Rather than applying a static preference for either long or short chains of thought, CARE adjusts the incentive on reasoning length according to the current competence of the policy. As illustrated in Fig. 2, the framework follows a sequential pipeline: it first observes group-level rollout outcomes, then derives a stable competence signal, converts that signal into a stage-aware effort score, and finally assembles the reward used for policy optimization. 
+
+3.1 Overview of CARE 
+
+For each prompt, the policy produces a rollout group and yields three training-time signals: the group pass rate 
+
+Pg , the reasoning length ℓ(h), and the EMA-smoothed competence estimate Pb,t . CARE uses these signals in a fixed order. It first maps the competence estimate to a training stage s, then normalizes the reasoning length into a batch-relative effort score z, and subsequently modulates the effort preference according to both the current stage and the informativeness of the observed success. The resulting reward is therefore conditioned jointly on policy maturity, local difficulty, and posterior surprise, instead of relying on a single global length heuristic. These intermediate signals are then integrated to for-mulate the final CARE reward as follows: 
+
+RCARE = Racc · ws · min  η, σ (ksz) · A, (1) where ks controls the stage-aware effort preference, A is 4A. Competence Monitor              
+
+> GRPO group
+> GPO
+> ×Acc 0/1 Acc 0/1
+> (one sample G responses)
+> √
+> ×
+> √Batch
+> (B samples)
+> EMA competence monitor
+> B. Stage Router
+> (Hard gating)
+> Output stage
+> Parameter lookup table
+> C. Effort Scorer
+> (Normalize Length - Sigmoid)
+> One completion h Batch stats:
+> D. Amplifier + Reward
+> Assembly+ Total Reward
+> Length counter Amplifier
+> Total Reward
+> Reward Assembly Pipeline
+> ×
+> 0.80 0.75 0.70
+> Correctness Gate:
+> Length normalizer
+> Sigmoid scorer
+> ···
+> ···
+> Stage
+> ··· ··· ··· ··· ··· ··· ··· ··· ··· ··· ··· ··· ··· ··· ··· ···
+
+Figure 3: Pipeline of the proposed CARE algorithm. a posterior amplification factor, ws is a stage-dependent weight, and η is a clipping threshold. 
+
+3.2 Competence Estimation 
+
+The reward controller requires a stable estimate of model maturity. Using instantaneous batch accuracy directly would be problematic because batch difficulty varies sub-stantially during training, which would cause frequent oscillation in the routing signal. We therefore construct a historical competence estimate through an exponential moving average (EMA), allowing the reward policy to track long-term capability trends rather than transient batch noise. For each question, the policy generates G rollouts in a GRPO group. We compute the group pass rate as follows: 
+
+Pg = 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+Acc i, (2) where Acc i ∈ { 0, 1} indicates whether the i-th rollout is correct. Given a batch containing B groups, we then compute the average batch pass rate as follows: Mean( Pg ) = 1
+
+B
+
+> B
+
+X
+
+> t=1
+
+Pg (t). (3) The competence estimate is updated according to the following equation: 
+
+Pb,t = γP b,t −1 + (1 − γ)Mean( Pg ), (4) where γ is the smoothing coefficient. In our implemen-tation, we set γ = 0 .99 so that routing decisions evolve smoothly with training. To avoid initialization bias, the EMA is warm-started from the observed pass rate at the beginning of training rather than from an arbitrary con-stant. As a result, Pb,t serves as a stable global state variable for the subsequent reward controller. 
+
+3.3 Stage-Aware Effort Scoring 
+
+The effect of reasoning length depends on the current competence regime. When the policy is still weak, longer chains may reflect necessary exploration; when the policy is already competent, excessive length more often indicates redundancy. CARE therefore does not assign a fixed preference to long outputs. Instead, it first routes training into a competence stage and then evaluates length relative to the local batch context. The current stage is determined as follows: 
+
+s = f (Pb,t ), s ∈ { Novice , Explorer , Proficient , Master }.
+
+(5) Specifically, the training process is divided into four pro-gressive stages based on a set of predefined competence thresholds T . In the Novice stage, the model is still weak and often fails to complete complex reasoning correctly, prompting CARE to strongly protect long-form explo-ration. As the model advances to the Explorer stage, it begins to exhibit useful reasoning patterns but still bene-fits from additional exploration; thus, CARE continues to encourage longer reasoning, albeit more moderately. Upon reaching a more reliable competence level in the Proficient stage, blindly encouraging longer reasoning is no longer de-sirable, and the controller begins to shift toward efficiency. Finally, in the Master stage, the model is expected to rea-son accurately and efficiently, leading CARE to strongly penalize redundant reasoning tokens. The exact values of 
+
+T are detailed in the experimental setup. These thresh-olds postpone compression until the policy has moved sufficiently beyond its SFT initialization, thereby reducing 5the risk of discouraging useful exploration too early. Raw response length is not directly comparable across instances, because difficult samples naturally require larger reasoning budgets. We therefore measure effort only after batch-relative normalization. Let ℓ(h) denote the token length of the generated reasoning chain. The normalized effort score is calculated as follows: 
+
+z = ℓ(h)max( ω · Tavg , T floor , 0.5Lpct ) , (6) where Tavg is the average length of correct responses within the batch, Lpct denotes the 75 th percentile of response lengths, Tfloor is a fixed lower bound for numerical sta-bilization, and ω is a tolerance multiplier that relaxes the length penalty to prevent premature truncation. The denominator combines successful-response statistics with a conservative floor so that normalization remains mean-ingful even when correct samples are sparse or abnormally short. In early training, this prevents the effort baseline from collapsing together with model performance. The stage-aware preference is then encoded through a modulated coefficient ks. We first define a stage-specific base routing coefficient bs, and then adjust it according to both group difficulty and the model’s distance from the competence anchor: 
+
+ks = bs + sgn( bs) α(1 − Pg ) + βmod |Pb,t − a|, (7) where bs ∈ B is the base routing coefficient for stage s,
+
+a is the competence anchor, and α, β mod are modulation weights. Positive ks values encourage longer reasoning, whereas negative values penalize it. Larger magnitudes are used when the training objective should be more explicit, while smaller magnitudes are used near transition regions to avoid abrupt changes in the reward landscape. Based on z and ks, we compute the stage-aware effort score as follows: 
+
+S = σ(ksz), (8) which quantifies whether the observed effort is desirable under the current competence regime. 
+
+3.4 Posterior Amplifier 
+
+Stage-aware effort scoring specifies the preferred direction of reasoning behavior, but it does not distinguish routine outcomes from especially informative ones. To address this, CARE adds a posterior amplifier that measures how far the current group performance exceeds or deviates from the expected competence baseline. We first compute the relative advantage as follows: ∆dif f = Pg − Pb,t . (9) A larger positive value indicates that the current group performs better than what the historical competence es-timate would predict. The amplification factor is then defined as follows: 
+
+A = 1 + asgs(∆ dif f ), (10) where as ∈ A amp is a stage-specific amplifier weight and 
+
+gs(·) is a stage-dependent transformation. We use different transformations in different stages: 
+
+gs(∆) = 
+
+(
+
+|∆|, s ∈ { Novice , Explorer },
+
+max(0 , ∆) , s ∈ { Proficient , Master }. (11) In early stages, the goal is to remain sensitive to un-usual and potentially useful exploratory behavior, even when it is not yet consistently aligned with the histori-cal average. In later stages, the controller becomes more selective and amplifies only outcomes that outperform expectations. This stage-dependent asymmetry allows the amplifier to function as an auxiliary booster without overriding the main effort preference established by the stage-aware scorer. 
+
+3.5 Final Reward and Training Objective 
+
+The raw CARE effort reward is assembled as follows: 
+
+RCARE raw = ws · min( η, S · A), (12) where ws ∈ W is a stage-dependent weight and η is a clipping threshold applied to prevent reward saturation. Here, S scores the desirability of the current reasoning effort, A scales that score according to posterior informa-tiveness, and ws adjusts the influence of the effort term across training stages. In practice, larger stage weights are assigned when exploration should be emphasized, whereas smaller weights are used when the effort term should act mainly as an efficiency regularizer. Reasoning effort should not be rewarded independently of factual correctness. We therefore gate the effort term by the accuracy reward, formulated as follows: 
+
+RCARE = RCARE raw · Racc . (13) The final reinforcement learning objective is defined as follows: 
+
+Rtotal = Racc +Rf ormat +RCARE +λtemp Rtemporal , (14) where Racc is the task accuracy reward, Rf ormat is the for-matting reward, RCARE is the CARE effort reward, and 
+
+Rtemporal serves as an auxiliary temporal reward where applicable. Clipping is applied after reward assembly to prevent a small number of amplified samples from domi-nating the GRPO update. All CARE components operate only during training, so the method reshapes reasoning behavior without introducing additional inference-time computation. 
+
+# 4 Experiments 
+
+4.1 Settings 
+
+We first conduct one epoch of supervised fine-tuning on Video-R1-CoT-165k to initialize the reasoning capability 6Table 1: Optimization and CARE hyperparameters.                                 
+
+> Hyperparameter Value Optimization Optimizer AdamW Learning rate 1×10 −6
+> Weight decay 0.01 KL coefficient 0.04 Gradient clipping 5.0 CARE Controller EMA momentum ( γ)0.99 Competence thresholds ( T){0.65 ,0.70 ,0.75 }
+> Competence anchor ( a)0.70 Base routing coefficients ( B){+3 .0,+1 .2,−1.2,−3.0}
+> Modulation weight ( α)0.5 Boundary modulation ( βmod )0.3 Stage weights ( W){0.3,0.25 ,0.2,0.2}
+> Amplifier weights ( Aamp ){1.0,0.5,0.2,0.5}
+> Length tolerance ( ω)2.5 Length floor ( Tfloor )300 Reward clip ( η)0.95 Temporal coefficient ( λtemp )1.0
+
+of the model, and then continue training with CARE under the GRPO framework. Unless otherwise specified, all experiments are conducted on 8 NVIDIA L20 (46GB) GPUs with a per-device batch size of 1. For reinforcement learning, we use Video-R1-260k, which contains about 260K video-question-answer pairs with visual reasoning queries. During training, each sample is limited to at most 16 frames with dynamic resolution up to 128 × 28 × 28. During inference, the resolution is increased to 256 ×28 ×28, and the number of frames is extended to 16 ∼64. We set the GRPO group size to G = 8 and train for 5 epochs. Table 1 summarizes the optimization and CARE-specific hyperparameters used throughout training and evaluation. Unless otherwise specified, stage-dependent parameter sets are listed in the order of Novice, Explorer, Proficient, and Master. 
+
+4.2 Main Results 
+
+To comprehensively evaluate the model’s spatial-temporal perception and complex reasoning capabilities, we conduct experiments on a suite of video reasoning benchmarks: VSI-Bench [29], VideoMMMU [30], and MMVU [31]. Ad-ditionally, we assess general video understanding capabili-ties using MVBench [32], TempCompass [33], and Video-MME [34]. Table 2 compares our method with recent video-language models and reinforcement-learning-based video reasoning approaches. 
+
+Overall Performance and Reasoning Capabilities 
+
+Our method consistently outperforms previous models Hard Medium-Hard Medium-Easy Easy  
+
+> Instance Difficulty
+> 200
+> 250
+> 300
+> 350
+> 400
+> 450
+> 500
+> Average Reasoning Length
+> CARE Unaware (Step-based)
+
+Figure 4: Visualization of the fixed-step ablation in Ta-ble 3. In the Ours (Fixed-step) setting, the resulting policy allocates a nearly constant reasoning length across different instance difficulty levels (categorized by the pass rate). In contrast, CARE dynamically adjusts the rea-soning budget, preserving a clear monotonic allocation pattern from hard to easy instances. across the evaluated benchmarks. Under the identical Qwen2.5-VL-7B backbone and 16-frame setting, CARE achieves notable gains over the Video-R1 baseline on reasoning-intensive datasets, improving VSI-Bench from 30.3 to 33.9 and VideoMMMU from 47.2 to 50.2. These re-sults demonstrate that competence-aware reward shaping effectively enhances multi-step video reasoning. 
+
+General Video Understanding and Scaling Beyond specialized reasoning tasks, CARE improves general video understanding, yielding higher scores on MVBench (64.4 vs. 62.4), TempCompass (73.1 vs. 70.8), and VideoMME (57.3 vs. 54.3). Furthermore, scaling the input from 16 to 64 frames provides consistent performance gains, reaching 36.2 on VSI-Bench and 62.3 on VideoMME, indicating that CARE robustly leverages richer temporal contexts while maintaining stable reasoning behavior. 
+
+4.3 Ablation Study 
+
+To quantify the contribution of each component in CARE, we conduct ablation studies by removing or simplifying key designs, as shown in Table 3. 
+
+Effect of Fixed-step Scheduling As illustrated in Fig. 4, this ablation evaluates reasoning-length allocation by comparing CARE with the Ours (Fixed-step) vari-ant reported in Table 3. Ours (Fixed-step) replaces the competence-aware transitions with a fixed schedule, evenly dividing the training process into four stages (Novice, Explorer, Proficient, and Master) that each occupy one quarter of the total training steps. In this setting, the reward controller is unaware of the instance-level compe-tence signals (such as the group pass rate Pg ) and enforces stage transitions based solely on step boundaries rather 7Table 2: Video model performance comparison.                                                                                                                                       
+
+> Video Reasoning Benchmark Video General Benchmark Models Frames VSI-Bench VideoMMMU MMVU(mc) MVBench TempCompass VideoMME(wo sub) LLaMA-VID [17] ----41.9 45.6 -VideoLLaMA2 [18] ---44.8 54.6 -47.9 LongVA-7B [19] -29.2 23.9 --56.9 52.6 VILA-1.5-8B [20] -28.9 20.8 --58.8 -VILA-1.5-40B [20] -31.2 34.0 ---60.1 Video-UTR-7B [21] ----58.8 59.7 52.6 LLaVA-OneVision-7B [22] -32.4 33.8 49.2 56.7 -58.2 Kangeroo-8B [23] ----61.1 62.5 56.0 Qwen2.5-VL-7B [24] --47.4 61.3 59.4 69.2 52.8 Video-R1-7B [3] 16 30.3 47.2 63.5 62.4 70.8 54.3 DeepVideo-R1 [25] -33.0 40.7 59.0 49.6 63.1 51.1 TinyLLaVA-Video-R1 [26] 16 --46.9 -49.5 46.6 VIDEORFT [12] 32 --51.1 62.1 --Temporal-RLT [27] 32 --65.0 --57.6 Video-COM [28] --50.2 65.4 -71.3 -Ours 16 33.9 50.2 64.2 64.4 73.1 57.3 Ours 32 34.3 51.0 64.5 65.0 73.6 60.6 Ours 64 36.2 51.1 64.8 65.7 73.8 62.3
+
+Table 3: Ablation study of CARE.                                                                        
+
+> Video Reasoning Benchmark Video General Benchmark Models Frames VSI-Bench VideoMMMU MMVU(mc) MVBench TempCompass VideoMME(wo sub) Baseline 16 30.3 47.2 63.5 62.4 70.8 54.3 Ours (2-stage) 16 29.4 48.3 63.8 63.2 71.1 55.2 Ours (SFT-only) 16 30.2 44.6 59.2 57.1 69.4 51.9 Ours (RL-only) 16 31.2 46.8 63.2 60.8 71.1 53.4 Ours w/o Amplifier 16 30.7 48.8 63.9 63.4 70.8 54.1 Ours w/o EMA 16 30.4 47.5 61.6 62.2 71.0 53.0 Ours (Fixed-step) 16 30.7 44.1 61.4 54.3 69.1 50.2 Ours w/o CARE 16 32.7 48.3 62.1 61.1 71.3 54.5 Ours 16 33.9 50.2 64.2 64.4 73.1 57.3
+
+than sample-adaptive control. Consequently, the resulting policy maintains a nearly constant reasoning length across different instance difficulty levels (categorized by the pass rate). In contrast, CARE allocates substantially longer reasoning to hard instances and progressively compresses reasoning as difficulty decreases. Furthermore, this vari-ant remains consistently below CARE on all evaluated benchmarks, reducing VideoMMMU from 50.2 to 44.1, MVBench from 64.4 to 54.3, and VideoMME from 57.3 to 50.2. This indicates that equal-duration stage allocation is insufficient. Without sample-adaptive control, the model cannot adjust the reasoning budget according to the ac-tual competence-demand mismatch of different instances, leading to less effective reasoning allocation and weaker overall performance. 
+
+Effect of Interval Granularity Replacing the four-stage competence partition with a binary interval (Ours (2-stage)) significantly degrades performance, dropping VSI-Bench from 33.9 to 29.4. A coarse two-stage reward fails to capture the gradual progression of model competence, introducing overly abrupt reward signals that disrupt the smooth transition from exploration to compression. This confirms the necessity of fine-grained competence modeling. 
+
+Effect of Posterior Amplification and Tfloor Remov-ing the posterior amplifier (Ours w/o Amplifier) causes consistent performance drops, with VideoMMMU decreas-ing from 50.2 to 48.8. This indicates that base length control alone is insufficient, while assigning larger rewards to unexpectedly strong performances accelerates learning on difficult instances. Furthermore, removing the mini-8mum reasoning length constraint ( Tfloor ) leads to training collapse, where the model rapidly converges to extremely short, trivial responses. Tfloor is thus critical to ensure sufficient capacity for multi-step reasoning. 
+
+Effect of EMA Smoothing Using the instantaneous batch mean pass rate instead of the EMA competence monitor (Ours w/o EMA) causes clear degradation. Be-cause video RL typically uses small batch sizes, raw pass rates are highly sensitive to sample difficulty, leading to severe reward shocks that can alternate abruptly between length penalization and encouragement. EMA smoothing provides a stable competence tracker, ensuring continuous curriculum progression and stable policy learning. 
+
+Effect of Cold-start SFT Ours (SFT-only) only ap-plies cold-start supervised fine-tuning to the base model and yields the weakest overall performance, with 30.2 on VSI-Bench, 44.6 on VideoMMMU, and 57.1 on MVBench. This result indicates that cold-start SFT improves ini-tialization but does not provide sufficient optimization pressure for video reasoning and temporal understanding. 
+
+Effect of Removing CARE Ours w/o CARE pre-serves the same training pipeline but removes CARE-specific adaptive reward design. Its performance remains consistently below the full method, for example dropping VSI-Bench from 33.9 to 32.7 and VideoMMMU from 50.2 to 48.3. This result indicates that the gain does not come from the training recipe alone. Instead, CARE’s competence-aware reward shaping provides the key opti-mization signal that converts reinforcement learning into stronger and more stable improvements. 
+
+Effect of Zero-start RL Ours (RL-only) directly ap-plies standard GRPO to the base model without cold-start supervised fine-tuning. It consistently outperforms Ours (SFT-only) on most benchmarks, improving VSI-Bench from 30.2 to 31.2 and MVBench from 57.1 to 60.8, but still remains below both Ours w/o CARE and the full method across all datasets. This result shows that generic RL optimization is beneficial, but starting RL without cold-start initialization still leaves the policy at a clear disadvantage. CARE further improves upon this foun-dation by providing competence-aware reward shaping, translating policy optimization into more stable and con-sistent gains on both video reasoning and general video benchmarks. 
+
+4.4 Analysis of Static Length Normaliza-tion 
+
+We further analyze why static length normalization is fundamentally unsuitable for multimodal reasoning. As shown in Fig. 5, using a fixed denominator Lstatic pro-duces incompatible optimization behavior across tasks 0 200 400 600 800 1000 1200     
+
+> Absolute Generation Length (Tokens)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Assigned Reward Signal ( Reffort )
+> Simple Task Complex Task
+> Ineffective Penalty:
+> Reward surface too flat,
+> failing to enforce brevity.
+> Gradient Vanishing:
+> Zero reward prevents
+> learning complex reasoning.
+> Static Low ( Lstatic = 100 )
+> Static Mid ( Lstatic = 400 )
+> Static High ( Lstatic = 1000 )
+
+Figure 5: Optimization landscape of static length nor-malization under different fixed denominators Lstatic . A single static denominator cannot accommodate varying reasoning lengths across instances. with different intrinsic reasoning demands. When Lstatic 
+
+is small, long yet necessary reasoning chains are pushed into the saturated tail of the reward function, yielding near-zero gradients and encouraging premature truncation. When Lstatic is large, the reward surface becomes too flat in the short-length region, making it difficult to penalize redundant reasoning on simple instances. Intermediate values merely trade off these two failure modes rather than resolving them. This analysis suggests that length cali-bration should be adaptive to task difficulty, rather than enforced through a single global normalization constant. 
+
+4.5 Training Behavior During RL 
+
+As summarized in Fig. 6, the training dynamics of Video-R1 and CARE are evaluated from three complementary perspectives: accuracy reward, reasoning length, and to-ken efficiency. Taken together, these results show that CARE improves task performance while reallocating the reasoning budget more effectively during reinforcement learning. 
+
+Accuracy Reward As shown in the left panel of Fig. 6, the two models begin with similar reward values, but their trajectories gradually diverge as training proceeds. Video-R1 saturates after the mid stage and remains close to 0.67, whereas CARE continues to improve and stabilizes at a higher level near 0.70. This gap indicates that CARE maintains more effective optimization pressure after the baseline has largely plateaued. 
+
+Reasoning Length The middle panel shows a clear difference in how the two methods allocate response length during training. Video-R1 steadily grows to a roughly fixed reasoning budget and then fluctuates around that level. CARE, in contrast, first increases its reasoning length beyond the baseline and later reduces it markedly after the later training stage. This pattern suggests that CARE permits broader exploration when the policy is still immature, and then compresses the reasoning process once more reliable behavior has been acquired. 90 100 200 300 400 500 600                
+
+> Global Steps
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> Reward Value
+> (a) Accuracy Reward
+> Video-R1 Video-CARE
+> 0100 200 300 400 500 600
+> Global Steps
+> 250
+> 300
+> 350
+> 400
+> 450
+> 500
+> 550
+> 600
+> Token Length
+> (b) Completion Length
+> Video-R1 Video-CARE
+> 0100 200 300 400 500 600
+> Global Steps
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> 3.5
+> Efficiency Score
+> (c) Token Efficiency
+> Video-R1 Video-CARE
+
+Figure 6: Training behavior during reinforcement learning. Left: accuracy reward. Middle: reasoning length. Right: token efficiency. Compared with Video-R1, CARE attains higher reward, adjusts response length more adaptively, and achieves better token efficiency throughout training. 
+
+Token Efficiency The right panel further shows that the gain in reward is not achieved by simply maintaining longer outputs. We compute token efficiency as follows: Token Efficiency = Accuracy Generated Tokens × 1000 , (15) and observe that CARE rises substantially throughout training, eventually reaching a level far above Video-R1. Combined with the length reduction in the later stage, this result indicates that CARE improves both effectiveness and efficiency, producing more reward per generated token rather than relying on a larger token budget. 
+
+4.6 Length Allocation and Efficiency Analysis 
+
+As summarized in Fig. 7, the efficiency-related results are presented from three complementary views: length alloca-tion across difficulty groups, reasoning length on correct samples, and reasoning length over the full evaluation set. Together, these results show that CARE reduces compu-tation without collapsing the response budget uniformly across all cases. 
+
+Length Allocation Across Difficulty The left panel examines the longest-response group across different diffi-culty levels. A clear ordering remains: harder instances still receive longer responses, while easier instances are assigned shorter outputs. This result indicates that CARE does not simply truncate responses indiscriminately. In-stead, it preserves a difficulty-sensitive allocation pattern and mainly compresses the portion of long responses that is less necessary for easier cases. 
+
+Reasoning Density on Correct Samples The mid-dle panel restricts the analysis to correctly answered sam-ples. Across all benchmarks, CARE consistently produces shorter correct responses than the static baseline, and the associated reduction rates remain substantial. Because answer correctness is already preserved in this comparison, the shorter responses indicate a denser reasoning process rather than an accuracy-efficiency trade-off. 
+
+System-Level Efficiency The right panel extends the comparison to the full evaluation set, including both cor-rect and incorrect predictions. CARE again yields shorter average responses across benchmarks, with reduction rates that are broadly consistent with those observed on correct samples. This consistency suggests that the efficiency gain is not confined to a narrow subset of examples, but reflects a systematic shift toward more compact decoding behavior. 
+
+4.7 Hyperparameter Sensitivity 
+
+To examine whether CARE depends on a narrow parame-ter choice, we vary three representative controller hyperpa-rameters that directly affect stage routing, response-length tolerance, and the minimum reasoning budget, while keep-ing all other settings fixed. As reported in Fig. 8, both accuracy and average reasoning length are evaluated across variations. The default configuration in Table 1, namely 
+
+T = {0.65 , 0.70 , 0.75 }, ω = 2 .5, and Tfloor = 300, con-sistently provides the best or near-best accuracy while avoiding unnecessary token growth. This indicates that the adopted setting corresponds to a stable operating regime rather than a fragile point solution. 
+
+Effect of Stage Thresholds Adjusting the stage thresholds in either direction leads to weaker behavior. A more permissive setting, {0.60 , 0.65 , 0.70 }, reduces ac-curacy and substantially increases the average reasoning length, indicating that overly early stage transitions make the routing signal less reliable and weaken the intended exploration-to-compression schedule. A more conservative setting, {0.70 , 0.75 , 0.80 }, slightly shortens responses but also lowers accuracy, suggesting that delayed transitions underuse adaptive modulation. The default thresholds 10 Hard Medium-Hard Medium-Easy Easy    
+
+> Instance Difficulty (Group Pass Rate Pg)
+> 0
+> 100
+> 200
+> 300
+> 400
+> 500
+> 600
+> Average Length of Top-Q4 Responses
+> (a) Length Allocation Across Difficulty
+> MMVU
+> MVBench
+> TempCompass
+> Video-MME
+> Video-MMMU
+> VSIBench
+> 0
+> 100
+> 200
+> 300
+> 400
+> 500
+> Average Reasoning Length
+> (b) Reasoning Density on Correct Samples
+> Static Baseline
+> CARE (Ours)
+> Reduction Rate
+> MMVU
+> MVBench
+> TempCompass
+> Video-MME
+> Video-MMMU
+> VSIBench
+> 0
+> 100
+> 200
+> 300
+> 400
+> 500
+> Average Reasoning Length
+> (c) System-Level Efficiency
+> Static Baseline
+> CARE (Ours)
+> Reduction Rate
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> Token Reduction Rate (%)
+> -18.5%
+> -37.3% -37.0%
+> -33.5%
+> -20.2%
+> -41.5%
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> Token Reduction Rate (%)
+> -18.7%
+> -37.5% -36.6%
+> -33.7%
+> -17.7%
+> -41.3%
+
+Figure 7: Length allocation and efficiency analysis across difficulty groups and benchmarks. Left: average length of the longest-response group across difficulty levels. Middle: average reasoning length on correctly answered samples, with token reduction rates relative to the static baseline. Right: average reasoning length over all samples, with token reduction rates relative to the static baseline. [0.60,0.65,0.70] [0.65,0.70,0.75] [0.70,0.75,0.80] 
+
+> Phase Thresholds ( )
+
+31 
+
+32 
+
+33 
+
+34 
+
+35 
+
+36 
+
+> Accuracy (%)
+
+(a) Impact of Stage Thresholds    
+
+> 1.5 2.5 3.5
+> Tolerance Multiplier ( )
+
+30 
+
+31 
+
+32 
+
+33 
+
+34 
+
+35 
+
+> Accuracy (%)
+
+(b) Impact of Length Tolerance   
+
+> 100 300 500
+> Stabilizer Floor ( Tfloor )
+
+31 
+
+32 
+
+33 
+
+34 
+
+35 
+
+36 
+
+> Accuracy (%)
+
+(c) Impact of Stabilizer Floor 
+
+800 
+
+1000 
+
+1200 
+
+1400 
+
+> Avg. Length (Tokens)
+
+600 
+
+800 
+
+1000 
+
+1200 
+
+1400 
+
+1600 
+
+1800 
+
+> Avg. Length (Tokens)
+
+700 
+
+800 
+
+900 
+
+1000 
+
+> Avg. Length (Tokens)
+
+Accuracy (%) Avg. Reasoning Length 
+
+Figure 8: Hyperparameter sensitivity of CARE with respect to stage thresholds, length tolerance, and stabilizer floor. The default setting achieves the strongest accuracy-length trade-off across all three factors. 
+
+{0.65 , 0.70 , 0.75 } therefore provide the best balance be-tween stable competence estimation and effective compres-sion. 
+
+Effect of Length Tolerance The tolerance multiplier 
+
+ω controls how strictly CARE reacts to response length deviations. When ω = 1 .5, the controller becomes too restrictive and suppresses useful reasoning budget, leading to lower accuracy. When ω = 3 .5, the constraint becomes too loose, causing a sharp increase in response length together with a clear accuracy drop. The middle setting 
+
+ω = 2 .5 achieves the highest accuracy with moderate reasoning length, showing that CARE benefits from a balanced tolerance that neither over-penalizes exploration nor permits redundant generation. 
+
+Effect of Stabilizer Floor The minimum reasoning floor Tfloor plays a stabilizing role in early and uncertain cases. Setting Tfloor = 100 yields lower accuracy, implying that the protected reasoning budget is insufficient for multi-step video reasoning. Increasing it to 500 raises the average length without improving performance, which means the floor becomes overly conservative and preserves unnecessary computation. The default value Tfloor =300 offers the strongest trade-off, maintaining enough reasoning capacity while still allowing later compression. 
+
+4.8 Expansion–Compression Cycle of Rea-soning Length 
+
+As visualized in Fig. 10, this phenomenon can be ex-plained by the expansion–compression cycle of reasoning lengths. During the early exploration phase, CARE shifts the length distribution rightward to enlarge the candidate reasoning space. In the late consolidation phase, the distri-bution shifts leftward, compressing redundant trajectories. 11 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> Instance Competence (Group Pass Rate Pg)
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> 2.00
+> Density
+> Phase 1: Baseline
+> Phase 2: Ours
+
+Figure 9: Kernel density estimation of instance compe-tence scores before and after CARE training. CARE shifts the distribution rightward and reduces the failure tail. 0 100 200 300 400 500 600 700 800 
+
+> Reasoning Length (Tokens)
+> 0.000
+> 0.001
+> 0.002
+> 0.003
+> 0.004
+> 0.005
+> 0.006
+> Density
+> Phase 1: Expansion
+> (System 2 Activation)
+> Phase 2: Compression
+> (Knowledge Distillation)
+> Training Stages
+> Phase 1: Early (Baseline)
+> Phase 2: Mid (Exploration)
+> Phase 3: Late (Consolidation)
+
+Figure 10: Evolution of reasoning-length distributions across training phases. CARE first expands reasoning length and later compresses redundant responses. 
+
+4.9 Competence Retention Under Com-pression 
+
+Crucially, as shown in Fig. 9, this compression does not degrade competence. Instead, the density of instances with near-perfect pass rates ( Pg ≈ 1) increases signifi-cantly under CARE. This proves that the observed length reduction reflects competence-aware compression, distill-ing internalized reasoning patterns into shorter, highly accurate responses without reverting to premature trun-cation. 
+
+4.10 Case Study 
+
+As presented in Fig. 11, a qualitative example illustrates a scenario where the target scene is initially observed under partial occlusion. CARE preserves the cue from the first view, re-examines the scene from a later viewpoint, and then updates the final count after the second sofa becomes fully visible. In contrast, the baseline commits early to a single-sofa interpretation and does not revise its conclusion after subsequent evidence appears. This example illustrates that CARE produces a shorter yet more effective reasoning process, remaining responsive to newly revealed visual evidence in multi-view video counting. 
+
+# 5 Limitations 
+
+Although CARE delivers consistent gains across a broad set of video reasoning evaluations, the current study should not be interpreted as claiming that one particular param-eterization is tuned to achieve the best absolute result on every benchmark or metric. Our primary objective is to validate an automatic training principle: the reward pref-erence over reasoning effort can evolve with the policy’s estimated competence, so that exploration is protected when the model is still weak and redundant computation is compressed once the policy becomes stronger. Under a fixed backbone, a unified GRPO setup, and a shared hyperparameter schedule, the experiments support this auto-adjusting perspective through accuracy, efficiency, and trajectory analyses. Nevertheless, the absolute opti-mum may still vary with model scale, data mixture, or controller coefficients, and stronger benchmark-specific tuning may further improve the reported numbers. There-fore, the main takeaway of this work is the effectiveness of competence-aware automatic reward shaping as an in-terpretable training mechanism, rather than the universal optimality of the current hyperparameter setting. 
+
+# 6 Conclusion 
+
+In this paper, we presented CARE, a competence-aware reward shaping framework for adaptive reasoning length optimization in multimodal reasoning. Unlike conven-tional static length control strategies, CARE explicitly models reasoning efficiency as an evolving property during reinforcement learning, and dynamically adjusts reward in-centives according to the model’s competence. By combin-ing a smoothed competence monitor, a stage-aware reward router, a difficulty-normalized effort scorer, and a poste-rior amplification mechanism, CARE enables the training process to transition from exploration-oriented long-form reasoning to efficiency-oriented concise reasoning. Exten-sive experiments on multiple video reasoning and gen-eral video understanding benchmarks demonstrated that CARE consistently improves reasoning accuracy, stabi-lizes reinforcement learning training, and enhances token efficiency. Further analyses showed that CARE induces a characteristic expansion-to-compression trajectory of reasoning length, allocates larger reasoning budgets to more difficult instances, and compresses redundant reason-ing without sacrificing competence. These results suggest that adaptive reward shaping is a promising direction for training multimodal reasoning systems that are not only more accurate, but also more computationally efficient. In future work, we plan to extend competence-aware reward shaping to broader multimodal settings, including image, 12 Stage 1: Doorway Occlusion 
+
+(Reference: Frame 3) 
+
+Stage 2: Re-inspected Viewpoint 
+
+(Reference: Frame 5) 
+
+Stage 3: Final Confirmation 
+
+(Reference: Frame 9) 
+
+Occlusion cue 
+
+(partial view) 
+
+Clearly visible sofa (1) and 
+
+partially visible cue (2) 
+
+Occlusion 
+
+Re-examination 
+
+Re-examination 
+
+Counting again 
+
+CARE produces a shorter yet accurate reasoning trace, 
+
+whereas the baseline is more verbose but less effective. 
+
+Question: How many sofa(s) are in this room? 
+
+CARE : 2 sofas 
+
+Baseline : 1 sofa 
+
+Counting Results 
+
+Full contour of second 
+
+sofa (2) confirmed 
+
+CARE Reasoning Trace: Let me think about this for a 
+
+moment. The ima ge shows a room with various pieces of furniture, 
+
+and I need to identify the number of sofas. Hmm, I see a large 
+
+piece of furniture that looks like a sofa. It has a cushioned seat 
+
+and backrest, which are typical features of a sofa. 
+
+Wait, there's another piece of furniture that also looks like a sofa. 
+
+It's positioned against the wall and has a similar cushioned design. 
+
+Oh, I see, there are two distinct pieces of furniture that fit the 
+
+description of a sofa. Let's break it down: one is clearly visible in 
+
+the center of the room, and the other is partially visible on the 
+
+left side. 
+
+I should verif y if there are any other pieces that could be 
+
+co ns id e r e d s o f as , b ut I d o n't s e e a n y . S o , a f t e r c a r e f u l 
+
+consideration, I can confidently say there are two sofas in this 
+
+room. 
+
+Baseline Reasoning Trace: Let me think about this for a 
+
+moment. The image shows a room with various pieces of furniture, 
+
+and I need to identify the number of sofas. First , let's break it 
+
+down. I see a large piece of furniture that looks like a sofa. It has a 
+
+cushioned seat and backrest, which are typical features of a sofa. 
+
+It's placed against the wall and has a wooden frame. 
+
+Now, let's consider if there are any other pieces of furniture that 
+
+could be sofas. I don't see any other large pieces of furniture that 
+
+have the same characteristics. There's a chair, but it's not a sofa. 
+
+There's a table, but it's not a sofa either. Hmm , I also see a small 
+
+table with a glass on it. That's not a sofa. There's a bookshelf with 
+
+books and a lamp, but that's not a sofa either. Oh, I see. There's 
+
+also a small table with a chair next to it. That's not a sofa. 
+
+Wait, I think I've covered all the furniture in the room. There's 
+
+only one large piece of furniture that looks like a sofa. Let's 
+
+double-check. Yes, there's only one large piece of furniture that 
+
+looks like a sofa. So, after careful consideration, I can conclude 
+
+that there is only one sofa in this room. Let's break it down one 
+
+last time to make sure. There's a large piece of furniture that 
+
+looks like a sofa. There are no other pieces of furniture that look 
+
+like sofas. Yes, I'm confident in my conclusion. There is only one 
+
+sofa in this room. Figure 11: Qualitative case study under viewpoint occlusion. CARE retains the partial cue from the early view, revisits the scene after re-examination, and correctly identifies two sofas once the second instance becomes fully visible. The baseline instead settles on a premature single-sofa interpretation and remains incorrect despite using a longer reasoning trace. document, and embodied reasoning, and to explore finer-grained adaptive control signals beyond reasoning length alone. 
+
+# References 
+
+[1] Z. Zhang, A. Zhang, M. Li, H. Zhao, G. Karypis, and A. Smola, “Multimodal chain-of-thought reasoning in language models,” arXiv preprint arXiv:2302.00923 ,2023. [2] Y. Wang et al. , “Multimodal chain-of-thought rea-soning,” arXiv preprint arXiv:2503.12605 , 2025. [3] K. Feng, K. Gong, B. Li, Z. Guo, Y. Wang, T. Peng, B. Wang, and X. Yue, “Video-r1: Rein-forcing video reasoning in mllms,” arXiv preprint arXiv:2503.21776 , 2025. [4] J. Su, J. Healey, P. Nakov, and C. Cardie, “Between underthinking and overthinking: An empirical study of reasoning length and correctness in llms,” arXiv preprint arXiv:2505.00127 , 2025. [5] Y. Sui, Y.-N. Chuang, G. Wang, J. Zhang, T. Zhang, J. Yuan, H. Liu, A. Wen, S. Zhong, N. Zou, H. Chen, and X. Hu, “Stop overthinking: A survey on efficient reasoning for large language models,” arXiv preprint arXiv:2503.16419 , 2025. [6] J. Su and C. Cardie, “Thinking fast and right: Bal-ancing accuracy and reasoning length with adaptive rewards,” arXiv preprint arXiv:2505.18298 , 2025. [7] W. Liu et al. , “Learn to reason efficiently with adap-tive length-based reward shaping,” arXiv preprint arXiv:2505.15612 , 2025. [8] X. Yu, Y. Xin, W. Zhang, C. Liu, H. Zhao, X. Hu, X. Yu, Z. Qiao, H. Tang, X. Yang et al. , “Modality 13 gap-driven subspace alignment training paradigm for multimodal large language models,” arXiv preprint arXiv:2602.07026 , 2026. [9] S. Ghosh, C. K. R. Evuru, S. Kumar, U. Tyagi, O. Ni-eto, Z. Jin, and D. Manocha, “Visual description grounding reduces hallucinations and boosts reason-ing in lvlms,” arXiv preprint arXiv:2405.15683 , 2024. [10] X. Yu, P. Ding, W. Zhang, S. Huang, S. Gao, C. Qin, K. Wu, Z. Fan, Z. Qiao, and D. Wang, “Unicorn: Text-only data synthesis for vision language model training,” arXiv preprint arXiv:2503.22655 , 2025. [11] Anonymous, “Thinking, less seeing? assessing am-plified hallucination in multimodal reasoning by rea-soning chain length and visual attention allocation,” 
+
+arXiv preprint arXiv:2505.21523 , 2025. [12] Q. Wang, Y. Yu, Y. Yuan, R. Mao, and T. Zhou, “Videorft: Incentivizing video reasoning capability in mllms via reinforced fine-tuning,” arXiv preprint arXiv:2505.12434 , 2025. [13] Z. Liu, Z. Sun, Y. Zang, X. Dong, Y. Cao, H. Duan, D. Lin, and J. Wang, “Visual-rft: Visual reinforce-ment fine-tuning,” in Proceedings of the IEEE/CVF International Conference on Computer Vision , 2025, pp. 2034–2044. [14] H. Tan, Y. Ji, X. Hao, M. Lin, P. Wang, Z. Wang, and S. Zhang, “Reason-rft: Reinforcement fine-tuning for visual reasoning,” arXiv preprint arXiv:2503.20752 ,2025. [15] M. Ni, Z. Yang, L. Li, C.-C. Lin, K. Lin, W. Zuo, and L. Wang, “Point-rft: Improving multimodal reason-ing with visually grounded reinforcement finetuning,” 
+
+arXiv preprint arXiv:2505.19702 , 2025. [16] Z. Cheng et al. , “V-star: Benchmarking video-llms on video spatio-temporal reasoning,” arXiv preprint arXiv:2503.11495 , 2025. [17] Y. Li, C. Wang, and J. Jia, “Llama-vid: An image is worth 2 tokens in large language models,” in European Conference on Computer Vision . Springer, 2024, pp. 323–340. [18] Z. Cheng, S. Leng, H. Zhang, Y. Xin, X. Li, G. Chen, Y. Zhu, W. Zhang, Z. Luo, D. Zhao et al. , “Videol-lama 2: Advancing spatial-temporal modeling and audio understanding in video-llms,” arXiv preprint arXiv:2406.07476 , 2024. [19] P. Zhang, K. Zhang, B. Li, G. Zeng, J. Yang, Y. Zhang, Z. Wang, H. Tan, C. Li, and Z. Liu, “Long context transfer from language to vision,” arXiv preprint arXiv:2406.16852 , 2024. [20] J. Lin, H. Yin, W. Ping, P. Molchanov, M. Shoeybi, and S. Han, “Vila: On pre-training for visual language models,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , 2024, pp. 26 689–26 699. [21] E. Yu, K. Lin, L. Zhao, Y. Wei, Z. Zhu, H. Wei, J. Sun, Z. Ge, X. Zhang, J. Wang et al. , “Unhackable temporal rewarding for scalable video mllms,” arXiv preprint arXiv:2502.12081 , 2025. [22] B. Li, Y. Zhang, D. Guo, R. Zhang, F. Li, H. Zhang, K. Zhang, P. Zhang, Y. Li, Z. Liu et al. , “Llava-onevision: Easy visual task transfer,” arXiv preprint arXiv:2408.03326 , 2024. [23] J. Liu, Y. Wang, H. Ma, X. Wu, X. Ma, X. Wei, J. Jiao, E. Wu, and J. Hu, “Kangaroo: A powerful video-language model supporting long-context video input,” International Journal of Computer Vision ,vol. 134, no. 3, p. 114, 2026. [24] S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang et al. , “Qwen2.5-vl technical report,” arXiv preprint arXiv:2502.13923 ,2025. [25] J. Park, J. Na, J. Kim, and H. J. Kim, “Deepvideo-r1: Video reinforcement fine-tuning via difficulty-aware regressive grpo,” arXiv preprint arXiv:2506.07464 ,2025. [26] X. Zhang, S. Wen, W. Wu, and L. Huang, “Tinyllava-video-r1: Towards smaller lmms for video reasoning,” 
+
+arXiv preprint arXiv:2504.09641 , 2025. [27] H. Li, S. Han, Y. Liao, J. Luo, J. Gao, S. Yan, and S. Liu, “Reinforcement learning tuning for videollms: Reward design and data efficiency,” arXiv preprint arXiv:2506.01908 , 2025. [28] H. Rasheed, M. Zumri, M. Maaz, M.-H. Yang, F. S. Khan, and S. Khan, “Video-com: Interactive video reasoning via chain of manipulations,” arXiv preprint arXiv:2511.23477 , 2025. [29] J. Yang, S. Yang, A. W. Gupta, R. Han, L. Fei-Fei, and S. Xie, “Thinking in space: How multimodal large language models see, remember, and recall spaces,” in Proceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 10 632–10 643. [30] K. Hu, P. Wu, F. Pu, W. Xiao, Y. Zhang, X. Yue, B. Li, and Z. Liu, “Video-mmmu: Evaluating knowl-edge acquisition from multi-discipline professional videos,” arXiv preprint arXiv:2501.13826 , 2025. [31] Y. Zhao, H. Zhang, L. Xie, T. Hu, G. Gan, Y. Long, Z. Hu, W. Chen, C. Li, Z. Xu et al. , “Mmvu: Measur-ing expert-level multi-discipline video understanding,” in Proceedings of the Computer Vision and Pattern Recognition Conference , 2025, pp. 8475–8489. 14 [32] K. Li, Y. Wang, Y. He, Y. Li, Y. Wang, Y. Liu, Z. Wang, J. Xu, G. Chen, P. Luo et al. , “Mvbench: A comprehensive multi-modal video understanding benchmark,” in Proceedings of the IEEE/CVF Con-ference on Computer Vision and Pattern Recognition ,2024, pp. 22 195–22 206. [33] Y. Liu, S. Li, Y. Liu, Y. Wang, S. Ren, L. Li, S. Chen, X. Sun, and L. Hou, “Tempcompass: Do video llms really understand videos?” in Findings of the As-sociation for Computational Linguistics: ACL 2024 ,2024, pp. 8731–8772. [34] C. Fu, Y. Dai, Y. Luo, L. Li, S. Ren, R. Zhang, Z. Wang, C. Zhou, Y. Shen, M. Zhang et al. , “Video-mme: The first-ever comprehensive evaluation bench-mark of multi-modal llms in video analysis,” in Pro-ceedings of the Computer Vision and Pattern Recog-nition Conference , 2025, pp. 24 108–24 118. 15
