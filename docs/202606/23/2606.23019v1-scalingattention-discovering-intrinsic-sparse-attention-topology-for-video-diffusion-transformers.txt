@@ -1,0 +1,742 @@
+Title: ScalingAttention: Discovering Intrinsic Sparse Attention Topology for Video Diffusion Transformers
+
+URL Source: https://arxiv.org/pdf/2606.23019v1
+
+Published Time: Tue, 23 Jun 2026 03:26:35 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# ScalingAttention: Discovering Intrinsic Sparse Attention Topology for Video Diffusion Transformers 
+
+Ruiliang Zhou 1,∗, Xuecheng Wu 2,∗,‡ Kang He 1 Guangyun Han 3 Bin Liu 3 Qinqin Chen 3 Wende Xu 4,‡ Qingjie Zhao 2 Chengru Song 1 
+
+> 1
+
+KlingAI Research 2 Beijing Institute of Technology 3 NVIDIA 4 Tsinghua University 
+
+Abstract 
+
+While Diffusion Transformers (DiTs) have rev-olutionized high-fidelity video generation, their reliance on 3D full attention creates a quadratic computational bottleneck. Existing sparse meth-ods face a dilemma: dynamic pruning suffers from prohibitive runtime overhead and memory fragmentation, while static heuristics fail to cap-ture fine-grained dependencies. In this work, we propose ScalingAttention, a training-free frame-work grounded in a key inductive bias: while in-dividual activations are input-dependent, the high-mass attention regions for each head rapidly con-verge to a stable, prompt-agnostic Intrinsic Sparse Topology . This topology is weight-encoded, scale-invariant, and efficient to extract. ScalingAtten-tion decouples topology discovery from sparsity control via: (1) WEST (Weight-Encoded Sparse Topology), which extracts a robust block-sparse prior mask offline to eliminate runtime search; (2) 
+
+FAST (Fidelity-Aware Sensitivity Tuning), which adaptively tunes head-wise sparsity based on dif-fusion fidelity requirements. To ensure practical acceleration, we co-design a hardware-aligned bit-wise block-sparse kernel. Experiments on Wan2.1 show up to 1.90 × end-to-end speedup with su-perior fidelity, establishing a new Pareto frontier over state-of-the-art baselines. 
+
+1. Introduction 
+
+Diffusion Transformers (DiTs) have recently achieved re-markable success in high-fidelity generative modeling, deliv-ering state-of-the-art performance in both image and video synthesis (Wan et al., 2025; Kong et al., 2025). By combin-ing diffusion-based iterative refinement with the expressive  
+
+> ∗
+
+Equal contribution. ‡ Work done during internship at KlingAI Research.. Correspondence to: <zhouruiliang@kuaishou.com >.
+
+Preprint. June 23, 2026. 
+
+capacity of Transformers, DiTs effectively capture complex spatial structures and long-range temporal dependencies (Rombach et al., 2022; Peebles and Xie, 2023; Liu et al., 2022). However, these advances come at a substantial com-putational cost. In video generation, DiTs rely heavily on 3D spatio-temporal self-attention, whose quadratic complexity with respect to the number of tokens leads to prohibitively expensive inference (Bertasius et al., 2021). For instance, generating a five-second video with 81 frames using the Wan2.1-14B model on an GPU requires nearly 30 minutes, with more than half of the end-to-end runtime dominated by 3D attention. A natural approach to mitigating this bottleneck is sparse attention (Yuan et al., 2025; Lu et al., 2025). Prior work has observed that attention distributions are inherently sparse, with only a small subset of critical tokens exerting a domi-nant influence on the output (Zhang et al., 2023; Xiao et al., 2024). Despite substantial recent efforts, existing sparse attention methods for Video DiTs face a persistent dilemma. Dynamic methods select important tokens at runtime, but incur substantial overhead and irregular execution that un-derutilize modern Tensor Cores (Yang et al., 2025; Zhang et al., 2025a; Chen et al., 2025). Static methods avoid this cost by fixing sparse patterns offline, but rely on heuris-tics that fail to capture the content-adaptive structure of video attention (Xi et al., 2025; Xia et al., 2025). Conse-quently, current methods typically sacrifice either inference efficiency or generation fidelity. In this work, we argue that this dilemma stems from a flawed premise: sparse attention patterns in Video DiTs are as-sumed to be purely input-dependent and transient. Instead, we make the following empirical discovery: In Video Diffusion Transformers, although individual atten-tion activations vary across inputs, the union of high-mass attention regions for each head rapidly converges to a stable structure across prompts. This empirical regularity indi-cates that sparsity is not transient, but reflects an underlying structural constraint of the model. 1                     
+
+> arXiv:2606.23019v1 [cs.CV] 22 Jun 2026 ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 35 40 45 50 55 60 65 70 75 80
+> Global Density
+> 16
+> 18
+> 20
+> 22
+> 24
+> 26
+> 28
+> PSNR
+> 2×Accelerate
+> SVG2 SVG ScalingAttention
+> Figure 1. Performance Comparison. We compare ScalingAtten-tion with SVG and SVG2 on Video DiTs. At comparable PSNR, ScalingAttention uses up to 2×fewer attention FLOPs (i.e., lower
+> density ) than SVG2, demonstrating a superior efficiency–fidelity trade-off. Here, density is defined as 1−Sparsity and represents the fraction of active attention blocks; this convention is used con-sistently throughout the paper.
+
+We therefore identify an Intrinsic Sparse Topology —a static, weight-encoded attention mask that is prompt-agnostic and scale-invariant, and emerges directly from the pre-trained parameters. This observation reframes sparse attention in Video DiTs: sparsification fundamentally decomposes into two orthogo-nal questions— where attention is permitted to occur (topol-ogy), and how much sparsity can be tolerated (sensitivity). Failing to disentangle these aspects, as in prior work, in-evitably leads to either inefficiency or fidelity degradation. Guided by this principle, we propose ScalingAttention , a training-free acceleration framework that decouples sparse pattern discovery from adaptive sparsity control. ScalingAt-tention consists of three tightly co-designed components: 
+
+WEST (Weight-Encoded Sparse Topology) extracts a ro-bust, resolution-scalable block-sparse prior mask via offline profiling; FAST (Fidelity-Aware Sensitivity Tuning) modu-lates head-wise sparsity in a fidelity-aware manner across the diffusion process; and a hardware-aligned bit-wise block-sparse kernel ( crm kernel ) translates structured sparsity into efficient block-level execution (Dong et al., 2024; Dao et al., 2022). Extensive experiments on Wan2.1-1.3B and Wan2.1-14B demonstrate that ScalingAttention achieves substantial end-to-end speedups while preserving generation quality, estab-lishing a new Pareto frontier between efficiency and fidelity. In particular, our method delivers up to 1.90 × end-to-end speedup while maintaining high visual fidelity. Beyond ac-celeration, our findings reveal an intrinsic structural property of attention in Video Diffusion Transformers, offering a prin-cipled perspective on how sparsity emerges from pre-trained weights. 
+
+2. Related Work 
+
+2.1. Visual Generative Models 
+
+Diffusion Transformers (DiTs) have evolved from factorized designs to full 3D architectures. Early video DiTs like Latte (Ma et al., 2025) and OpenSora (Zheng et al., 2024) decou-pled spatial and temporal attention to reduce computational cost. However, to model complex motion and maintain global consistency, state-of-the-art models (e.g., Wan2.1 (Wan et al., 2025), HunyuanVideo (Kong et al., 2025)) have shifted to full 3D attention, treating video as a unified to-ken sequence (Liu et al., 2024; Wu et al., 2025). While this maximizes modeling capacity, it induces a quadratic complexity O(N 2) that renders high-resolution generation computationally prohibitive, necessitating efficient attention mechanisms. 
+
+2.2. Sparse Attention for Video DiTs 
+
+Existing acceleration strategies largely fall into two cat-egories. Dynamic Methods (e.g., SVG2 (Yang et al., 2025), AdaSpa (Xia et al., 2025)) prune tokens based on runtime activation magnitudes. While accurate, they re-quire calculation-heavy selection steps and produce irreg-ular memory patterns that hinder Tensor Core utilization on GPUs. Static Methods (e.g., Radial (Li et al., 2025), PARO (Zhao et al., 2025)) apply fixed sparsity masks (e.g., sliding windows or dilated patterns (Beltagy et al., 2020; Ma et al., 2024)) independent of input content. Although hardware-friendly, these heuristics lack the flexibility to capture object-specific interactions, often degrading visual quality. ScalingAttention bridges this gap by discovering static yet adaptive sparse patterns encoded in the model weights. 
+
+3. Motivation 
+
+Despite the growing interest in sparse attention for accel-erating Video Diffusion Transformers (DiTs), existing ap-proaches remain constrained by a transient view of sparsity. Prior methods (Yang et al., 2025) assume that attention pat-terns are purely input-dependent, leading to a persistent dichotomy: static methods impose rigid heuristics that fail to capture semantic structure, while dynamic methods incur prohibitive overhead from online identification of critical tokens. In this work, we challenge this premise. We reveal that while individual attention activations vary across inputs, the support regions of attention heads are largely prede-termined by the model weights. This reveals an Intrinsic Sparse Topology —a static, weight-encoded structure that is stable across inputs and scale-invariant. Based on this discovery, we identify three key observations that bridge the gap between algorithmic sparsity and hardware-efficient 2ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs Key Tokens              
+
+> Query Tokens
+> Prompt A Prompt B Union Mask
+> Key Tokens
+> Query Tokens
+> 480p (Upsampled) 720p (Original)
+> Recall > 96%
+> Difference
+> 510 15 20 25
+> Number of Profiling Prompts ( Np)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Union Mask Density (%)
+> Trend Stabilization
+> (c) Union Mask Density
+> Low Density (<20%) [n=5673]
+> Medium Density (20-70%) [n=7285]
+> High Density (>70%) [n=2042]
+> Global Average (All Samples)
+> Static Baseline
+> 010 20 30 40
+> Timestep
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> Average Density (%)
+> (d) Average Density
+> Attention Recall = 0.9 Average Density
+> Standard Deviation
+> (a) Sparse Topology (b) Scale Invariance
+
+Figure 2. Empirical Discovery of Intrinsic Sparse Topology. We reveal that attention sparsity in Video DiTs is governed by a static, weight-encoded structure rather than transient input variations. (a) Sparse Topology (Top-Left): While individual prompts (A vs. B) activate distinct sub-regions, their union converges to a stable, prompt-agnostic boundary, revealing a latent topology. (b) Scale Invariance (Bottom-Left): This topology is semantic: a mask extracted from a 480p proxy aligns with the native 720p map ( > 96% recall), enabling efficient low-res profiling. (c) Calibration Stability (Right): The union mask density saturates rapidly within ∼20 prompts, confirming that the intrinsic topology can be robustly extracted offline. 
+
+acceleration. 
+
+Observation 1: Sparse attention exhibits an intrin-sic, weight-encoded topology. Contrary to the view that sparse patterns are purely input-dependent, we observe that each attention head possesses a latent sparse topology deter-mined by its pre-trained weights. As visualized in Figure 2, this manifests in three key properties: • Intrinsic Structure: While individual prompts trig-ger distinct activations, the union of their high-mass regions rapidly converges to a stable, prompt-agnostic boundary. We term this the Intrinsic Sparse Topol-ogy . It represents a head-specific support envelope, which is a static boundary encoded in the weights and selectively activated by inputs. • Asymptotic Stability: The density of this union mask does not grow unboundedly but saturates at a low level. This reveals a general sparse hull that captures all struc-turally significant interactions across the data distribu-tion. • Scale Invariance: This topology scales consistently across resolutions: a mask extracted from a 480p proxy aligns with the native 720p map with > 96% recall. It also remains highly consistent under large aspect-ratio changes, even when the same prompt produces markedly different layouts. Together, these results sug-gest a reusable structural prior encoded by the model rather than an input-specific layout. Further analysis is provided in Section 5.4 and Appendix Figure 8. 
+
+Theoretical Interpretation: The Functional Support En-velope. We attribute this stability to an emergent func-tional specialization of attention heads during training. To generalize across heterogeneous scenes and massive training scales, each head is driven to encode parameters sufficient to support a consistent functional bias (e.g., motion coherence or object permanence). This process naturally induces a bounded support envelope, corresponding to the maximal extent over which the head may be activated across inputs. At inference time, a specific prompt activates only a subset of this pre-encoded support. This explains why the topology is static while activations are dynamic. 
+
+Observation 2: Sensitivity to sparsity evolves via entropy reduction. While the topology (where to attend) is static, the tolerance for approximation (how much to attend) is not. The diffusion process describes a trajectory from high-entropy noise to structured content (Huang et al., 2021). As generation progresses, attention distributions become increasingly concentrated, and the model’s sensitivity to sparsity correspondingly diminishes. This manifests across two dimensions: temporal denoising steps and spatial transformer layers . Consequently, enforcing a uniform sparsity ratio is suboptimal: it wastes computation in robust later stages while degrading fidelity in sensitive early phases. 
+
+Observation 3: The Sparsity-Efficiency Gap. Finally, theoretical sparsity rarely translates to wall-clock speedup due to the Granularity Mismatch . Modern GPUs rely on Tensor Cores for peak throughput, which demand dense, aligned data tiles (e.g., 128 × 128 ). Existing dynamic meth-ods generate fine-grained, unstructured masks that cause 
+
+memory fragmentation (Dao, 2023; Shah et al., 2024). The overhead of metadata lookups and non-coalesced loads 3ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+often negates the computational savings (Dong et al., 2024). Therefore, a practical sparse solution must not only preserve semantic structure (Obs. 1) but also be structurally aligned with hardware tiling units. 
+
+Implication: Tripartite Co-design. These three observa-tions dictate the architectural requirements of ScalingAtten-tion: (1) Topology (WEST): Extract the weight-encoded structure offline as a static prior to bypass runtime search; (2) 
+
+Sensitivity (FAST): Modulate sparsity levels dynamically to match the evolving fidelity requirements; (3) System (crm kernel ): Enforces block-wise alignment and bit-wise topology encoding, enabling efficient Tensor Core execu-tion. This co-design transforms sparse attention from a con-ceptual approximation into a principled, high-performance acceleration framework. 
+
+4. Methodology 
+
+In this section, we present ScalingAttention, a sparse atten-tion framework for efficient video DiTs. Building on two insights from Section 3: (i) sparse topology is encoded in the model weights, and (ii) sparsity sensitivity evolves through-out the diffusion trajectory. Consequently, ScalingAttention integrates three components: 1) Weight-Encoded Sparse Topology for constructing static, reusable masks offline; 2) Fidelity-Aware Sparsity Tuning for adaptive, fidelity-guided sparsity control throughout the generation process; and 3) an efficient bit-wise block-sparse attention kernel that trans-lates theoretical FLOPs reduction into end-to-end inference acceleration with minimal runtime overhead. 
+
+4.1. Weight-Encoded Sparse Topology (WEST) 
+
+WEST extracts a static sparse topology from pre-trained weights. Instead of storing discrete masks, we construct an offline Threshold Map that compactly indexes block stabil-ity, enabling O(1) mask generation at inference. 4.1.1. B LOCK -WISE TOPOLOGY EXTRACTION 
+
+Given a calibration set, we compute the attention matrix Ai
+
+for each head. To align with hardware tiling (Sec. 4.3.2), we partition Ai into B × B blocks ( B = 128 ) and aggregate scores into a block significance matrix Si:
+
+S(u,v ) 
+
+> i
+
+= 1
+
+B2
+
+X
+
+> p∈B u
+
+X
+
+> q∈B v
+
+A(p,q ) 
+
+> i
+
+. (1) where Bu and Bv denote the token indices of the u-th query block and v-th key block, respectively. This aggregation filters token-level noise while preserving stable, hardware-friendly structural dependencies. 4.1.2. T HRESHOLD MAP CONSTRUCTION 
+
+To capture the intrinsic topology generalizing across inputs, we define the Threshold Map T. For each block (u, v ),
+
+T(u,v ) records the minimum sparsity threshold p required for inclusion in the union of active regions across all cali-bration prompts:          
+
+> T(u,v )= min {p| ∃ i∈[1 , M ],(u, v )∈Top-k(Si, p )}.
+
+(2) This representation encodes the full sparsity hierarchy. At in-ference, a binary mask for any target density p is instantiated via a lightweight comparison Mp = I(T ≤ p), effectively decoupling topology discovery from dynamic sparsity con-trol. We visualize the resulting threshold map and the mask construction process in Figure 3. Additional visualizations across layers/heads are provided in Appendix F. 
+
+4.2. Fidelity-Aware Sparsity Tuning (FAST) 
+
+FAST determines the optimal sparsity p(l, t ) for each layer 
+
+l and timestep t by regulating the divergence between dense and sparse attention. Unlike static strategies, FAST adheres to a fidelity-first principle: it dynamically allocates compu-tation budget to early denoising steps and shallower layers where error accumulation makes the model most sensitive (Observation 2), ensuring that aggressive sparsification in later stages does not compromise generation quality. 4.2.1. H ELLINGER DISTANCE AS A FIDELITY METRIC 
+
+Adaptive sparsity control requires a reliable metric to quan-tify the discrepancy between dense attention distributions P
+
+and their sparse approximations ˜P. Conventional measures such as cosine similarity are ill-suited for attention maps, which are typically high-dimensional and heavy-tailed. As shown in Figure 4, cosine similarity saturates prematurely, approaching 1.0 even when structurally critical tokens have been pruned. This occurs because cosine similarity mea-sures only angular alignment: once attention mass collapses onto a few dominant entries, sparse and dense attention maps remain nearly collinear, rendering cosine similarity insensitive to structural distortion (Steck et al., 2024). We therefore adopt a fidelity metric based on the Hellinger distance (Baldi and Sadowski, 2013). For two discrete distributions P and Q, it is defined as: 
+
+H(P, Q ) = 1
+
+√2
+
+vuut nX
+
+> i=1
+
+(√pi − √qi)2. (3) The square-root transformation attenuates extreme values, making the metric more sensitive to changes in distributional mass. And compared to KL divergence, Hellinger distance is symmetric, bounded, and well-defined under zero-mass en-tries, which are ubiquitous in sparse attention (Cover, 1999). 4ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs Calibration  Set 
+
+> Unify masks
+> across prompts
+> Aggregate masks from
+> all sparsity threshold
+> Threshold Map
+> Target
+> Global
+> Sparsity:50%
+> Tuning the
+> Fidelity Score
+> offline
+> Calibration
+> Attention
+> Stratified
+> Sampling
+> Mask
+
+F 
+
+> Masked
+> Sample Map
+> Efficient
+> Approximation
+> Any
+> Sparsity
+> Fidelity
+> Score
+> Computing F score
+> Preserved Sparsity
+> Filter
+> Binary
+> Conservation Bilinear
+> Interpolation
+> Static Runtime Mask in
+> Target Resolutions
+> Scale
+> Invariance
+
+(a) Offline Topology Construction (WEST)  (b) Offline Sparsity Tuning (FAST)  (c) Efficient Deployment 
+
+and Inference 
+
+Once per Model  Once per Setting  Reuse for All Prompts       
+
+> Offline Calibration of Fidelity -Score and Sparsity per Head
+> Unacceptable
+> Storage Pressure
+> Weight -Encoded Sparse Topology
+> Head -wise Union util Saturation
+> (Stored)
+> Look up corresponding sparsity according
+> to the given Fidelity requirement
+> Static
+> Stored
+> Masks
+> Deployment
+> Inference
+
+Figure 3. Overview of the ScalingAttention Framework. Our method decouples sparse attention into three phases: (a) Once per Model (WEST): We aggregate intrinsic attention patterns from a calibration set to construct a static Threshold Map , which encodes the complete sparsity hierarchy offline. (b) Once per Setting (FAST): Given a global sparsity target, we modulate a spatio-temporal fidelity surface to determine head-specific thresholds. Using Stratified Sampling and a pre-computed Fidelity-Sparsity Profile , we map these requirements to optimal thresholds p∗ via efficient lookup. (c) Reuse for All Prompts: The resulting static masks are resolution-scalable via Conservative Bilinear Interpolation and executed by proposed crm kernel .0.0 0.2 0.4 0.6 0.8 1.0   
+
+> top-k threshold
+> 0.800
+> 0.825
+> 0.850
+> 0.875
+> 0.900
+> 0.925
+> 0.950
+> 0.975
+> 1.000
+> Similarity Metric
+> Discriminative Gap
+> Early Saturation
+> Fidelity Score (Ours) Cosine Similarity(Baseline) Density
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Density
+
+Figure 4. Metric Comparison. Cosine similarity (orange) satu-rates prematurely as sparsity increases, failing to capture structural loss. The proposed Fidelity Score (blue) maintains a smooth, monotonic response, enabling precise calibration. 
+
+Compared to total variation, its square-root geometry pro-vides smoother sensitivity under progressive sparsification. For dense attention P and its sparse approximation ˜P , we define the Fidelity Score as: 
+
+F(P, ˜P ) = 1 − H(P, ˜P ). (4) As illustrated in Figure 4, the Fidelity Score maintains a smooth, monotonic response across the entire sparsity range, enabling reliable threshold calibration for FAST. 4.2.2. S PATIAL -T EMPORAL FIDELITY ALLOCATION 
+
+To map the model’s evolving tolerance to specific sparsity levels, we define a parametric target fidelity function A(l, t )
+
+over transformer layer l and denoising timestep t:
+
+A(l, t ) = 1 −
+
+h
+
+β
+
+
+
+1 − l+ωt NL+ωN T
+
+γ
+
++ (1 − β)
+
+i
+
+(5) where NL and NT denote the total number of layers and timesteps. The parameter ω balances spatial and temporal contributions, while β (baseline fidelity) and γ (transition curvature) are optimized offline to satisfy the given con-straint (e.g., 50% overall global sparsity), rather than being manually tuned. During offline profiling, we characterize the fidelity-sparsity relationship for each attention head under its corresponding WEST topology. Prior to inference, given a global density target, FAST determines a consistent set of head-specific sparsity thresholds that collectively satisfy the global con-straint. For each head at position (l, t ), we select the maxi-mum sparsity threshold that satisfies: 
+
+F(P, ˜P ) ≥ A (l, t ). (6) Combined with the threshold map from Sec. 4.1, this yields static sparse masks for inference without runtime adaptation. The overall workflow is illustrated in Figure 3, and the com-plete mask generation procedure is detailed in Algorithm 1 in the Appendix. 5ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+4.2.3. E FFICIENT PROFILING VIA STRATIFIED 
+
+SAMPLING 
+
+Directly computing fidelity on full calibration N × N at-tention maps offline would incur prohibitive storage and computational overhead during profiling. To make thresh-old calibration practical, we employ a block-wise stratified sampling strategy to the full calibration attention map. Instead of evaluating all rows, we partition the attention map into uniform row blocks and randomly sample a small num-ber of rows from each block. This ensures coverage of both high- and low-importance regions. Figure 3 visualizes the 
+
+stratified sampling procedure. Empirically, sampling only 
+
+16 rows (approximately 0.05% of the full map) suffices to approximate the true Hellinger distance with negligible error (see sensitivity analysis in Sec. 5.4). This reduces profiling cost by orders of magnitude while preserving calibration accuracy. 
+
+4.3. Efficient System–Algorithm Co-design 
+
+While Sections 4.1 and 4.2 establish the theoretical effi-ciency of ScalingAttention, to translate these algorithmic gains into practical speedups, we further address two system-level challenges that arise in deployment: (i) supporting variable resolutions without quadratic storage overhead and re-profiling, and (ii) executing diverse sparse patterns effi-ciently on modern GPUs. We resolve both through a cohe-sive system–algorithm co-design, which enables scalable deployment and hardware-efficient execution. 4.3.1. R ESOLUTION SCALABILITY 
+
+Since sparse patterns are determined by model weights rather than sequence length, ScalingAttention constructs sparse topology only once at a base resolution (e.g., 480 ×
+
+720 ) and reuses it across scales. At inference, the base 
+
+threshold map is resized via conservative bilinear interpola-tion with a ceiling rule: 
+
+R(u,v ) 
+
+> target
+
+=
+
+
+
+Φ
+
+
+
+Rbase , ush
+
+, vsw
+
+ 
+
+, (7) ensuring that any overlap with active regions is preserved. This enables arbitrary-resolution inference with constant storage cost. 4.3.2. CRM K ERNEL : B IT -WISE BLOCK -S PARSE 
+
+ATTENTION EXECUTION 
+
+Efficient block-sparse attention requires a runtime represen-tation that supports both compact storage and fast iteration over active KV blocks (Rajbhandari et al., 2022). Index-based formats (e.g., CSR) incur non-negligible metadata traffic and irregular memory access, while dense boolean masks suffer from excessive space overhead (Gale et al., 2020; Dao et al., 2022; Dao, 2023). The crm kernel adopts a Compressed Row Mask (CRM) rep-resentation to encode sparse topology, representing each at-tention row as a compact bitmask stored in aligned uint32 
+
+arrays, where each bit indicates the activation of a KV block. This design enables a single uint32 load to decode the status of 32 blocks simultaneously. With a block size of 
+
+128 × 128 , even long sequences (e.g., 256k tokens) require only tens of mask loads per row (64 loads for 256k tokens), making mask overhead negligible relative to attention com-putation. Active KV blocks are traversed using native GPU bitwise op-erations (e.g., bit scan and bit clear), allowing constant-time advancement without explicit index decoding. This iterator seamlessly replaces the dense block iterator in FlashAtten-tion, yielding a block-sparse variant that preserves dense Tensor Core computation (Shah et al., 2024). Pseudocode and detailed kernel-level evaluations are pro-vided in the Appendix E. 
+
+5. Experiments 
+
+5.1. Experimental Setup Models and Tasks. We evaluate ScalingAttention on state-of-the-art open-source Video Diffusion Transformers, in-cluding Wan2.1-T2V-1.3B, Wan2.1-I2V-14B (Wan et al., 2025), and HunyuanVideo (Kong et al., 2025). Experi-ments are conducted at 480 p for Wan2.1-T2V-1.3B and HunyuanVideo, and at 720 p for Wan2.1-I2V-14B. For cross-model validation on HunyuanVideo, we evaluate the full WEST+FAST pipeline at 55% global density on a Penguin-Video Benchmark subset that covers diverse semantic as-pects. After 3D-VAE tokenization, Wan2.1-1.3B processes 21 frames with 1,560 tokens, Wan2.1-14B processes 3,600 tokens while HunyuanVideo processes 33 frames with 1350 tokens per frame. 
+
+Metrics. We assess reconstruction fidelity using PSNR, SSIM, and LPIPS, and evaluate perceptual video quality with VBench (Huang et al., 2024; Hua et al., 2025). Effi-ciency is measured by global density , defined as the ratio of sparse attention FLOPs to full attention FLOPs across all layers and timesteps. 
+
+Baselines. We compare against Sparse VideoGen (SVG) (Xi et al., 2025) and Sparse VideoGen2 (SVG2) (Yang et al., 2025), using their official configurations and iden-tical prompts for fair comparison. 
+
+Implementation Details. ScalingAttention is imple-mented with custom CUDA kernels and benchmarked on 6ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+high-end GPU with large memory capacity, with GPU clock locked to 1545 MHz to avoid potential throttling. For WEST, sparse topologies are constructed using Np = 27 diverse calibration prompts. For FAST, fidelity profiling uses a sin-gle prompt, which we find sufficient in practice. Unless otherwise specified, our method applies sparsity across all layers and denoising steps without any dense warm-up ,whereas prior methods rely on a warm-up phase. Additional details are provided in the Appendix. 
+
+5.2. Quality Evaluation 
+
+We qualitatively validate our method by visualizing attention maps. As shown in Figure 2, we analyze maps from vari-ous attention heads in Wan2.1 using prompts from VBench. Despite the diversity of sparse patterns, they exhibit remark-able topological consistency across prompts (i.e., different 
+
+threshold maps in Appendix F). Additionally, benefiting from resolution scalability, the same sparse mask can be reused across different resolutions. This allows for flex-ible resolution and context changes with lightweight pre-processing at a lower resolution. We present a quantitative comparison against state-of-the-art baselines in Table 1. ScalingAttention consistently es-tablishes a new Pareto frontier, outperforming all baseline methods in reconstruction fidelity (PSNR, SSIM, LPIPS) while achieving the highest speedup due to its co-design. Specifically, ScalingAttention achieves a PSNR of 26.61 dB on Wan2.1-1.3B, 24.15 dB on Wan2.1-14B, and 28.88 dB on HunyuanVideo at substantially reduced density, demonstrat-ing its effectiveness in preserving fine details and temporal quality while removing redundant computation. On Hun-yuanVideo, the results are measured on a PenguinVideo Benchmark subset, where our method also remains competi-tive on the two retained perceptual metrics, Smoothness and Consistency, under the same evaluation protocol. Detailed visual comparisons on HunyuanVideo are deferred to Appendix Figure 9. The sparse outputs preserve dense-level appearance while maintaining a sparsity of nearly 50% in Table 1, demonstrating nearly lossless video quality and acceleration benefits. 
+
+5.3. Efficiency Evaluation Efficient Block-Sparse Kernel. To demonstrate the effi-ciency of the crm kernel , we benchmark its latency against FlashAttention-3 (Shah et al., 2024) across varying sparsity levels and sequence lengths using a fixed block size of 128, as shown in Figure 5. We analyze performance from two aspects: (1) Minimal Overhead: We evaluate implementation over-head in the fully dense setting (0As shown in Figure 5 (with short-sequence details in Appendix 6), the crm kernel incurs less than 10These results confirm that the crm kernel is an ef-ficient block-sparse extension of FlashAttention, supporting high-resolution video generation with minimal cost. (2) Scalable Speedup: As sparsity increases, the crm kernel 
+
+effectively converts theoretical FLOPs reduction into wall-clock speedup: at 50% sparsity, latency is reduced by 40– 60%, and at extreme sparsity ( > 90% ), it achieves over 
+
+10 × acceleration, demonstrating strong scalability for long-context modeling. 
+
+End-to-End Speedup Evaluation. To demonstrate the end-to-end efficiency of ScalingAttention, we report several metrics, including global density and speedup. In Table 1, ScalingAttention achieves an average speedup of 1.76 ×,while maintaining superior generation quality. Specifi-cally, compared to SVG2, ScalingAttention achieves both higher fidelity (PSNR of 26.61 dB) and greater acceleration (1.65 ×) on Wan2.1-1.3B at 50Moreover, on Wan2.1-14B, ScalingAttention delivers a 1.90 × speedup at 52.5% density while still attaining the highest PSNR among all methods. The same trend holds on HunyuanVideo, where ScalingAt-tention reaches 1.73 × speedup at 55% density while also achieving the best reconstruction metrics in Table 1. 
+
+5.4. Sensitivity Analysis 
+
+We evaluate the robustness of ScalingAttention against hyperparameter variations to validate its stability on the efficiency-accuracy Pareto frontier. 
+
+Impact of Calibration Set Size ( Np). We assess the sen-sitivity of WEST to the number of profiling prompts. We construct the calibration set Dcal by sampling representative prompts across diverse semantic dimensions (e.g., camera motion, object interactions) to ensure sufficient coverage. We observe that the topological structure saturates rapidly. As shown in Figure 2(c), the union mask density stabilizes even when aggregating Np = 27 prompts, indicating that individual attention patterns are consistently confined within a compact static topology. Empirically, a lightweight cali-bration set of as few as 8–10 diverse prompts is sufficient to approximate the optimal topology with negligible perfor-mance loss. 
+
+FAST Robustness to the Profiling Prompt. FAST does not discover semantic topology; that role is already handled by WEST using diverse calibration prompts. Instead, FAST only profiles how aggressively each head can be sparsified under a fixed WEST-derived Threshold Maps prior. To test whether a single profiling prompt is sufficient, we vary the prompt used for threshold estimation while keep-ing the same underlying sparse topology and fixed target density on Wan2.1-1.3B. Specifically, we compare four se-mantically distinct prompt groups ( action , scenery , object ,and sci-fi ) against an aggregate reference formed by aver-7ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+Table 1. Quality and efficiency benchmarking results of ScalingAttention and baselines on three representative Video DiTs (Wan 2.1 1.3B, Wan 2.1 14B, and HunyuanVideo). ScalingAttention consistently achieves superior quality–speedup trade-offs. 
+
+Model Config PSNR ↑ SSIM ↑ LPIPS ↓ Smoothness ↑ Consistency ↑ Density ↓ Speedup ↑
+
+Wan 2.1 1.3B, 480P, T2V - - - 98.46 96.07 100% 1×
+
+SVG 19.71 0.7314 0.2684 97.87 92.58 50% 1.27 ×
+
+SVG2 24.44 0.8387 0.1249 98.25 92.46 50% 1.31 ×
+
+Ours 26.61 0.8734 0.0986 98.31 93.16 50% 1.65 ×
+
+Wan 2.1 14B, 720P, I2V - - - 98.96 98.46 100% 1×
+
+SVG 22.34 0.7385 0.1597 98.62 95.54 52% 1.47 ×
+
+SVG2 23.33 0.7474 0.1431 98.50 95.75 52.5% 1.56 ×
+
+Ours 24.15 0.7778 0.1191 98.65 96.00 52.5% 1.90 ×
+
+HunyuanVideo 480P, T2V - - - 98.87 91.59 100% 1×
+
+SVG 26.4696 0.8592 0.1125 98.94 91.76 55% 1.68 ×
+
+SVG2 28.3100 0.8853 0.0860 98.89 91.26 55% 1.69 ×
+
+Ours 28.8844 0.8996 0.0756 98.85 91.45 55% 1.73 ×1024 2048 4096 8192 16384 32768 65536 131072 262144 
+
+> Sequence Length
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Normalized Latency  Sparsity
+> 0.0
+> FA3
+> 0.25
+> 0.50
+> 0.70
+> 0.80
+> 0.90
+> 0.95
+
+Figure 5. Kernel-Level Efficiency Benchmarking. We compare the normalized latency of our crm kernel kernel against FlashAttention-3 (FA3) across sequence lengths from 1K to 262K. The orange bar represents the FA3 baseline (1.0). Even at 0% sparsity (Blue), our kernel incurs minimal overhead ( < 10% ) due to efficient bit-mask loading. As sparsity increases (Green to Grey), latency drops significantly, demonstrating linear scalability. 
+
+aging their selected scale indices. Threshold-level statistics initially suggest noticeable variation: the mean per-head ac-tivated index range is 6.90, and the maximum range reaches 48. However, these threshold shifts do not translate into substantial mask differences, because the attention density curves are typically flat in the long-tail region and nearby thresholds often induce nearly identical token masks. As shown in Table 2, every single prompt remains close to the aggregate reference, with IoU above 91% and density deviation within 1.89%. The average density gap is below 1.3%, and the sci-fi prompt provides the closest approxima-tion, with only 0.24% density gap and 94.53% IoU. This result supports the practical use of a single profiling prompt for FAST, with negligible impact on the recovered sparse support and generated videos. 
+
+Sensitivity to Profiling Sampling Ratio. We investigate the trade-off between estimation precision and profiling 
+
+Table 2. FAST robustness to the profiling prompt. With fixed WEST topology, different profiling prompts lead to only minor density variation and high mask overlap with the aggregate refer-ence. 
+
+Profiling Prompt Density ∆ Density IoU Scale Err. 
+
+Aggregate ref. 39.05% – – –sci-fi 38.80% 0.24% 94.53% 1.62 action 38.01% 1.03% 91.10% 2.81 scenery 37.22% 1.83% 91.90% 2.80 object 40.94% 1.89% 93.63% 1.98 
+
+overhead by varying the row sampling ratio. Empirical results indicate that block-wise stratified sampling with only 16 rows ( ∼0.05% of the sequence) is sufficient. Detailed results are provided in Appendix D . This minimal subset yields a correlation of > 0.999 with the ground truth derived from the full attention map. Consequently, we adopt N =
+
+8ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs              
+
+> Table 3. One-time offline cost of WEST and FAST on HunyuanVideo-13B. Threshold maps and target-density masks are reusable across subsequent inference runs.
+> Stage Time (s) Storage
+> WEST sampling (one prompt) 2228 17 GB FAST sampling (one prompt) 340 96 GB Threshold map + Fidelity Score construction 759 8.6 GB Density search 330 –One target-density mask 118 8.2 GB
+
+16 to minimize offline profiling costs without compromising calibration robustness. 
+
+Offline Cost and Storage. We further quantify the one-time setup cost of WEST and FAST on HunyuanVideo-13B us-ing a GPU. WEST uses about 10 dense calibration prompts, whereas FAST requires only one dense generation pass for Hellinger-distance-based fidelity profiling. As summarized in Table 3, the dominant cost lies in WEST prompt sam-pling, while threshold-map construction, density search, and target-mask generation are substantially smaller. Although the intermediate tensors are large, these costs are amor-tized across later inference runs because threshold maps and target-density masks are reusable. For reference, generating a single 5 s HunyuanVideo-720P video already takes nearly 2300 s on one GPU, making the one-time profiling pipeline practical when reused. Moreover, the runtime overhead of the CRM kernel remains below 10% in the dense setting and only 4.8% on long sequences, as shown in Figure 5. 
+
+Robustness Under Aspect-Ratio Shift. To test whether the discovered topology remains stable under large geo-metric changes, we additionally evaluate Wan2.1 using 
+
+480 × 832 and 832 × 480 inputs. Even for the same prompt, these settings can produce substantially different semantic layouts. Nevertheless, the resulting attention distributions still share nearly the same sparse support pattern and main-tain high recall. This cross-aspect-ratio consistency further supports that WEST captures a reusable support envelope determined primarily by the model rather than by a specific input layout. Detailed visualizations of the masks across different aspect ratios are deferred to Appendix Figure 8. In practice, we adopt a mixed calibration strategy that sam-ples prompts from multiple aspect ratios to slightly improve coverage without introducing any runtime overhead. 
+
+Pareto Frontier Analysis. To validate overall effective-ness, we benchmark ScalingAttention against baselines across a wide spectrum of computation budgets on Wan2.1-T2V-1.3B. As shown in Figure 1, ScalingAttention consis-tently dominates the efficiency-quality trade-off, achieving superior fidelity at equivalent densities with higher speedups enabled by its zero-overhead design. We identify two dis-                
+
+> Table 4. Compositional evaluation with orthogonal techniques.
+> ScalingAttention remains effective in a 3-step distilled setting and benefits further from PARO.
+> Method Density PSNR ↑SSIM ↑LPIPS ↓
+> Ours + FastWan 54.0% 24.61 0.8848 0.0732 + PARO 53.7% 24.92 0.8904 0.0680
+
+tinct regimes in the density-quality curve: • Low-Density Regime ( < 40% ): We observe a per-formance drop due to the granularity bottleneck . The fixed block size of 128 ×128 limits the retention of fine-grained critical tokens under extreme sparsity. How-ever, our static topology is orthogonal to token per-mutation methods (e.g., PARO, SVG2) (Zhao et al., 2025; Yang et al., 2025). As further validated by the compositional results in Table 4, combining ScalingAt-tention with token reordering can partially mitigate this bottleneck by clustering dispersed critical tokens into more hardware-friendly blocks. • High-Density Regime ( > 40% ): Quality scales lin-early with density. ScalingAttention significantly out-performs baselines that suffer from rigid heuristics or runtime overhead. Notably, our method achieves com-parable PSNR to dense attention with only ∼50% com-putation, validating the efficacy of FAST in preserving essential visual information. 
+
+5.5. Compatibility with Orthogonal Techniques 
+
+We further evaluate whether ScalingAttention remains ef-fective when composed with orthogonal acceleration tech-niques. Specifically, we apply our method to FastWan (3-steps) (Zhang et al., 2025b), a highly sparse and distilled model, and additionally combine it with PARO-based token permutation (Zhao et al., 2025). As shown in Table 4, ScalingAttention maintains stable per-formance in the distilled setting and benefits further from PARO, which improves PSNR from 24.61 to 24.92 at a nearly identical density. These results support two conclu-sions: first, ScalingAttention integrates seamlessly with ex-ternal acceleration strategies without causing disproportion-ate error accumulation; second, token permutation provides a practical way to alleviate the coarse 128 × 128 granu-larity bottleneck by reorganizing sparse support into more favorable block layouts. 
+
+5.6. Ablation Study Effectiveness of FAST. To isolate the contribution of our dynamic sparsity control, we compare ScalingAttention against a static uniform baseline on Wan2.1-T2V-1.3B. Both 9ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+methods use the same weight-encoded topology (WEST). Crucially, to strengthen the baseline, we grant it a 30% dense warm-up phase. In contrast, ScalingAttention oper-ates with 0% warm-up , applying adaptive sparsity through-out the entire generation process. As detailed in Table 5 ( in Appendix B ), ScalingAttention consistently outperforms the baseline at all density levels. Notably, at a low density of 45%, the static baseline perfor-mance collapses (17.83 dB), whereas our method maintains high fidelity (23.43 dB). This result confirms that static thresholds fail to capture the evolving sensitivity of the diffusion process, whereas FAST effectively aligns the com-putational budget with the model’s intrinsic temporal dy-namics. 
+
+6. Conclusion 
+
+We presented ScalingAttention, a system-algorithm co-designed framework that accelerates Video Diffusion Trans-formers by decoupling sparse topology discovery (WEST) from dynamic sensitivity modulation (FAST). Our study re-veals a strong inductive bias in Video DiTs: while attention activations are input-dependent, the sparse topology of each head is largely encoded in the model weights. By exploiting this property with a hardware-aligned bit-wise block-sparse kernel, ScalingAttention bridges the gap between theoretical sparsity and practical wall-clock accel-eration, achieving state-of-the-art speedups without compro-mising generation quality. We believe this perspective opens new opportunities for combining static structural priors with trainable modulation and token-level permutation mechanisms, further advancing efficient large-scale video generation. The compositional results in Section 5.5 provide a concrete example of this direction. 
+
+Limitations. ScalingAttention has two primary limitations. First, the granularity bottleneck: to maximize Tensor Core utilization, our crm kernel uses 128 ×128 blocks, which restricts fine-grained pruning and leads to diminished re-turns at extreme sparsity ( < 40% ). Second, static envelope redundancy: WEST extracts the union of active regions, inherently retaining more tokens than dynamic oracles for localized motion, a trade-off that future token permutation mechanisms could address. 
+
+References 
+
+P. Baldi and P. J. Sadowski. Understanding Dropout. In C. Burges, L. Bottou, M. Welling, Z. Ghahramani, and K. Weinberger, editors, Advances in Neural Information Processing Systems , volume 26, 2013. I. Beltagy, M. E. Peters, and A. Cohan. Longformer: The long-document transformer, 2020. G. Bertasius, H. Wang, and L. Torresani. Is space-time attention all you need for video understanding? In Pro-ceedings of the International Conference on Machine Learning (ICML) , volume 2, page 4, 2021. P. Chen, X. Zeng, M. Zhao, P. Ye, M. Shen, W. Cheng, G. Yu, and T. Chen. Sparse-vDiT: Unleashing the power of sparse attention to accelerate video diffusion transformers, 2025. T. M. Cover. Elements of information theory . 1999. T. Dao. FlashAttention-2: Faster attention with better paral-lelism and work partitioning, 2023. T. Dao, D. Fu, S. Ermon, A. Rudra, and C. R ´e. FlashAt-tention: Fast and memory-efficient exact attention with io-awareness. In S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh, editors, Advances in Neu-ral Information Processing Systems , volume 35, pages 16344–16359, 2022. J. Dong, B. Feng, D. Guessous, Y. Liang, and H. He. Flex Attention: A programming model for generating opti-mized attention kernels, 2024. T. Gale, M. Zaharia, C. Young, and E. Elsen. Sparse gpu kernels for deep learning. In SC20: International Con-ference for High Performance Computing, Networking, Storage and Analysis , pages 1–14. IEEE, 2020. D. Hua, X. Wang, B. Zeng, X. Huang, H. Liang, J. Niu, X. Chen, Q. Xu, and W. Zhang. Vabench: A comprehen-sive benchmark for audio-video generation, 2025. C.-W. Huang, J. H. Lim, and A. C. Courville. A varia-tional perspective on diffusion-based generative models and score matching. Advances in Neural Information Processing Systems , 34:22863–22876, 2021. Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit, Y. Wang, X. Chen, L. Wang, D. Lin, Y. Qiao, and Z. Liu. Vbench: Comprehensive benchmark suite for video generative models. In Proceed-ings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 21807–21818, June 2024. W. Kong, Q. Tian, Z. Zhang, R. Min, Z. Dai, J. Zhou, J. Xiong, X. Li, B. Wu, J. Zhang, K. Wu, Q. Lin, J. Yuan, Y. Long, A. Wang, A. Wang, C. Li, D. Huang, F. Yang, H. Tan, H. Wang, J. Song, J. Bai, J. Wu, J. Xue, J. Wang, K. Wang, M. Liu, P. Li, S. Li, W. Wang, W. Yu, X. Deng, Y. Li, Y. Chen, Y. Cui, Y. Peng, Z. Yu, Z. He, Z. Xu, Z. Zhou, Z. Xu, Y. Tao, Q. Lu, S. Liu, D. Zhou, H. Wang, 10 ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+Y. Yang, D. Wang, Y. Liu, J. Jiang, and C. Zhong. Hun-yuanVideo: A systematic framework for large video gen-erative models, 2025. X. Li, M. Li, T. Cai, H. Xi, S. Yang, Y. Lin, L. Zhang, S. Yang, J. Hu, K. Peng, M. Agrawala, I. Stoica, K. Keutzer, and S. Han. Radial Attention: $ \mathcal o(n \log n)$ sparse attention for long video generation. In The Thirty-ninth Annual Conference on Neural Infor-mation Processing Systems , 2025. Y. Liu, K. Zhang, Y. Li, Z. Yan, C. Gao, R. Chen, Z. Yuan, Y. Huang, H. Sun, J. Gao, L. He, and L. Sun. Sora: A review on background, technology, limitations, and opportunities of large vision models, 2024. Z. Liu, J. Ning, Y. Cao, Y. Wei, Z. Zhang, S. Lin, and H. Hu. Video swin Transformer. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 3202–3211, June 2022. E. Lu, Z. Jiang, J. Liu, Y. Du, T. Jiang, C. Hong, S. Liu, W. He, E. Yuan, Y. Wang, Z. Huang, H. Yuan, S. Xu, X. Xu, G. Lai, Y. Chen, H. Zheng, J. Yan, J. Su, Y. Wu, N. Y. Zhang, Z. Yang, X. Zhou, M. Zhang, and J. Qiu. MoBA: Mixture of block attention for long-context llms, 2025. X. Ma, G. Fang, and X. Wang. Deepcache: Accelerating dif-fusion models for free. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition ,pages 15762–15772, 2024. X. Ma, Y. Wang, X. Chen, G. Jia, Z. Liu, Y.-F. Li, C. Chen, and Y. Qiao. Latte: Latent diffusion transformer for video generation. Transactions on Machine Learning Research ,2025. ISSN 2835-8856. W. Peebles and S. Xie. Scalable diffusion models with trans-formers. In Proceedings of the IEEE/CVF international conference on computer vision , pages 4195–4205, 2023. S. Rajbhandari, C. Li, Z. Yao, M. Zhang, R. Y. Am-inabadi, A. A. Awan, J. Rasley, and Y. He. DeepSpeed-MoE: Advancing mixture-of-experts inference and train-ing to power next-generation AI scale. In K. Chaudhuri, S. Jegelka, L. Song, C. Szepesvari, G. Niu, and S. Sabato, editors, Proceedings of the 39th International Conference on Machine Learning , volume 162 of Proceedings of Ma-chine Learning Research , pages 18332–18346, 17–23 Jul 2022. R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Om-mer. High-resolution image synthesis with latent diffu-sion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,pages 10684–10695, June 2022. J. Shah, G. Bikshandi, Y. Zhang, V. Thakkar, P. Ramani, and T. Dao. Flashattention-3: Fast and accurate attention with asynchrony and low-precision. Advances in Neural Information Processing Systems , 37:68658–68685, 2024. H. Steck, C. Ekanadham, and N. Kallus. Is cosine-similarity of embeddings really about similarity? In Companion Proceedings of the ACM Web Conference 2024 , pages 887–890, 2024. T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C.-W. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, J. Zeng, J. Wang, J. Zhang, J. Zhou, J. Wang, J. Chen, K. Zhu, K. Zhao, K. Yan, L. Huang, M. Feng, N. Zhang, P. Li, P. Wu, R. Chu, R. Feng, S. Zhang, S. Sun, T. Fang, T. Wang, T. Gui, T. Weng, T. Shen, W. Lin, W. Wang, W. Wang, W. Zhou, W. Wang, W. Shen, W. Yu, X. Shi, X. Huang, X. Xu, Y. Kou, Y. Lv, Y. Li, Y. Liu, Y. Wang, Y. Zhang, Y. Huang, Y. Li, Y. Wu, Y. Liu, Y. Pan, Y. Zheng, Y. Hong, Y. Shi, Y. Feng, Z. Jiang, Z. Han, Z.-F. Wu, and Z. Liu. Wan: Open and advanced large-scale video generative models, 2025. C. Wu, J. Li, J. Zhou, J. Lin, K. Gao, K. Yan, S. ming Yin, S. Bai, X. Xu, Y. Chen, Y. Chen, Z. Tang, Z. Zhang, Z. Wang, A. Yang, B. Yu, C. Cheng, D. Liu, D. Li, H. Zhang, H. Meng, H. Wei, J. Ni, K. Chen, K. Cao, L. Peng, L. Qu, M. Wu, P. Wang, S. Yu, T. Wen, W. Feng, X. Xu, Y. Wang, Y. Zhang, Y. Zhu, Y. Wu, Y. Cai, and Z. Liu. Qwen-Image Technical Report, 2025. H. Xi, S. Yang, Y. Zhao, C. Xu, M. Li, X. Li, Y. Lin, H. Cai, J. Zhang, D. Li, J. Chen, I. Stoica, K. Keutzer, and S. Han. Sparse VideoGen: Accelerating video diffusion trans-formers with spatial-temporal sparsity, 2025. Y. Xia, S. Ling, F. Fu, Y. Wang, H. Li, X. Xiao, and B. Cui. Training-free and adaptive sparse attention for efficient long video generation, 2025. G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis. Efficient streaming language models with attention sinks. In The Twelfth International Conference on Learning Represen-tations , 2024. S. Yang, H. Xi, Y. Zhao, M. Li, J. Zhang, H. Cai, Y. Lin, X. Li, C. Xu, K. Peng, J. Chen, S. Han, K. Keutzer, and I. Stoica. Sparse VideoGen2: Accelerate video generation with sparse attention via semantic-aware permutation. In 
+
+The Thirty-ninth Annual Conference on Neural Informa-tion Processing Systems , 2025. J. Yuan, H. Gao, D. Dai, J. Luo, L. Zhao, Z. Zhang, Z. Xie, Y. Wei, L. Wang, Z. Xiao, Y. Wang, C. Ruan, M. Zhang, W. Liang, and W. Zeng. Native sparse atten-tion: Hardware-aligned and natively trainable sparse at-tention. In W. Che, J. Nabende, E. Shutova, and M. T. Pile-hvar, editors, Proceedings of the 63rd Annual Meeting of 
+
+11 ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+the Association for Computational Linguistics (Volume 1: Long Papers) , pages 23078–23097, Vienna, Austria, July 2025. Association for Computational Linguistics. ISBN 979-8-89176-251-0. doi: 10.18653/v1/2025.acl-long. 1126. URL https://aclanthology.org/2025. acl-long.1126/ .J. Zhang, C. Xiang, H. Huang, J. wei, H. Xi, J. Zhu, and J. Chen. SpargeAttention: Accurate and training-free sparse attention accelerating any model inference. In Forty-second International Conference on Machine Learning , 2025a. P. Zhang, Y. Chen, H. Huang, W. Lin, Z. Liu, I. Stoica, E. Xing, and H. Zhang. Vsa: Faster video diffusion with trainable sparse attention, 2025b. URL https: //arxiv.org/abs/2505.13389 .Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. R ´e, C. Barrett, Z. A. Wang, and B. Chen. H2O: Heavy-hitter oracle for efficient gen-erative inference of large language models. In A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine, editors, Advances in Neural Information Pro-cessing Systems , volume 36, pages 34661–34710, 2023. T. Zhao, K. Hong, X. Yang, X. Xiao, H. Li, F. Ling, R. Xie, S. Chen, H. Zhu, Y. Zhang, and Y. Wang. PAROAtten-tion: Pattern-aware reordering for efficient sparse and quantized attention in visual generation models, 2025. Z. Zheng, X. Peng, T. Yang, C. Shen, S. Li, H. Liu, Y. Zhou, T. Li, and Y. You. Open-Sora: Democratizing efficient video production for all, 2024. 12 ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+A. Algorithm for ScalingAttention Mask Generation 
+
+We provide the complete algorithmic pipeline for sparse mask generation in ScalingAttention. The procedure consists of two offline phases: (1) Weight-Encoded Sparse Topology (WEST) , which constructs a static threshold map and a fidelity profile from calibration data; (2) Fidelity-Aware Sparsity Tuning (FAST) , which instantiates block-sparse attention masks for a given global density target. 
+
+Algorithm 1 ScalingAttention: From Sampling to Static Mask Generation 
+
+1: Input: Calibration dataset D, Set of candidate thresholds P = {p1, . . . , p K }
+
+2: Input: Global target density ρtarget , Fidelity hyperparameters (α, β )
+
+3: Output: Set of Static Block Masks M = {Ml,t,h } for all layers l, timesteps t, heads h
+
+4: PHASE 1: WEST - T HRESHOLD MAP & P ROFILE CONSTRUCTION 
+
+5: Initialize Threshold Map Tl,t,h ← 1.0 (Max Value) 6: Initialize Fidelity Profile Φl,t,h ← ∅ 
+
+7: for each layer l, timestep t, head h do 
+
+8: for each calibration sample x ∈ D do 
+
+9: // 1. Block-wise Aggregation 
+
+10: Compute Attn Weights A ∈ RN ×N
+
+11: Aggregate to Block Matrix S ∈ RNB ×NB (Eq. 1) 12: // 2. Local Threshold Discovery 
+
+13: Sort S and compute cumulative sum C
+
+14: For each p ∈ P , find cutoff τ s.t. C[τ ] ≈ p
+
+15: Construct local map L: L(u,v ) = min {p ∈ P | Block (u, v ) is active at p}
+
+16: // 3. Topology Union 
+
+17: Tl,t,h ← min( Tl,t,h , L) {Include block if active in any sample }
+
+18: end for 
+
+19: // 4. Compute Fidelity Metrics (Accuracy vs. Density) 
+
+20: for each p ∈ P do 
+
+21: Measure approximation error ϵp using Block Mask Mp = I(Tl,t,h ≤ p)
+
+22: Record profile: Φl,t,h [p] ← (Density p, Accuracy p = 1 − ϵp)
+
+23: end for 
+
+24: end for 
+
+25: PHASE 2: FAST - M ASK INSTANTIATION 
+
+26: for each layer l, timestep t, head h do 
+
+27: // 1. Determine Head-Specific Threshold p∗
+
+28: Compute Fidelity Threshold τacc = f (l, t ; γ, β ) {Spatio-temporal surface }
+
+29: Find optimal p∗ ∈ P from Φl,t,h such that: 30: Accuracy p∗ ≥ τacc AND Density p∗ ≈ LocalTarget 31: // 2. Generate Static Block Mask 
+
+32: Ml,t,h = I(Tl,t,h ≤ p∗) {Result is NB × NB block mask }
+
+33: end for 
+
+34: Return M { Final block masks ready for kernel execution }
+
+B. Detailed Ablation Data 
+
+In this section, we provide the numerical results of the ablation study regarding the Fidelity-Aware Sensitivity Tuning (FAST) module. 
+
+Table 5. Impact of Adaptive Modulation. FAST significantly outperforms static uniform sparsity. Notably, our method achieves higher PSNR without any dense warm-up, validating that fidelity-guided modulation effectively redistributes computation to where it matters most. 
+
+Method Global Density (%) 45 50 60 74 
+
+Static Uniform (w/ Warm-up) 17.83 20.50 24.39 25.78 
+
+ScalingAttention (Ours) 23.43 24.13 25.41 27.19 
+
+13 ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+C. Detailed Kernel Overhead Analysis 
+
+To further validate the implementation quality of our block-sparse kernel, we analyze the pure runtime overhead of crm kernel compared to FlashAttention-3 in a fully dense setting (0% sparsity) on shorter sequences in Figure 6. 1024 2048 4096 8192 16384 
+
+> Sequence Length
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> Latency (ms)
+> Implementation
+> FA3
+> crm
+
+Figure 6. Dense Kernel Overhead on Short Sequences. We compare the absolute latency (ms) of crm kernel vs. FA3 at 0% sparsity. Even on short sequences where kernel launch overheads are typically more pronounced, crm kernel maintains a comparable latency profile to FA3, with a maximum overhead of only 9.0% at N = 16384 .
+
+D. Detailed Sensitivity Analysis 
+
+As discussed in Section 5.4 of the main paper, we evaluate the consistency between the estimated Fidelity Score (using sparse sampling) and the ground-truth score (calculated on the full attention map). Table 6 demonstrates that even with an extremely low sampling rate, the estimation remains highly accurate. 
+
+Table 6. Robustness of Stratified Sampling. We report the Consistency across varying sampling rates ( N ). The approximation reaches near-perfect accuracy with N = 16 .
+
+Sampled Rows Consistency Metric 
+
+(N ) Mean Worst-case 
+
+2 0.999 0.980 4 1.000 0.985 8 1.000 0.983 16 1.000 0.999 
+
+32 1.000 0.999 64 1.000 1.000 
+
+E. CRM Kernel Pseudocode 
+
+Algorithm 2 details the forward iterator for the Compressed Row Mask (CRM) format. This lightweight iterator enables efficient traversal of sparse attention matrices by skipping empty segments and rapidly enumerating active KV blocks using hardware bitwise primitives. 14 ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+Algorithm 2 CRM Forward Iterator 
+
+1: Input: Row Pointer row ptr (start of compressed mask for current query), Size N (number of uint32 segments) 2: State: Struct S{ptr, end, val, base }
+
+3: Function: Initialize Iterator 
+
+4: function INIT (row ptr, N )5: S.ptr ← row ptr 
+
+6: S.end ← row ptr + N
+
+7: S.val ← 0
+
+8: S.base ← − 32 
+
+9: ADVANCE (S) {Prefetch first non-zero segment }
+
+10: return S
+
+11: end function 
+
+12: Function: Skip Empty Segments 
+
+13: function ADVANCE (S)14: while S.val = 0 and S.ptr ̸ = S.end do 
+
+15: S.val ← Load (S.ptr ) {Global memory load }
+
+16: S.ptr ← S.ptr + 1 
+
+17: S.base ← S.base + 32 
+
+18: end while 
+
+19: end function 
+
+20: Function: Consume Current Active Block 
+
+21: function NEXT (S)22: S.val ← S.val & ( S.val − 1) {Clear lowest set bit }
+
+23: if S.val = 0 then 
+
+24: ADVANCE (S) {Move to next non-zero segment }
+
+25: end if 
+
+26: end function 
+
+27: Function: Get Global KV Block Index 
+
+28: function INDEX (S)29: if S.val = 0 then 
+
+30: return ⊥ { End-of-row sentinel }
+
+31: end if 
+
+32: bit ← CTZ (S.val ) {Count trailing zeros }
+
+33: return S.base + bit 
+
+34: end function 
+
+F. Additional Threshold Map Visualizations 
+
+In this section, we present extended visualizations of the Threshold Maps extracted by the WEST module. As discussed in Section 3 (Observation 1), these maps capture the intrinsic sparse topology encoded in the pre-trained weights. Figure 7 showcases this topology across a diverse set of attention heads, layers, and diffusion timesteps. Despite variations in input prompts, the high-mass attention regions of each head consistently lie within a stable and well-defined structure, further corroborating our empirical findings. 15 ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+Figure 7. Threshold Map Gallery for WEST. We visualize representative attention structures across layers/heads and diffusion timesteps (e.g., t=0 , 20 , 40 ). Despite diverse per-prompt activations, the stable support envelope captured by WEST remains consistent, supporting the existence of an intrinsic, weight-encoded sparse topology. 
+
+16 ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs Query Tokens 
+
+Wan2.1 (Original) - 480:832 (vertical) Wan2.1 Scale - 832:480 
+
+Recall = 97.19% 
+
+Difference 
+
+(Wan2.1 Original - Wan2.1 Scale) 
+
+> Query Tokens
+
+Wan2.1 (Original) - 480:832 (vertical) Wan2.1 Scale - 832:480 
+
+Recall = 82.67% 
+
+Difference 
+
+(Wan2.1 Original - Wan2.1 Scale) 
+
+> Query Tokens
+
+Recall = 96.25% 
+
+> Query Tokens
+
+Recall = 93.86% 
+
+> Query Tokens
+
+Recall = 76.61% 
+
+> Query Tokens
+
+Recall = 70.76% 
+
+> Query Tokens
+
+Recall = 91.25% 
+
+> Query Tokens
+
+Recall = 90.09% 
+
+> Query Tokens
+
+Recall = 94.92% 
+
+> Query Tokens
+
+Recall = 97.08% 
+
+Key Tokens 
+
+> Query Tokens
+
+Key Tokens Recall = 98.45% Key Tokens 
+
+> Query Tokens
+
+Key Tokens Recall = 88.38% 
+
+Figure 8. Appendix visualization of aspect-ratio robustness. For the same prompt under different aspect-ratio settings, the generated videos exhibit substantial semantic-layout differences, yet the recovered sparse attention support remains nearly unchanged. This provides an additional view that the Intrinsic Sparse Topology is primarily weight-encoded rather than input-specific. 
+
+17 ScalingAttention: Intrinsic Sparse Attention Topology for vDiTs 
+
+Figure 9. Qualitative comparison on HunyuanVideo. Side-by-side frames from dense attention and ScalingAttention at global density of 55%. 
+
+18

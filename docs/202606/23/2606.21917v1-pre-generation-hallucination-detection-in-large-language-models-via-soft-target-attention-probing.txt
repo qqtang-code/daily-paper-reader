@@ -1,0 +1,875 @@
+Title: Pre-Generation Hallucination Detection in Large Language Models via Soft-Target Attention Probing
+
+URL Source: https://arxiv.org/pdf/2606.21917v1
+
+Published Time: Tue, 23 Jun 2026 01:32:27 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Pre-Generation Hallucination Detection in Large Language Models via Soft-Target Attention Probing 
+
+Amina Miftakhova 
+
+Applied AI Institute 
+
+Alexey Zaytsev 
+
+Applied AI Institute 
+
+Abstract 
+
+Detecting hallucination risk before generation enables abstention, retrieval augmentation, and routing decisions without incurring the cost of decoding. While prior work has shown that such risk can be estimated from a model’s internal representations, existing approaches treat this as binary classification over a sin-gle decoded output. We instead formulate it as a risk-estimation problem. Under this for-mulation, we introduce soft-target supervision based on the empirical answer error rate over stochastically sampled outputs — an estimator we prove to be the unique unbiased minimum-variance estimator of the model’s per-prompt error probability under its sampling distribu-tion. We further adapt attention probing to the pre-generation setting, enabling the detector to selectively aggregate hallucination-relevant prompt representations. Across three question-answering benchmarks and five models, atten-tion probing outperforms linear probing on short-answer tasks. Replacing binary labels with soft-target supervision further and consis-tently improves detection quality. Source code: anonymous.4open.science. 
+
+1 Introduction 
+
+Large language models frequently generate con-fident but factually incorrect responses: a phe-nomenon known as hallucination (Huang et al., 2025). Detecting hallucination risk before genera-tion is especially attractive because it enables ab-stention, retrieval augmentation, or model routing without paying the full cost of decoding. Most hallucination detection methods operate post-generation, using uncertainty estimates (Ma-linin and Gales, 2021), semantic consistency across sampled outputs (Farquhar et al., 2024), or probes over generated representations (Belinkov, 2022; CH-Wang et al., 2024). Pre-generation detection has recently received attention as a lightweight al-ternative (Alnuhait et al., 2025; Ji et al., 2024; Kogilathota et al., 2026). If implemented, it can sig-nificantly improve efficiency for adaptive RAG sce-narios allowing better selection of sufficient quan-tity of context (Moskvoretskii et al., 2025) or even reduce the number of materialized hallucinations (Alnuhait et al., 2025). However, a key challenge for implementing pre-generation hallucination detector is formulating a training target. Existing pre-generation detectors typically assign binary labels derived from a single greedy-decoded answer (Ji et al., 2024; Alnuhait et al., 2025). In reality, a pre-generation answer correctness appears a random variable: during sam-pling the same model produces both correct and incorrect answers (Manakul et al., 2023; Farquhar et al., 2024), reflecting genuine stochasticity in its output distribution. A binary label from a single decoded output is therefore a noisy proxy for the model’s underlying error tendency on that input (Müller et al., 2019; Guo et al., 2017). We argue that pre-generation detection is more precisely framed as risk estimation : the task is to predict the probability that the model hallucinates on a given prompt under its own answer distribu-tion. Under this framing, we propose soft-target supervision derived directly from answer correct-ness: the training target for each prompt is the empirical fraction of sampled answers that are fac-tually incorrect, estimated at temperature τ = 1 to reflect the model’s base distribution and provide a consistent difficulty signal across deployment con-ditions. We theoretically and empirically show that sample error rate is an unbiased minimum-variance estimator of the error probability under the model’s sampling distribution. A second, independent issue concerns represen-tation: how to extract hallucination-relevant sig-nal from hidden states. We systematically com-pare probing approaches in the pre-generation set-
+
+> arXiv:2606.21917v1 [cs.CL] 20 Jun 2026 Figure 1: General scheme of pre-generation hallucination detection (left) and soft-target construction (right)
+
+ting, contrasting uniform aggregation with atten-tion probing (CH-Wang et al., 2024), which uses a learned query vector to selectively weight token-level hidden states. We further study which layers of the generating model carry the strongest halluci-nation signal, finding that intermediate layers are consistently most informative, suggesting that reli-able risk estimates can be obtained without waiting for the full forward pass to complete. Our contributions are: • Risk-estimation framing and soft-target su-pervision. We reframe pre-generation hallu-cination detection (Figure 1, left) as a risk-estimation problem and introduce soft-target supervision derived from empirical answer er-ror rates (Figure 1, right). We prove that the sample error rate is an unbiased, minimum-variance estimator of the the error probability under the model’s sampling distribution. • Probing approach and layer analysis. Asystematic comparison of probing architec-tures shows that attention probing, which uses a learned query vector to selectively weight token-level hidden states, outperforms uni-form aggregation in the pre-generation set-ting. Layerwise analysis further reveals that intermediate layers carry the strongest halluci-nation signal across models and datasets, thus allowing efficient hallucination detection. • Empirical findings of systematic evaluation. 
+
+In the pre-generation setting, soft-target super-vision provides a consistently stronger train-ing signal than binary labels on open-ended question answering task. We demonstrate that our findings hold across three model families (Qwen, LLaMA, and Gemma) in the sub-9B parameter regime, across architectures of vary-ing scale and design. 
+
+2 Related Work 
+
+LLMs can produce fluent text that is factually in-correct or inconsistent with the provided context, a phenomenon commonly referred to as hallucina-tion (Huang et al., 2025; Sahoo et al., 2024). Its prevalence in high-stakes settings has motivated a substantial body of work on their detection and mitigation. 
+
+Post-generation hallucination detection Post-generation methods identify hallucinations af-ter text has been produced and can be broadly grouped into black-box, grey-box, and white-box approaches. Black-box methods operate on generated text alone: SelfCheckGPT (Manakul et al., 2023) ex-ploits semantic inconsistency across multiple sam-ples, while LLM-as-a-judge (Zheng et al., 2023) approaches use a separate model as an evaluator. Grey-box methods additionally access the out-put distribution. Token-level entropy (Malinin and Gales, 2021) provides a strong baseline, and seman-tic entropy (Farquhar et al., 2024) improves on it by clustering sampled responses into equivalence classes and computing entropy over cluster proba-bilities, yielding higher ROC-AUC on long-form QA. White-box methods exploit internal model states. A foundational result is that classifiers trained on hidden-layer activations reliably predict whether a statement the model reads or generates is truthful (Azaria and Mitchell, 2023), showing that verac-ity is encoded in the model’s internal state rather than only in its output distribution. Burns et al. (Burns et al., 2022) push this further with Contrast-Consistent Search (CCS), an unsupervised probe that recovers truth-related directions in activation space by exploiting the consistency constraint that a statement and its negation must be assigned op-posite truth values. Linear probes over pooled hid-den states (Belinkov, 2022) are the standard su-pervised baseline. Kossen et al. (Kossen et al., 2025) improve upon them by training lightweight probes to predict semantic entropy directly from hidden states. Orgad et al. (Orgad et al., 2025) deepen our understanding of where truthfulness is encoded, finding that the relevant signal is con-centrated on specific tokens rather than uniformly distributed, and that error detectors trained this way fail to generalize across datasets, suggesting truth-fulness encoding is multifaceted rather than uni-versal. Attention-based methods include Lookback Lens (Chuang et al., 2024), which uses the ratio of attention placed on context versus newly generated tokens, and Xu et al. (Xu et al., 2023), who iden-tify internal hallucination symptoms via contrastive source perturbations. Bazarova et al. (Bazarova et al., 2025) detect hallucination through topologi-cal divergence between generated text and source context, while RAGLens (Xiong et al., 2026) trains sparse autoencoders on hidden states to identify in-terpretable features correlated with unfaithful gen-eration. 
+
+Pre-generation hallucination detection Pre-generation methods assess hallucination risk from the input representation, before any text is pro-duced. This line of work is still relatively re-cent. An early precursor is Kadavath et al. (Ka-davath et al., 2022), who study whether LLMs can estimate the probability that the model knows the answer to a query by examining model self-evaluations. While their approach conditions on a proposed answer and thus is not strictly pre-generative, it motivates the broader question of whether correctness can be predicted before de-coding. Gottesman and Geva (Gottesman and Geva, 2024) answer this more directly with KEEN, a probe trained on internal representations of sub-ject entities that predicts both QA accuracy and open-ended factuality, without generating a single output token. Ji et al. (Ji et al., 2024) and Alnuhait et al. (Alnuhait et al., 2025) train linear probes on input representations with binary labels, estab-lishing strong baselines. Kossen et al. (Kossen et al., 2025) show that probes predicting semantic entropy transfer to the pre-generation setting, albeit with reduced accuracy. The approach has also been extended to vision-language models: HALP (Kogi-lathota et al., 2026) probes pre-generative internal states of VLMs to predict hallucination risk before decoding begins, demonstrating that the principle generalizes across modalities and architectures. However, the use of binary supervision targets in pre-generation setting is statistically ill-posed: since generation has not yet occurred, hallucina-tion is not a deterministic outcome but a proba-bility over the model’s stochastic output distribu-tion. Hard labels collapse this distribution to a single sample, introducing irreducible label noise. Our work addresses this directly by framing pre-generation detection as estimation of hallucination probability, and training probes on soft targets de-rived from the output distribution. 
+
+3 Methodology 
+
+3.1 Problem Statement 
+
+We study hallucination detection before decod-ing begins. Given an input prompt x, a language model induces a distribution over possible answers 
+
+a ∼ pθ(· | x). In the pre-generation setting, the quantity of interest is not whether a single sam-pled answer is hallucinated, but rather the model’s hallucination risk under its own answer distribu-tion. We therefore treat hallucination detection as a supervised prediction problem over the model’s internal representations, where the target is an esti-mate of the probability that the model will produce an incorrect answer for the given prompt. Formally, let H(xi) = {h(l) 
+
+> j
+
+}n,L j=1 , l =1 denote the full set of hidden states produced by the model for all n input tokens across all L layers. The hallucination risk detection model approximates: 
+
+p∗ 
+
+> i
+
+= Ea∼pθ (·| xi)
+
+1[incorrect (a)] 
+
+= X
+
+> a
+
+pθ(a | xi) 1[incorrect (a)] 
+
+using a chosen subset of H(xi) to produce 
+
+ˆp∗ 
+
+> i
+
+(H(xi)) . The probe is a layer-agnostic frame-work: it can be applied to the hidden states of any single layer l, and we study the effect of this choice via a layerwise ablation in the Results 4.3 section. 
+
+3.2 Target Construction Binary targets. In the binary setting, the target is yi ∈ { 0, 1}, derived from the single greedy-decoded answer a† = arg max a pθ(a | xi):
+
+ygreedy  
+
+> i
+
+= 1[incorrect (a†)] 
+
+Since ygreedy  
+
+> i
+
+is a deterministic constant, its bias relative to the true target p∗ 
+
+> i
+
+is: 
+
+Bias( ygreedy  
+
+> i
+
+) = 1[incorrect (a†)] − p∗
+
+> i
+
+This mismatch associated with the variance of gen-eration is structural and irreducible. It can be as large as ±1 in the extreme cases described below. 1. Underestimation : the model assigns its sin-gle highest probability mass to a correct an-swer while distributing mass 1−ϵ across many incorrect ones, giving ygreedy  
+
+> i
+
+= 0 but p∗ 
+
+> i
+
+≈ 1;2. Overestimation : the model’s top answer is an incorrect paraphrase while nearly all prob-ability mass lies on correct variants, giving 
+
+ygreedy  
+
+> i
+
+= 1 but p∗ 
+
+> i
+
+≈ 0.In both cases the mode-mean gap δi = ygreedy  
+
+> i
+
+−
+
+p∗ 
+
+> i
+
+is large. Crucially, δi is question-specific and need not correlate with the true risk p∗ 
+
+> i
+
+. Thus, a probe trained on greedy targets may learn to predict decoding artifacts rather than the genuine halluci-nation risk of the model. 
+
+Soft targets. To address this limitation, we derive soft targets from the empirical error rate over N
+
+answers sampled via ancestral sampling from the tempered distribution pτθ (· | xi):
+
+ˆyi = 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+Zj , Zj = 1[incorrect (a(j) 
+
+> i
+
+)] 
+
+At a fixed temperature τ = ˆ τ , this estimator is unbi-ased for p∗ 
+
+> i
+
+(ˆ τ ) = Ea∼pˆτθ
+
+[1[incorrect (a)]] by linear-ity of expectation and the independence of samples. Furthermore, ˆyi is a uniformly minimum-variance unbiased estimator (UMVUE) of p∗ 
+
+> i
+
+(ˆ τ ); we pro-vide a formal proof further in the Paragraph 3.2. We construct soft targets at τ = 1 . At this tem-perature, pτ =1  
+
+> θ
+
+≡ pθ, making p∗ 
+
+> i
+
+(1) the error prob-ability under the model’s original learned distribu-tion and providing the most principled default for soft-target construction, free from any temperature hyperparameter. 
+
+The empirical error rate is the UMVUE of the model’s error probability. Let xi be a fixed in-put and let the model induce a distribution pθ(· | xi)
+
+at temperature τ = 1 , i.e., the raw model distribu-tion. Define the target quantity: 
+
+p∗ 
+
+> i
+
+= Pr  
+
+> a∼pθ(·| xi)
+
+[incorrect( a)] ∈ (0 , 1) .
+
+Assuming each answer a(j) is drawn indepen-dently from pθ(· | xi), the indicators Zj =
+
+1[incorrect( a(j))] are i.i.d. Bernoulli( p∗ 
+
+> i
+
+), and the soft target is ˆyi = 1
+
+> N
+
+PNj=1 Zj .
+
+Unbiasedness. By linearity of expectation, 
+
+E[ˆ yi] = 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+E[Zj ] = 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+p∗ 
+
+> i
+
+= p∗ 
+
+> i
+
+.
+
+UMVUE. Let T = PNj=1 Zj . The joint likeli-hood is 
+
+L(p∗ 
+
+> i
+
+| Z1, . . . , Z N ) = ( p∗ 
+
+> i
+
+)T (1 − p∗ 
+
+> i
+
+)N −T ,
+
+which depends on the data only through T . By the Fisher-Neyman factorization theorem (Lehmann and Casella, 1998), T is sufficient for p∗ 
+
+> i
+
+. The Bino-mial family {Binomial( N, p ) : p ∈ (0 , 1) } is com-plete, since it forms a one-parameter exponential family with natural parameter log p 
+
+> 1−p
+
+(Lehmann and Casella, 1998). Since ˆyi = T /N is an un-biased function of a complete sufficient statistic, the Lehmann-Scheffé theorem implies that ˆyi is the unique UMVUE of p∗ 
+
+> i
+
+(Lehmann and Casella, 1998). □
+
+We also emphasize the importance of variance reduction for the speed of convergence for stochas-tic gradient methods, as the convergence speed is linear in 1Var( g) with g being the stochastic gradi-ent, that is proportional to variance of ˆyi, which we minimize for convex (Bottou et al., 2018) and non-convex (Yan et al., 2018) optimization problem cases. From a statistical learning theory perspec-tive, we can also directly measure the benefit of soft-targets of similar order in Appendix A. 3.3 Attention Probing for Pre-Generation Setting 
+
+Attention probing was originally developed by CH-Wang et al. (CH-Wang et al., 2024) for post-generation hallucination detection, where answer-side hidden states are available. We adapt this mechanism to the pre-generation setting by apply-ing it to prompt-side hidden states instead. Given the token-level hidden states {hj }nj=1 
+
+from the input prompt at a fixed layer l, a learn-able query vector q ∈ Rd produces a weighted aggregation: 
+
+ˆhi =
+
+> n
+
+X
+
+> j=1
+
+αij hj , αij = exp( q⊤hj )
+
+P 
+
+> k
+
+exp( q⊤hk)
+
+This allows the probe to focus selectively on the prompt positions most informative for hallucina-tion risk, rather than aggregating all token represen-tations uniformly as in linear probing. A logistic regression head then maps the aggregated represen-tation to a hallucination risk score: 
+
+ˆpi = σ(w⊤ˆhi + b)
+
+Both the binary and soft-target variants are trained with binary cross-entropy loss, treating the continu-ous soft target ˆyi ∈ [0 , 1] as the supervision signal directly: 
+
+L = − 1
+
+M
+
+> M
+
+X
+
+> i=1
+
+ˆyi log ˆ pi + (1 − ˆyi) log(1 − ˆpi).
+
+3.4 Experimental Combinations 
+
+The supervision target construction and probe archi-tecture define distinct axes of design. We evaluate three combinations: linear probing with binary tar-gets, attention probing with binary targets, and at-tention probing with soft targets. We focus compar-isons on attention-based probes because attention probing consistently outperforms linear probing across all settings, which we verify in Section 4. Thus, the soft-target contribution is evaluated in the stronger attention-probe setting. 
+
+4 Results and Discussion 
+
+4.1 Experimental Setting Datasets We evaluate on the subsets of three datasets: SQuAD (Rajpurkar et al., 2016), Nat-ural Questions (NQ) (Kwiatkowski et al., 2019) (short extractive), and HotpotQA (Yang et al., 2018) (multi-hop short answer). The details on constructing the subsets are provided in Appendix B. 
+
+Models. We evaluate on five instruction-tuned models from three architecture families, all in the sub-9B parameter regime: Qwen2.5-3B, Qwen2.5-7B, Qwen3.5-9B, Llama-2-7B, and Gemma-4-E2B. For all models, we use the instruction-tuned variant and apply probes to hidden states extracted during a single forward pass over the input prompt, with no modification to the model weights. 
+
+Correctness evaluation. An answer is consid-ered correct if the ground truth is contained in the response, or if ROUGE-L > 0.6 and NLI-based se-mantic similarity > 0.85 , following the evaluation approach used by (Kuhn et al., 2023). 
+
+Baselines We compare against three pre-generation baselines: 1. Question length heuristic; 2. Zero-shot self-assessment, obtained by prompting the model to report its own confidence without generating an answer; 3. Linear probe on mean-pooled hidden states from the last layer (Alnuhait et al., 2025). We additionally report post-generation results for length-normalized entropy, linear probe, and attention probe. Full implementation details for all baselines are given in Appendix C. 
+
+Probe training All probes are trained for up to 30 epochs with early stopping on val-idation ROC-AUC. We use the Adam opti-mizer with binary cross-entropy. Hyperparam-eters are selected via grid search: learning rate ∈ {10 −4, 5×10 −5, 10 −5}, weight decay ∈{0, 10 −5, 10 −4}, batch size ∈ { 8, 16 }. Probes are trained independently per model and dataset. Soft targets are constructed with N = 10 samples at temperature τ = 1 .
+
+4.2 Results 
+
+We present results with ROC AUC values for binary error classification across different datasets and models in Table 1 and a critical difference diagram for pre-generation methods in Figure 2. Detailed analysis is provided in subsequent paragraphs. 12345    
+
+> 4.4000
+> Question length 4.0000
+> Self-check 3.2000
+> Linear probe
+> 2.2000 Attention probe
+> 1.2000 Attention probe, soft target
+
+Figure 2: Critical difference diagram for pre-generation hallucination detection methods across dataset–model pairs. Mean ranks over all dataset-model pairs for ROC-AUC of detection are presented, horizontal bars connect not statistically significant differences in ranks for α = 0 .05 .
+
+Figure 2 summarizes the relative performance of the pre-generation hallucination detection methods using a critical difference diagram (Ismail Fawaz et al., 2019b; Bazarova et al., 2025). Each method is ranked within every dataset–model pair accord-ing to ROC-AUC, and the reported position cor-responds to its average rank across all evalua-tion pairs. Lower ranks indicate better perfor-mance. The attention probe trained with soft tar-gets achieves the best average rank, followed by the standard attention probe, other approaches perform substantially worse. Moreover, the performance gain between the attention probe with soft targets and other methods is statistically significant. 
+
+Pre-generation performance scales with answer determinism. Pre-generation detection perfor-mance is strong across diverse datasets. On SQuAD, the difference between the best pre- and post-generation methods is from 10.82 (-13.51%) to 0.52 (-0.07%) ROC-AUC points across models (average difference of -4.32%). On HotpotQA it increases, reaching up to 13.94 (-19.17%) point difference (-6.55% on average). These results sug-gest that when answers are short and structurally constrained, a substantial portion of the model’s uncertainty is already encoded in the input represen-tations, allowing pre-generation probes to perform competitively with post-generation methods. As expected answer length and reasoning complexity increase, uncertainty becomes more dependent on the generation process itself, widening the gap in favour of post-generation detection. 
+
+Soft targets improve open-ended tasks in the pre-generation setting. On all three datasets, atten-tion probing trained with soft targets outperforms its binary-target counterpart across all evaluated models (Table 1). The gains are most pronounced on SQuAD, where the ROC-AUC increases from 85.19 to 85.66 (+0.55%) in the worst case for Qwen3.5-9B and from 73.23 to 78.00 (+6.51%) in the best case for Gemma-4-E2B. On HotpotQA, in the worst case ROC-AUC does not change for Qwen3.5-7B and Gemma-4-E2B, and in the best case rises from 60.13 to 65.48 (+8.90%) for Llama-2-7B. However, there are no such consistent im-provements in the post-generation setting. These results are consistent with the risk-estimation fram-ing introduced in Section 3. Soft targets provide a closer approximation to the model’s true per-prompt error probability than a single greedy label, and this additional information is most useful in the pre-generation setting, where the probe must infer distributional uncertainty from input repre-sentations alone. We compare the empirical error rate against alternative soft-target formulations in Appendix F, demonstrating that the error rate con-sistently performs best, in agreement with its theo-retical grounding as an UMVUE of the per-prompt error probability. 
+
+Attention probing dominates linear probing in the pre-generation hallucination detection. 
+
+The advantage of attention probing over linear is consistent across datasets, where the difference reaches up to 23.1 ROC-AUC points (Table 1). The experimental evidence is consistent with the interpretation that the learned attention mechanism selectively aggregates the prompt positions most informative for hallucination risk, capturing sig-nal that uniform pooling discards. On single-token tasks such as multiple-choice or boolean QA, how-ever, as demonstrated in Appendix H, this advan-tage disappears. The uncertainty signal appears to be sufficiently captured by mean pooling alone, and attention probing provides no additional benefit. 
+
+4.3 Layer Analysis 
+
+To examine how detection quality varies across the transformer’s depth, we train probes using hid-den states extracted from a representative subset of layers {1, ⌊L/ 4⌋, ⌊L/ 2⌋, ⌊3L/ 4⌋, L } of the gen-erating model. Due to the time and resources con-straints, this evaluation was done on the validation and test splits of the data. The results are shown in Figure 3. Regime Method Qwen2.5-3B Qwen2.5-7B Qwen3.5-9B Llama-2-7B Gemma-4-E2B SQuAD                                                                                                                                        
+
+> Post-gen. Entropy 69.63 72.54 79.54 50.79 64.26 Linear probe 58.61 68.99 76.81 79.67 73.72 Attention probe 75.32 83.39 84.79 81.49 79.77
+> Attention probe, soft target 80.06 83.33 87.54 82.13 78.52 Pre-gen. Question length 52.86 56.84 51.95 55.36 51.79 Self-check, zero-shot 57.75 51.10 57.04 52.04 51.29 Linear probe 56.45 58.64 70.27 63.99 65.37 Attention probe 65.39 76.95 85.19 73.93 73.23 Attention probe, soft target 69.24 80.15 85.66 77.01 78.00 Natural Questions
+> Post-gen. Entropy 52.80 51.08 65.10 50.51 63.63 Linear probe 64.69 70.06 71.37 66.97 69.68 Attention probe 66.62 72.64 76.61 75.00 72.22 Attention probe, soft target 67.98 74.43 77.28 74.36 72.45
+> Pre-gen. Question length 50.04 53.06 52.20 51.20 53.51 Self-check, zero-shot 57.69 59.18 60.86 47.68 56.78 Linear probe 58.56 63.41 63.87 61.46 59.38 Attention probe 62.79 68.98 78.97 72.94 70.22 Attention probe, soft target 66.30 71.18 81.52 74.13 71.56 HotpotQA
+> Post-gen. Entropy 53.36 61.61 66.84 52.06 59.48 Linear probe 65.62 72.09 67.42 67.38 68.67 Attention probe 62.82 72.72 74.76 72.77 69.31
+> Attention probe, soft target 68.09 72.73 74.76 72.77 69.31
+> Pre-gen. Question length 50.87 59.53 50.33 51.26 52.60 Self-check, zero-shot 54.93 59.30 60.73 51.21 52.80 Linear probe 56.91 56.63 58.82 59.61 56.56 Attention probe 54.41 58.10 74.84 60.13 63.29
+> Attention probe, soft target 62.53 58.79 74.84 65.48 63.29
+
+Table 1: Performance comparison across datasets, models, and hallucination detection methods, measured by ROC-AUC. Results are grouped by dataset and by whether detection is performed in classic setting after generation (Post-gen.) or in our setting before generation (Pre-gen.). 
+
+Across models and datasets, hallucination-relevant information is distributed throughout the network rather than concentrated in a single layer. The best-performing layer varies by model and task, but intermediate layers are consistently among the most informative, suggesting that useful pre-generation signal emerges well before the final rep-resentation and can be extracted without a full for-ward pass to the last layer. 
+
+4.4 Discussions 
+
+Taken together, the results support three conclu-sions. First, pre-generation hallucination detec-tion is most reliable when the answer space is short and structurally constrained. On such tasks, the probe’s ROC-AUC approaches that of post-generation methods. Second, attention probing is the stronger lightweight architecture in this setting, with gains that are largest precisely where the task provides the most variable prompt structure. Third, soft-target supervision derived from the empirical error rate provides a meaningful and consistent im-provement over binary labels on open-ended tasks, with the advantage diminishing as answer deter-minism increases. This pattern aligns directly with the theoretical motivation in Section 3. The primary limitation is the degradation in rel-ative performance as task complexity and answer length increase. On long-context, multi-hop tasks, the detector must infer hallucination risk from more diffuse evidence spread across a longer prompt, and post-generation methods that condition on the gen-erated answer retain a clear advantage. This is not a weakness of the specific probe design but a structural consequence of the pre-generation set-ting: without access to the generated answer, some uncertainty cannot be resolved. This limitation clarifies the boundary conditions of the method and motivates future work on context-aware probing and integration with abstention or retrieval mecha-Figure 3: Performance of attention probe with soft targets trained and tested on hidden states from the different layer depth across three datasets. Larger markers indicate the best-performing layer per model and dataset. 
+
+nisms. 
+
+5 Conclusions 
+
+We studied pre-generation hallucination detection through the lens of risk estimation, arguing that the model’s per-prompt error probability is a more principled supervision target than a binary label derived from a single greedy output. Our central contribution is soft-target supervision based on the empirical answer error rate —– the unique unbiased minimum-variance estimator of that quantity under the model’s sampling distribution. Across the open-ended tasks we evaluated, soft-target supervision consistently improves detec-tion quality over binary labels, and the empir-ical error rate outperforms the alternative soft-target formulations we considered. The consis-tent gains from soft-target training provide a di-rect empirical evidence that hallucination in the pre-generation setting is fundamentally a distribu-tional property of the model, supporting the risk-estimation view at empirical level. Our experi-ments further demonstrate that attention probing is a strong and parameter-efficient mechanism for extracting this risk signal from prompt-side hid-den states. Learned attention aggregation consis-tently outperforms mean-pool probing on short open-ended tasks. Layerwise analysis shows that hallucination-relevant information is distributed across the network, with intermediate layers fre-quently among the most informative. Thus, strong detection signals emerge before the full forward pass completion (Orgad et al., 2025). Finally, when answers are short and structurally constrained, pre-generation probes approach post-generation perfor-mance while avoiding the cost of decoding. As answer length increases, post-generation methods retain a clear advantage, as uncertainty becomes more dependent on the generation process itself (Farquhar et al., 2024; Kossen et al., 2025). The broader implication is that pre-generation hallucination detection provides a reliable, inter-pretable, and earlier signal if augmented with soft-target training. This result, combined with the find-ing that intermediate layers are frequently the most informative, points toward a practically relevant operating regime: on tasks with short structured answers, reliable hallucination risk estimates can be obtained before generation and partway through the forward pass. The scope and limitations of these conclusions are discussed in Section 6. Natural directions for future work include extending the risk-estimation framework to to exploit the intermediate-layer find-ing for early-exit inference (Schuster et al., 2022) and integrating pre-generation risk scores with abstention (Kadavath et al., 2022) or retrieval-augmented generation (Asai et al., 2023) policies. 6 Limitations 
+
+We group the limitations of this work into three categories: theoretical assumptions underlying the framework, empirical scope of the evaluation, and practical constraints on applicability. 
+
+Theoretical assumptions. 
+
+1. The UMVUE argument assumes that correct-ness is a well-defined binary property of each answer. For truly open-ended or creative tasks where correctness is graded or subjective, this assumption breaks down and the framework is not directly applicable; the semantic entropy framework (Farquhar et al., 2024) may be more appropriate in such settings. 2. Soft targets are defined relative to a fixed sam-pling temperature. The paper evaluates tar-gets constructed at τ = 1 , which recovers the model’s base distribution, but the probe’s per-formance under a mismatch between training temperature and deployment temperature has not been characterized. Practitioners deploy-ing models at temperatures other than τ = 1 
+
+should treat soft-target estimates with appro-priate caution. 3. The soft-target construction assumes a reliable correctness-checking pipeline. Errors in auto-mated evaluation introduce noise into the tar-gets and, if systematic, can bias the soft-target estimator away from the true error probability, violating the unbiasedness guarantee. We use automated evaluation that occasionally pro-duces incorrect judgments. The approach is therefore best suited to tasks where correct-ness can be verified reliably and should be applied with caution on tasks with ambiguous or graded answers. 
+
+Empirical scope. 
+
+4. We evaluate models up to 7B parameters due to computational constraints. Larger models may exhibit different layer-wise distributions of hallucination-relevant signal — in particu-lar, the optimal probing layer may shift deeper as model capacity increases — and whether the soft-target and attention-probing findings generalize to that regime remains an open question. 5. All datasets are in English. Hallucination behaviour may differ across languages, par-ticularly in low-resource settings where the model’s output distribution is less calibrated. 6. The evaluation covers ancestral sampling and greedy decoding. Robustness of the soft-target framework under other decoding strate-gies (e.g., beam search, nucleus sampling with varying p) has not been assessed. 7. Further experiment would further clarify the usefulness of detected halluciations for their mitigation within mitigation or adaptive RAG frameworks. 
+
+Practical constraints. 
+
+7. The method operates in the white-box setting and requires access to intermediate layer acti-vations from a transformer-based model with a token-level residual stream. It is not appli-cable to black-box API models or to architec-tures that do not expose token-level hidden states in this form (e.g., state-space models). 8. Pre-generation detection is inherently con-strained by the absence of answer-side evi-dence. On tasks requiring deep multi-step reasoning or long-form synthesis, uncertainty becomes substantially dependent on the gener-ation process itself, and post-generation meth-ods retain a clear advantage. The appropri-ate interpretation is that pre-generation detec-tion provides an earlier and cheaper signal that complements rather than replaces post-generation detectors. 
+
+7 Ethics Statement 
+
+7.1 Use of AI Assistants 
+
+During the preparation of this manuscript, AI-assisted writing tools were used for proofreading and critical review of individual sections. As a re-sult, some parts of the paper may be classified as AI-generated, AI-edited, or a mix of human and AI contributions. All scientific content, experimental design, results, and conclusions are the sole respon-sibility of the authors. 
+
+References 
+
+> Deema Alnuhait, Neeraja Kirtane, Muhammad Khalifa, and Hao Peng. 2025. FACTCHECKMATE: Preemp-tively detecting and mitigating hallucinations in LMs.
+
+In Findings of the Association for Computational Lin-guistics: EMNLP 2025 , pages 12413–12428, Suzhou, China. Association for Computational Linguistics. Akari Asai, Zeqiu Wu, Yizhong Wang, Avirup Sil, and Hannaneh Hajishirzi. 2023. Self-rag: Learning to retrieve, generate, and critique through self-reflection. 
+
+ArXiv , abs/2310.11511. Amos Azaria and Tom Mitchell. 2023. The internal state of an LLM knows when it’s lying. In Find-ings of the Association for Computational Linguistics: EMNLP 2023 , pages 967–976, Singapore. Associa-tion for Computational Linguistics. Alexandra Bazarova, Aleksandr Yugay, Andrey Shulga, Alina Ermilova, Andrei Volodichev, Konstantin Polev, Julia Belikova, Rauf Parchiev, Dmitry Simakov, Maxim Savchenko, Andrey Savchenko, Serguei Barannikov, and Alexey Zaytsev. 2025. Hal-lucination detection in llms via topological diver-gence on attention graphs. Yonatan Belinkov. 2022. Probing classifiers: Promises, shortcomings, and advances. Computational Linguis-tics , 48(1):207–219. Léon Bottou, Frank E Curtis, and Jorge Nocedal. 2018. Optimization methods for large-scale machine learn-ing. SIAM review , 60(2):223–311. Collin Burns, Haotian Ye, Dan Klein, and Jacob Steinhardt. 2022. Discovering latent knowledge in language models without supervision. ArXiv ,abs/2212.03827. Sky CH-Wang, Benjamin Van Durme, Jason Eisner, and Chris Kedzie. 2024. Do androids know they’re only dreaming of electric sheep? In Findings of the As-sociation for Computational Linguistics: ACL 2024 ,pages 4401–4420, Bangkok, Thailand. Association for Computational Linguistics. Yung-Sung Chuang, Linlu Qiu, Cheng-Yu Hsieh, Ran-jay Krishna, Yoon Kim, and James Glass. 2024. Lookback lens: Detecting and mitigating contextual hallucinations in large language models using only attention maps. In Proceedings of the 2024 Con-ference on Empirical Methods in Natural Language Processing , pages 1419–1436. Christopher Clark, Kenton Lee, Ming-Wei Chang, Tom Kwiatkowski, Michael Collins, and Kristina Toutanova. 2019. Boolq: Exploring the surprising difficulty of natural yes/no questions. In NAACL .Sebastian Farquhar, Jannik Kossen, Lorenz Kuhn, and Yarin Gal. 2024. Detecting hallucinations in large language models using semantic entropy. Nature ,630:625–630. Daniela Gottesman and Mor Geva. 2024. Estimating knowledge in large language models without gen-erating a single token. In Proceedings of the 2024 Conference on Empirical Methods in Natural Lan-guage Processing , pages 3994–4019, Miami, Florida, USA. Association for Computational Linguistics. Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Wein-berger. 2017. On calibration of modern neural net-works. In Proceedings of the 34th International Con-ference on Machine Learning - Volume 70 , ICML’17, page 1321–1330. JMLR.org. Lei Huang, Weijiang Yu, Weitao Ma, Weihong Zhong, Zhangyin Feng, Haotian Wang, Qianglong Chen, Weihua Peng, Xiaocheng Feng, Bing Qin, and Ting Liu. 2025. A survey on hallucination in large lan-guage models: Principles, taxonomy, challenges, and open questions. ACM Trans. Inf. Syst. , 43(2). Hassan Ismail Fawaz, Germain Forestier, Jonathan We-ber, Lhassane Idoumghar, and Pierre-Alain Muller. 2019a. Deep learning for time series classification: a review. Data Mining and Knowledge Discovery ,33(4):917–963. Hassan Ismail Fawaz, Germain Forestier, Jonathan We-ber, Lhassane Idoumghar, and Pierre-Alain Muller. 2019b. Deep neural network ensembles for time se-ries classification. In IEEE International Joint Con-ference on Neural Networks .Ziwei Ji, Delong Chen, Etsuko Ishii, Samuel Cahyaw-ijaya, Yejin Bang, Bryan Wilie, and Pascale Fung. 2024. LLM internal states reveal hallucination risk faced with a query. In Proceedings of the 7th Black-boxNLP Workshop: Analyzing and Interpreting Neu-ral Networks for NLP , pages 88–104, Miami, Florida, US. Association for Computational Linguistics. Saurav Kadavath, Tom Conerly, Amanda Askell, Thomas Henighan, Dawn Drain, Ethan Perez, Nicholas Schiefer, Zachary Dodds, Nova Dassarma, Eli Tran-Johnson, Scott Johnston, Sheer El-Showk, Andy Jones, Nelson Elhage, Tristan Hume, Anna Chen, Yuntao Bai, Sam Bowman, Stanislav Fort, and 17 others. 2022. Language models (mostly) know what they know. ArXiv , abs/2207.05221. Sai Akhil Kogilathota, Sripadha Vallabha E G, Luzhe Sun, and Jiawei Zhou. 2026. HALP: Detecting hal-lucinations in vision-language models without gen-erating a single token. In Proceedings of the 19th Conference of the European Chapter of the Associa-tion for Computational Linguistics (Volume 1: Long Papers) , pages 6067–6085, Rabat, Morocco. Associ-ation for Computational Linguistics. Jannik Kossen, Jiatong Han, Muhammed Razzak, Lisa Schut, Shreshth A Malik, and Yarin Gal. 2025. Se-mantic entropy probes: Robust and cheap hallucina-tion detection in LLMs. Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar. 2023. Semantic uncertainty: Linguistic invariances for un-certainty estimation in natural language generation. In The Eleventh International Conference on Learn-ing Representations .Tom Kwiatkowski, Jennimaria Palomaki, Olivia Red-field, Michael Collins, Ankur P. Parikh, Chris Alberti, Danielle Epstein, Illia Polosukhin, Jacob Devlin, Ken-ton Lee, Kristina Toutanova, Llion Jones, Matthew Kelcey, Ming-Wei Chang, Andrew M. Dai, Jakob Uszkoreit, Quoc V. Le, and Slav Petrov. 2019. Natu-ral questions: A benchmark for question answering research. Transactions of the Association for Compu-tational Linguistics , 7:453–466. Erich L Lehmann and George Casella. 1998. Theory of Point Estimation , 2 edition. Springer, New York, NY. Andrey Malinin and Mark John Francis Gales. 2021. Uncertainty estimation in autoregressive structured prediction. In International Conference on Learning Representations .Potsawee Manakul, Adian Liusie, and Mark Gales. 2023. SelfCheckGPT: Zero-resource black-box hallucina-tion detection for generative large language models. In Proceedings of the 2023 Conference on Empiri-cal Methods in Natural Language Processing , pages 9004–9017, Singapore. Association for Computa-tional Linguistics. Mehryar Mohri, Afshin Rostamizadeh, and Ameet Tal-walkar. 2018. Foundations of machine learning . MIT press. Viktor Moskvoretskii, Maria Marina, Mikhail Sal-nikov, Nikolay Ivanov, Sergey Pletenev, Daria Gal-imzianova, Nikita Krayko, Vasily Konovalov, Irina Nikishina, and Alexander Panchenko. 2025. Adap-tive retrieval without self-knowledge? bringing un-certainty back home. In Proceedings of the 63rd An-nual Meeting of the Association for Computational Linguistics , pages 6355–6384. Rafael Müller, Simon Kornblith, and Geoffrey Hinton. 2019. When does label smoothing help? Curran Associates Inc., Red Hook, NY, USA. Cheng Niu, Yuanhao Wu, Juno Zhu, Siliang Xu, KaShun Shum, Randy Zhong, Juntong Song, and Tong Zhang. 2024. RAGTruth: A hallucination cor-pus for developing trustworthy retrieval-augmented language models. In Proceedings of the 62nd An-nual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 10862– 10878, Bangkok, Thailand. Association for Compu-tational Linguistics. Hadas Orgad, Michael Toker, Zorik Gekhman, Roi Re-ichart, Idan Szpektor, Hadas Kotek, and Yonatan Be-linkov. 2025. LLMs know more than they show: On the intrinsic representation of LLM hallucinations. In 
+
+The Thirteenth International Conference on Learning Representations .Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev, and Percy Liang. 2016. SQuAD: 100,000+ questions for machine comprehension of text. In Proceedings of the 2016 Conference on Empirical Methods in Natu-ral Language Processing , pages 2383–2392, Austin, Texas. Association for Computational Linguistics. Pranab Sahoo, Prabhash Meharia, Akash Ghosh, Sri-parna Saha, Vinija Jain, and Aman Chadha. 2024. A comprehensive survey of hallucination in large language, image, video and audio foundation mod-els. In Conference on Empirical Methods in Natural Language Processing .Tal Schuster, Adam Fisch, Jai Gupta, Mostafa Dehghani, Dara Bahri, Vinh Q. Tran, Yi Tay, and Donald Met-zler. 2022. Confident adaptive language modeling. In Proceedings of the 36th International Conference on Neural Information Processing Systems , NIPS ’22, Red Hook, NY, USA. Curran Associates Inc. Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, Tianle Li, Max Ku, Kai Wang, Alex Zhuang, Rongqi Fan, Xiang Yue, and Wenhu Chen. 2024. Mmlu-pro: a more robust and challenging multi-task language understanding benchmark. In Proceedings of the 38th International Conference on Neural Information Processing Sys-tems , NIPS ’24, Red Hook, NY, USA. Curran Asso-ciates Inc. Guangzhi Xiong, Zhenghao He, Bohan Liu, Sanchit Sinha, and Aidong Zhang. 2026. Toward faithful retrieval-augmented generation with sparse autoen-coders. In The Fourteenth International Conference on Learning Representations .Weijia Xu, Sweta Agrawal, Eleftheria Briakou, Mari-anna J. Martindale, and Marine Carpuat. 2023. Un-derstanding and detecting hallucinations in neural machine translation via model introspection. Trans-actions of the Association for Computational Linguis-tics , 11:546–564. Y Yan, T Yang, Z Li, Q Lin, and Y Yang. 2018. Aunified analysis of stochastic momentum methods for deep learning. In IJCAI International Joint Confer-ence on Artificial Intelligence .Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William Cohen, Ruslan Salakhutdinov, and Christo-pher D. Manning. 2018. HotpotQA: A dataset for diverse, explainable multi-hop question answering. In Proceedings of the 2018 Conference on Empiri-cal Methods in Natural Language Processing , pages 2369–2380, Brussels, Belgium. Association for Com-putational Linguistics. Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. 2023. Judging llm-as-a-judge with mt-bench and chatbot arena. In 
+
+Proceedings of the 37th International Conference on Neural Information Processing Systems , NIPS ’23, Red Hook, NY, USA. Curran Associates Inc. 
+
+A Statistical learning theory justification for soft-targets 
+
+Our results shows that, under cross-entropy train-ing, empirical soft targets provide an unbiased es-timate of the ideal objective with target p⋆(x), the conditional hallucination risk of the model. Since the cross-entropy loss is linear in the target, aver-aging over sampled generations does not change the population objective; instead, it reduces the sampling-noise component of the uniform general-ization bound at rate O(( mN )−1/2). This explains why soft-target supervision provides a more sta-ble learning signal than a single greedy or sam-pled binary label in pre-generation hallucination detection. The proof and the theorem are natural extensions of existing results for statistical learning theory (Mohri et al., 2018). 
+
+Theorem 1. Let X ∼ D denote a prompt, and let 
+
+Y ∈ { 0, 1} indicate whether a sampled answer is incorrect. Define the conditional hallucination risk 
+
+p⋆(x) = P(Y = 1 | X = x).
+
+Let F be a finite class of predictors f : X →
+
+[ε, 1 − ε], for some ε ∈ (0 , 1/2) . Given m prompts 
+
+x1, . . . , x m, suppose that for each prompt we draw 
+
+N independent generations 
+
+Yij | X = xi ∼ Bernoulli( p⋆(xi)) ,
+
+with j = 1 , . . . , N , and construct the soft target 
+
+bpi = 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+Yij .
+
+Consider the empirical soft-target cross-entropy objective 
+
+bRN (f ) = 1
+
+m
+
+> m
+
+X
+
+> i=1
+
+ℓ(f (xi), bpi),
+
+where 
+
+ℓ(q, p ) = −p log q − (1 − p) log(1 − q).
+
+Let the population risk be 
+
+R(f ) = EX∼D 
+
+ℓ(f (X), p ⋆(X)) .
+
+Then, for every fixed f ∈ F ,
+
+E
+
+h bRN (f ) | x1, . . . , x m
+
+i
+
+= 1
+
+m
+
+> m
+
+X
+
+> i=1
+
+ℓ(f (xi), p ⋆(xi)) .
+
+Thus, the empirical soft-target cross-entropy is an unbiased estimate of the ideal cross-entropy objec-tive with target p⋆(x).Moreover, with probability at least 1 − δ, uni-formly over f ∈ F ,
+
+bRN (f ) − R(f )
+
+≤ sup  
+
+> f∈F
+
+1
+
+m
+
+> m
+
+X
+
+> i=1
+
+ℓ(f (xi), p ⋆(xi)) − R(f )
+
++ log 
+
+ 1 − εε
+
+ r log(2 |F| /δ )2mN .
+
+Consequently, if 
+
+bfN ∈ arg min  
+
+> f∈F
+
+bRN (f )
+
+and 
+
+f ⋆ ∈ arg min   
+
+> f∈F
+
+R(f ),
+
+then, with probability at least 1 − δ,
+
+R( bfN ) − R(f ⋆)
+
+≤ 2 sup  
+
+> f∈F
+
+1
+
+m
+
+> m
+
+X
+
+> i=1
+
+ℓ(f (xi), p ⋆(xi)) − R(f )
+
++ 2 log 
+
+ 1 − εε
+
+ r log(2 |F| /δ )2mN .
+
+Therefore, increasing the number of sampled gen-erations N reduces the sampling-noise component of the learning bound at rate O(( mN )−1/2). The case N = 1 corresponds to supervision from a single sampled binary label. Proof. For a fixed prompt xi, the cross-entropy loss is linear in the target: 
+
+ℓ(f (xi), bpi) = −bpi log f (xi)−(1 −bpi) log(1 −f (xi)) .
+
+Since 
+
+E[bpi | xi] = p⋆(xi),
+
+we have 
+
+E[ℓ(f (xi), bpi) | xi]= −p⋆(xi) log f (xi) − (1 − p⋆(xi)) log(1 − f (xi)) = ℓ(f (xi), p ⋆(xi)) .
+
+Averaging over i = 1 , . . . , m proves the unbiased-ness statement. It remains to control the additional deviation caused by using bpi instead of p⋆(xi). For each i,
+
+ℓ(f (xi), bpi) − ℓ(f (xi), p ⋆(xi)) = −(bpi − p⋆(xi)) log f (xi)+ ( bpi − p⋆(xi)) log(1 − f (xi)) = ( bpi − p⋆(xi)) log 1 − f (xi)
+
+f (xi) .Because f (xi) ∈ [ε, 1 − ε],
+
+log 1 − f (xi)
+
+f (xi) ≤ log 1 − εε .
+
+Moreover, bpi − p⋆(xi) is the average of N centered Bernoulli variables and is therefore sub-Gaussian with variance proxy 1/(4 N ). Hence, for any fixed 
+
+f , Hoeffding’s inequality gives 
+
+1
+
+m
+
+> m
+
+X
+
+> i=1
+
+[ℓ(f (xi), bpi) − ℓ(f (xi), p ⋆(xi))] 
+
+≤ log 
+
+ 1 − εε
+
+ r log(2 /δ )2mN 
+
+with probability at least 1 − δ. Applying a union bound over f ∈ F yields the stated uniform bound. Combining this sampling deviation with the stan-dard generalization gap between the empirical ideal risk and the population risk gives the result. Finally, the excess-risk bound follows from the standard empirical risk minimization argument: 
+
+R( bfN ) − R(f ⋆) ≤ 2 sup  
+
+> f∈F
+
+bRN (f ) − R(f ) .
+
+B Dataset Construction 
+
+B.1 Dataset Selection and Preprocessing 
+
+We evaluate on three QA datasets chosen to span the spectrum of answer formats and reasoning de-mands. For each dataset, we construct a sepa-rate hallucination detection dataset per generat-ing model, as hallucination behaviour is model-dependent. SQuAD (Rajpurkar et al., 2016) contains over 100,000 extractive reading comprehension ques-tions. Since the proposed methods do not require large training sets and full-scale soft target con-struction is computationally expensive, we restrict experiments to the official validation split of 10,570 samples, which we randomly partition into training, validation, and test subsets. HotpotQA (Yang et al., 2018) contains approx-imately 113,000 multi-hop questions across three difficulty levels (easy, medium, hard). To construct a balanced evaluation set that controls for difficulty, we sample 3,000 examples from each difficulty level and merge them into a dataset of 9,000 exam-ples, preserving the difficulty distribution across splits. Natural Questions (Kwiatkowski et al., 2019) contains over 300,000 Wikipedia-sourced ques-tions with both short and long reference answers. Since input paragraphs are often too long for smaller models, we use the long answer as the context and the short answer as the gold target. We sample 9,000 examples uniformly. 
+
+B.2 Dataset Statistics Dataset Train Test Validation 
+
+SQuAD 8456 1057 1057 HotpotQA 6000 1500 1500 NQ 6000 1500 1500 
+
+> Table 2: Number of samples in each split for the evalu-ated datasets.
+
+Table 2 reports the number of samples in each split across all datasets used in the paper. 
+
+C Baseline Implementation 
+
+C.1 Question and Context Length 
+
+This heuristic baseline tests whether surface-level properties of the input contain hallucination-relevant information. We use the number of whitespace-tokenized words in the concatenated question and context string. No hidden-state ex-traction is required. 
+
+C.2 Zero-Shot Self-Check 
+
+This baseline elicits the model’s verbalized confi-dence estimate by prompting it directly, before any answer is generated. The prompt used is specified in Appendix D. Rather than taking a hard binary prediction from the first generated token, we extract a soft hal-lucination probability directly from the model’s next-token distribution. Specifically, let Vno =
+
+{no , No , NO } and Vyes = {yes , Yes , YES } denote the sets of case variants for each response. The hal-lucination risk score is defined as the probability mass on negative responses, normalized over the union of both sets. This produces a continuous score in [0 , 1] rather than a hard binary decision, utilizing the full prob-ability distribution over the relevant token surface forms. No training is performed, this is a purely zero-shot signal. The baseline tests whether the model possesses an accessible internal notion of answerability that can be elicited through prompt-ing alone. 
+
+C.3 Length-Normalized Entropy 
+
+Following Malinin and Gales (Malinin and Gales, 2021), we compute the sequence-level en-tropy of the model’s distribution normalized by the sequence length. For a generated sequence 
+
+a = (a1, . . . , a m), the length-normalized en-tropy is LNE (a | x) = − 1
+
+> m
+
+Pmt=1 
+
+PVv=1 pθ(v |
+
+x, a <t ) log pθ(v | x, a <t ), where V is the vocab-ulary size and pθ(v | x, a <t ) is the model’s next-token distribution at position t. This is computed via a single teacher-forced forward pass over the greedy-decoded answer. Length normalization cor-rects for the tendency of longer sequences to ac-cumulate higher entropy. The resulting scalar is used directly as a hallucination risk score without any learned component. Per-position entropy is computed from the full softmax distribution using 
+
+log -softmax for numerical stability, avoiding ex-plicit computation of exp followed by log .
+
+C.4 Linear Probing on Pooled Input Representations 
+
+Following Alnuhait et al. (Alnuhait et al., 2025), we extract hidden states from the generating model at a fixed transformer layer l for the full input se-quence (prompt tokens only, no generated answer). The per-layer hidden state matrix H(l) ∈ Rn×d is mean-pooled across the token dimension to pro-duce a single vector ¯h(l) ∈ Rd. A single output layer is trained on top of ¯h(l).
+
+C.5 Attention Probing in the Post-Generation Setting 
+
+The post-generation attention probe follows the im-plementation described originally by CH-Wang et al. (CH-Wang et al., 2024). The hidden states are extracted from the answer sequence rather than the input. Specifically, let H(l) 
+
+> answer
+
+∈ R(m)×d denote the hidden states at layer l for the answer token sequence of length m. The learned query q attends over all m positions: 
+
+ˆhi =
+
+> m
+
+X
+
+> j=1
+
+αij h(l) 
+
+> j
+
+, αij = exp( q⊤h(l) 
+
+> j
+
+)
+
+P 
+
+> k
+
+exp( q⊤h(l) 
+
+> k
+
+)
+
+The logistic regression head and training proce-dure are identical to the pre-generation setting. 
+
+D Prompts 
+
+D.1 Generation Prompt 
+
+Generation Prompt 
+
+> Give a short, concise answer to the question using the information from the paragraph. Context: {context} Question: {question}
+
+D.2 Self-Check Prompt 
+
+Self-Check Prompt    
+
+> Answer with a single word: 'YES 'or 'NO ':are you able to answer the question correctly using the information from the context? Context: {context} Question: {question}
+
+E Statistical Significance of the Obtained Results 
+
+To assess the statistical significance of the reported differences, we use the critical difference diagram, a computationally efficient non-parametric proce-dure suitable for comparing multiple classifiers across datasets (Ismail Fawaz et al., 2019a). The analysis presented in the Figure 4 confirms three key findings: • Pre-generation attention probing trained with soft targets significantly outperforms its binary-target counterpart; • Pre-generation attention probing with soft tar-gets performs comparably to post-generation attention probing trained on binary targets; • Pre-generation attention probing significantly outperforms pre-generation linear probing re-gardless of supervision target. 
+
+F Soft Target Formulation 
+
+F.1 Empirical Comparison of Soft Target Formulations 
+
+All formulations below take as input N answers 
+
+{a(j)}Nj=1 sampled i.i.d. from pθ(· | xi) at temper-ature τ = 1 .0, along with their per-sequence log-probabilities and token counts where required. Let Figure 4: Critical difference diagram for the hallucination detection approaches. The numbers represent the ranks for each method. Thick horizontal lines group methods that are not significantly different. 
+
+Target SQuAD Natural Questions 
+
+Error rate 79.45 74.13 
+
+Error rate weighted by answer log-prob 77.77 74.02 Relative probability mass of incorrect / correct answers 66.16 73.75 Semantic dissimilarity of the greedy answer 62.03 55.93 Mean semantic dissimilarity 54.68 58.24 Semantic dissimilarity weighted by answer log-prob 59.31 58.90 
+
+> Table 3: Comparison of attention probe trained on differ-ent soft target formulations, average ROC-AUC across models
+
+Zj = 1[incorrect (a(j))] denote the correctness in-dicator and let ˜ℓj = log pθ(a(j) | xi)/|a(j)| denote the per-token log-probability of the j-th sample, used to normalize for sequence length. 
+
+Error rate. The simple empirical fraction of in-correct answers: ˆyi = 1
+
+> N
+
+PNj=1 Zj . As demon-strated in Section 3.2, it is an unbiased UMVUE for the raw model error probability. 
+
+Error rate weighted by answer log-probability. 
+
+Samples are reweighted by their softmax-normalized per-token log-probability before ag-gregation: ˆyM 1 
+
+> i
+
+= PNj=1 wj Zj , wj =    
+
+> exp( ˜ℓj)
+> P
+> kexp( ˜ℓk)
+
+. Since all samples are drawn from 
+
+pθ(· | xi), the uniform weight 1/N is the natural sampling weight. Replacing it with wj is equiva-lent to self-normalized importance sampling with the same proposal and target distribution, intro-ducing a systematic bias toward over-representing high-probability incorrect answers. 
+
+Relative probability mass of incorrect vs. cor-rect answers. The log-probability gap between incorrect and correct groups, passed through a sig-moid: ˆyM 2 
+
+> i
+
+= σ
+
+¯˜ℓincorr − ¯˜ℓcorr 
+
+
+
+, where ¯˜ℓincorr and 
+
+¯˜ℓcorr are the mean per-token log-probabilities of in-correct and correct samples respectively. This mea-sures how much more probability mass the model concentrates on incorrect answers, rather than the absolute frequency of incorrectness. When all sam-ples fall in one class, the missing group’s mean is approximated by the per-token log-probability of the ground-truth answer shifted by a small offset 
+
+ϵ = 0 .1 · | ˜ℓgt |.
+
+Semantic dissimilarity of the greedy answer. 
+
+A single-sample estimate based on the greedy-decoded answer a†: ˆyM 3 
+
+> i
+
+= 1 − sim (a†, g i), where 
+
+gi is the gold reference answer and sim denotes cosine similarity under nli-roberta-large sentence embeddings. This requires no sampling and no cor-rectness threshold, but provides only a single-point estimate with O(1) variance regardless of N .
+
+Mean semantic dissimilarity. The sample mean of per-answer semantic dissimilarity: ˆyM 4 
+
+> i
+
+=
+
+> 1
+> N
+
+PNj=1 
+
+ 1 − sim (a(j), g i). Unlike the error rate, this is an unbiased estimator of Ea∼pθ [1 −
+
+sim (a, g i)] rather than of p∗ 
+
+> i
+
+. The two quantities diverge whenever semantic proximity and correct-ness are misaligned. For example, a factually wrong answer can be semantically close to the correct one, and a correct paraphrase can be se-mantically distant from the gold string. 
+
+Semantic dissimilarity weighted by an-swer log-probability. The log-probability-weighted version of mean semantic dissimilarity: 
+
+ˆyM 5 
+
+> i
+
+= PNj=1 wj
+
+ 1 − sim (a(j), g i) , wj =Post-generation  
+
+> probe
+> Pre-generation
+> probe ( L)
+> Pre-generation
+> probe (3 L/4)
+> Pre-generation
+> probe ( L/2)
+> 0
+> 200
+> 400
+> 600
+> 800
+> 1000
+> Computational cost, GFLOPs
+> Baseline 7% saved
+> 30% saved
+> 54% saved
+
+Figure 5: Mean GFLOPs and cost savings relative to pre-generation probing at full depth ( L) and relative to post-generation probing, averaged across five models at median prompt and response lengths.     
+
+> exp( ˜ℓj)
+> P
+> kexp( ˜ℓk)
+
+. This compounds the biases of impor-tance weight distortion and similarity-correctness mismatch, with no cancellation between the two sources of bias in general. 
+
+F.2 Ablation on the Number of Samples Llama-2-7B Qwen2.5-7B 
+
+N = 3 57.47 52.47 
+
+N = 5 58.17 53.82 
+
+N = 10 59.07 58.26 
+
+Table 4: Ablation on the number of samples N used to construct soft targets, evaluated on HotpotQA for two representative models, ROC-AUC. 
+
+Table 4 reports detection quality as a function of the number of samples N used to estimate the per-prompt error rate. Performance increases monoton-ically with N for both models, consistent with the theoretical expectation: as N grows, the empirical error rate converges to the true error probability p∗ 
+
+> i
+
+,reducing estimator variance and providing a cleaner supervision signal. While the absolute gains are modest, the trend is consistent across both model families, supporting the use of N = 10 as the de-fault in the main experiments. 
+
+G Computational Cost Analysis 
+
+We stated that pre-generation hallucination detec-tion provides the opportunity for early detection. Figure 3 demonstrates that in general, middle lay-ers contain the majority of the information about the hallucination, thus suggesting detection on early layers. To quantify the reduction of the in-ference cost, we estimate the theoretical FLOPs for detection on different layers at median prompt and response lengths from our evaluation datasets and average them across models. Figure 5 demon-strates both absolute FLOPs and relative computa-tional costs savings for different layers. 
+
+H Results on Additional Datasets 
+
+Datasets. We report results on three additional datasets: MMLU-Pro (Wang et al., 2024) (10-way multiple choice), BoolQ (Clark et al., 2019) (binary yes/no), and RAGTruth (Niu et al., 2024) (long-form retrieval-augmented generation). Due to computational constraints, these experiments cover a subset of the models evaluated in the main text; the specific models are indicated in each table. 
+
+Scope of evaluation. We evaluate binary-target probes only on all three datasets. Soft-target supervision is not evaluated here for two rea-sons. First, MMLU-Pro and BoolQ require single-token answers, and the experiments demonstrated that soft targets provide no benefit, even degrad-ing performance on such tasks (Table 5). Sec-ond, RAGTruth does not provide an automated correctness-checking pipeline, which is a prerequi-site for soft-target construction. 
+
+Results. Tables 5, 6, and 7 report ROC-AUC scores across datasets and models. The results are consistent with two findings from the main text. First, pre-generation attention probing achieves de-tection quality comparable to post-generation meth-ods across all three datasets, supporting the conclu-sion that hallucination risk is substantially encoded in the input representations on these tasks. Second, attention probing consistently outperforms linear probing in the pre-generation setting, confirming that learned aggregation provides a more informa-tive representation of prompt-level uncertainty than uniform pooling. Method / Model Qwen2.5-3B Qwen2.5-7B Post-generation 
+
+Entropy 64.99 72.32 Linear probe 64.03 69.18 Attention probe 50.00 75.42 Pre-generation 
+
+Question length 59.21 60.15 Self-check, zero-shot 53.73 60.20 Linear probe 63.89 69.23 Attention probe 50.00 74.40 
+
+Attention probe, soft target 53.55 56.95 
+
+> Table 5: Performance comparison across different models and methods on MMLU-Pro dataset, ROC-AUC.
+
+Method / Model Qwen2.5-3B Qwen2.5-7B Llama-2-7B Mistral-7B Post-generation 
+
+Entropy 68.58 78.35 62.63 51.08 Linear probe 91.42 94.76 90.66 92.24 Attention probe 92.18 94.46 90.94 93.18 Pre-generation 
+
+Question length 51.08 50.85 51.00 52.52 Self-check, zero-shot 63.36 64.19 52.65 61.11 Linear probe 69.65 82.25 68.64 78.99 Attention probe 92.03 84.23 89.88 93.21 
+
+> Table 6: Performance comparison across different models and methods on BoolQ dataset, ROC-AUC.
+
+Method / Model Llama-2-7B Llama-2-13B Mistral-7B Post-generation 
+
+Entropy 62.63 52.34 66.71 Linear probe 53.63 60.71 59.84 Attention probe 56.37 60.41 65.31 
+
+Pre-generation 
+
+Question length 55.18 53.01 52.47 Self-check, zero-shot 53.97 52.33 54.85 Linear probe 53.58 61.04 59.87 Attention probe 56.20 67.34 65.24
