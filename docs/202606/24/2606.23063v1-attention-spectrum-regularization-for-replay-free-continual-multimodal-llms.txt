@@ -1,0 +1,4168 @@
+Title: Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+URL Source: https://arxiv.org/pdf/2606.23063v1
+
+Published Time: Tue, 23 Jun 2026 03:31:53 GMT
+
+Number of Pages: 39
+
+Markdown Content:
+2026-06-20 
+
+# Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+Chuangxin Zhao *1 Canran Xiao *2 Siyuan Ma 3 Mengyao Lyu 3 Yanbiao Ma 4 Jun Xia †1
+
+Guiguang Ding †5 Yang Liu †3 
+
+> 1
+
+The Hong Kong University of Science and Technology (Guangzhou) 2 Sun Yat-sen University 3 Nanyang Technological University 4 Renmin University of China 5 Tsinghua University  
+
+> *
+
+Equal contribution † Corresponding authors: junxia@hkust-gz.edu.cn , dinggg@tsinghua.edu.cn ,
+
+yangliu@ntu.edu.sg 
+
+Abstract 
+
+Multimodal large language models (MLLMs) are increasingly required to adapt to non-stationary streams of visual domains, question types, and user instructions, yet continual fine-tuning often causes severe forgetting of previously acquired multimodal skills. Existing continual vision–language methods mainly preserve outputs, replay data or pseudo-data, regularize embedding geometry, or allocate task-specific parameters, but they provide limited control over how the internal cross-modal attention patterns supporting old skills drift during adaptation. In this paper, we propose Attention-Spectrum Regularization (ASR), a replay-free continual learning framework that preserves skill-conditioned structures of cross-modal attention. ASR treats cross-attention maps as two-dimensional signals, summarizes their scale and directional properties into compact spectral statistics, and stores only skill-wise prototype distributions instead of replaying past image-question pairs, generated pseudo-examples, or old-stage teacher snapshots. During later stages, a phase-invariant spectral regularizer constrains harmful drift of these prototypes while allowing instance-level attention to adapt to new tasks. We further provide theoretical analysis showing that skill-conditioned spectral drift controls forgetting under a spectral sufficiency assumption, and that Fourier power spectra are stable to spatial translations and bounded perturbations. Experiments on continual VQA and multimodal instruction-tuning benchmarks, including VQA v2, VQACL, CLT-VQA, CoIN, and UCIT, show that ASR consistently improves final performance and reduces forgetting over strong replay-, regularization-, and adapter-based baselines. These results suggest that preserving skill-level attention structure is an effective and lightweight mechanism for continual MLLMs. Code is available at github.com/Creative-zcx/attention-spectrum-replay. 
+
+Keywords: Continual learning, multimodal large language models, cross-attention, spectral regular-ization, visual question answering 
+
+1 Introduction 
+
+Multimodal large language models (MLLMs) are in-creasingly deployed in dynamic environments where new domains, question types, and multimodal in-structions arrive over time [ 1– 3]. This continual adaptation is essential for long-lived VQA systems, multimodal assistants, retrieval applications, and real-world agents [ 4– 7]. However, adapting MLLMs in non-stationary streams remains difficult: standard fine-tuning often causes catastrophic forgetting, de-grading both previous task performance and zero-shot generalization [8–12]. Existing continual vision–language learning meth-ods have made important progress from several perspectives. Continual VQA studies design skill-or question-type streams and mitigate forgetting through replay, pseudo-data, symbolic prompts, or expert routing [ 8 , 13 –16 ]. Continual CLIP/VLM methods preserve image–text alignment by reg-ularizing features, similarities, or representation topology [ 9, 10 , 17 –19 ]. Recent continual multi-
+
+1
+
+> arXiv:2606.23063v1 [cs.CV] 22 Jun 2026
+
+Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+modal instruction-tuning methods further improve parameter-efficient adaptation through LoRA, MoE adapters, routing, style normalization, or data selec-tion [ 20 –24 ]. These methods substantially improve the stability–plasticity trade-off, but they mainly op-erate on external outputs, stored or generated sam-ples, embedding geometry, or trainable parameter allocation. A key aspect remains underexplored: the inter-nal cross-modal attention structure that supports multimodal reasoning. Question-conditioned vi-sual attention has long been central to VQA mod-els [ 25 , 26 ], and modern VL transformers explicitly use co-attentional or cross-modality layers to align language and visual regions [ 27 , 28 ]. For skills such as counting, localization, relation reasoning, and text reading, successful prediction depends not only on the final answer or global image–text similarity, but also on where the model looks, how fine-grained its focus is, and which spatial structures are empha-sized [ 29 –32 ]. Thus, a model may preserve part of its representation geometry while still drifting in the visual evidence it uses for old skills; this concern is consistent with VQA studies showing that answer ac-curacy can be inflated by language priors rather than grounded visual understanding [ 33 ]. Although atten-tion transfer and attention-prior studies suggest that attention maps can serve as useful supervisory sig-nals, existing continual VL methods provide limited mechanisms for explicitly diagnosing or preserving such skill-dependent patterns of visual focus. This paper asks: can we mitigate forgetting in MLLMs by preserving the skill-conditioned structure of cross-modal attention? We hypothesize that different multimodal skills induce relatively stable attention patterns, and that harmful drift of these patterns is an important source of forgetting. Based on this view, we propose Attention-Spectrum Regularization (ASR), which treats cross-modal attention as a structured two-dimensional signal and preserves compact skill-level summaries of its scale and directional properties. This allows ASR to regularize internal visual focus behavior without storing past images, questions, or teacher models. Our contributions are summarized as follows: 
+
+• Insight into multimodal forgetting. We show How many     
+
+> apples ?
+> Count
+> Non-stationary multimodal stream
+> read locate
+> What word is
+> on the sign?
+> Where is the
+> cat sitting?
+> Existing continual VL / MLLM ASR (ours) Continual Learning Task
+> MLLM
+> Feature /
+> similarity space
+> MLLM
+> Feature /
+> similarity space
+> Regularization
+> (logits/similarity/
+> geometry)
+> Replay
+> MLLM
+> MLLM
+> spectral
+> spectral
+> Regularization
+> (spectral)
+> spectral
+> •Existing methods regularize outputs or embedding
+> geometry
+> •ASR regularizes skill-conditioned attention
+> spectra —compact statistics of where and at what
+> scale the model attends
+
+Figure 1: Existing continual learning (CL) methods adapt a multimodal backbone mainly by replaying past data or pseudo-examples and regularizing logits or feature / similarity geometry. ASR instead treats cross-attention as a 2D signal, and applies a phase-invariant spectral regularization to keep attention spectra stable across stages. 
+
+that different reasoning skills exhibit distinct cross-attention spectral patterns, and that drift of these patterns is strongly associated with skill-wise for-getting. 
+
+• Replay-free structural retention. We propose 
+
+Attention-Spectrum Regularization (ASR), a plug-in continual learning framework that preserves com-pact skill-conditioned attention statistics without storing or replaying past samples, pseudo-samples, or old-stage teacher snapshots. 
+
+• Consistent gains across benchmarks. ASR im-proves final performance and reduces forgetting on continual VQA and multimodal instruction-tuning benchmarks, including VQA v2, VQACL, CLT-VQA, CoIN, and UCIT, with consistent gains across mul-tiple MLLM backbones. 
+
+2 Related Work 
+
+2.1 Continual vision–language and VQA learning. 
+
+Early continual learning methods mainly mitigated forgetting by constraining parameters or predictions, as in EWC [ 34 ] and LwF [ 35 ], or by replaying a small memory of past samples [ 36 , 37 ]. With the rise of vision–language models, this problem shifted from closed-set recognition to preserving cross-modal alignment and compositional reasoning. Representa-
+
+2Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+tive studies explored continual CLIP/VLM pretrain-ing and retrieval [ 9, 17 – 19 , 38 ], data-free structured concept learning [ 4], and continual VQA streams where models must retain question-specific reason-ing skills [ 8, 14 ]. VQACL introduced a skill–concept benchmark with novel compositions [ 14 ]; TRIPLET decoupled unimodal prompt learning before cross-modal interaction [ 39 ]; SGP replayed symbolic scene-graph prompts [ 13 ]; QUAD used questions-only re-play with attention consistency distillation [ 15 ]; and recent SoTA methods such as CL-MoE and BCP-MFA address continual VQA through expert routing or drift correction [ 16 , 40 ]. These methods substantially improve stability, but they often depend on stored questions, symbolic surrogates, generated pseudo-data, teacher signals, or additional routing capacity. In contrast, ASR keeps neither past images nor past questions, and stores only compact skill-conditioned spectral prototypes of cross-modal attention. 
+
+2.2 Continual multimodal instruction tuning of MLLMs. 
+
+Continual instruction tuning extends the above set-ting from VQA-style tasks to heterogeneous in-struction streams. CoIN established a benchmark for sequential multimodal instruction tuning and showed that MLLMs suffer severe forgetting across diverse task families [ 5 ]. Subsequent work improved parameter-efficient adaptation through LoRA-style subspaces and expert modules [ 41 , 42 ]. HiDe-LLaVA separates task-specific and task-general components according to representation similarity [ 20 ]; SEFE distinguishes superficial answer-style forgetting from essential ability forgetting [ 21 ]; BranchLoRA intro-duces asymmetric LoRA branches and routing [ 22 ]; D-MoLE dynamically composes curriculum LoRA ex-perts [ 23 ]; and Adapt-∞ selects dynamic data to scale continual multimodal instruction tuning [ 24 ]. These methods mainly operate on adapter alloca-tion, routing, answer style, or data selection. ASR is complementary: rather than allocating more task-specific capacity, it regularizes the spatial scale and directional structure of cross-modal attention, pro-viding an internal behavioral constraint that can be combined with parameter-efficient tuning. 
+
+2.3 Attention, representation, and spectral retention. 
+
+Knowledge retention has also been studied through intermediate representations and attention maps. Feature or representation distillation has been used in continual learning and dense prediction [ 35 , 43 ], while attention transfer shows that attention maps can serve as compact supervisory signals [ 44 , 45 , 45 ]. In multimodal continual learning, MAFED observes that different modalities may evolve at different rates and uses modality-aware feature distillation [ 46 ]; GaB studies data-free continual VQA through gen-erated pseudo-rehearsal [ 47 ]; and QUAD shows that attention drift is an important source of forget-ting in VQA [ 15 ]. However, directly matching high-dimensional features or raw attention maps can be teacher-dependent, memory-inefficient, and overly restrictive when new tasks require different visual grounding. ASR instead treats cross-modal attention as a two-dimensional signal and preserves its phase-insensitive Fourier statistics. By modeling radial energy, angular anisotropy, and dominant spectral modes with skill-conditioned Gaussian prototypes, ASR retains stable reasoning-specific visual focus pat-terns while allowing instance-level attention to adapt to new data. 
+
+3 Preliminary Study 
+
+Before introducing our method, we first perform an exploratory study to examine how multimodal forget-ting manifests inside cross-modal attention .
+
+Diagnostic setup We consider two representative multimodal backbones: a LLaVA-style MLLM and an InstructBLIP-style MLLM. Each model is contin-ually fine-tuned on the same non-stationary VQA stream. After each stage, we evaluate old valida-tion subsets grouped by reasoning skills, such as 
+
+count , color , spatial , relation , OCR/read ,and fine-grained . For model m, skill s, and tran-sition t−1 → t, the skill-wise forgetting is defined as 
+
+F(t) 
+
+> m,s
+
+= max  
+
+> τ<t
+
+Acc (︀ θ(τ) 
+
+> m
+
+; Vs)︀ − Acc (︀ θ(t) 
+
+> m
+
+; Vs)︀ , (1) where Vs denotes the held-out validation samples associated with skill s.
+
+> 3
+
+Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 0.1 0.2 0.3 0.4 0.5 0.6 0.7                      
+
+> attention-spectrum drift Δ spec
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> high-frequency attention loss Δ Ehigh
+> (a) LLaVA-style MLLM
+> yes/no
+> color
+> object
+> count
+> relation
+> OCR/read fine-grained
+> grounding
+> stable
+> basin
+> failure
+> ridge
+> r(Δ spec ,F)=0.77, r(Δ Ehigh ,F)=0.76
+> 0.1 0.2 0.3 0.4 0.5 0.6 0.7
+> attention-spectrum drift Δ spec
+> (b) InstructBLIP-style MLLM
+> yes/no
+> color
+> object
+> count
+> relation
+> OCR/read
+> fine-grained
+> grounding
+> stable
+> basin
+> failure
+> ridge
+> r(Δ spec ,F)=0.71, r(Δ Ehigh ,F)=0.76
+> 0
+> 8
+> 16
+> 24
+> 32
+> forgetting potential / accuracy drop
+> T1 T2 T3 T4 T5 T6 T7
+> stage transition
+> grounding-sensitive skills other skills atypical observations skill centroid
+
+Figure 2: Exploratory potential-field diagnosis of vanilla sequential fine-tuning on two different MLLM backbones. Each marker corresponds to one skill–transition–seed observation. The horizontal axis measures attention-spectrum drift, and the vertical axis measures high-frequency attention loss. The background contours show the smoothed forgetting potential, and the streamlines indicate the direction of increasing forgetting. Marker area denotes the increase of attention entropy. Rings mark atypical observations caused by noisy stage transitions or answer-distribution shifts. T1–T7 denote consecutive stage transitions. Both models exhibit a similar stable basin at low spectral drift and low high-frequency loss, as well as a failure ridge where large spectrum drift coincides with weakened fine-scale attention. 
+
+For the same validation samples, we extract cross-modal attention maps from the saved checkpoints and summarize their frequency content. Let ¯r(t)
+
+m,s and 
+
+¯d(t)
+
+m,s denote the mean radial and angular spectra of skill s at checkpoint θ(t)
+
+m . We measure the spectrum drift across two adjacent checkpoints by 
+
+∆(t)
+
+spec, m,s = JSD (︀ ¯r(t−1)
+
+m,s ∥¯r(t)
+
+m,s)︀ + η JSD (︀ ¯d(t−1)
+
+m,s ∥ ¯d(t)
+
+m,s)︀ ,
+
+(2) where JSD (·∥· ) is the Jensen–Shannon divergence. We further measure the loss of high-frequency atten-tion energy: 
+
+∆E(t)
+
+high, m,s =∑︁ 
+
+ρk >ρ0[︁ 
+
+¯r(t−1)
+
+m,s,k − ¯r(t)
+
+m,s,k]︁ , (3) where ρ0 separates low/mid-frequency and high-frequency bands. A positive ∆Ehigh indicates that fine-scale attention components become weaker after continual tuning. 
+
+Forgetting potential field To visualize the failure landscape, we construct a smooth diagnostic poten-tial field for each model: 
+
+Um(x, y) ≈ E[︁ F(t)
+
+m,s | x = ∆(t)
+
+spec, m,s, y = ∆E(t)
+
+high, m,s]︁ .
+
+(4) It is estimated from the observed skill–transition– seed measurements by smooth interpolation. The contours indicate the severity of expected forgetting, while the streamlines show the direction of increasing forgetting potential. 
+
+Observations Fig. 2 shows that, despite architec-tural differences, the two backbones exhibit simi-lar failure geometry. Skills with small spectral drift and limited high-frequency loss remain in the stable basin and suffer only minor forgetting. In contrast, grounding-sensitive skills such as count , relation ,
+
+OCR/read , grounding , and fine-grained tend to move toward the high-potential region. These skills do not merely lose output accuracy; their cross-modal attention also undergoes a structured change in frequency space. Some points show moderate forgetting without severe spectral drift, which may be caused by answer-space shift or language-side bias. Conversely, a few samples show large attention drift but limited accu-racy degradation, suggesting that not every atten-tion change is harmful. Nevertheless, the dominant trend is consistent across both models: severe forget-ting is most likely when the attention spectrum drifts 
+
+4Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+and fine-scale visual evidence is weakened simulta-neously. This preliminary study suggests that multimodal forgetting has a measurable attention-level signature. More importantly, this signature is skill-dependent: different reasoning skills occupy different regions of the potential field and degrade along different tra-jectories. These observations motivate our method design. Instead of storing old data or only con-straining output logits, we seek to preserve compact, skill-conditioned summaries of cross-modal attention structure. The next section instantiates this idea as 
+
+Attention-Spectrum Regularization .
+
+4 Method 
+
+We propose Attention-Spectrum Regularization (ASR), a replay-free continual learning framework for MLLMs. ASR treats these cross-attention maps as two-dimensional signals and operates on them through four components: (1) a cross-attention extractor that selects layers/heads and aggregates functional to-kens; (2) a spectral encoder ϕ(·) that maps attention maps to low-dimensional spectral statistics summa-rizing where and at what scale the model attends; (3) a skill parser gψ producing a distribution over reasoning skills π(q); (4) a prototype memory M
+
+storing skill-conditioned spectral prototypes. The overall pipeline is illustrated in Fig. 3. 
+
+4.1 Preliminaries 
+
+At stage t ∈ { 1, . . . , T}, the learner observes a dataset 
+
+D(t) ={︀ (I(t) 
+
+> i
+
+, q(t) 
+
+> i
+
+, y(t) 
+
+> i
+
+)}︀ Nt
+
+> i=1
+
+, where I(t) 
+
+> i
+
+is an image, 
+
+q(t) 
+
+> i
+
+a question or instruction, and y(t) 
+
+> i
+
+a task-specific target (answer tokens, relevance labels, etc.). Once stage t is finished, D(t) is no longer accessible. A multimodal LLM fθ processes (I, q) through a vision encoder, a language model, and architecture-specific multimodal fusion modules [ 48 ]. Since differ-ent MLLM families expose visual grounding signals in different forms, we do not assume that every back-bone has explicit encoder–decoder cross-attention layers. Instead, ASR operates on a unified cross-modal attention map , defined as a text-to-vision attention map. For models with explicit cross-attention, this map is the native cross-attention matrix. For decoder-only MLLMs such as LLaVA-style, Qwen-VL-style, and InternVL-style models, it is extracted from the text-to-vision submatrix of decoder self-attention after visual tokens have been inserted into the language-model context. Detailed backbone-specific extraction rules are provided in Appendix A. Let Lattn be the set of candidate multimodal atten-tion layers or decoder blocks, and let Hattn be the set of attention heads. For layer or block l ∈ L attn 
+
+and head h ∈ H attn , ASR obtains A(l,h) ∈ RTq ×H×W ,
+
+where Tq is the number of question/instruction to-kens and H × W is the reconstructed visual grid. The slice A(l,h) 
+
+> τ
+
+∈ RH×W encodes how token τ attends to visual evidence. We assume a fixed set of reasoning skills S (e.g., 
+
+{count , color , read , . . . }). A lightweight parser 
+
+gψ maps q to a probability vector [49]: 
+
+π(q) = (︀ πs(q))︀ s∈S ∈ ∆|S| ,∑︁ 
+
+> s∈S
+
+πs(q) = 1, (5) where πs(q) is the posterior that skill s is required by q.
+
+4.2 Attention-Spectrum Encoding 
+
+Cross-modal attention maps capture where the model looks when solving a multimodal problem. Empir-ically, different skills induce characteristic spatial scales and directional patterns. ASR encodes these properties via frequency-domain statistics. 
+
+Token aggregation. Given A(l,h) ∈ RTq ×H×W ,we select question-side functional tokens U(q) ⊆{1, . . . , Tq}, such as wh-words, verbs, relation words, OCR-related tokens, and head nouns. Answer to-kens are excluded when teacher forcing is used. We average the corresponding text-to-vision maps: 
+
+˜A(l,h)(x, y) = 1
+
+|U(q)|∑︁ τ∈U(q)
+
+A(l,h) 
+
+> τ
+
+(x, y), (6) then normalize the map to sum to one. For brevity we write A(x, y) for a normalized map. 
+
+2D Fourier spectrum. We compute the 2D discrete Fourier transform 
+
+ˆA(u, v) = 
+
+> H−1
+
+∑︁ 
+
+> x=0
+> W−1
+
+∑︁ 
+
+> y=0
+
+A(x, y) exp (︂ − 2πi(︁ ux H + vy W)︁)︂ ,
+
+(7) 
+
+> 5
+
+Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs How 
+
+> many
+> apples
+> are
+> the
+> bowl
+> ?
+> in
+
+v1
+
+v2
+
+v3
+
+v4
+
+vN                   
+
+> MLLM / Transformer
+> block ( Llayers)
+> Q=TW Q
+> K=VW KV=VW V
+> softmax
+> extract text -vision
+> attention
+> 2D FFT
+> (1) ()A
+> (2) ()A
+> ()()HA
+> 
+
+soft skill posterior π (q)    
+
+> count
+> read
+> locate
+> relation
+> color
+> 0.72
+> 0.10
+> 0.08
+> 0.06
+> 0.04
+> read locate
+> relation
+> count
+> current sample
+> ϕ(A)
+> skill prstotype (Gaussian)
+
+( ) 1i
+
+> i
+
+q
+
+ 
+
+gφ
+
+> (lightweight
+> parser)
+
+Skill parser gφ
+
+Spectral distillation 
+
+ϕ(A) ∈RD 
+
+> ()
+> How-many
+> Lh
+
+A ( )
+
+> apples
+> Lh
+
+A ( )
+
+> bowls
+> Lh
+
+A ( )
+
+> TL
+> Lh
+
+A 
+
+> 2
+> mah D
+> ( , )l h
+
+A
+
+> 丨FFT (A) 丨2
+
+d(θ)
+
+Cross-attention extraction 
+
+Attention-
+
+Spectrum Encoder 
+
+Skill-conditioned prototype memory 
+
+locate 
+
+Spectral distillation loss 
+
+> min
+> spec
+> mah
+
+exp d
+
+w
+
+
+
+ 
+
+  
+
+ 
+
+Ground truth "S even"         
+
+> "Three" answer
+> head
+> current similarity Sfrozen reference S1
+> T1…TMT1…TM
+> KL ayen
+> v1
+> vN
+> …
+> KL sym
+> locate
+> ˆd
+> count
+> ˆd
+
+…
+
+> …
+> angular spectra match
+
+patchify 
+
+> visual tokens ( V)
+
+v1 v2 v3 v4 vN       
+
+> How many apples are in the bowl ?
+> tokenize
+
+Multimodal input 
+
+…
+
+…
+
+5
+
+Descriptor space ϕ
+
+How many apples are in 
+
+the bowl?   
+
+> How
+> many
+> apples
+> bowl
+> strong weak
+> ��⊺�
+
+aggregation 
+
+count      
+
+> count count (,)
+> count
+> ˆd
+
+read           
+
+> (,)read read
+> ˆread d
+> (,)locate locate
+> 
+
+... 
+
+> confidence gate
+
+Task L oss Geo metry L oss   
+
+> spatial
+> attention
+> visual/image text tokens
+> frozen trainable
+> functional
+> tokens
+> LoRA
+
+Figure 3: Overview of Attention-Spectrum Regularization (ASR). We extract cross-modal attention maps from a multimodal LLM, encode them into low-dimensional spectral descriptors, aggregate them into skill-conditioned prototypes stored in a compact memory, and apply a spectral distillation loss during training on later stages. ASR only keeps spectrum statistics for each reasoning skill. 
+
+for u ∈ { 0, . . . , H−1} and v ∈ { 0, . . . , W−1}, and the power spectrum P(u, v) = | ˆA(u, v)|2. We map 
+
+(u, v) to polar coordinates 
+
+ρ(u, v) = √︂(︁ uH)︁ 
+
+2
+
++(︁ vW)︁ 
+
+2
+
+, (8) 
+
+θ(u, v) = atan2 (︁ vW , uH)︁ , (9) and renormalize radii to [0, 1 ] by dividing by ρmax =
+
+max u,v ρ(u, v).
+
+Radial and angular spectra. We discretize radii into K bins {R k} on [0, 1 ] and angles into Mθ bins 
+
+{Θm} on [−π, π). For each head, we compute a radial spectrum r ∈ RK and an angular spectrum d ∈
+
+RMθ by averaging the power P(u, v) over frequencies whose radius or angle falls into the corresponding bin: 
+
+rk ∝∑︁ 
+
+ρ(u,v)∈R k
+
+P(u, v), dm ∝∑︁ 
+
+θ(u,v)∈Θm
+
+P(u, v),
+
+(10) followed by normalization. We further define an anisotropy vector a ∈ RMθ as 
+
+am = dm
+
+¯d + ε , ¯d = 1
+
+Mθ∑︁ m
+
+dm, (11) so that am > 1 indicates directions with above-average energy. We use Mθ for angular bins to avoid overloading M, which denotes the number of contin-ual tasks in the evaluation metrics. 
+
+Dominant peak and per-head descriptor. We locate the dominant frequency peak (u⋆, v⋆) =
+
+arg max u,v P(u, v) with radius ρ⋆ and angle θ⋆, and record its power p⋆ = P(u⋆, v⋆). For each layer–head 
+
+(l, h) we then form a spectral descriptor 
+
+ϕ(l,h)(A) = [︀ r⊤, d⊤, a⊤, ρ⋆, θ⋆, p⋆]︀ ⊤ ∈ RD0 ,
+
+(12) where D0 = K + 2Mθ + 3.
+
+Layer–head aggregation. Given a set of selected attention layers or blocks Lsel ⊆ L attn and heads 
+
+Hsel ⊆ Hattn , we denote J = Lsel × H sel and 
+
+J = |J | . For each sample we aggregate head-level descriptors by their mean and element-wise variance, 
+
+μϕ = 1
+
+J∑︁ (l,h)∈J 
+
+ϕ(l,h)(A),
+
+σ2
+
+ϕ = 1
+
+J∑︁ (l,h)∈J (︀ 
+
+ϕ(l,h)(A) − μϕ)︀ ⊙2,
+
+(13) 
+
+6Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+and define the final per-sample spectral descriptor as 
+
+ϕ(A) = [ μ⊤ 
+
+> ϕ
+
+, σ⊤ 
+
+> ϕ
+
+]⊤ ∈ RD, D = 2D0. (14) We similarly average head-level angular spectra 
+
+d(l,h)(θ) over (l, h) ∈ J to obtain a per-sample an-gular profile d(θ), which we will later match to skill-specific angular prototypes. 
+
+4.3 Skill-Conditioned Spectrum Prototypes 
+
+Different skills induce distinct but stable attention spectra across tasks. ASR therefore maintains, for each skill s ∈ S , a Gaussian distribution over spectral descriptors and a mean angular spectrum. 
+
+Per-stage moments. At the end of stage t, we collect descriptors attributed to skill s as 
+
+F (t) 
+
+> s
+
+={︀ ϕ(t)
+
+> i
+
+⃒⃒ (I(t) 
+
+> i
+
+, q(t) 
+
+> i
+
+, y(t) 
+
+> i
+
+) ∈ D (t), πs(q(t) 
+
+> i
+
+) > τskill }︀ 
+
+(15) where s ∈ S , ϕ(t) 
+
+> i
+
+= ϕ(A(t) 
+
+> i
+
+) and τskill ∈ [0, 1 ) is a threshold. Let n(t) 
+
+> s
+
+= |F (t) 
+
+> s
+
+|. We estimate per-stage mean and diagonal covariance ̂︀ 
+
+μ(t) 
+
+> s
+
+= 1
+
+n(t)
+
+> s
+
+∑︁ ϕ∈F (t)
+
+> s
+
+ϕ,̂︀ 
+
+Σ(t) 
+
+> s
+
+= diag (︁ 1
+
+n(t) 
+
+> s
+
+− 1∑︁ ϕ∈F (t)
+
+> s
+
+(︀ 
+
+ϕ −̂︀ μ(t)
+
+> s
+
+)︀ ⊙2)︁ .
+
+(16) 
+
+Similarly, with angular spectra d(t) 
+
+> i
+
+∈ RM for those samples, ̂︀ 
+
+d(t) 
+
+> s
+
+= 1
+
+n(t)
+
+> s
+
+∑︁ i:ϕ(t)  
+
+> i∈F (t)
+> s
+
+d(t) 
+
+> i
+
+. (17) 
+
+Exponential moving average. We maintain a global prototype memory M ={︀ (μs, Σs, ˆ ds)}︀ s∈S , initial-ized at t = 1. After stage t we update 
+
+μs ← α μs + ( 1 − α)̂︀ μ(t) 
+
+> s
+
+, (18) 
+
+Σs ← α Σs + ( 1 − α)̂︀ Σ(t) 
+
+> s
+
+, (19) 
+
+ˆds ← α ˆds + ( 1 − α)̂︀ d(t) 
+
+> s
+
+, (20) with α ∈ [0, 1 ) controlling the memory horizon. Thus, for each s we approximate ϕ(A) | s ∼ N (μs, Σs),
+
+and interpret ˆds (after normalization) as the mean angular spectrum for skill s.
+
+4.4 Spectral Distillation 
+
+Given prototypes, ASR constrains the current model to use attention spectra consistent with previously learned skills. 
+
+Skill-weighted Mahalanobis penalty. For a sample 
+
+(I, q) at stage t+1, let ϕ = ϕ(A) be its descriptor, 
+
+d(θ) its angular spectrum, and π(q) its skill posterior. For s ∈ S , define the squared Mahalanobis distance 
+
+D2mah (ϕ ∥ s) = (︀ ϕ − μs)︀ ⊤Σ−1
+
+> s
+
+(︀ ϕ − μs)︀ , (21) where Σ−1 
+
+> s
+
+is the inverse diagonal covariance. The skill-weighted penalty is 
+
+ℓmah spec (ϕ, q) = ∑︁ 
+
+> s∈S
+
+πs(q) D2mah (ϕ ∥ s). (22) 
+
+Angular KL divergence. We normalize d(θ) and ˆds
+
+to discrete distributions 
+
+pm = dm∑︀  
+
+> m′
+
+dm′ + ε , ˆps,m = ˆds,m∑︀  
+
+> m′
+
+ˆds,m′ + ε , (23) and use a symmetric KL divergence. The angular term is 
+
+ℓang spec (d, q) = ∑︁ 
+
+> s∈S
+
+πs(q) KL sym (︀ d ∥ ˆds)︀ . (24) 
+
+Confidence-adaptive weight. We reduce regular-ization for spectra that are far from all prototypes. Define 
+
+dmin (ϕ) = min  
+
+> s∈S
+
+D2mah (ϕ ∥ s),
+
+wspec (ϕ) = exp (︁ − dmin (ϕ)
+
+τmah )︁ ,
+
+(25) with temperature τmah > 0. When ϕ is close to some prototype, wspec ≈ 1; otherwise it decays exponen-tially. 
+
+Spectral distillation loss. The spectral distillation loss for sample (I, q) is 
+
+Lspec (I, q) = wspec (︀ ϕ(A))︀(︂ ℓmah spec (︀ ϕ(A), q)︀ 
+
++ λang ℓang spec (︀ d(θ), q)︀)︂ ,
+
+(26) with λang ≥ 0.
+
+> 7Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Algorithm 1 Attention-Spectrum Regularization (ASR)   
+
+> Require: Stage datasets
+
+{D (t)}Tt=1, MLLM fθ, skill parser gψ,decay α, weights β, γ    
+
+> Ensure: Final model parameters θand spectrum memory
+
+M 
+
+> 1: Initialize prototype memory
+
+M ← ∅   
+
+> 2: for t
+
+= 1, . . . , T do    
+
+> 3: for mini-batch
+
+B ⊂ D (t) do     
+
+> 4: Run fθon
+
+B to obtain predictions and cross-attention maps {A(l,h)} 
+
+> 5: Aggregate functional-token maps and encode spectra
+
+(ϕi, di ) by 2D FFT 6: Compute skill posterior πi = gψ(qi ) for each sample 7: Compute Lspec using skill-weighted Mahalanobis distance, angular KL divergence, and confidence-adaptive weight 8: Compute L(t) = 1  
+
+> |B| ∑︀ i[︀
+
+Ltask + βLspec ]︀ + γLgeo    
+
+> 9: Update θ
+
+← θ − η∇θL(t)   
+
+> 10: end for
+> 11: Recompute
+
+(ϕi, di, πi ) on D(t) or a subset before dis-carding data 12: for skill s ∈ S do   
+
+> 13: Collect
+
+F (t) 
+
+> s
+
+= {ϕi : πi,s > τskill } and estimate 
+
+(̂︀ μ(t)     
+
+> s,̂︀ Σ(t)
+> s,̂︀ d(t)
+> s
+
+)  
+
+> 14: Initialize or update
+
+(μs, Σs,̂︀ ds) ∈ M by EMA with decay α     
+
+> 15: end for
+> 16: end for
+> 17: return θ,
+
+M
+
+4.5 Objective and Training Schedule 
+
+Given ˆy = fθ(I, q) at stage t, we denote the task loss by Ltask (I, q, y).
+
+Geometry regularizer. To avoid over-regularization in the spectral space, we add a light geometric regularizer that anchors cross-modal similarities to a frozen reference encoder fθ0 (e.g., the original pretrained model). For a mini-batch of B pairs 
+
+{(Ii, qi)}Bi=1, let zI,i, zq,i be embeddings from fθ and 
+
+z0
+
+> I,i
+
+, z0 
+
+> q,i
+
+from fθ0 . Define cosine similarity matrices 
+
+Sij = ⟨zI,i, zq,j⟩∥zI,i∥ ∥ zq,j∥ , S0 
+
+> ij
+
+= ⟨z0
+
+> I,i
+
+, z0
+
+> q,j
+
+⟩∥z0
+
+> I,i
+
+∥ ∥ z0
+
+> q,j
+
+∥ , (27) and a batch-level loss 
+
+Lgeo = 12B
+
+> B
+
+∑︁ 
+
+> i=1
+
+(︁ 
+
+KL (︀ σ(Si,: ) ∥ σ(S0
+
+> i,:
+
+))︀ 
+
++ KL (︀ σ(S0
+
+> i,:
+
+) ∥ σ(Si,: ))︀)︁ ,
+
+(28) where σ is row-wise softmax. 
+
+Total loss. For a mini-batch B(t) ⊂ D (t) at stage t,the total loss is 
+
+L(t) = 1
+
+|B (t)|∑︁ (I,q,y)∈B (t)[︁ 
+
+Ltask (I, q, y)+ β Lspec (I, q)]︁ + γ Lgeo ,
+
+(29) with hyperparameters β, γ ≥ 0.
+
+Training schedule. The overall training procedure is summarized in Algorithm 1. At each stage, ASR adapts the current MLLM using only the current data, where the spectral loss is inactive at the first stage and is enabled once prototype memory is available. After stage-wise optimization, ASR extracts attention-spectrum descriptors from the current stage, groups them according to skill posteriors, and updates the skill-conditioned prototype memory by exponential moving average before discarding the data. In this way, ASR preserves compact skill-level attention statistics without storing past samples or maintaining a teacher model. 
+
+5 Theory 
+
+5.1 Forgetting Bound via Skill-Conditioned Spectral Drift 
+
+We formalize ASR as a memory mechanism that pre-serves the skill-conditioned distribution of attention spectra. Let x = ( I, q) denote an image–question pair and let zθ (x) = ϕ(Aθ (x)) ∈ RD be the ASR spectral descriptor extracted from the cross-modal attention of model fθ . For an old stage m and a later stage 
+
+t > m, let θm and θt be the parameters after train-ing stages m and t, respectively. We write S ∈ S for the reasoning skill and define the skill-conditioned descriptor law 
+
+Qθ 
+
+> m,s
+
+:= Law (zθ (X) | (X, Y, S) ∼ P m, S = s) , s ∈ S .
+
+(30) Let ωm,s := Pr Pm (S = s) be the skill mass at stage m.The old-stage risk and the forgetting from stage m to stage t are 
+
+Rm(θ) := E(X,Y)∼P m [ℓ( fθ (X), Y)] ,
+
+Fm→t := [ Rm(θt) − Rm(θm)] + . (31) 
+
+> 8Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+For each old skill s, ASR stores a spectral prototype 
+
+(μm,s, Σm,s), where Σm,s ≻ 0 is the skill-wise covari-ance used to whiten spectral deviations. It induces the Mahalanobis ground metric 
+
+dm,s(z, z′) :=⃦⃦⃦ Σ−1/2  
+
+> m,s
+
+(z − z′)⃦⃦⃦ 2 . (32) The following assumption states that, on an old skill, the loss increase caused by changing the model can be read from the drift of its spectral descriptors up to a small residual. 
+
+Assumption 1 (Skill-wise spectral sufficiency) . For every old stage m and skill s ∈ S , there exist a measur-able surrogate gm,s : RD → R, a constant Lm,s > 0,and a residual ϵm,s ≥ 0 such that, for θ ∈ { θm, θt},⃒⃒⃒ 
+
+Rm,s(θ) − EZ∼Qθ 
+
+> m,s
+
+[gm,s(Z)] ⃒⃒⃒ ≤ ϵm,s,⃒⃒ 
+
+gm,s(z) − gm,s(z′)⃒⃒ ≤ Lm,sdm,s(z, z′),
+
+(33) 
+
+where Rm,s(θ) := E[ℓ( fθ (X), Y) | S = s].
+
+Let Wp,m,s be the p-Wasserstein distance under the ground metric dm,s. Let Gθ 
+
+> m,s
+
+denote the Gaussian with the same spectral mean and covariance as Qθ
+
+> m,s
+
+under the representation stored by ASR. Define the non-Gaussianity and the Gaussian spectral drift as 
+
+Γθ 
+
+> m,s
+
+:= W2, m,s(︁ Qθ
+
+> m,s
+
+, Gθ
+
+> m,s
+
+)︁ ,
+
+∆m,t,s := W2, m,s(︁ Gθt
+
+> m,s
+
+, Gθm
+
+> m,s
+
+)︁ .
+
+(34) When Gθm 
+
+> m,s
+
+= N (μm,s, Σm,s) and Gθt 
+
+> m,s
+
+=
+
+N (μt|m,s, Σt|m,s), ∆m,t,s has the closed form 
+
+∆2 
+
+> m,t,s
+
+=⃦⃦⃦ Σ−1/2  
+
+> m,s
+
+(μt|m,s − μm,s)⃦⃦⃦ 22
+
++⃦⃦⃦⃦(︁ Σ−1/2  
+
+> m,s
+
+Σt|m,sΣ−1/2 
+
+> m,s
+
+)︁ 
+
+> 1/2
+
+− ID⃦⃦⃦⃦ 
+
+> 2
+> F
+
+.
+
+(35) 
+
+Theorem 1 (Skill-conditioned spectral drift controls forgetting) . Under Assumption 1, for every old stage 
+
+m < t, the forgetting of stage m after training until stage t satisfies the sharp distributional bound 
+
+Fm→t ≤∑︁ 
+
+> s∈S
+
+ωm,s Lm,sW1, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ 
+
++ 2∑︁ 
+
+> s∈S
+
+ωm,sϵm,s.
+
+(36) 
+
+Moreover, the distributional drift is controlled by the ASR skill-wise Gaussian spectral drift: 
+
+Fm→t ≤∑︁ 
+
+> s∈S
+
+ωm,s Lm,s(︁ Γθt 
+
+> m,s
+
++ ∆m,t,s + Γθm
+
+> m,s
+
+)︁ 
+
++ 2∑︁ 
+
+> s∈S
+
+ωm,sϵm,s.
+
+(37) 
+
+In particular, if the skill-conditioned descriptors are Gaussian in the ASR spectral space, then Γθt 
+
+> m,s
+
+= Γθm 
+
+> m,s
+
+=
+
+0 and forgetting is controlled only by the closed-form drift ∆m,t,s in Eq. (35) .
+
+Proof sketch. For each old skill, Assumption 1 re-duces the old-task risk difference to the difference of two expectations of an Lm,s-Lipschitz function over the old and current descriptor laws. Therefore, 
+
+[Rm,s(θt) − Rm,s(θm)] + ≤ Lm,sW1, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ 
+
++ 2ϵm,s.
+
+(38) Averaging Eq. (38) over the skill weights ωm,s gives Eq. (36) . The second bound follows by inserting Gaussian prototypes between the two descriptor laws: 
+
+W1, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ ≤ W2, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ 
+
+≤ Γθt 
+
+> m,s
+
++ ∆m,t,s + Γθm
+
+> m,s
+
+.
+
+(39) Finally, Eq. (35) is the exact 2-Wasserstein distance between two Gaussians after whitening by Σ−1/2  
+
+> m,s
+
+.The full proof is given in Appendix B. 
+
+5.2 Phase-Invariant Stability of Spectral At-tention 
+
+ASR regularizes the Fourier power spectrum of cross-attention maps rather than the raw attention maps. This choice induces a useful invariance: spatial trans-lations of the attention map only change the phase of its Fourier coefficients and therefore leave the power spectrum unchanged. We formalize this property and show that the resulting spectral descriptor is stable under noisy or boundary corrupted translations. Let A ∈ RH×W be a nonzero attention map and let ̂︀ A = F A be the unitary two-dimensional discrete 
+
+> 9Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Fourier transform, defined by ̂︀ 
+
+A(u, v) = 1
+
+√HW 
+
+> H−1
+
+∑︁ 
+
+> x=0
+> W−1
+
+∑︁ 
+
+> y=0
+
+A(x, y) exp (︁ −2πi(︁ ux H + vy W)︁)︁ .
+
+(40) The normalized Fourier power spectrum is 
+
+p(A)u,v := |̂︀ A(u, v)|2
+
+∥A∥2
+
+> F
+
+, p(A) ∈ ∆HW −1. (41) Let C be the deterministic ASR spectral coarsening operator that maps the frequency distribution to ra-dial/angular statistics, and define 
+
+Ψ(A) := Cp (A), κC := sup  
+
+> r̸=0
+
+∥Cr ∥2
+
+∥r∥1
+
+. (42) For a cyclic shift δ = ( δx, δy), define 
+
+(Tδ A)( x, y) := A(︀ (x − δx ) mod H, (y − δy) mod W)︀ .
+
+(43) We consider a skill-conditioned source-to-target attention shift where a target-domain attention map is generated as 
+
+Atar = T∆ Asrc + E, ρ := ∥E∥F
+
+∥Asrc ∥F
+
+, (44) where ∆ may be random and may depend on the sample, and E captures non-translational perturba-tions such as boundary effects, occlusion, or attention noise. 
+
+Assumption 2 (Spectral Lipschitz risk) . For each skill 
+
+s ∈ S , the old-skill loss can be represented by a spectral surrogate hs satisfying 
+
+|hs(z) − hs(z′)| ≤ Ls∥z − z′∥2, z, z′ ∈ range (Ψ).
+
+(45) 
+
+Theorem 2 (Phase-invariant spectral stability) . For every nonzero attention map A and every cyclic transla-tion δ, the Fourier power spectrum and the ASR spectral descriptor are exactly invariant: 
+
+p(Tδ A) = p(A), Ψ(Tδ A) = Ψ(A). (46) 
+
+Moreover, under the perturbed shift model in Eq. (44) ,if ρ ≤ 1, then ⃦⃦ 
+
+p(Atar ) − p(Asrc )⃦⃦ 1 ≤ 2ρ,⃦⃦ Ψ(Atar ) − Ψ(Asrc )⃦⃦ 2 ≤ 2κC ρ.
+
+(47) 
+
+The constant 2 in the power-spectrum bound is sharp. Consequently, for any skill s and any coupling be-tween source and target attention maps satisfying Eq. (44) ,
+
+W1(︀ Law (Ψ(Atar ) | s), Law (Ψ(Asrc ) | s))︀ 
+
+≤ 2κCE [ρ | s] . (48) 
+
+Under Assumption 2, the skill-conditioned spectral risk gap obeys ⃒⃒ 
+
+E[︀ hs(Ψ(Atar )) | s]︀ − E [hs(Ψ(Asrc )) | s]⃒⃒ 
+
+≤ 2LsκCE [ρ | s] . (49) 
+
+In particular, when E = 0, the spectral distribution and the spectral risk are invariant to arbitrary skill-conditioned random translations. 
+
+Proof sketch. The DFT diagonalizes cyclic transla-tions. Specifically, ̂︂ 
+
+Tδ A(u, v) = exp (︂ −2πi(︂ uδx
+
+H + vδy
+
+W)︂)︂̂︀ A(u, v).
+
+(50) Thus the translation only multiplies each Fourier coefficient by a unit-modulus phase factor, proving Eq. (46) . For the perturbed case, let a = F (T∆ Asrc )
+
+and b = F (Atar ) = a + F E. Parseval gives ∥F E∥2 =
+
+∥E∥F and ∥a∥2 = ∥Asrc ∥F. The key step is the sharp projective stability inequality ⃦⃦⃦⃦ 
+
+|b|⊙2
+
+∥b∥22
+
+− |a|⊙2
+
+∥a∥22⃦⃦⃦⃦ 1
+
+≤ 2 ∥b − a∥2
+
+∥a∥2
+
+. (51) This inequality follows by bounding the classical to-tal variation between the coordinate measurements of two unit vectors by the trace distance between the corresponding rank-one projectors. Applying the coarsening operator C yields the descriptor bound in Eq. (47) . Finally, Eq. (48) follows by using the source–target coupling as a valid transport plan, and Eq. (49) follows from the Lipschitz property of hs.Full proofs are in Appendix C. 
+
+6 Experimental Results 
+
+6.1 Experimental Setup 
+
+Datasets. ASR is evaluated on five continual mul-timodal settings: (i) VQA v2 (Question-Type In-cremental). It contains ∼200k images and 1.1M 
+
+> 10 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Table 1: Continual VQA results. AP is higher better and AF is lower better. Joint denotes the multitask upper bound. Green numbers after ASR results indicate improvement over the strongest baseline for each metric. 
+
+Method Venue VQA v2 (10 tasks) VQACL (VQAv2+NExT-QA) CLT-VQA AP ↑ AF ↓ AP std ↑ AF std ↓ AP nov ↑ AF nov ↓ AP ↑ AF ↓
+
+Reference Vanilla (LLaVA-1.5-7B) – 44.1 18.3 40.2 19.5 28.7 17.3 36.8 22.5 
+
+Regularization-based 
+
+EWC [34] (LLaVA-1.5-7B) PNAS’17 45.0 15.7 40.9 18.1 29.2 16.8 37.6 20.4 LwF [35] (LLaVA-1.5-7B) ECCV’16 45.8 14.2 41.3 17.2 29.8 15.9 38.3 19.1 
+
+Replay-based 
+
+ER [36] (LLaVA-1.5-7B) – 47.9 11.1 42.7 14.0 31.0 13.1 40.8 15.7 
+
+Continual VQA / VLM methods 
+
+VQACL [14] (T5-style) CVPR’23 48.5 9.2 44.1 11.6 33.4 10.4 41.5 13.9 QUAD [15] (T5-style) ICCV’25 50.3 6.1 46.8 7.8 36.5 7.1 43.6 10.1 CL-MoE [16] (LLaVA-7B) CVPR’25 51.2 3.8 47.9 6.2 37.8 6.0 44.4 8.4 BCP-MFA [40] (VQA Enc-Dec) ICCV’25 49.4 7.5 45.9 9.1 35.0 8.6 45.4 6.4 KeepLoRA [50] (LLaVA-1.5-7B) ICLR’26 50.6 4.5 46.5 6.9 37.0 6.6 44.7 7.2 Upper bound 
+
+Joint (LLaVA-1.5-7B) – 55.0 0.0 52.4 0.0 43.0 0.0 49.8 0.0 
+
+Ours 
+
+ASR (LLaVA-1.5-7B) Ours 52.0 ↑0.8 2.4 ↓1.4 48.6 ↑0.7 5.1 ↓1.1 39.1 ↑1.3 4.9 ↓1.1 46.2 ↑0.8 5.5 ↓0.9 
+
+ASR (Qwen2.5-VL-7B) Ours 54.2 ↑3.0 2.0 ↓1.8 51.4 ↑3.5 4.6 ↓1.6 42.0 ↑4.2 4.4 ↓1.6 48.0 ↑2.6 5.1 ↓1.3 
+
+ASR (InternVL3-8B) Ours 53.6 ↑2.4 2.1 ↓1.7 50.8 ↑2.9 4.8 ↓1.4 41.4 ↑3.6 4.5 ↓1.5 47.4 ↑2.0 5.3 ↓1.1 
+
+questions sourced mainly from MS-COCO. Follow-ing the VQACL/CL-MoE protocol, we split VQA v2 into M=10 tasks by question type as Marouf et al. [15] . (ii) VQAv2 + NExT-QA (VQACL skill–concept setting). To evaluate compositional generalization and cross-dataset transfer, we additionally follow the VQACL [ 14 ] setting, where VQAv2 and NExT-QA are organized as a two-level sequence over reasoning skills and visual concepts. (iii) CLT-VQA setting. To further examine robustness under imbalanced con-tinual learning, we include the continual long-tailed VQA setting following Zhang et al. [40] . This setting introduces long-tailed answer and concept distribu-tions across sequential VQA tasks, stressing whether a method can preserve previously learned visual rea-soning patterns while adapting to new and under-represented concepts. (iv) CoIN Benchmark for CIT. 
+
+For continual multimodal instruction tuning, we fol-low Chen et al. [21] to use the CoIN benchmark [ 5]. 
+
+(v) UCIT Benchmark for Unseen CIT. To stress general-ization to tasks unseen during supervised fine-tuning of the base MLLM, we follow HiDe-LLaVA [ 20 ] to evaluate on UCIT. 
+
+Evaluation metrics. We follow standard contin-ual learning metrics for multimodal VQA and CIT. For each task b and training stage a, we record per-task performance ma,b using the task’s official met-ric, including VQA accuracy for VQAv2 and CLT-VQA, WUPS for NExT-QA, and dataset-specific scores for CoIN/UCIT. Overall performance is summarized by 
+
+Final Average Performance AP = 1
+
+> M
+
+∑︀ Mt=1 mM,t and 
+
+Average Forgetting AF . In the VQACL/QUAD skill– concept setting, we additionally report AP/AF sepa-rately on standard, i.e., seen skill–concept, and novel-composition splits. For the CLT-VQA setting, we re-port the overall AP/AF. For continual instruction tun-ing on CoIN and UCIT, we follow prior work and report Last , i.e., final performance averaged over all 
+
+> 11
+
+Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+Table 2: Continual multimodal instruction tuning on CoIN and UCIT. We report Last and Avg, where higher is better. Joint denotes the multitask upper bound. Green numbers after ASR results indicate improvement over the strongest non-ours baseline for each metric.                                                                                                 
+
+> Method Venue CoIN UCIT Last ↑Avg ↑Last ↑Avg ↑
+> Reference LoRA-FT (LLaVA-1.5-7B) ICLR’22 49.3 47.2 41.5 39.8
+> LoRA / MoE-based continual tuning
+> O-LoRA [42] (LLaVA-1.5-7B) –52.1 49.8 43.2 42.1 MoELoRA [ 51 ](LLaVA-1.5-7B) –54.7 52.4 45.9 44.3 HiDe-LLaVA [20] (LLaVA-1.5-7B) ACL’25 57.2 55.1 47.8 46.0 SEFE [21] (LLaVA-1.5-7B) ICML’25 58.4 56.2 49.0 47.3 BranchLoRA [22] (LLaVA-1.5-7B) ACL’25 59.1 56.9 49.7 47.9 D-MoLE [23] (InternVL2-2B) ICML’25 60.3 58.0 51.2 49.4 Adapt-∞[24] (LLaVA-1.5-7B) ICLR’25 59.7 58.8 51.7 50.2 PCLR [52] (LLaVA-7B) ICLR’26 59.5 58.2 51.3 49.8 Upper bound
+> Joint (LLaVA-1.5-7B) –64.5 63.1 56.2 54.8
+> Ours
+> ASR (LLaVA-1.5-7B) Ours 61.4 ↑1.1 60.0 ↑1.2 53.1 ↑1.4 51.5 ↑1.3
+> ASR (Qwen2.5-VL-7B) Ours 63.2 ↑2.9 61.8 ↑3.0 55.0 ↑3.3 53.3 ↑3.1
+> ASR (InternVL3-8B) Ours 62.7 ↑2.4 61.2 ↑2.4 54.5 ↑2.8 52.8 ↑2.6
+
+T stages, and Avg , i.e., time-averaged performance across the training trajectory. 
+
+Implementation details. Unless otherwise specified, main experiments are conducted with LLaVA-1.5-7B as the base MLLM. The backbone is kept frozen, and only lightweight adapters and task-specific heads are trainable. To verify that ASR is not tied to a specific LLaVA-style architecture, we further conduct back-bone robustness experiments on Qwen2.5-VL-7B [ 53 ]and InternVL3-8B [ 54 ]. For LLaVA-1.5-7B, Qwen2.5-VL-7B, and InternVL3-8B, ASR extracts text-to-vision cross-modal attention maps from selected decoder self-attention blocks after visual tokens have been inserted into the language-model context. For back-bones that expose explicit image–text cross-attention, ASR directly uses the native cross-attention matrices. In all cases, the extracted maps are reconstructed onto a visual grid and normalized before spectral encoding. The architecture-specific extraction details are given in Appendix A. For the VQA v2 10-task split, we train each task for 1 epoch with batch size 16 , using AdamW with learning rate 2e −4 and cosine decay. For the VQA-CL/QUAD setting on VQAv2 and NExT-QA, we train for 3 epochs per task with batch size 80 and learn-ing rate 1e −4. For the CLT-VQA setting, we follow the task sequence, long-tailed split, and optimization protocol of Zhang et al. [40] . For CoIN and UCIT, we follow Guo et al. [20] schedules: 1 epoch per task for the majority of datasets and up to 5 epochs for smaller OCR-style datasets. For Qwen2.5-VL-7B and InternVL3-8B, we use the same ASR hyperparame-ters as LLaVA-1.5-7B, and adjust only the per-device batch size with gradient accumulation to keep the effective batch size unchanged. Please refer to the supplementary materials for more details. 
+
+6.2 Main results 
+
+Continual VQA. Table 1 reports results on VQA v2, VQACL, and CLT-VQA. On the default LLaVA-1.5-7B backbone, ASR achieves the best results among all non-joint methods. On VQA v2, ASR improves over CL-MoE [ 16 ] by +0.8 AP and reduces AF by 1.4 points. On VQACL, ASR consistently improves both standard and novel-composition splits, with gains of +0.7 AP std , +1.3 AP nov , and lower forgetting. On CLT-VQA, ASR further improves over BCP-MFA [ 40 ]by +0.8 AP and 0.9 AF, showing its robustness un-der long-tailed continual VQA. ASR also generalizes to stronger backbones. With Qwen2.5-VL-7B and InternVL3-8B, ASR obtains higher absolute AP and lower AF across all three VQA settings. 
+
+Continual instruction tuning. Table 2 reports results on CoIN and UCIT. On LLaVA-1.5-7B, ASR achieves 61.4 Last and 60.0 Avg on CoIN, improving over the strongest baselines by +1.1 and +1.2 points, respec-tively. On UCIT, ASR reaches 53.1 Last and 51.5 Avg, outperforming Adapt-∞ [ 24 ] by +1.4 and +1.3 points. With Qwen2.5-VL-7B and InternVL3-8B, ASR further improves the absolute performance on both benchmarks, demonstrating consistent effectiveness across different MLLM backbones. 
+
+6.3 Ablation Results 
+
+Single–factor ablations. We perform single–factor ablations of ASR on the VQA v2 10-task split and CoIN CIT benchmark: ❶ w/o Spectrum Distilla-tion (remove Lspec ; only task loss + Lgeo ); ❷ w/o Skill Conditioning (replace skill-specific prototypes 
+
+{(μs, Σs, ˆ ds)}s∈S by a single global prototype); ❸
+
+12 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs                                                  
+
+> Table 3: Single–factor ablations of ASR.
+> Variant VQA v2 (10 tasks) CoIN AP ↑AF ↓Last ↑Avg ↑
+> Full ASR 52.0 2.4 61.4 60.0
+> ❶50.1 (-1.9) 4.3 (+1.9) 59.0 (-2.4) 57.7 (-2.3)
+> ❷51.1 (-0.9) 3.5 (+1.1) 60.0 (-1.4) 58.6 (-1.4)
+> ❸51.4 (-0.6) 3.0 (+0.6) 60.6 (-0.8) 59.1 (-0.9)
+> ❹51.2 (-0.8) 3.2 (+0.8) 60.2 (-1.2) 58.9 (-1.1)
+> ❺51.6 (-0.4) 2.9 (+0.5) 60.7 (-0.7) 59.4 (-0.6)
+
+w/o Angular term (set λang =0; only radial / Maha-lanobis spectrum matching); ❹ w/o Confidence Weighting (set wspec (ϕ) ≡ 1); ❺ w/o Geometry Regularizer (set γ=0; no Lgeo anchor). From Ta-ble 3, removing Spectrum Distillation causes by far the largest degradation, confirming it as the main driver of stability, while collapsing per-skill proto-types into a single global prototype still yields clear drops in AP/Last and higher AF, underscoring the value of skill-conditioned priors. The angular term, confidence weighting, and geometry regularizer each contribute smaller but consistent gains, indicating that directional cues, adaptive regularization, and a light geometric anchor jointly turn spectral statistics into a robust constraint across tasks. 
+
+Spectrum design variants. We study how differ-ent attention representations affect continual stabil-ity. We compare four variants: directly distilling raw spatial attention maps ( Raw Attention ), using only the radial frequency profile ( Radial-only ), using only the angular profile ( Angular-only ), and the complete spectrum descriptor used by ASR ( Full Spectrum ). As shown in Fig. 4(a), raw attention distillation is less effective, obtaining 50.8 AP / 3.7 AF on VQA v2 and 59.5 Last / 58.2 Avg on CoIN. Radial-only matching performs better than angular-only match-ing, suggesting that spatial scale is more critical for preserving visual grounding. However, the full spec-trum achieves the best results, confirming that both scale and directional cues are useful for stabilizing cross-modal attention. 
+
+Prototype design variants. We then examine how spectrum prototypes should be organized. We com-pare a single global prototype ( Global ), task-level pro-totypes ( Task-wise ), skill-wise prototypes with mean only ( Skill-wise Mean ), and the proposed skill-wise Gaussian prototypes ( Skill-wise Gaussian ). Fig. 4(b) shows that global prototypes are insufficient, drop-ping to 51.1 AP and 60.0 Last. Task-wise prototypes improve the result slightly, but remain weaker than skill-wise prototypes because tasks can contain mixed reasoning skills. Using skill-wise mean prototypes further improves stability, while the full Gaussian modeling reaches the best result. This supports our design choice of modeling forgetting at the skill level with both mean and variance statistics. 
+
+Regularization variants. Finally, we compare different spectral regularization strategies. Hard Skill assigns each sample to the most likely skill, while Soft Skill uses the full posterior distribution 
+
+π(q). Fixed Weight applies a non-adaptive spectral weight, and Confidence Weight uses the proposed prototype-distance-based adaptive weight. As shown in Fig. 4(c), hard skill assignment is the weakest because ambiguous questions may involve multiple skills. Soft skill weighting improves performance, while fixed weighting still over-regularizes samples whose spectra are far from existing prototypes. The proposed confidence-adaptive weighting obtains the best results, reducing VQA AF to 2.4 and improving CoIN Avg to 60.0. 
+
+6.4 Mechanism Analysis 
+
+6.4.1 Do different skills exhibit distinct attention spectra 
+
+To test whether ASR learns skill-specific attention pat-terns, we analyze four representative skills ( count ,
+
+read , locate , relation ) on the last stage of the VQA v2 stream. For each skill we aggregate cross-attention maps into a 6D spectral summary (low/mid/high frequency energy and anisotropy along three orientation bands) for both the Baseline and ASR. As shown in Fig. 5, ASR yields more clearly separated skill-wise spectra, while the Baseline ex-hibits more entangled patterns, indicating that our method sharpens skill-conditioned attention priors instead of applying a uniform regularization. 
+
+6.4.2 Does stabilizing spectra correlate with re-duced forgetting 
+
+For each skill s ∈{count , read , locate , relation } and stage 
+
+t > 1 in the VQA v2 stream, we measure a spec-
+
+> 13
+
+Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs Raw 
+
+> Radial
+> Angular
+> Full
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> Degradation
+
+Spectrum Design 
+
+> VQA AP
+> VQA AF
+> CoIN Last
+> CoIN Avg
+
+(a) Spectrum design Global 
+
+> Task
+> Mean
+> Gaussian
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> 2.00
+> Degradation
+
+Prototype Design  
+
+> VQA AP
+> VQA AF
+> CoIN Last
+> CoIN Avg
+
+(b) Prototype design Hard 
+
+> Soft
+> Fixed
+> Conf.
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> Degradation
+
+Regularization Design  
+
+> VQA AP
+> VQA AF
+> CoIN Last
+> CoIN Avg
+
+(c) Regularization design 
+
+Figure 4: Design-level ablations of ASR. All plots show degradation relative to the full ASR variant. For AP, Last, and Avg, lower bars indicate smaller performance drops. For AF, lower bars indicate less forgetting increase. Low  
+
+> freq
+> Mid
+> freq
+> High
+> freq
+> Horiz
+> aniso
+> Vert
+> aniso
+> Diag
+> aniso
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Count
+> Low
+> freq
+> Mid
+> freq
+> High
+> freq
+> Horiz
+> aniso
+> Vert
+> aniso
+> Diag
+> aniso
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Read
+> Low
+> freq
+> Mid
+> freq
+> High
+> freq
+> Horiz
+> aniso
+> Vert
+> aniso
+> Diag
+> aniso
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Locate
+> Low
+> freq
+> Mid
+> freq
+> High
+> freq
+> Horiz
+> aniso
+> Vert
+> aniso
+> Diag
+> aniso
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Relation
+> Baseline (CL-MoE) ASR
+
+Figure 5: Skill-wise attention spectra. ASR produces more distinct spectral signatures for different skills. 
+
+tral prototype drift ∆(t)
+
+s = ∥μ(t)
+
+s − μ(t−1)
+
+s ∥2 and a skill-wise forgetting score F(t)
+
+s (drop from the best historical accuracy on skill-s questions to the accuracy after stage t). From Fig. 6, the baseline exhibits a clear trend where larger prototype drift coincides with higher forgetting, whereas ASR both reduces the typical drift magnitudes and achieves consistently lower F(t)
+
+s at comparable drift levels. It shows quantitative evidence that stabilizing skill-conditioned attention spectra is closely tied to mitigating catastrophic forgetting in continual multimodal learning. 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9           
+
+> Prototype drift (t)
+> s=(t)
+> s(t1)
+> s2
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 15.0
+> 17.5
+> 20.0
+> Skill-wise forgetting  F(t)
+> s (p.p.)
+> CL-MoE, r= 0.81
+> ASR, r= 0.57
+> CL-MoE trend
+> ASR trend
+
+Figure 6: Prototype spectral drift vs. forgetting. Each point is a skill–stage pair (s, t).
+
+6.4.3 Are correct predictions closer to spectral pro-totypes 
+
+On the fifth task of the VQA v2 stream, we compute for each sample the squared Mahalanobis distance 
+
+D2mah (ϕ(A), μs, Σs) to its skill prototype and group instances by prediction outcome (correct vs. error) for Full ASR and w/o Spectrum Distillation. From Fig. 7, ASR produces markedly lower distances for correct than for error cases, with a clear separation between the two groups, whereas removing spectral distillation shifts all distributions toward larger, more overlapping distances. This supports the view that ASR tightens skill-conditioned spectral manifolds and makes out-of-prototype spectra more indicative of 
+
+14 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+mistakes. ASR 
+
+correct 
+
+ASR 
+
+error 
+
+w/oSpec 
+
+correct 
+
+w/oSpec 
+
+error 
+
+0
+
+1
+
+2
+
+3
+
+4
+
+> Squared Mahalanobis Distance  D2mah
+
+ASR Correct 
+
+ASR Error 
+
+w/oSpec Correct 
+
+w/oSpec Error 
+
+0.92 
+
+1.82 
+
+1.54 
+
+2.38 
+
+Figure 7: Mahalanobis distance to skill prototypes for correct vs. error predictions. 
+
+6.4.4 Task-Level Interference Structure 
+
+We next examine how ASR reshapes task-level inter-ference in the VQA v2 10-task stream. We visualize the full task ×task structure to see which tasks inter-fere with which others, and how this pattern changes under ASR. Recall that ma,b denotes the performance on task b after training up to stage a (a ≥ b for seen tasks). For each method we construct a 10 × 10 ma-trix M = [ ma,b]10 
+
+a,b=1 for the VQA v2 stream. To isolate 
+
+forgetting on each task b, we normalize column-wise by the best historical performance on that task: 
+
+mmax 
+
+b = max 
+
+a≥b ma,b, ∆a,b = ma,b − mmax 
+
+b . (52) Thus, ∆a,b = 0 for the stage(s) where task b attains its best performance, while ∆a,b < 0 quantifies the amount of forgetting at later stages. We restrict our analysis to the lower triangular part ( a ≥ b), since tasks b > a have not been seen at stage a.Fig. 8 shows the resulting task ×task heatmaps for CL-MoE and ASR. Under CL-MoE, the interference map shows clear negative bands in the lower-left region: early tasks (columns 1–3) gradually accumu-late 2–3 points of forgetting as more tasks arrive, and several mid-stream tasks also experience noticeable drops after later stages. In contrast, ASR produces a much lighter map: most ∆a,b values remain within a narrow band around zero, and deep negative streaks are largely absent. This confirms that ASR does not merely improve the final average AP, but genuinely 1 2 3 4 5 6 7 8 9 10                                                                                    
+
+> Task Index b
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> Stage Index  a
+> -1.0
+> -1.5 -1.0
+> -2.0 -1.5 -1.0
+> -2.5 -2.0 -1.2 -0.5
+> -3.0 -2.5 -1.5 -0.8 -0.3
+> -3.2 -3.0 -2.0 -1.2 -0.5 -0.1
+> -3.5 -3.2 -2.5 -1.5 -0.8 -0.3 -0.2
+> -3.7 -3.5 -2.8 -1.8 -1.0 -0.5 -0.3 -0.1
+> -4.0 -3.8 -3.0 -2.0 -1.3 -0.7 -0.5 -0.3 -0.2
+> CL-MoE
+> 12345678910
+> Task Index b
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> Stage Index  a
+> -0.2
+> -0.5 -0.5
+> -0.7 -1.0 -0.2 -0.1
+> -1.0 -1.2 -0.4
+> -1.2 -1.5 -0.7 -0.4 -0.2
+> -1.3 -1.7 -0.9 -0.6 -0.3 -0.1
+> -1.4 -1.8 -1.0 -0.7 -0.4 -0.2 -0.1
+> -1.5 -1.9 -1.1 -0.8 -0.5 -0.3 -0.2 -0.1
+> -1.6 -2.0 -1.2 -0.9 -0.6 -0.4 -0.3 -0.2 -0.1
+> ASR (ours)
+> 6
+> 5
+> 4
+> 3
+> 2
+> 1
+> 0
+> Performance Drop  a, b = ma, b mmax
+> b
+
+Figure 8: Task ×task interference on VQA v2 (10-task stream). Each heatmap shows ∆a,b = ma,b − mmax 
+
+b for 
+
+a ≥ b, i.e., the drop from best historical performance on task b at stage a, the upper triangle ( a < b) is masked. Darker colors indicate stronger forgetting. How many apples are in   
+
+> the white bowl?
+> CL-MoE: T hree. ASR(Ours): T hree.
+> What word is printed
+> on the bicycle closest to
+> the camera?
+> CL-MoE: MARKET. ASR(Ours): CITY.
+
+Figure 9: Case study .
+
+reshapes the task-level interference structure, mak-ing forgetting more uniformly mild across the stream and especially alleviating interference on early skills. 
+
+6.4.5 Qualitative results 
+
+Figure 9 illustrates how ASR reshapes cross-attention. In the counting case (top row), both methods predict the correct answer “Three”, but ASR focuses its at-tention almost exclusively on the apples in the white bowl, whereas CL-MoE spreads attention across the table. In the reading case (bottom row), CL-MoE is distracted by the large “MARKET” sign in the back-ground, while ASR concentrates on the small “CITY” text on the frame of the bicycle and answers correctly. 
+
+15 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+7 Conclusion 
+
+We addressed catastrophic forgetting in MLLMs by shifting the focus from preserving all features to preserving skill-conditioned patterns of visual atten-tion, and proposed Attention-Spectrum Regulariza-tion (ASR) as a replay-free spectral regularizer that stabilizes cross-modal attention across tasks. Our ex-periments show that constraining attention spectra via compact, per-skill prototypes yields consistent gains over strong replay- and MoE-based baselines. Future work may explore fully self-supervised skill discovery, and apply spectral attention regulariza-tion to broader continual settings such as open-world detection, grounding, and embodied agents. 
+
+References 
+
+[1] Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. Visual instruction tuning. Advances in neural information processing systems , 36:34892– 34916, 2023. [2] Peng Xu, Wenqi Shao, Kaipeng Zhang, Peng Gao, Shuo Liu, Meng Lei, Fanqing Meng, Siyuan Huang, Yu Qiao, and Ping Luo. Lvlm-ehub: A comprehen-sive evaluation benchmark for large vision-language models. IEEE Transactions on Pattern Analysis and Machine Intelligence , 47(3):1877–1893, 2024. [3] Yuetan Chu, Yilan Zhang, Zhongyi Han, Changchun Yang, Longxi Zhou, Gongning Luo, Chao Huang, and Xin Gao. Improving representation of high-frequency components for medical visual foundation models. IEEE Transactions on Medical Imaging , 2025. [4] James Seale Smith, Paola Cascante-Bonilla, Assaf Ar-belle, Donghyun Kim, Rameswar Panda, David Cox, Diyi Yang, Zsolt Kira, Rogerio Feris, and Leonid Kar-linsky. Construct-vl: Data-free continual structured vl concepts learning. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recogni-tion , pages 14994–15004, 2023. [5] Cheng Chen, Junchen Zhu, Xu Luo, Heng T Shen, Jingkuan Song, and Lianli Gao. Coin: A benchmark of continual instruction tuning for multimodel large language models. Advances in Neural Information Processing Systems , 37:57817–57840, 2024. [6] Yuetan Chu, Jianpeng Wang, Peiyao Luo, Hui Chen, Zhongheng Zhang, Jiannan Zhang, Yilan Zhang, Yingnan Ju, Yaxin Xiong, Xiqing Luo, et al. Ct-based ai system for quantitative and integrated manage-ment of acute respiratory distress syndrome in criti-cal care. npj Digital Medicine , 2026. [7] Haohan Chi, Huan-ang Gao, Ziming Liu, Jianing Liu, Chenyu Liu, Jinwei Li, Kaisen Yang, Yangcheng Yu, Zeda Wang, Wenyi Li, et al. Impromptu vla: Open weights and open data for driving vision-language-action models. Advances in Neural Information Pro-cessing Systems , 38, 2026. [8] Claudio Greco, Barbara Plank, Raquel Fernández, and Raffaella Bernardi. Psycholinguistics meets con-tinual learning: Measuring catastrophic forgetting in visual question answering. In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics , pages 3601–3605, 2019. [9] Zixuan Ni, Longhui Wei, Siliang Tang, Yueting Zhuang, and Qi Tian. Continual vision-language representation learning with off-diagonal informa-tion. In International Conference on Machine Learn-ing , pages 26129–26149. PMLR, 2023. [10] Zangwei Zheng, Mingyuan Ma, Kai Wang, Ziheng Qin, Xiangyu Yue, and Yang You. Preventing zero-shot transfer degradation in continual learn-ing of vision-language models. In Proceedings of the IEEE/CVF international conference on computer vision , pages 19125–19136, 2023. [11] Yuetan Chu, Xinhua Ma, Xinran Jin, Gongning Luo, and Xin Gao. Medtri: A platform for structured medi-cal report normalization to enhance vision-language pretraining. arXiv preprint arXiv:2602.22143 , 2026. [12] Juan Wang, Yiping Duan, Xiaoming Tao, Mai Xu, and Jianhua Lu. Semantic perceptual image com-pression with a laplacian pyramid of convolutional networks. IEEE Transactions on Image Processing ,30:4225–4237, 2021. [13] Stan Weixian Lei, Difei Gao, Jay Zhangjie Wu, Yux-uan Wang, Wei Liu, Mengmi Zhang, and Mike Zheng Shou. Symbolic replay: Scene graph as prompt for continual learning on vqa task. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 37, pages 1250–1259, 2023. [14] Xi Zhang, Feifei Zhang, and Changsheng Xu. Vqacl: A novel visual question answering continual learning setting. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 19102–19112, 2023. [15] Imad Eddine Marouf, Enzo Tartaglione, Stéphane Lathuilière, and Joost van de Weijer. Ask and re-member: A questions-only replay strategy for con-tinual visual question answering. arXiv preprint arXiv:2502.04469 , 2025. URL https://arxiv. org/pdf/2502.04469 .[16] Tianyu Huai, Jie Zhou, Xingjiao Wu, Qin Chen, Qingchun Bai, Ze Zhou, and Liang He. Cl-moe: Enhancing multimodal large language model with dual momentum mixture-of-experts for continual visual question answering. In Proceedings of the 
+
+> 16 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Computer Vision and Pattern Recognition Conference ,pages 19608–19617, 2025. [17] Shipeng Yan, Lanqing Hong, Hang Xu, Jianhua Han, Tinne Tuytelaars, Zhenguo Li, and Xuming He. Generative negative text replay for continual vision-language pretraining. In European Conference on Computer Vision , pages 22–38. Springer, 2022. [18] Hongguang Zhu, Yunchao Wei, Xiaodan Liang, Chunjie Zhang, and Yao Zhao. Ctp: Towards vision-language continual pretraining via compatible mo-mentum contrast and topology preservation. In Pro-ceedings of the IEEE/CVF International Conference on Computer Vision , pages 22257–22267, 2023. [19] Wenzhuo Liu, Fei Zhu, Longhui Wei, and Qi Tian. C-clip: Multimodal continual learning for vision-language model. In The Thirteenth International Conference on Learning Representations , 2025. [20] Haiyang Guo, Fanhu Zeng, Ziwei Xiang, Fei Zhu, Da-Han Wang, Xu-Yao Zhang, and Cheng-Lin Liu. Hide-llava: Hierarchical decoupling for continual instruc-tion tuning of multimodal large language model. In 
+
+Proceedings of the 63rd Annual Meeting of the Associ-ation for Computational Linguistics (Volume 1: Long Papers) , pages 13572–13586, 2025. [21] Jinpeng Chen, Runmin Cong, Yuzhi Zhao, Hongzheng Yang, Guangneng Hu, Horace Ip, and Sam Kwong. Sefe: Superficial and essential forgetting eliminator for multimodal continual instruction tuning. In Forty-second International Conference on Machine Learning , 2025. [22] Duzhen Zhang, Yong Ren, Zhong-Zhi Li, Yahan Yu, Jiahua Dong, Chenxing Li, Zhilong Ji, and Jinfeng Bai. Enhancing multimodal continual in-struction tuning with branchlora. arXiv preprint arXiv:2506.02041 , 2025. [23] Chendi Ge, Xin Wang, Zeyang Zhang, Hong Chen, Jiapei Fan, Longtao Huang, Hui Xue, and Wenwu Zhu. Dynamic mixture of curriculum lora experts for continual multimodal instruction tuning. In Forty-second International Conference on Machine Learning ,2025. [24] Adyasha Maharana, Jaehong Yoon, Tianlong Chen, and Mohit Bansal. Adapt-∞: Scalable continual multimodal instruction tuning via dynamic data se-lection. In The Thirteenth International Conference on Learning Representations , 2025. [25] Zichao Yang, Xiaodong He, Jianfeng Gao, Li Deng, and Alex Smola. Stacked attention networks for image question answering. In Proceedings of the IEEE conference on computer vision and pattern recognition ,pages 21–29, 2016. [26] Peter Anderson, Xiaodong He, Chris Buehler, Damien Teney, Mark Johnson, Stephen Gould, and Lei Zhang. Bottom-up and top-down attention for image captioning and visual question answering. In 
+
+Proceedings of the IEEE conference on computer vision and pattern recognition , pages 6077–6086, 2018. [27] Jiasen Lu, Dhruv Batra, Devi Parikh, and Stefan Lee. Vilbert: Pretraining task-agnostic visiolinguistic rep-resentations for vision-and-language tasks. Advances in neural information processing systems , 32, 2019. [28] Hao Tan and Mohit Bansal. Lxmert: Learning cross-modality encoder representations from trans-formers. In Proceedings of the 2019 conference on empirical methods in natural language processing and the 9th international joint conference on natural language processing (EMNLP-IJCNLP) , pages 5100– 5111, 2019. [29] Ramprasaath R Selvaraju, Michael Cogswell, Ab-hishek Das, Ramakrishna Vedantam, Devi Parikh, and Dhruv Batra. Grad-cam: Visual explanations from deep networks via gradient-based localization. In Proceedings of the IEEE international conference on computer vision , pages 618–626, 2017. [30] Canran Xiao, Tianxiang Xu, Siyuan Ma, Yiyang Jiang, Haoyu Gao, Yuhan Wu, et al. Re-versible primitive–composition alignment for con-tinual vision–language learning. In The Fourteenth International Conference on Learning Representations ,2026. [31] Jinlai Zhang, Mingchao Xiang, Yongheng Hu, Wei Hao, Linlong Lei, and Kefu Yi. Multivariate fea-ture learning and associative spatial information en-hancement for snow object detection in autonomous driving. Engineering Applications of Artificial Intelli-gence , 175:114672, 2026. [32] Ruanzhi Jiao, Jinlai Zhang, Chang Li, and Lin Hu. Large-kernel spatially parallel feature fusion for monocular 3d perception in autonomous driving. 
+
+Knowledge-Based Systems , 343:115998, 2026. [33] Yash Goyal, Tejas Khot, Douglas Summers-Stay, Dhruv Batra, and Devi Parikh. Making the v in vqa matter: Elevating the role of image understand-ing in visual question answering. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 6904–6913, 2017. [34] James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwinska, et al. Overcoming catastrophic forgetting in neural networks. Proceedings of the national academy of sciences , 114(13):3521–3526, 2017. [35] Zhizhong Li and Derek Hoiem. Learning without forgetting. IEEE transactions on pattern analysis and machine intelligence , 40(12):2935–2947, 2017. 
+
+> 17 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+[36] Arslan Chaudhry, Marcus Rohrbach, Mohamed Elho-seiny, Thalaiyasingam Ajanthan, P Dokania, P Torr, and M Ranzato. Continual learning with tiny episodic memories. In Workshop on Multi-Task and Lifelong Reinforcement Learning , 2019. [37] Pietro Buzzega, Matteo Boschini, Angelo Porrello, Davide Abati, and Simone Calderara. Dark experi-ence for general continual learning: a strong, simple baseline. Advances in neural information processing systems , 33:15920–15930, 2020. [38] Saurabh Garg, Mehrdad Farajtabar, Hadi Pouransari, Raviteja Vemulapalli, Sachin Mehta, Oncel Tuzel, Vaishaal Shankar, and Fartash Faghri. Tic-clip: Con-tinual training of clip models. In The Twelfth In-ternational Conference on Learning Representations ,2024. [39] Zi Qian, Xin Wang, Xuguang Duan, Pengda Qin, Yuhong Li, and Wenwu Zhu. Decouple before in-teract: Multi-modal prompt learning for continual visual question answering. In Proceedings of the IEEE/CVF International Conference on Computer Vi-sion , pages 2953–2962, 2023. [40] Feifei Zhang, Zhihao Wang, Xi Zhang, and Chang-sheng Xu. Overcoming dual drift for continual long-tailed visual question answering. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 4413–4423, 2025. [41] Edward J Hu, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. In International Conference on Learning Rep-resentations , 2022. [42] Xiao Wang, Tianze Chen, Qiming Ge, Han Xia, Rong Bao, Rui Zheng, Qi Zhang, Tao Gui, and Xuan-Jing Huang. Orthogonal subspace learning for language model continual learning. In Findings of the Asso-ciation for Computational Linguistics: EMNLP 2023 ,pages 10658–10671, 2023. [43] Arthur Douillard, Yifu Chen, Arnaud Dapogny, and Matthieu Cord. Plop: Learning without forgetting for continual semantic segmentation. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 4040–4050, 2021. [44] Sergey Zagoruyko and Nikos Komodakis. Paying more attention to attention: Improving the perfor-mance of convolutional neural networks via atten-tion transfer. In International Conference on Learning Representations , 2017. [45] Beiwen Tian, Liyi Luo, Hao Zhao, and Guyue Zhou. Vibus: Data-efficient 3d scene parsing with view-point bottleneck and uncertainty-spectrum model-ing. ISPRS Journal of Photogrammetry and Remote Sensing , 194:302–318, 2022. [46] Malvina Nikandrou, Georgios Pantazopoulos, Ioan-nis Konstas, and Alessandro Suglia. Enhancing con-tinual learning in visual question answering with modality-aware feature distillation. In Proceedings of the 3rd Workshop on Advances in Language and Vision Research (ALVR) , pages 73–85, 2024. [47] Deepayan Das, Davide Talon, Massimiliano Mancini, Yiming Wang, and Elisa Ricci. One vlm to keep it learning: Generation and balancing for data-free continual visual question answering. In 2025 IEEE/CVF Winter Conference on Applications of Com-puter Vision (WACV) , pages 5635–5645. IEEE, 2025. [48] Jinlai Zhang, Xiaolong Song, Yucheng Li, Diqing Liang, Zhiyong Zhang, and Jinhu Cai. Adaptive dual cross-attention network for multispectral object detection in autonomous driving. Expert Systems with Applications , page 132012, 2026. [49] Xiaoxue Chen, Tianyu Liu, Hao Zhao, Guyue Zhou, and Ya-Qin Zhang. Cerberus transformer: Joint semantic, affordance and attribute parsing. In Pro-ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 19649–19658, 2022. [50] Mao-Lin Luo, Zi-Hao Zhou, Yi-Lin Zhang, Yuanyu Wan, Tong Wei, and Min-Ling Zhang. Keeplora: Con-tinual learning with residual gradient adaptation. In 
+
+The Fourteenth International Conference on Learning Representations , 2026. [51] Qidong Liu, Xian Wu, Xiangyu Zhao, Yuanshao Zhu, Derong Xu, Feng Tian, and Yefeng Zheng. Moelora: An moe-based parameter efficient fine-tuning method for multi-task medical applications. 
+
+CoRR , 2023. [52] Weicheng Meng, Jingyang Qiao, Shaohui Liu, Zhizhong Zhang, and Yuan Xie. Pclr: Progressively compressed lora for multimodal continual instruc-tion tuning. In The Fourteenth International Confer-ence on Learning Representations , 2026. [53] Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al. Qwen2. 5-vl technical report. 
+
+arXiv preprint arXiv:2502.13923 , 2025. [54] Jinguo Zhu, Weiyun Wang, Zhe Chen, Zhaoyang Liu, Shenglong Ye, Lixin Gu, Hao Tian, Yuchen Duan, Weijie Su, Jie Shao, et al. Internvl3: Ex-ploring advanced training and test-time recipes for open-source multimodal models. arXiv preprint arXiv:2504.10479 , 2025. 
+
+> 18 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+A Architecture-Agnostic Cross-Modal At-tention Extraction 
+
+This appendix specifies how ASR extracts the unified cross-modal attention map A(l,h) ∈ RTq ×H×W used in Section 4.1 and Section 4.2. The key point is that ASR does not require every MLLM backbone to contain explicit encoder–decoder cross-attention. For decoder-only MLLMs, ASR uses the text-to-vision block of self-attention; for models with explicit cross-attention, ASR uses the native cross-attention matrix. 
+
+A.1 Token Index Sets 
+
+After the multimodal input is packed by a backbone, let V denote the set of visual-token indices and let 
+
+T denote the set of question/instruction-side text-token indices. Special tokens and answer tokens are excluded from T when they are not part of the input question or instruction. We also keep the visual-token layout produced by the vision encoder or multimodal projector, so that each visual token can be mapped back to a spatial position. 
+
+A.2 Decoder-Only MLLMs 
+
+For decoder-only MLLMs, such as LLaVA-style, Qwen-VL-style, and InternVL-style models, visual tokens and text tokens are inserted into a single language-model context. For a selected decoder block l and head h, the self-attention matrix is 
+
+P(l,h) = softmax (︃ Q(l,h)(K(l,h))⊤
+
+√dh
+
++ M)︃ , (53) where M is the causal or backbone-specific attention mask. ASR extracts the text-to-vision submatrix 
+
+B(l,h) = P(l,h)[T , V ] ∈ R|T |×|V | . (54) The row B(l,h) 
+
+> τ,:
+
+represents how text token τ attends to visual tokens in block l and head h. This is the cross-modal attention signal used by ASR for decoder-only MLLMs. 
+
+A.3 Backbones with Explicit Cross-Attention 
+
+For MLLMs that contain explicit cross-attention mod-ules, such as Q-Former-style or encoder–decoder fu-sion modules, ASR directly uses the image–text cross-attention matrix: 
+
+B(l,h) = P(l,h) 
+
+> cross
+
+∈ R|T |×|V | . (55) Thus, Eq. (54) and Eq. (55) define the same object: a token-level text-to-vision attention distribution. 
+
+A.4 Visual-Grid Reconstruction 
+
+To compute spectral statistics, ASR converts the token-level attention vector into a two-dimensional visual map. Let Ωx,y ⊆ V be the set of visual tokens assigned to grid cell (x, y). For a text token τ ∈ T ,we define 
+
+A(l,h) 
+
+> τ
+
+(x, y) = 1
+
+|Ωx,y|∑︁ v∈Ωx,y
+
+B(l,h) 
+
+> τ,v
+
+, (x, y) ∈ [H] × [W].
+
+(56) For standard patch-based visual encoders, Ωx,y usu-ally contains one patch token. For backbones with patch merging, tiling, or dynamic-resolution packing, 
+
+Ωx,y is determined by the backbone-specific visual-token layout. If different samples produce different grid sizes, the attention maps are resized to a com-mon resolution before spectral encoding. Each map is then renormalized as 
+
+A(l,h) 
+
+> τ
+
+← A(l,h)
+
+> τ
+
+∑︀  
+
+> x,y
+
+A(l,h) 
+
+> τ
+
+(x, y) + ε . (57) 
+
+A.5 Functional-Token Selection 
+
+ASR aggregates attention maps over a small set of question-side functional tokens U(q). In our im-plementation, U(q) includes wh-words, verbs, head nouns, relation words, numerals, and OCR-related tokens. If no token is selected by this rule, we use all non-special question/instruction tokens. The aggre-gated map is 
+
+˜A(l,h)(x, y) = 1
+
+|U(q)|∑︁ τ∈U(q)
+
+A(l,h) 
+
+> τ
+
+(x, y). (58) This aggregation is performed before the Fourier transform in Section 4.2. 
+
+A.6 Backbone-Specific Summary 
+
+The selected layer–head set J = Lsel × H sel is fixed for each backbone across all continual-learning stages. For decoder-only MLLMs, we select middle-to-late decoder blocks where visual and linguistic tokens have undergone sufficient interaction. For backbones with explicit cross-attention, we select the corresponding multimodal fusion blocks. After this 
+
+> 19 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Table 4: Backbone-specific attention sources used by ASR. Decoder-only MLLMs do not need explicit cross-attention layers; ASR extracts the text-to-vision block from decoder self-attention after visual tokens are inserted into the language-model context. 
+
+Backbone family Attention source ASR map LLaVA-style models Decoder self-attention over inserted visual tokens and text tokens Text-token rows to visual-token columns, 
+
+P(l,h)[T , V ]
+
+Qwen-VL-style models Decoder self-attention over dynamically packed visual and text tokens Text-to-vision submatrix recon-structed with the visual-token layout InternVL-style models Decoder self-attention over visual-context tokens and text tokens Text-to-vision submatrix recon-structed with the visual-token layout Q-Former / encoder– decoder models Explicit image– text cross-attention Native cross-attention matrix 
+
+P(l,h)
+
+> cross
+
+extraction step, all backbones provide the same ob-ject A(l,h) ∈ RTq ×H×W , so the subsequent spectral encoder is architecture-agnostic. 
+
+B Full Proofs for the Skill-Wise Spectral Forgetting Bound 
+
+For stage m, let Pm be the distribution of triples 
+
+(X, Y, S), where X = ( I, q) and S ∈ S is the reason-ing skill. For s ∈ S , define the conditional old-stage risk 
+
+Rm,s(θ) := EPm [ℓ( fθ (X), Y) | S = s] . (59) The full old-stage risk decomposes as 
+
+Rm(θ) = ∑︁ 
+
+> s∈S
+
+ωm,s Rm,s(θ), ωm,s := Pr 
+
+> Pm
+
+(S = s).
+
+(60) For any model parameter θ, the skill-conditioned spectral descriptor law is 
+
+Qθ 
+
+> m,s
+
+= Law (zθ (X) | (X, Y, S) ∼ P m, S = s) . (61) The ASR memory for skill s at stage m is (μm,s, Σm,s)
+
+with Σm,s ≻ 0. The corresponding ground metric is 
+
+dm,s(z, z′) = ⃦⃦⃦ Σ−1/2  
+
+> m,s
+
+(z − z′)⃦⃦⃦ 2 . (62) For p ∈ { 1, 2 } and probability measures P, Q on RD,the Wasserstein distance under dm,s is 
+
+Wp,m,s(P, Q) := inf 
+
+> γ∈Π(P,Q)
+
+(︁ E(U,V)∼γ [dm,s(U, V)p])︁ 1/ p
+
+,
+
+(63) where Π(P, Q) is the set of all couplings of P and Q.For any descriptor law Q, let G(Q) be the Gaussian distribution with the same mean and covariance as represented in the ASR spectral memory. We use the shorthand 
+
+Gθ 
+
+> m,s
+
+:= G(Qθ
+
+> m,s
+
+). (64) The non-Gaussianity term and the Gaussian spectral drift are 
+
+Γθ 
+
+> m,s
+
+:= W2, m,s(︁ Qθ
+
+> m,s
+
+, Gθ
+
+> m,s
+
+)︁ ,
+
+∆m,t,s := W2, m,s(︁ Gθt
+
+> m,s
+
+, Gθm
+
+> m,s
+
+)︁ .
+
+(65) 
+
+B.1 Auxiliary Lemmas 
+
+Lemma 1 (Risk reduction to spectral transport) . Sup-pose Assumption 1 holds for stage m and skill s. Then 
+
+|Rm,s(θt) − Rm,s(θm)| ≤ ⃒⃒⃒ EZ∼Qθtm,s
+
+[gm,s(Z)] 
+
+−EZ∼Qθmm,s [gm,s(Z)] ⃒⃒⃒ 
+
++ 2ϵm,s.
+
+(66) 
+
+Proof. By adding and subtracting the spectral surro-gate expectations, we get 
+
+Rm,s(θt) − Rm,s(θm)=[︁ Rm,s(θt) − EZ∼Qθtm,s
+
+gm,s(Z)]︁ 
+
++[︁ EZ∼Qθtm,s
+
+gm,s(Z) − EZ∼Qθmm,s gm,s(Z)]︁ 
+
++[︁ EZ∼Qθmm,s gm,s(Z) − Rm,s(θm)]︁ .
+
+(67) 
+
+> 20
+
+Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+Taking absolute values and applying the triangle in-equality yields 
+
+|Rm,s(θt) − Rm,s(θm)|≤⃒⃒⃒ Rm,s(θt) − EZ∼Qθtm,s
+
+gm,s(Z)⃒⃒⃒ 
+
++⃒⃒⃒ EZ∼Qθtm,s
+
+gm,s(Z) − EZ∼Qθmm,s gm,s(Z)⃒⃒⃒ 
+
++⃒⃒⃒ EZ∼Qθmm,s gm,s(Z) − Rm,s(θm)⃒⃒⃒ .
+
+(68) Assumption 1 bounds the first and third terms by ϵm,s.Therefore, 
+
+|Rm,s(θt) − Rm,s(θm)| ≤ ϵm,s
+
++⃒⃒⃒ EZ∼Qθtm,s
+
+gm,s(Z)
+
+−EZ∼Qθmm,s gm,s(Z)⃒⃒⃒ 
+
++ ϵm,s,
+
+(69) which proves Eq. (66). 
+
+Lemma 2 (Lipschitz test functions are controlled by Wasserstein drift) . Let g : RD → R satisfy 
+
+|g(z) − g(z′)| ≤ Ld m,s(z, z′) for all z, z′. Then, for any probability measures P, Q with finite first moments, 
+
+|EZ∼P g(Z) − EZ∼Q g(Z)| ≤ LW1, m,s(P, Q). (70) 
+
+Proof. Let γ ∈ Π(P, Q) be any coupling. If (U, V) ∼
+
+γ, then U ∼ P and V ∼ Q. Hence 
+
+|EZ∼P g(Z) − EZ∼Q g(Z)|
+
+=⃒⃒⃒ E(U,V)∼γ [g(U) − g(V)] ⃒⃒⃒ 
+
+≤ E(U,V)∼γ [|g(U) − g(V)|]
+
+≤ LE(U,V)∼γ [dm,s(U, V)] .
+
+(71) Taking the infimum over all couplings γ ∈ Π(P, Q)
+
+gives 
+
+|EZ∼P g(Z) − EZ∼Q g(Z)| ≤ L inf  
+
+> γ∈Π(P,Q)
+
+E(U,V)∼γ [dm,s(U, V)] = LW1, m,s(P, Q).
+
+(72) 
+
+Lemma 3 (W1–W2 comparison and Gaussian inser-tion) . For any descriptor laws Qθt 
+
+> m,s
+
+and Qθm
+
+> m,s
+
+,
+
+W1, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ ≤ W2, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ 
+
+≤ Γθt 
+
+> m,s
+
++ ∆m,t,s + Γθm
+
+> m,s
+
+.
+
+(73) 
+
+Proof. We first prove W1 ≤ W2. For any coupling 
+
+γ ∈ Π(P, Q), Jensen’s inequality gives 
+
+Eγ [dm,s(U, V)] ≤(︀ Eγ[︀ dm,s(U, V)2]︀)︀ 1/2 . (74) Taking the infimum on the left over all couplings and then using that the same inequality holds for every coupling gives 
+
+W1, m,s(P, Q) = inf  
+
+> γ∈Π(P,Q)
+
+Eγ [dm,s(U, V)] 
+
+≤ inf 
+
+> γ∈Π(P,Q)
+
+(︀ Eγ[︀ dm,s(U, V)2]︀)︀ 1/2 
+
+= W2, m,s(P, Q).
+
+(75) We now prove the Gaussian insertion inequality. For brevity, set 
+
+P0 := Qθt
+
+> m,s
+
+, P1 := Gθt
+
+> m,s
+
+,
+
+P2 := Gθm
+
+> m,s
+
+, P3 := Qθm
+
+> m,s
+
+. (76) Let γ01 , γ12 , and γ23 be η-optimal couplings for the three adjacent pairs. By the gluing lemma, there exists a joint distribution over (Z0, Z1, Z2, Z3) whose adjacent marginals are these couplings. Using the triangle inequality for dm,s and then Minkowski’s in-equality, we obtain (︀ 
+
+E[︀ dm,s(Z0, Z3)2]︀)︀ 1/2 
+
+≤(︁ E[︁ (dm,s(Z0, Z1) + dm,s(Z1, Z2) + dm,s(Z2, Z3)) 2]︁)︁ 1/2 
+
+≤(︀ E[︀ dm,s(Z0, Z1)2]︀)︀ 1/2 +(︀ E[︀ dm,s(Z1, Z2)2]︀)︀ 1/2 
+
++(︀ E[︀ dm,s(Z2, Z3)2]︀)︀ 1/2 .
+
+(77) Since the joint law couples P0 and P3, the definition of W2 gives 
+
+W2, m,s(P0, P3) ≤(︀ E[︀ dm,s(Z0, Z3)2]︀)︀ 1/2 
+
+≤ W2, m,s(P0, P1) + W2, m,s(P1, P2)+ W2, m,s(P2, P3) + 3η.
+
+(78) Letting η ↓ 0 and substituting the definitions of Γθt
+
+> m,s
+
+,
+
+∆m,t,s, and Γθm 
+
+> m,s
+
+proves 
+
+W2, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ ≤ Γθt 
+
+> m,s
+
++ ∆m,t,s + Γθm
+
+> m,s
+
+. (79) Combining Eq. (75) and Eq. (79) proves the claim. 
+
+21 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+Lemma 4 (Exact Gaussian formula in the ASR whitened metric) . Let G0 = N (μ0, Σ0) and G1 =
+
+N (μ1, Σ1) with Σ0 ≻ 0 and Σ1 ≻ 0. Under the metric 
+
+d0(z, z′) = ∥Σ−1/2 0 (z − z′)∥2,
+
+W22,0 (G1, G0) = ⃦⃦⃦ Σ−1/2 0 (μ1 − μ0)⃦⃦⃦ 22
+
++ Tr (C1) + D − 2Tr (C1/2 1 ),
+
+(80) 
+
+where C1 = Σ−1/2 0 Σ1Σ−1/2 0 . Equivalently, 
+
+W22,0 (G1, G0) = ⃦⃦⃦ Σ−1/2 0 (μ1 − μ0)⃦⃦⃦ 22 +⃦⃦⃦ C1/2 1 − ID⃦⃦⃦  
+
+> 2
+> F
+
+.
+
+(81) 
+
+Proof. Apply the affine whitening map T(z) =
+
+Σ−1/2 0 (z − μ0). Under this map, G0 becomes ̃︀ G0 =
+
+N (0, ID ) and G1 becomes ̃︀ G1 = N (δ, C1), where 
+
+δ := Σ−1/2 0 (μ1 − μ0), C1 := Σ−1/2 0 Σ1Σ−1/2 0 .
+
+(82) Therefore, 
+
+W22,0 (G1, G0) = W22 (N (δ, C1), N (0, ID )) , (83) where the right-hand side uses the Euclidean metric. Let X ∼ N (0, ID ) and Y ∼ N (δ, C1) be any cou-pling. Write ¯Y = Y − δ. Then EX = 0, E ¯Y = 0,
+
+Cov (X) = ID, and Cov ( ¯Y) = C1. Expanding the squared cost, we obtain 
+
+E[︀ ∥X − Y∥22]︀ = E[︀ ∥X − ¯Y − δ∥22]︀ 
+
+= ∥δ∥22 + E[︀ ∥X − ¯Y∥22]︀ 
+
+= ∥δ∥22 + Tr (ID ) + Tr (C1) − 2Tr (K),
+
+(84) where K := E[X ¯Y⊤] is the cross-covariance. The joint covariance matrix 
+
+M :=(︃ ID KK⊤ C1)︃ 
+
+(85) must be positive semidefinite. Since the upper-left block is ID, the Schur complement implies 
+
+C1 − K⊤K ⪰ 0. (86) Consequently, 
+
+Tr (K) ≤ ∥ K∥∗
+
+= Tr (︁ (K⊤K)1/2 )︁ 
+
+≤ Tr (C1/2 1 ).
+
+(87) The first inequality uses Tr (K) ≤∑︀ i σi(K), the sec-ond is the definition of the nuclear norm, and the last follows from K⊤K ⪯ C1 and the monotonicity of the matrix square root. Substituting Eq. (87) into Eq. (84) gives the lower bound 
+
+E[︀ ∥X − Y∥22]︀ ≥ ∥ δ∥22 + D + Tr (C1) − 2Tr (C1/2 1 ).
+
+(88) It remains to show that the lower bound is attain-able. Let X ∼ N (0, ID ) and define 
+
+Y := δ + C1/2 1 X. (89) Then Y ∼ N (δ, C1) and the cross-covariance is K =
+
+C1/2 1 . Therefore, 
+
+E[︀ ∥X − Y∥22]︀ = ∥δ∥22 + D + Tr (C1) − 2Tr (C1/2 1 ).
+
+(90) Combining the lower and upper bounds proves Eq. (80). Finally, ⃦⃦⃦ 
+
+C1/2 1 − ID⃦⃦⃦  
+
+> 2
+> F
+
+= Tr (C1) + Tr (ID ) − 2Tr (C1/2 1 )= Tr (C1) + D − 2Tr (C1/2 1 ),
+
+(91) which proves Eq. (81). 
+
+Lemma 5 (Perturbation caused by empirical spectral memory) . Let G = N (μ, Σ) be the ideal old spectral prototype and ̂︀ G = N (̂︀ μ,̂︀ Σ) be the stored empirical prototype, where Σ ≻ 0 and ̂︀ Σ ≻ 0. Define 
+
+a :=⃦⃦⃦ Σ−1/2 (̂︀ μ − μ)⃦⃦⃦ 2 ,
+
+B := Σ−1/2 ̂︀ ΣΣ −1/2 ,
+
+b := ∥B − ID ∥F, ρ := ∥B − ID ∥op .
+
+(92) 
+
+If ρ < 1, then for any Gaussian Gt = N (μt, Σt),
+
+W2, Σ(Gt, G) ≤√︀ 1 + ρ W2, ̂︀ Σ(Gt,̂︀ G)+(︃ a2 + b2
+
+(1 +√︀ 1 − ρ)2)︃ 
+
+> 1/2
+
+.
+
+(93) 
+
+Here W2, Σ and W2, ̂︀ Σ denote 2-Wasserstein distances under the Mahalanobis metrics induced by Σ and ̂︀ Σ,respectively. 
+
+> 22 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Proof. The triangle inequality for W2 gives 
+
+W2, Σ(Gt, G) ≤ W2, Σ(Gt,̂︀ G) + W2, Σ(̂︀ G, G). (94) We first compare the two ground metrics. Since ρ =
+
+∥B − ID ∥op < 1, all eigenvalues of B lie in [1 − ρ, 1 +
+
+ρ]. Hence B ⪯ (1 + ρ)ID, which implies B−1 ⪰ (1 +
+
+ρ)−1 ID. For any vector v ∈ RD,
+
+∥Σ−1/2 v∥22 = v⊤Σ−1v
+
+≤ (1 + ρ)v⊤̂︀ Σ−1v
+
+= ( 1 + ρ)∥̂︀ Σ−1/2 v∥22.
+
+(95) Therefore, 
+
+dΣ(u, v) ≤√︀ 1 + ρ d̂︀ Σ(u, v) ∀u, v ∈ RD. (96) Applying Eq. (96) inside the definition of W2 yields 
+
+W2, Σ(Gt,̂︀ G) = inf 
+
+> γ
+
+(︀ Eγ[︀ dΣ(U, V)2]︀)︀ 1/2 
+
+≤√︀ 1 + ρ inf 
+
+> γ
+
+(︀ Eγ[︀ d̂︀ Σ(U, V)2]︀)︀ 1/2 
+
+=√︀ 1 + ρ W2, ̂︀ Σ(Gt,̂︀ G).
+
+(97) It remains to bound W2, Σ(̂︀ G, G). By Lemma 4, 
+
+W22, Σ(̂︀ G, G) = ⃦⃦⃦ Σ−1/2 (̂︀ μ − μ)⃦⃦⃦ 22 +⃦⃦⃦ B1/2 − ID⃦⃦⃦ 
+
+> 2
+> F
+
+= a2 +⃦⃦⃦ B1/2 − ID⃦⃦⃦  
+
+> 2
+> F
+
+.
+
+(98) Let λ1, . . . , λD be the eigenvalues of B. Since λi ∈
+
+[1 − ρ, 1 + ρ], for each i we have 
+
+|√︀ λi − 1| = |λi − 1|√λi + 1
+
+≤ |λi − 1|
+
+1 +√︀ 1 − ρ .
+
+(99) Squaring and summing over i gives ⃦⃦⃦ 
+
+B1/2 − ID⃦⃦⃦  
+
+> 2
+> F
+
+=
+
+> D
+
+∑︁ 
+
+> i=1
+
+(√︀ λi − 1)2
+
+≤∑︀ 
+
+> Di=1
+
+(λi − 1)2
+
+(1 +√︀ 1 − ρ)2
+
+= ∥B − ID ∥2
+
+> F
+
+(1 +√︀ 1 − ρ)2
+
+= b2
+
+(1 +√︀ 1 − ρ)2 .
+
+(100) Combining Eq. (94) , Eq. (97) , Eq. (98) , and Eq. (100) proves Eq. (93). 
+
+B.2 Proof of Theorem 1 
+
+We start from the definition of forgetting and remove the positive part using [a]+ ≤ | a|:
+
+Fm→t = [ Rm(θt) − Rm(θm)] +
+
+≤ | Rm(θt) − Rm(θm)| . (101) Using the risk decomposition in Eq. (60), we get 
+
+|Rm(θt) − Rm(θm)| =⃒⃒⃒⃒⃒∑︁ 
+
+> s∈S
+
+ωm,s (Rm,s(θt) − Rm,s(θm)) ⃒⃒⃒⃒⃒ 
+
+≤∑︁ 
+
+> s∈S
+
+ωm,s |Rm,s(θt) − Rm,s(θm)| .
+
+(102) Applying Lemma 1 to each skill gives 
+
+Fm→t ≤∑︁ 
+
+> s∈S
+
+ωm,s(︃⃒⃒⃒ EZ∼Qθtm,s
+
+gm,s(Z) − EZ∼Qθmm,s gm,s(Z)⃒⃒⃒ 
+
++ 2ϵm,s)︃ .
+
+(103) Since gm,s is Lm,s-Lipschitz under dm,s, Lemma 2 yields 
+
+Fm→t ≤∑︁ 
+
+> s∈S
+
+ωm,s(︃ Lm,sW1, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ + 2ϵm,s)︃ 
+
+=∑︁ 
+
+> s∈S
+
+ωm,s Lm,sW1, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ + 2∑︁ 
+
+> s∈S
+
+ωm,sϵm,s.
+
+(104) This proves Eq. (36). It remains to prove the Gaussian spectral-drift ver-sion. From Lemma 3, for every skill s,
+
+W1, m,s(︁ Qθt
+
+> m,s
+
+, Qθm
+
+> m,s
+
+)︁ ≤ Γθt 
+
+> m,s
+
++ ∆m,t,s + Γθm
+
+> m,s
+
+. (105) Substituting Eq. (105) into Eq. (104) gives 
+
+Fm→t ≤∑︁ 
+
+> s∈S
+
+ωm,s Lm,s(︁ Γθt 
+
+> m,s
+
++ ∆m,t,s + Γθm
+
+> m,s
+
+)︁ 
+
++ 2∑︁ 
+
+> s∈S
+
+ωm,sϵm,s,
+
+(106) which proves Eq. (37). 
+
+> 23 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Finally, suppose Gθm 
+
+> m,s
+
+= N (μm,s, Σm,s) and Gθt 
+
+> m,s
+
+=
+
+N (μt|m,s, Σt|m,s). Applying Lemma 4 with Σ0 = Σm,s,
+
+μ0 = μm,s, Σ1 = Σt|m,s, and μ1 = μt|m,s yields 
+
+∆2 
+
+> m,t,s
+
+=⃦⃦⃦ Σ−1/2  
+
+> m,s
+
+(μt|m,s − μm,s)⃦⃦⃦ 22
+
++⃦⃦⃦⃦(︁ Σ−1/2  
+
+> m,s
+
+Σt|m,sΣ−1/2 
+
+> m,s
+
+)︁ 
+
+> 1/2
+
+− ID⃦⃦⃦⃦ 
+
+> 2
+> F
+
+.
+
+(107) This proves Eq. (35) and completes the proof of The-orem 1. 
+
+B.3 Empirical Memory Version 
+
+Theorem 1 uses the ideal old prototype (μm,s, Σm,s).In ASR, this prototype is estimated and stored as 
+
+(̂︀ μm,s,̂︀ Σm,s). The following corollary converts the ideal bound into a bound expressed through the stored memory. 
+
+Corollary 1 (Forgetting bound with stored ASR mem-ory) . Assume the conditions of Theorem 1. For every skill s, let ̂︀ Gm,s := N (̂︀ μm,s,̂︀ Σm,s) and define ̂︀ 
+
+∆m,t,s := W2, ̂︀ Σm,s(︁ Gθt
+
+> m,s
+
+,̂︀ Gm,s)︁ ,
+
+am,s :=⃦⃦⃦ Σ−1/2  
+
+> m,s
+
+(̂︀ μm,s − μm,s)⃦⃦⃦ 2 ,
+
+Bm,s := Σ−1/2 
+
+> m,s
+
+̂︀ Σm,sΣ−1/2  
+
+> m,s
+
+,
+
+bm,s := ∥Bm,s − ID ∥F, ρm,s := ∥Bm,s − ID ∥op .
+
+(108) 
+
+If ρm,s < 1 for all s ∈ S , then 
+
+Fm→t ≤∑︁ 
+
+> s∈S
+
+ωm,s Lm,s(︃ Γθt 
+
+> m,s
+
++ Γθm
+
+> m,s
+
++√︀ 1 + ρm,ŝ︀ ∆m,t,s + ξm,s)︃ 
+
++ 2∑︁ 
+
+> s∈S
+
+ωm,sϵm,s,
+
+(109) 
+
+where the empirical-memory error is 
+
+ξm,s :=(︃ a2 
+
+> m,s
+
++ b2
+
+> m,s
+
+(1 +√︀ 1 − ρm,s)2)︃ 
+
+> 1/2
+
+. (110) 
+
+Proof. From Theorem 1, it is enough to upper bound the ideal Gaussian drift ∆m,t,s. Applying Lemma 5 with Gt = Gθt
+
+> m,s
+
+, G = Gθm
+
+> m,s
+
+, and ̂︀ G =̂︀ Gm,s gives 
+
+∆m,t,s = W2, Σm,s(︁ Gθt
+
+> m,s
+
+, Gθm
+
+> m,s
+
+)︁ 
+
+≤√︀ 1 + ρm,s W2, ̂︀ Σm,s(︁ Gθt
+
+> m,s
+
+,̂︀ Gm,s)︁ 
+
++(︃ a2 
+
+> m,s
+
++ b2
+
+> m,s
+
+(1 +√︀ 1 − ρm,s)2)︃ 
+
+> 1/2
+
+=√︀ 1 + ρm,ŝ︀ ∆m,t,s + ξm,s.
+
+(111) Substituting Eq. (111) into Eq. (37) yields Eq. (109) .
+
+B.4 Tightness of the Wasserstein Forgetting Bound 
+
+The first inequality in Theorem 1 is essentially the tightest possible bound under only Lipschitz spec-tral sufficiency. The next proposition formalizes this claim. 
+
+Proposition 1 (Sharpness under Lipschitz spectral sufficiency) . Consider one skill and suppose the spec-tral sufficiency residual is zero. Let P and Q be two descriptor laws supported on a compact subset of RD
+
+under metric dm,s. For every η > 0, there exists an 
+
+L-Lipschitz spectral surrogate g such that the induced risk difference satisfies 
+
+R(θt) − R(θm) ≥ LW1, m,s(P, Q) − η. (112) 
+
+Consequently, no uniform upper bound depending only on the descriptor laws and the Lipschitz constant can improve the leading term LW1, m,s(P, Q) by a fixed pos-itive factor. Proof. By the Kantorovich–Rubinstein duality on compact metric spaces, 
+
+W1, m,s(P, Q) = sup 
+
+> Lip (h)≤1
+
+{EZ∼Ph(Z) − EZ∼Qh(Z)} .
+
+(113) Therefore, for every η > 0, there exists a 1-Lipschitz function hη such that 
+
+EZ∼Phη (Z) − EZ∼Qhη (Z) ≥ W1, m,s(P, Q) − η/L.
+
+(114) Set g = Lh η . Then g is L-Lipschitz and 
+
+EZ∼P g(Z) − EZ∼Q g(Z) = L(︀ EZ∼Phη (Z) − EZ∼Qhη (Z))︀ 
+
+≥ LW1, m,s(P, Q) − η.
+
+(115) 
+
+> 24 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Because the support is compact, hη is bounded. Adding a constant to g does not change the difference of expectations, so one may shift it to be nonnega-tive if a nonnegative loss surrogate is desired. Con-struct a spectrally sufficient old task with Qθt 
+
+> m,s
+
+= P,
+
+Qθm 
+
+> m,s
+
+= Q, and 
+
+R(θ) = EZ∼Qθ g(Z). (116) The residual is zero by construction, and Eq. (115) gives Eq. (112) . Hence the Wasserstein term in The-orem 1 is sharp under the stated assumptions. 
+
+B.5 Interpretation for ASR 
+
+The theorem shows that ASR controls forgetting through three quantities. First, the main term ∆m,t,s
+
+measures the drift of the skill-conditioned attention-spectrum prototype. Its mean component penalizes shifts in the canonical spectral focus of skill s, while its covariance component penalizes changes in the scale and directional variability of that focus. Sec-ond, Γθm 
+
+> m,s
+
+and Γθt 
+
+> m,s
+
+measure the error of the Gaussian prototype approximation. These terms vanish when descriptors are Gaussian in the ASR space and remain small when the stored prototype is a good summary of the skill-conditioned spectral distribution. Third, 
+
+ϵm,s measures the part of old-task behavior not ex-plained by attention spectra. The empirical version shows why compact memory is sufficient. ASR does not need old images or old teacher logits; it only needs (̂︀ μm,s,̂︀ Σm,s) per skill. The price of using this finite memory is the perturbation term ξm,s in Eq. (110) . Thus, the theory predicts that forgetting should be small when the following three conditions hold: skill-wise spectral drift is small, skill-wise spectral prototypes are accurately estimated, and the old task loss is well explained by the pre-served cross-attention spectra. 
+
+C Full Proofs for Phase-Invariant Spectral Stability 
+
+Let 
+
+TH,W := ZH × ZW (117) be the discrete two-dimensional torus. We identify an attention map A ∈ RH×W with a vector in CN , where 
+
+N = HW . The unitary DFT operator F : CN → CN
+
+is defined by Eq. (40) . Since F is unitary, Parseval’s identity gives 
+
+∥F A∥2 = ∥A∥F, ⟨F A, F B⟩ = ⟨A, B⟩. (118) For a nonzero Fourier vector a ∈ CN , define its coor-dinate power distribution by 
+
+q(a)j := |aj|2
+
+∥a∥22
+
+, j ∈ { 1, . . . , N}. (119) Thus the Fourier power spectrum of an attention map is 
+
+p(A) = q(F A). (120) The ASR descriptor considered in this analysis is 
+
+Ψ(A) = Cp (A), (121) where C is a fixed linear coarsening map, such as the map that aggregates frequency bins into radial and angular spectra. Its ℓ1-to-ℓ2 operator norm is 
+
+κC = sup  
+
+> r̸=0
+
+∥Cr ∥2
+
+∥r∥1
+
+. (122) 
+
+C.1 DFT Diagonalization of Cyclic Transla-tions 
+
+Lemma 6 (Cyclic translations are Fourier phase ramps) . For every A ∈ CH×W and every cyclic shift 
+
+δ = ( δx, δy),̂︂ 
+
+Tδ A(u, v) = exp (︂ −2πi(︂ uδx
+
+H + vδy
+
+W)︂)︂̂︀ A(u, v).
+
+(123) 
+
+Consequently, 
+
+p(Tδ A) = p(A), Ψ(Tδ A) = Ψ(A). (124) 
+
+Proof. Starting from the definition of the DFT and the cyclic translation, we have ̂︂ 
+
+Tδ A(u, v) = 1
+
+√HW 
+
+> H−1
+
+∑︁ 
+
+> x=0
+> W−1
+
+∑︁ 
+
+> y=0
+
+A(︀ (x − δx ) mod H, (y − δy) mod )︀ 
+
+· exp (︁ −2πi(︁ ux H + vy W)︁)︁ .
+
+(125) 
+
+> 25 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Let x′ = ( x − δx ) mod H and y′ = ( y − δy) mod W.Since the map (x, y) 7 → (x′, y′) is a bijection on TH,W ,we get ̂︂                                      
+
+> TδA(u,v) = 1
+> √HW
+> H−1∑︁
+> x′=0
+> W−1∑︁
+> y′=0
+> A(x′,y′)
+> ·exp (︂ −2πi(︂ u(x′+δx)
+> H+v(y′+δy)
+> W)︂)︂
+> =exp (︂ −2πi(︂ uδx
+> H+vδy
+> W)︂)︂
+> ·1
+> √HW
+> H−1∑︁
+> x′=0
+> W−1∑︁
+> y′=0
+> A(x′,y′)exp (︂ −2πi(︂ ux ′
+> H+vy ′
+> W)︂)︂
+> =exp (︂ −2πi(︂ uδx
+> H+vδy
+> W)︂)︂̂︀ A(u,v).
+
+(126) Taking squared magnitudes cancels the phase factor: 
+
+|̂︂ Tδ A(u, v)|2 =⃒⃒⃒⃒ exp (︂ −2πi(︂ uδx
+
+H + vδy
+
+W)︂)︂⃒⃒⃒⃒ 
+
+> 2
+
+|̂︀ A(u, v)|2
+
+= |̂︀ A(u, v)|2.
+
+(127) By Parseval’s identity, 
+
+∥T δ A∥F = ∥F T δ A∥2 = ∥F A∥2 = ∥A∥F. (128) Combining Eq. (127) and Eq. (128) gives p(Tδ A) = 
+
+p(A). Since Ψ(A) = Cp (A), we also obtain 
+
+Ψ(Tδ A) = Ψ(A).
+
+C.2 A Sharp Projective Stability Inequality 
+
+The next lemma is the key stability estimate. It shows that the normalized power map is Lipschitz with the optimal constant 2 under relative perturbations. The proof uses the geometry of rank-one projectors. 
+
+Lemma 7 (Coordinate power is controlled by projec-tive distance) . Let a, b ∈ CN be nonzero vectors and define u = a/∥a∥2 and v = b/∥b∥2. Then 
+
+∥q(a) − q(b)∥1 ≤ 2√︁ 1 − |⟨ u, v⟩| 2. (129) 
+
+Proof. Let Pu = uu ∗ and Pv = vv ∗ be the rank-one projectors associated with u and v. For any sign vector σ ∈ [−1, 1 ]N , let Dσ be the diagonal matrix with diagonal entries σ1, . . . , σN . Since ∥Dσ∥op ≤ 1,we have 
+
+∥q(a) − q(b)∥1 = sup 
+
+> σ∈[−1,1 ]N
+> N
+
+∑︁ 
+
+> j=1
+
+σj(︀ |uj|2 − | vj|2)︀ 
+
+= sup 
+
+> σ∈[−1,1 ]N
+
+Tr [Dσ(Pu − Pv)] 
+
+≤ sup 
+
+> ∥M∥op ≤1
+
+|Tr [M(Pu − Pv)] |
+
+= ∥Pu − Pv∥∗.
+
+(130) Here ∥ · ∥ ∗ is the nuclear norm. It remains to compute 
+
+∥Pu − Pv∥∗. Multiplying v by a global phase does not change Pv, so assume without loss of generality that 
+
+⟨u, v⟩ = c ∈ [0, 1 ]. If c = 1, the claim is immediate. Otherwise define 
+
+w := v − cu 
+
+√1 − c2 , v = cu +√︀ 1 − c2 w, (131) where {u, w} is an orthonormal basis for span {u, v}.In this basis, Pu − Pv has matrix representation 
+
+Pu − Pv =(︃ 1 − c2 −c√1 − c2
+
+−c√1 − c2 −(1 − c2))︃ . (132) The trace and determinant of this 2 × 2 matrix are 
+
+Tr (Pu − Pv) = 0, det (Pu − Pv) = −(1 − c2).
+
+(133) Therefore its two nonzero eigenvalues are √1 − c2
+
+and −√1 − c2, and hence 
+
+∥Pu − Pv∥∗ = 2√︀ 1 − c2 = 2√︁ 1 − |⟨ u, v⟩| 2. (134) Substituting Eq. (134) into Eq. (130) proves the lemma. 
+
+Lemma 8 (Sharp perturbation stability of normalized power) . Let a, e ∈ CN with a̸ = 0, and let b = a + e.If 
+
+ρ := ∥e∥2
+
+∥a∥2
+
+≤ 1, (135) 
+
+then 
+
+∥q(b) − q(a)∥1 ≤ 2ρ. (136) 
+
+The constant 2 is sharp. 
+
+> 26 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Proof. Let u = a/∥a∥2 and v = b/∥b∥2. Since b lies in the one dimensional subspace spanned by v, the distance from u to that subspace is no larger than the distance from u to b/∥a∥2:
+
+inf  
+
+> α∈C
+
+∥u − αv∥2 ≤⃦⃦⃦⃦ u − b
+
+∥a∥2⃦⃦⃦⃦ 2
+
+=⃦⃦⃦⃦ a
+
+∥a∥2
+
+− a + e
+
+∥a∥2⃦⃦⃦⃦ 2
+
+= ∥e∥2
+
+∥a∥2
+
+= ρ.
+
+(137) On the other hand, the exact distance from a unit vector u to the span of a unit vector v is 
+
+inf  
+
+> α∈C
+
+∥u − αv∥22 = inf 
+
+> α∈C
+
+(︀ ∥u∥22 − 2Re [α⟨v, u⟩] + |α|2∥v∥22)︀ 
+
+= 1 − |⟨ u, v⟩| 2.
+
+(138) Combining Eq. (137) and Eq. (138) yields √︁ 
+
+1 − |⟨ u, v⟩| 2 ≤ ρ. (139) Applying Lemma 7 gives 
+
+∥q(b) − q(a)∥1 ≤ 2√︁ 1 − |⟨ u, v⟩| 2
+
+≤ 2ρ.
+
+(140) It remains to prove sharpness. It suffices to con-struct a two-dimensional example. Fix any ρ ∈ [0, 1 ]
+
+and set φ = arcsin (ρ) and α0 = π/4 − φ/2 . Define 
+
+u :=(︃ cos α0
+
+sin α0)︃ 
+
+, v :=(︃ cos (α0 + φ)
+
+sin (α0 + φ))︃ . (141) Let a = u, b = cos φ v, and e = b − a. Then 
+
+∥e∥22 = ∥ cos φ v − u∥22
+
+= cos 2 φ + 1 − 2 cos φ ⟨u, v⟩
+
+= cos 2 φ + 1 − 2 cos 2 φ
+
+= sin 2 φ = ρ2.
+
+(142) Since normalizing b gives v, the corresponding coor-dinate power distributions satisfy 
+
+∥q(b) − q(a)∥1 = | cos 2(α0 + φ) − cos 2 α0|
+
++ | sin 2(α0 + φ) − sin 2 α0|
+
+= 2| cos 2(α0 + φ) − cos 2 α0|
+
+= 2| sin (2α0 + φ) sin φ|
+
+= 2ρ.
+
+(143) Thus the factor 2 in Eq. (136) cannot be improved. 
+
+C.3 Coarsening, Transport, and Risk Stability 
+
+Lemma 9 (ASR coarsening stability) . For any two nonzero attention maps A and B,
+
+∥Ψ(A) − Ψ(B)∥2 ≤ κC ∥p(A) − p(B)∥1. (144) 
+
+Proof. By the definition of Ψ and κC,
+
+∥Ψ(A) − Ψ(B)∥2 = ∥Cp (A) − Cp (B)∥2
+
+= ∥C(p(A) − p(B)) ∥2
+
+≤ κC ∥p(A) − p(B)∥1.
+
+(145) 
+
+Lemma 10 (Pointwise perturbed-translation stabil-ity) . Let A̸ = 0 and 
+
+B = Tδ A + E, ρ = ∥E∥F
+
+∥A∥F
+
+≤ 1. (146) 
+
+Then 
+
+∥p(B) − p(A)∥1 ≤ 2ρ, ∥Ψ(B) − Ψ(A)∥2 ≤ 2κC ρ.
+
+(147) 
+
+Proof. Let 
+
+a := F (Tδ A), e := F E, b := F B. (148) By linearity of the DFT and the model B = Tδ A + E,
+
+b = a + e. (149) Parseval’s identity and Lemma 6 give 
+
+∥a∥2 = ∥T δ A∥F = ∥A∥F, ∥e∥2 = ∥E∥F. (150) Therefore ∥e∥2
+
+∥a∥2
+
+= ∥E∥F
+
+∥A∥F
+
+= ρ. (151) Applying Lemma 8 yields 
+
+∥q(b) − q(a)∥1 ≤ 2ρ. (152) Since q(b) = p(B) and q(a) = p(Tδ A), while 
+
+p(Tδ A) = p(A) by Lemma 6, we obtain 
+
+∥p(B) − p(A)∥1 = ∥q(b) − q(F A)∥1
+
+= ∥q(b) − q(a)∥1
+
+≤ 2ρ.
+
+(153) 
+
+> 27 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+The descriptor bound follows from Lemma 9: 
+
+∥Ψ(B) − Ψ(A)∥2 ≤ κC ∥p(B) − p(A)∥1
+
+≤ 2κC ρ. (154) 
+
+Lemma 11 (Distributional transport stability) . Fix a skill s. Suppose there exists a coupling of source and target attention maps such that 
+
+Atar = T∆ Asrc + E, ρ = ∥E∥F
+
+∥Asrc ∥F
+
+≤ 1 a.s. 
+
+(155) 
+
+Then 
+
+W1(︀ Law (Ψ(Atar ) | s), Law (Ψ(Asrc ) | s))︀ 
+
+≤ 2κCE [ρ | s] , (156) 
+
+where W1 uses the Euclidean distance on the descriptor space. Proof. Let 
+
+Zsrc := Ψ(Asrc ), Ztar := Ψ(Atar ). (157) The joint law of (Zsrc , Ztar ) induced by the assumed coupling is a valid transport plan between the two descriptor laws. Hence 
+
+W1(︀ Law (Ztar | s), Law (Zsrc | s))︀ 
+
+≤ E[︀ ∥Ztar − Zsrc ∥2 | s]︀ 
+
+= E[︀ ∥Ψ(Atar ) − Ψ(Asrc )∥2 | s]︀ 
+
+≤ E [2κC ρ | s]= 2κCE [ρ | s] .
+
+(158) The third line uses Lemma 10. 
+
+Lemma 12 (Spectral risk stability) . Under Assump-tion 2 and the coupling condition in Eq. (155) ,⃒⃒ 
+
+E[︀ hs(Ψ(Atar )) | s]︀ − E [hs(Ψ(Asrc )) | s]⃒⃒ 
+
+≤ 2LsκCE [ρ | s] . (159) 
+
+Proof. Using the same source–target coupling as in Lemma 11, we obtain ⃒⃒ 
+
+E[︀ hs(Ψ(Atar )) | s]︀ − E [hs(Ψ(Asrc )) | s]⃒⃒ 
+
+=⃒⃒ E[︀ hs(Ψ(Atar )) − hs(Ψ(Asrc )) | s]︀⃒⃒ 
+
+≤ E[︀⃒⃒ hs(Ψ(Atar )) − hs(Ψ(Asrc )) ⃒⃒ | s]︀ 
+
+≤ LsE[︀ ∥Ψ(Atar ) − Ψ(Asrc )∥2 | s]︀ 
+
+≤ 2LsκCE [ρ | s] .
+
+(160) The second inequality uses Assumption 2, and the last inequality uses Lemma 10. 
+
+C.4 Proof of Theorem 2 
+
+Proof. The exact invariance statement follows di-rectly from Lemma 6: 
+
+p(Tδ A) = p(A), Ψ(Tδ A) = Ψ(A). (161) For the perturbed shift model Atar = T∆ Asrc + E,applying Lemma 10 with A = Asrc , B = Atar , and 
+
+δ = ∆ gives ⃦⃦ 
+
+p(Atar ) − p(Asrc )⃦⃦ 1 ≤ 2ρ,⃦⃦ 
+
+Ψ(Atar ) − Ψ(Asrc )⃦⃦ 2 ≤ 2κC ρ. (162) The sharpness of the constant 2 follows from Lemma 8. The distributional bound follows from Lemma 11: 
+
+W1(︀ Law (Ψ(Atar ) | s), Law (Ψ(Asrc ) | s))︀ 
+
+≤ 2κCE [ρ | s] . (163) The risk bound follows from Lemma 12: ⃒⃒ 
+
+E[︀ hs(Ψ(Atar )) | s]︀ − E [hs(Ψ(Asrc )) | s]⃒⃒ 
+
+≤ 2LsκCE [ρ | s] . (164) If E = 0, then ρ = 0 almost surely. Substituting 
+
+ρ = 0 into Eq. (162) , Eq. (163) , and Eq. (164) gives zero spectral drift and zero spectral risk gap: ⃦⃦ 
+
+Ψ(Atar ) − Ψ(Asrc )⃦⃦ 2 = 0, 
+
+W1(︀ Law (Ψ(Atar ) | s), Law (Ψ(Asrc ) | s))︀ = 0. 
+
+(165) This completes the proof. 
+
+C.5 Boundary-Corrupted Translations 
+
+The theorem above is exact for cyclic translations. Ordinary image translations with zero padding or cropping are not exactly cyclic, but they can be writ-ten as a cyclic translation plus a boundary residual. This gives a useful robustness interpretation. Let T 0 
+
+> δ
+
+denote the zero-padded shift: 
+
+(T 0 
+
+> δ
+
+A)( x, y) := A(x − δx, y − δy)1{︃ 0 ≤ x − δx < H,0 ≤ y − δy < W}︃ .
+
+(166) Define the boundary residual by 
+
+E∂,δ(A) := T 0 
+
+> δ
+
+A − T δ A. (167) 
+
+> 28 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Corollary 2 (Stability under zero-padded transla-tions) . For every nonzero A and every shift δ, if 
+
+ρ∂,δ(A) := ∥E∂,δ(A)∥F
+
+∥A∥F
+
+≤ 1, (168) 
+
+then 
+
+∥p(T 0 
+
+> δ
+
+A) − p(A)∥1 ≤ 2ρ∂,δ(A),
+
+∥Ψ(T 0 
+
+> δ
+
+A) − Ψ(A)∥2 ≤ 2κC ρ∂,δ(A). (169) 
+
+Proof. By definition, 
+
+T 0 
+
+> δ
+
+A = Tδ A + E∂,δ(A). (170) Applying Lemma 10 with E = E∂,δ(A) and ρ =
+
+ρ∂,δ(A) gives Eq. (169). 
+
+C.6 Why Raw Attention Matching Is Translation-Unstable 
+
+The preceding results explain why ASR matches the power spectrum rather than the raw attention map. Raw attention matching is not phase invariant and may assign a large penalty to a harmless spatial shift. 
+
+Proposition 2 (Raw attention matching can be max-imally unstable) . There exist normalized nonnegative attention maps A and cyclic translations Tδ such that 
+
+∥p(Tδ A) − p(A)∥1 = 0, ∥T δ A − A∥F = √2∥A∥F.
+
+(171) 
+
+Thus, a raw attention ℓ2 penalty can be maximal among nonnegative unit-norm attention maps, while the ASR spectral penalty is exactly zero. Proof. Let A be a point mass at location (0, 0 ):
+
+A(x, y) = 1{x = 0, y = 0}. (172) Choose any nonzero shift δ such that Tδ A is sup-ported at a different location. Then A and Tδ A have disjoint supports, and 
+
+∥T δ A − A∥2 
+
+> F
+
+= ∥T δ A∥2 
+
+> F
+
++ ∥A∥2 
+
+> F
+
+− 2⟨T δ A, A⟩
+
+= 1 + 1 − 0 = 2. 
+
+(173) Since ∥A∥F = 1, this gives ∥T δ A − A∥F = √2∥A∥F.On the other hand, Lemma 6 gives 
+
+p(Tδ A) = p(A), ∥p(Tδ A) − p(A)∥1 = 0. 
+
+(174) Finally, for any two nonnegative unit-norm attention maps A1 and A2, their inner product is nonnegative, so 
+
+∥A1 − A2∥2 
+
+> F
+
+= ∥A1∥2 
+
+> F
+
++ ∥A2∥2 
+
+> F
+
+− 2⟨A1, A2⟩≤ 2. (175) Hence the raw attention distance in Eq. (173) is max-imal in this class. 
+
+C.7 Peak Stability under a Spectral Gap 
+
+ASR may additionally record the dominant spectral peak. The peak index is not globally Lipschitz be-cause the maximizer can switch under arbitrarily small perturbations if the top two frequencies are tied. However, it is stable under a standard margin condition. For a nonzero attention map A, define the unnor-malized power spectrum 
+
+P(A)u,v := |̂︀ A(u, v)|2. (176) Let k⋆(A) denote the dominant frequency index and define the peak gap 
+
+γpk (A) := P(A)k⋆ (A) − max    
+
+> k̸=k⋆(A)
+
+P(A)k. (177) 
+
+Lemma 13 (Dominant peak stability) . Let B =
+
+Tδ A + E and let η = ∥E∥F /∥A∥F. If 
+
+2η + η2 < γpk (A)
+
+2∥A∥2
+
+> F
+
+, (178) 
+
+then 
+
+k⋆(B) = k⋆(A). (179) 
+
+Proof. Let a = F (Tδ A), e = F E, and b = a + e =
+
+F B. For each frequency index k, we have ⃒⃒ 
+
+|bk|2 − | ak|2⃒⃒ =⃒⃒ |ak + ek|2 − | ak|2⃒⃒ 
+
+=⃒⃒ 2Re (akek) + |ek|2⃒⃒ 
+
+≤ 2|ak|| ek| + |ek|2
+
+≤ 2∥a∥2∥e∥2 + ∥e∥22.
+
+(180) By Parseval and translation invariance of the Frobe-nius norm, 
+
+∥a∥2 = ∥A∥F, ∥e∥2 = ∥E∥F = η∥A∥F. (181) 
+
+> 29 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Therefore, 
+
+∥P(B) − P(Tδ A)∥∞ ≤ (2η + η2)∥A∥2
+
+> F
+
+. (182) Since P(Tδ A) = P(A) by Lemma 6, we have 
+
+∥P(B) − P(A)∥∞ ≤ (2η + η2)∥A∥2
+
+> F
+
+. (183) Let k⋆ = k⋆(A). For any k̸ = k⋆, the peak gap defini-tion gives 
+
+P(A)k⋆ − P(A)k ≥ γpk (A). (184) Using Eq. (183), we get 
+
+P(B)k⋆ − P(B)k = ( P(A)k⋆ − P(A)k)+ ( P(B)k⋆ − P(A)k⋆ )
+
+− (P(B)k − P(A)k)
+
+≥ γpk (A) − 2∥P(B) − P(A)∥∞
+
+≥ γpk (A) − 2(2η + η2)∥A∥2
+
+> F
+
+> 0. 
+
+(185) Thus P(B)k⋆ > P(B)k for every k̸ = k⋆, so the domi-nant peak remains k⋆.
+
+C.8 Interpretation for ASR 
+
+Theorem 2 gives a formal robustness explanation for ASR. A spatial translation of an attention map becomes a phase ramp in the Fourier domain, and ASR removes this phase by using the power spec-trum. Therefore, ASR does not penalize changes in the absolute image location of an attended object when the underlying attention structure is preserved. The stability bound further shows that, under real-istic shifts with boundary effects or attention noise, the spectral drift scales only with the relative non-translational residual ρ, not with the translation mag-nitude ∥∆∥. This is precisely the desired behavior for continual multimodal learning: the model should preserve skill-specific scale and directional focus pat-terns while remaining insensitive to harmless spatial phase changes. 
+
+D Additional Experimental Details 
+
+D.1 Datasets and Task Streams 
+
+D.1.1 VQA v2: Question-Type Incremental Stream 
+
+Base dataset. VQA v2 contains approximately 204 Kimages (from MS-COCO) and 1.1 M questions with open-ended answers. We use the official training and validation splits for continual training and evaluation, respectively. Following standard practice in continual VQA [ 14 –16 ], we treat the validation split as the held-out test set and do not use the official test-dev or test-std splits. 
+
+Task construction. We adopt the 10-task “question-type incremental” protocol used by VQACL, QUAD, and CL-MoE. Each question in VQA v2 is annotated with a primary question type (e.g., counting ,
+
+color , location , comparison , attribute ,
+
+activity , existence , reading , object ,
+
+other ). We group questions whose primary type matches one of the 10 categories, and fix a determin-istic ordering of these categories to define the task stream 
+
+D(1), D(2), . . . , D(10 ). (186) Each D(t) contains all image–question–answer triples whose question type is assigned to stage t. Images may appear in multiple tasks if their questions belong to different types; this matches prior continual VQA settings [14, 15]. 
+
+Train/validation splits per task. Within each D(t),we use all training questions for stage-t optimization and all validation questions for evaluation. We do not re-split the official partitions, all hyper-parameter selection is done once on a held-out subset of the VQA v2 validation split (5k images), and the resulting configuration is reused for all experiments. 
+
+D.1.2 VQAv2 + NExT-QA: VQACL Skill–Concept Setting 
+
+Base datasets. The VQACL skill–concept bench-mark [ 14 ] builds on VQA v2 and NExT-QA. NExT-QA consists of ∼4.3K videos and ∼9.2K multi-choice questions targeting causal, temporal, and descriptive reasoning. 
+
+Skill and concept taxonomy. We follow the skill taxonomy S and concept grouping re-leased by VQACL. Skills include, for example, 
+
+count , color , location , compare-number ,
+
+compare-attribute , existence , relation ,and read . Concepts are defined as disjoint groups of COCO object categories (e.g., {person, dog, horse}, {car, bus, truck}, {bottle, cup, bowl}), plus additional video-specific concepts for NExT-QA. 
+
+> 30 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+Skill–concept tasks. Each task in the stream corre-sponds to a subset of skill–concept pairs (s, c), where 
+
+s ∈ S is a reasoning skill and c is a concept group. In the standard split, both training and test sets contain the same skill–concept combinations, while in the 
+
+novel-composition split, certain combinations are held out during training and only appear at test time. We exactly reuse the task ordering and split specification from VQACL/QUAD: (i) for VQA v2 questions, we follow their skill and concept annotations; (ii) for NExT-QA, we map questions to skills and concept groups using their released mappings. The outer level of the stream is skill-based, and within each skill, concept groups appear in a fixed order. 
+
+Evaluation splits. For each skill–concept pair (s, c),we use its training subset during the corresponding stage(s) and its validation subset for evaluation. We report AP and AF separately on the standard (“std”) and novel-composition (“nov”) test splits, as in Ta-ble 1. 
+
+D.1.3 CoIN: Continual Instruction Tuning 
+
+Base benchmark. CoIN [ 5 ] is a continual mul-timodal instruction tuning benchmark containing 
+
+T=10 datasets spanning diverse tasks (e.g., VQA, cap-tioning, OCR, referring expression comprehension, classification, and science QA). We follow Guo et al. [20] , Chen et al. [21] and treat each dataset as one stage in the instruction-tuning stream. 
+
+Stream construction. We use the canonical CoIN or-dering released by prior CIT work (MoE-LoRA, HiDe-LLaVA, SEFE, BranchLoRA, D-MoLE, Adapt-∞). At stage t ∈ { 1, . . . , 10 }, the model sees only the train-ing data from the t-th dataset D(t) and is not allowed to access raw data from previous datasets (replay baselines are given a bounded memory buffer. See App. D.3). 
+
+Train/validation splits. For each dataset in CoIN, we use its official training and validation splits. Unless otherwise specified by the dataset, we treat the vali-dation split as our held-out evaluation set. Dataset-specific metrics (e.g., VQA accuracy, CIDEr, BLEU, exact match) are converted to a unified scalar score 
+
+ma,b following Chen et al. [21]. 
+
+D.1.4 UCIT: Unseen Continual Instruction Tuning 
+
+Base benchmark. UCIT [ 20 ] is designed to evaluate continual instruction tuning when the post-training tasks are not part of the original pretraining/fine-tuning mixture of the base MLLM. It assembles a stream of multimodal instruction datasets that are distributionally farther from LLaVA-1.5’s pretraining data. 
+
+Stream and splits. We follow the original UCIT pro-tocol and ordering from HiDe-LLaVA [ 20 ]. As in CoIN, each stage corresponds to one dataset, with its own training and validation splits. At stage t, only the t-th dataset is accessible for optimization. We report Last and Avg scores averaged across all UCIT datasets (see App. D.6). 
+
+D.2 Backbone and Preprocessing 
+
+Backbone MLLM. Unless otherwise specified, the main experiments use LLaVA-1.5-7B as the base MLLM. The backbone robustness experiments use Qwen2.5-VL-7B [ 53 ] and InternVL3-8B [ 54 ]. These additional backbones follow the same continual task order, evaluation protocol, and ASR hyperparameters as the LLaVA-1.5-7B setting. The vision branch is a CLIP-style vision transformer operating on 224 ×224 
+
+or 336 ×336 images (we use the default resolution of the official LLaVA-1.5-7B checkpoint). The language branch is a 7B-parameter autoregressive transformer. We freeze all backbone parameters and only fine-tune lightweight adapters and task heads, as detailed be-low. 
+
+Image preprocessing. We follow the official LLaVA pipeline. Images are resized to a fixed resolution (longer side at most 512 pixels), padded to square if necessary, and normalized with CLIP mean and vari-ance. During training we apply random horizontal flip and random cropping restricted to keep at least 
+
+80% of the shorter side. At test time we only apply deterministic resizing and center cropping. 
+
+Text preprocessing. Questions and instructions are tokenized with the same tokenizer used by LLaVA-1.5-7B. For VQA-style tasks, we prepend a modality tag (e.g., "USER: <image> QUESTION:" ) and ap-pend a standard answer template as in the official LLaVA instruction-tuning data. For instruction-tuning tasks (CoIN/UCIT), we reuse the prompt templates 
+
+> 31 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+released by HiDe-LLaVA and SEFE whenever avail-able. Maximum sequence length is set to 256 tokens; longer instructions are truncated from the left, pre-serving the most recent tokens and the full answer region. 
+
+D.3 Baselines and Implementation Details 
+
+We compare ASR with both classic continual learn-ing baselines and recent state-of-the-art multimodal methods. Unless otherwise noted, we re-implement all baselines on top of the same LLaVA-1.5-7B back-bone and training schedule as ASR. 
+
+EWC [ 34 ]. Elastic Weight Consolidation penalizes parameter deviation from previous stages using a diagonal Fisher information matrix. We estimate the Fisher on the final model of stage t−1 using one epoch over D(t−1) and store only its diagonal entries. The loss is 
+
+LEWC = λEWC ∑︁ 
+
+> i
+
+F(t−1)
+
+> i
+
+(︀ θi − θ(t−1)
+
+> i
+
+)︀ 2, (187) where λEWC is selected from {10 3, 10 4, 10 5} on a held-out validation subset. 
+
+LwF [ 35 ]. Learning without Forgetting distills logits from the previous-stage model fθ(t−1) to the current model fθ on the current task. For VQA, we distill the predicted answer distribution; for instruction tun-ing, we distill token-level distributions with temper-ature τLwF = 2. The distillation weight is tuned in 
+
+{0.5, 1.0, 2.0 }.
+
+ER [ 36 ]. Experience Replay maintains a bounded buffer of raw examples. At the end of stage t, we sample a fixed number of examples per task and store them in a reservoir buffer of size B. During training at stage t+1, each mini-batch contains a mixture of current-task examples and replayed samples in a 3:1 
+
+ratio. We follow Zhang et al. [14] and set B = 20,000 
+
+for VQA v2 and B = 10,000 for CoIN/UCIT. 
+
+VQACL/QUAD/CL-MoE/BCP-MFA. For the VQA-based benchmarks we use the official implementa-tions of VQACL [ 14 ], QUAD [ 15 ], CL-MoE [ 16 ], and BCP-MFA [ 40 ] when available, and otherwise re-implement them following the descriptions in their papers. All methods are adapted to LLaVA-1.5-7B by replacing their vision-language backbones with ours and keeping their MoE/router architectures and replay buffer sizes. Hyper-parameters (e.g., router capacity, replay ratio) are kept as close as possible to the original settings; when a direct mapping is not possible, we select the best variant on the VQA v2 10-task validation subset. 
+
+CIT baselines. For CoIN and UCIT we compare to LoRA-FT, O-LoRA, MoELoRA, HiDe-LLaVA, SEFE, BranchLoRA, D-MoLE, and Adapt-∞. We follow Guo et al. [20] , Chen et al. [21] , Zhang et al. [22] , Ge et al. [23] , Maharana et al. [24] for their backbone freezing strategies, LoRA rank and placement, and dataset-specific sampling schedules. When multiple variants are reported in prior work, we include the best-performing publicly released configuration. 
+
+D.4 Attention-Spectrum Regularization Im-plementation 
+
+Selected layers and heads. We apply ASR to a subset of cross-attention layers in the vision–language fusion module. In all experiments, we select the last Lsel =4
+
+fusion layers and all cross-attention heads within these layers, i.e., 
+
+Lsel = {last 4 fusion layers }, Hsel = Hcross .
+
+(188) We empirically found that using more layers yields diminishing returns while increasing overhead. 
+
+Spectral encoder parameters. We discretize the radial and angular frequencies into K=8 radial bins and M=8 angular bins, respectively. The per-head descriptor dimension is thus 
+
+D0 = K + 2M + 3 = 8 + 16 + 3 = 27, (189) and the aggregated descriptor dimension is 
+
+D=2D0 = 54 . We normalize spectra with a small constant ε = 10 −8 to avoid division by zero. 
+
+Skill parser gψ. We instantiate the skill parser as a lightweight Transformer-based text classifier with 4 layers, 8 attention heads, hidden size 512, and a softmax output over |S| skills. The parser is trained offline on a mixture of VQA v2 and NExT-QA training questions using skill labels from VQACL and heuris-tic templates (e.g., mapping “How many” to count ,“What color” to color ). We minimize cross-entropy with AdamW (learning rate 1e −4) for 10 epochs and freeze gψ when training ASR. During ASR train-ing, we use the soft posterior π(q) rather than hard 
+
+> 32 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+skill labels. The skill threshold in Sec. 4.3 is set to 
+
+τskill = 0.2 .
+
+Prototype memory. For each skill s ∈ S, we maintain a mean μs ∈ RD, a diagonal covariance 
+
+Σs ∈ RD×D, and a mean angular spectrum ˆds ∈ RM.At the end of stage t, we estimate ̂︀ μ(t) 
+
+> s
+
+,̂︀ Σ(t) 
+
+> s
+
+, and ̂︀ d(t)
+
+> s
+
+using all training examples in D(t) whose skill pos-terior for s exceeds τskill . We then update the global prototypes via exponential moving averages with de-cay α = 0.9 :
+
+μs ← α μs + ( 1 − α)̂︀ μ(t) 
+
+> s
+
+,
+
+Σs ← α Σs + ( 1 − α)̂︀ Σ(t) 
+
+> s
+
+,ˆds ← α ˆds + ( 1 − α)̂︀ d(t) 
+
+> s
+
+.
+
+(190) At stage t=1, we train without spectral regularization (β=0) and initialize the prototypes from the resulting 
+
+θ(1).
+
+Spectral distillation hyper-parameters. Unless oth-erwise specified, we use 
+
+β = 0.5, λang = 0.1, τmah = 1.0, (191) and set the confidence weight wspec (ϕ) as in Sec. 4.4. The geometry regularizer weight is set to γ = 0.05 
+
+for VQA v2 and VQACL, and γ = 0.02 for CoIN/UCIT to account for the larger variety of instruction styles. 
+
+D.5 Training Details 
+
+Optimizer and schedule. For all experiments we use AdamW with β1 = 0.9 , β2 = 0.999 , and weight decay 
+
+0.01 . On the VQA v2 10-task stream, we train each stage for 1 epoch with batch size 16 , maximum learn-ing rate 2e −4, and cosine decay without warmup. On the VQACL skill–concept setting, we train 3 epochs per stage with batch size 80 and maximum learning rate 1e −4. On CoIN and UCIT, we follow Guo et al. [20] : for large datasets (e.g., VQAv2, GQA) we train for 1 epoch per stage; for smaller OCR-heavy datasets (e.g., TextVQA, OCR-VQA) we train for up to 5 epochs, capped at 50,000 update steps per stage. Learning rates and batch sizes are shared across baselines and ASR. 
+
+LoRA configuration. For LLaVA-1.5-7B, we insert rank-r=16 LoRA adapters into all self-attention and cross-attention layers of the language model, as well as into the vision-to-language projection layer. LoRA adapters are applied to the query and value projec-tions only, following standard practice in multimodal instruction tuning. For CIT baselines that already specify LoRA ranks (e.g., Adapt-∞), we keep their original choices. 
+
+Hardware and runtime. All experiments are con-ducted on 8 ×A100 GPUs with 80GB memory. We use mixed-precision (bfloat16) training for all methods. On the VQA v2 10-task split, one full run of ASR takes approximately 8–10 GPU hours. On CoIN and UCIT, training the full 10-stage stream takes approximately 20–24 GPU hours. Baselines with large replay buffers (e.g., Adapt-∞) are slightly more expensive due to additional data loading and sampling overhead. 
+
+D.6 Metric Definitions 
+
+We now provide formal definitions of the continual learning metrics used in Tables 1 and 2. 
+
+Per-stage, per-task scores. Let M denote the num-ber of tasks in a stream (e.g., M=10 for VQA v2 and CoIN). After training on task a ∈ { 1, . . . , M},we evaluate the model on each task b ∈ { 1, . . . , M}
+
+and record a scalar metric ma,b (e.g., VQA accuracy, normalized dataset score). By convention, we set 
+
+ma,b = 0 if task b has not been seen yet (i.e., b > a). 
+
+Final Average Performance (AP). For VQA-based streams with M tasks, the final average performance is 
+
+AP = 1
+
+M
+
+> M
+
+∑︁ 
+
+> t=1
+
+mM,t, (192) which averages the performance on all tasks after training on the last task. 
+
+Average Forgetting (AF). Average forgetting mea-sures the average drop from the best historical perfor-mance on each task to its final performance. Follow-ing Zhang et al. [14], Marouf et al. [15], we define 
+
+AF = 1
+
+M − 1
+
+> M−1
+
+∑︁ 
+
+> t=1
+
+(︀ 
+
+mmax  
+
+> t
+
+− mM,t)︀ ,
+
+mmax  
+
+> t
+
+= max  
+
+> a∈{ t,..., M}
+
+ma,t.
+
+(193) That is, for each task t, we compute the maximum accuracy it ever achieved over the course of training 
+
+> 33 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+and subtract its final accuracy; AF is the average of these drops over all non-final tasks. 
+
+Standard vs. novel composition AP/AF. In the VQACL skill–concept setting, we compute separate AP and AF values on standard (seen skill–concept) and novel-composition splits by restricting the aver-aging in (192) and (193) to tasks corresponding to standard or novel compositions, respectively. This yields (AP std , AF std ) and (AP nov , AF nov ) as reported in Table 1. 
+
+Last and Avg for CIT. For CoIN and UCIT, we fol-low Guo et al. [20], Chen et al. [21] and report: 
+
+• Last : final performance averaged over all tasks, 
+
+Last = 1
+
+M
+
+> M
+
+∑︁ 
+
+> b=1
+
+mM,b. (194) 
+
+• Avg : time-averaged performance across the train-ing trajectory, 
+
+Avg = 1
+
+M
+
+> M
+
+∑︁ 
+
+> a=1
+
+1
+
+a
+
+> a
+
+∑︁ 
+
+> b=1
+
+ma,b. (195) This rewards methods that perform well both early and late in the stream. 
+
+Skill-wise forgetting. In Sec. 5 and Fig. 6, we also use a skill-wise forgetting measure. Let R(t) 
+
+> s
+
+denote the population risk (or the negative of accuracy) on skill s after stage t, and let 
+
+F(t) 
+
+> s
+
+=[︀ R(t) 
+
+> s
+
+− R(t−1)
+
+> s
+
+]︀ + (196) be the incremental forgetting of skill s at stage t.Summing F(t) 
+
+> s
+
+over t yields a cumulative skill-wise forgetting measure, 
+
+Fcum  
+
+> s
+
+=
+
+> M
+
+∑︁ 
+
+> t=2
+
+F(t) 
+
+> s
+
+. (197) In practice, we approximate R(t) 
+
+> s
+
+by the negative of the accuracy on validation questions whose skill pos-terior is dominated by s.
+
+D.7 Ablation Variants of ASR 
+
+Recall that Full ASR optimizes, at stage t, the joint loss 
+
+L(t) = 1
+
+|B (t)|∑︁ (I,q,y)∈B (t)[︁ 
+
+Ltask (I, q, y) + β Lspec (I, q)]︁ 
+
++ γ Lgeo ,
+
+(198) where Ltask is the task-specific supervised loss (VQA accuracy or instruction tuning loss), Lspec is the confidence-weighted spectral distillation loss com-bining Mahalanobis and angular terms (Sec. 4.4), and Lgeo is the geometry regularizer anchoring cross-modal similarities to a frozen reference encoder (Sec. 4.5). Prototypes {(μs, Σs, ˆ ds)}s∈S are main-tained as described in App. D.4. We denote the five ablations by ❶–❺:
+
+❶ w/o Spectrum Distillation. This ablation re-moves the attention-spectrum regularization entirely, while keeping the geometry regularizer: 
+
+β = 0, γ > 0 (as in Full ASR) . (199) Concretely, we set Lspec (I, q) ≡ 0 for all samples; no spectral distillation term is added to the loss, and the confidence weight wspec (·) is unused. We still com-pute spectral descriptors ϕ(A) for analysis, but they no longer influence training. The prototype memory 
+
+M is not updated after stage 1 in this variant, since it is never used in the loss. The resulting training objective degenerates to: 
+
+L(t) 
+
+> w/o spec
+
+= 1
+
+|B (t)|∑︁ (I,q,y)∈B (t)
+
+Ltask (I, q, y) + γ Lgeo ,
+
+(200) which corresponds to a geometry-regularized contin-ual fine-tuning baseline. 
+
+❷ w/o Skill Conditioning. This ablation collapses all skill-specific prototypes into a single global pro-totype, thereby removing the conditioning on skill identities while retaining spectral regularization. We introduce a single global index sglob and replace the skill set S by {sglob } when computing prototypes and spectral losses. In particular: 
+
+• The skill parser gψ is ignored; we treat all samples as belonging to the same “skill” and aggregate their descriptors into a global set F (t) 
+
+> sglob
+
+at stage t.
+
+> 34 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs
+
+• We estimate a single global mean ̂︀ μ(t) 
+
+> sglob
+
+, covariance ̂︀ 
+
+Σ(t) 
+
+> sglob
+
+and angular spectrum ̂︀ d(t) 
+
+> sglob
+
+using all exam-ples in D(t), and update a single global prototype 
+
+(μsglob , Σsglob , ˆ dsglob ) via EMA. 
+
+• During training, the spectral loss is computed with-out skill weights: 
+
+Lglob spec (I, q) = wspec (︀ ϕ(A))︀(︁ D2mah (︀ ϕ(A) ∥ sglob )︀ 
+
++ λang KL sym (︀ d(θ) ∥ ˆdsglob )︀)︁ ,
+
+(201) where D2mah (·∥ sglob ) and ˆdsglob are defined as in Sec. 4.4 but with a single prototype. The rest of the pipeline, including β, γ and wspec (·),is unchanged. This variant tests whether a single global attention prior is sufficient, versus the full skill-conditioned design of ASR. 
+
+❸ w/o Angular Term. This ablation removes the angular component of spectral regularization while keeping the radial / Mahalanobis matching intact. Specifically, we set 
+
+λang = 0, (202) so that the spectral loss becomes 
+
+Lrad spec (I, q) = wspec (︀ ϕ(A))︀∑︁ 
+
+> s∈S
+
+πs(q) D2mah (︀ ϕ(A) ∥ s)︀ ,
+
+(203) with the same confidence weights wspec (·) and skill posterior π(q) as in Full ASR. We still maintain and update ˆds for analysis, but it does not enter the train-ing loss. This variant isolates the contribution of directional information in the frequency domain. 
+
+❹ w/o Confidence Weighting. In Full ASR, the spectral distillation loss is modulated by a confidence weight 
+
+wspec (︀ ϕ(A))︀ = exp (︁ −dmin (ϕ(A)) /τmah )︁ , (204) where dmin (ϕ) is the minimum Mahalanobis distance to any skill prototype (Eq. (19) in the main text). This reduces the regularization strength for spectra that are far from all known prototypes. In the w/o Confidence Weighting ablation, we dis-able this modulation by setting 
+
+wspec (︀ ϕ(A))︀ ≡ 1 ∀ ϕ(A), (205) so that every sample contributes equally to the spec-tral loss, independent of how close its descriptor is to the current prototype memory. The resulting spectral loss is 
+
+Lunif spec (I, q) = ∑︁ 
+
+> s∈S
+
+πs(q) D2mah (︀ ϕ(A) ∥ s)︀ 
+
++ λang ∑︁ 
+
+> s∈S
+
+πs(q) KL sym (︀ d(θ) ∥ ˆds)︀ .
+
+(206) All other components, including prototype up-dates and τmah , remain unchanged. This variant tests whether adaptive down-weighting of out-of-prototype spectra is necessary for stability. 
+
+❺ w/o Geometry Regularizer. Finally, this ablation removes the cross-modal geometry regularizer and keeps only the task loss and spectral regularization: 
+
+γ = 0, β > 0 (as in Full ASR) . (207) The geometry loss Lgeo , which matches image–text similarity distributions between the current model and the frozen reference backbone, is omitted from the objective. The training loss thus reduces to 
+
+L(t) 
+
+> w/o geo
+
+= 1
+
+|B (t)|∑︁ (I,q,y)∈B (t)[︁ 
+
+Ltask (I, q, y)+ β Lspec (I, q)]︁ ,
+
+(208) with the same spectral loss Lspec and prototype up-dates as in Full ASR. This variant probes how much of ASR’s stability comes from the spectral constraints alone, as opposed to a combination of spectral and geometric anchors. 
+
+E Additional Experimental Results 
+
+E.1 Backbone Robustness 
+
+Table 5 reports results for three LLaVA-1.5 variants with different LLM capacities (3B, 7B, 13B). Across all sizes, adding ASR substantially improves both VQA and CIT metrics: on LLaVA-1.5-7B, ASR lifts VQA v2 AP from 44.1 to 52.0 and reduces AF from 18.3 to 
+
+2.4 , while on CoIN it improves Last from 49.3 to 61.4 
+
+and Avg from 47.2 to 60.0 , and on UCIT it raises Last/Avg from 41.5/39.8 to 53.1/51.5 . The abso-lute performance naturally increases with model size 
+
+> 35
+
+Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+Table 5: Same-family backbone sizes. Comparison of Vanilla vs. ASR on LLaVA-1.5-3B/7B/13B for VQA v2 (10-task split) and CoIN/UCIT continual instruction tuning. All models share the same training schedules. Backbone Method VQA v2 CoIN UCIT AP ↑ AF ↓ Last ↑ Avg ↑ Last ↑ Avg ↑
+
+LLaVA-1.5-3B Vanilla 41.0 21.0 46.8 44.7 39.0 37.5 ASR 48.0 5.0 58.3 56.9 50.1 48.8 LLaVA-1.5-7B Vanilla 44.1 18.3 49.3 47.2 41.5 39.8 ASR (ours) 52.0 2.4 61.4 60.0 53.1 51.5 
+
+LLaVA-1.5-13B Vanilla 45.8 16.5 51.2 49.0 43.7 41.9 ASR 53.0 2.1 62.8 61.1 54.4 52.9 
+
+(3B <7B <13B), but the relative gains from ASR re-main consistent. Interestingly, the smaller 3B model, which suffers the most catastrophic forgetting under Vanilla training, benefits the most in relative terms (e.g., VQA v2 AF from 21.0 to 5.0 ), supporting the view that skill-conditioned spectral stabilization is especially valuable when capacity is limited. 
+
+E.2 Stage-wise Dynamics of Plasticity and Stability 
+
+Beyond final AP/AF and Last/Avg, we analyze how performance evolves over the continual stream to understand whether ASR provides uniform stability or merely improves the last few stages. 
+
+VQA v2 10-task stream. For the VQA v2 question-type incremental setting, we consider three repre-sentative methods: Vanilla fine-tuning, CL-MoE, and ASR. At each stage a ∈ { 1, . . . , 10 } we measure: (i) 
+
+Plasticity on the current task : ma,a, i.e., performance on the current task a immediately after training on it. (ii) Stability on seen tasks : ¯ma = 1
+
+> a
+
+∑︀ ab=1 ma,b, i.e., average performance over all tasks seen so far. Fig. 10 plots ma,a and ¯ma across stages. Vanilla exhibits strong plasticity spikes on the current task but a steep decline in ¯ma as more tasks are added, indicating severe interference with previous skills. CL-MoE partly ameliorates this behavior, but still shows noticeable drops after each new task. In contrast, ASR maintains plasticity comparable to or slightly higher than CL-MoE on the current task while yielding a much flatter stability curve: ¯ma decays only mildly and stabilizes after mid-stream, consistent with our goal of preserving skill-conditioned attention spectra rather than over-constraining task learning. 1 2 3 4 5 6 7 8 9 10            
+
+> Stage a
+> 54
+> 55
+> 56
+> 57
+> 58
+> 59
+> 60
+> Current-task Performance  ma, a
+> VQA v2: Plasticity on Current Task
+> Vanilla
+> CL-MoE
+> ASR (ours)
+> 12345678910
+> Stage a
+> 46
+> 48
+> 50
+> 52
+> 54
+> 56
+> Average on Seen Tasks  ma
+> VQA v2: Stability on Seen Tasks
+> Vanilla
+> CL-MoE
+> ASR (ours)
+
+Figure 10: Stage-wise plasticity and stability on VQA v2 (10-task stream). Left: performance on the current task ma,a (plasticity). Right: average performance on all seen tasks ¯ma = 1
+
+> a
+
+∑︀ b≤a ma,b (stability). 
+
+CoIN and UCIT CIT streams. For continual multi-modal instruction tuning, we track analogous stage-wise dynamics on CoIN and UCIT for three methods: LoRA-FT, Adapt-∞, and ASR. At each stage a we de-fine 
+
+• Stage-wise Last La: average performance on all tasks seen up to stage a after training on stage a.
+
+• Running Avg Aa: time-averaged performance up to stage a, Aa = 1
+
+> a
+
+∑︀ ak=1 Lk.Fig. 11 shows La and Aa for CoIN and UCIT. On both benchmarks, LoRA-FT exhibits a clear down-ward trend in La as the stream progresses, reflecting cumulative forgetting. Adapt-∞ raises the overall level of La but still shows visible dips when switching to new tasks. ASR not only shifts the curves upward (higher La and Aa at almost every stage) but also smooths out the drops: performance on seen datasets decreases much less when new datasets arrive, and the running average Aa grows steadily. These dy-namics mirror the static Last/Avg gains in Table 2 and provide a temporal view of how ASR improves the plasticity–stability trade-off over the entire CIT trajectory rather than only at the end. 
+
+E.3 Spectral Drift vs. Embedding Drift vs. For-getting 
+
+Complementing the analysis in Fig. 6, which relates spectral prototype drift to skill-wise forgetting, we now compare spectral drift and embedding drift side by side to test whether attention spectra are indeed more predictive of forgetting than conventional fea-ture drift. 
+
+36 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 48                     
+
+> 50
+> 52
+> 54
+> 56
+> 58
+> 60
+> 62
+> CoIN Last  La
+> CoIN: Stage-wise Last
+> LoRA-FT
+> Adapt-
+> ASR (ours)
+> 50
+> 52
+> 54
+> 56
+> 58
+> 60
+> CoIN Running Avg  Aa
+> CoIN: Running Average
+> LoRA-FT
+> Adapt-
+> ASR (ours)
+> 12345678910
+> Stage a
+> 40
+> 42
+> 44
+> 46
+> 48
+> 50
+> 52
+> 54
+> UCIT Last  La
+> UCIT: Stage-wise Last
+> LoRA-FT
+> Adapt-
+> ASR (ours)
+> 12345678910
+> Stage a
+> 42
+> 44
+> 46
+> 48
+> 50
+> 52
+> UCIT Running Avg  Aa
+> UCIT: Running Average
+> LoRA-FT
+> Adapt-
+> ASR (ours)
+
+Figure 11: Stage-wise dynamics on CoIN and UCIT. 
+
+We focus on four representative skills s ∈{count , read , locate , relation } in the VQA v2 10-task stream. For each stage t > 1 and skill s, we compute three quantities: 
+
+• Spectral drift :
+
+∆spec 
+
+s (t) = ⃦⃦ μ(t)
+
+s − μ(t−1)
+
+s⃦⃦ 2, (209) where μ(t)
+
+s is the skill-s spectral prototype at stage 
+
+t (Sec. 4.3). 
+
+• Embedding drift :
+
+∆emb 
+
+s (t) = ⃦⃦ ¯z(t)
+
+s − ¯z(t−1)
+
+s⃦⃦ 2, (210) where ¯z(t)
+
+s is the mean pooled image–text embed-ding of skill-s examples at stage t, computed from the multimodal representation (before the decod-ing head) of the current model. 
+
+• Skill-wise forgetting :
+
+F(t)
+
+s =[︀ Rs(θ(t)) − Rs(θ(t−1))]︀ +, (211) i.e., the increase in skill-s population risk from stage t − 1 to t (Sec. 5). In practice we approxi-mate Rs(·) via the negative of validation accuracy on questions dominated by skill s.We aggregate all skill–stage pairs (s, t) into a set of points and analyze the correlation between drift and forgetting for ASR. Fig. 12 shows two scatter plots: spectral drift ∆spec 
+
+s (t) vs. forgetting F(t)
+
+s and embed-ding drift ∆emb 
+
+s (t) vs. the same F(t)
+
+s . Each point cor-responds to one skill–stage pair. We also report Pear-son and Spearman correlation coefficients in the leg-end. Spectral drift exhibits a strong, approximately monotone relationship with forgetting (e.g., Pearson 
+
+ρ ≈ 0.8 , Spearman ρ ≈ 0.75 ), whereas embedding drift shows a much weaker and noisier association (e.g., ρ ≈ 0.4 , Spearman ρ ≈ 0.35 ). This suggests that changes in skill-conditioned attention spectra are substantially more predictive of skill-wise forget-ting than changes in pooled embeddings, providing empirical support for our theoretical view that ASR stabilizes continual learning by directly constraining the structure of cross-modal attention. 0.05 0.10 0.15 0.20 0.25             
+
+> Spectral drift spec
+> s(t)
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> Forgetting  F(t)
+> s
+> Spectral drift vs. forgetting
+> (s,t) points
+> Linear fit
+> 0.100 0.125 0.150 0.175 0.200 0.225 0.250 0.275 0.300
+> Embedding drift emb
+> s(t)
+> Embedding drift vs. forgetting
+> (s,t) points
+> Linear fit
+
+Figure 12: Spectral drift vs. embedding drift vs. forgetting on VQA v2 for four skills 
+
+s ∈ { count , read , locate , relation }. Each point corresponds to one skill–stage pair (s, t) under ASR. Left: 
+
+spectral drift ∆spec 
+
+s (t) vs. skill-wise forgetting F(t)
+
+s ; Right: 
+
+embedding drift ∆emb 
+
+s (t) vs. F(t)
+
+s . Spectral drift shows a much stronger correlation with forgetting than embedding drift, indicating that changes in attention spectra are a more faithful indicator of catastrophic forgetting than changes in pooled representations. 
+
+E.4 Cost–Performance Trade-off: Memory and Time vs. Accuracy 
+
+ASR is designed to be replay-free and lightweight, using only compact skill-conditioned spectral proto-types instead of large replay buffers or additional experts. To quantify this claim, we compare several baselines and ASR in terms of (i) extra memory foot-print and (ii) training cost, against their achieved performance. 
+
+Metrics. For each method we estimate: 
+
+• Extra memory (MB) beyond the frozen backbone: this includes adapter parameters, routing/expert parameters, and any persistent replay buffer or prototype memory. We approximate memory as param_count × 2 bytes (bfloat16) plus stored data size. 
+
+• Per-step training time (ms) for a representative 
+
+37 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+stage with a fixed batch size, measured as the average wall-clock time per optimization step over that stage. This reflects computational overhead (e.g., MoE routing, replay sampling, spectral com-putation). 
+
+• Performance : for VQA v2 we use final AP on the 10-task split, for CoIN we use final Last as in Table 2. We consider (i) VQA v2 methods {Vanilla, EWC, ER, QUAD, CL-MoE, ASR} and (ii) CoIN methods {LoRA-FT, HiDe-LLaVA, SEFE, BranchLoRA, D-MoLE, Adapt-∞, ASR}. Replay-heavy methods (ER and Adapt-∞) incur large buffer memory; MoE-based methods (CL-MoE, D-MoLE) increase parameter counts and runtime; ASR adds only a small spectral prototype memory and modest FFT overhead. 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5             
+
+> Extra Memory (MB)
+> log 10 (1 + MB)
+> 44
+> 46
+> 48
+> 50
+> 52
+> Average Precision (AP)
+> 100MB 1GB
+> VQA v2: Cost vs Performance
+> Vanilla
+> EWC
+> ER
+> QUAD
+> CL-MoE
+> ASR
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0
+> Extra Memory (MB)
+> log 10 (1 + MB)
+> 48
+> 51
+> 54
+> 57
+> 60
+> 63
+> Last Accuracy
+> 100MB 1GB
+> CoIN: Cost vs Performance
+> LoRA-FT
+> HiDe-LLaVA
+> SEFE
+> BranchLoRA
+> D-MoLE
+> Adapt-
+> ASR
+
+Figure 13: Cost–performance trade-off. Left: VQA v2 10-task AP vs. extra memory (MB) for Vanilla, EWC, ER, QUAD, CL-MoE, and ASR. Right: CoIN Last vs. extra memory (MB) for LoRA-FT, HiDe-LLaVA, SEFE, BranchLoRA, D-MoLE, Adapt-∞, and ASR. The x-axis is 
+
+log 10 (1 + memory ) (MB); marker area is proportional to per-step training time. Replay-based methods (ER, Adapt-∞) lie in the high-memory region, and MoE-style methods (CL-MoE, D-MoLE) incur noticeable runtime overhead. ASR achieves the best or near-best performance while residing near the low-memory, moderate-time corner, confirming that skill-conditioned attention-spectrum regularization offers a favorable cost–performance trade-off. 
+
+As shown in Fig. 13, on VQA v2 (left), ER and CL-MoE improve AP over Vanilla but at the cost of large replay buffers (ER, ∼2.5 GB) or additional ex-perts ( ∼1 GB), and increased runtime. ASR attains the highest AP (52.0) with only ∼10 MB of extra memory for skill prototypes and a modest per-step overhead, occupying the most favorable top-left re-gion (high AP, low cost). On CoIN (right), Adapt-∞
+
+achieves strong Last but requires a multi-GB replay buffer; MoE-based D-MoLE also incurs substantial extra parameters and runtime. ASR reaches the high-est Last (61.4) with a prototype memory of only 
+
+∼15 MB and moderate per-step time, demonstrat-ing that attention-spectrum regularization can match or surpass replay-heavy methods while being signifi-cantly more memory-efficient. 
+
+E.5 Task Order Robustness 
+
+A natural concern in continual learning is whether a method’s gains are specific to a particular task or-dering. To test this, we evaluate CL-MoE and ASR on VQA v2 under multiple permutations of the 10 question-type tasks. Let the canonical order be the question-type se-quence used in Sec. 6.1. We then sample three addi-tional random permutations of the 10 tasks, yielding 
+
+4 orders in total: 
+
+O1 (canonical) , O2, O3, O4.
+
+For each method m ∈ { CL-MoE , ASR } and order Ok,we run the full 10-stage stream and record the final AP and AF on VQA v2. This yields per-order values 
+
+AP (m)
+
+k and AF (m)
+
+k ; we then compute the mean and standard deviation across orders: 
+
+AP (m) = 14
+
+4∑︁ 
+
+k=1
+
+AP (m)
+
+k , σ(m)
+
+AP = Std (︀ {AP (m)
+
+k }4
+
+k=1)︀ ,AF (m) = 14
+
+4∑︁ 
+
+k=1
+
+AF (m)
+
+k , σ(m)
+
+AF = Std (︀ {AF (m)
+
+k }4
+
+k=1)︀ .
+
+(212) For the canonical order O1, the AP/AF values match Table 1 . CL-MoE ASR  
+
+> 50.5
+> 51.0
+> 51.5
+> 52.0
+> Average Performance (AP)
+> (a) AP Across Task Orders
+> CL-MoE ASR
+> 2.5
+> 3.0
+> 3.5
+> 4.0
+> Average Forgetting (AF)
+> lower is better
+> (b) AF Across Task Orders
+
+Figure 14: Task order robustness on VQA v2 (10-task stream). 
+
+Figure 14 summarizes AP and AF across orders using bar plots with error bars. For CL-MoE, AP 
+
+38 Attention-Spectrum Regularization for Replay-Free Continual Multimodal LLMs 
+
+fluctuates more across orders and AF varies around 
+
+4.0 with non-trivial spread, indicating that its stability is somewhat sensitive to the specific task sequence. ASR not only yields higher mean AP and lower mean AF, but also exhibits slightly smaller variation across orders ( σAP ≈ 0.12 , σAF ≈ 0.13 ), suggesting that the skill-conditioned spectral constraint makes the method less dependent on a favorable curriculum. In all four permutations, ASR dominates CL-MoE in both AP and AF, providing evidence that our gains are not an artifact of a particular task ordering.

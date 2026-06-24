@@ -1,0 +1,969 @@
+Title: Accelerating Multimodal Large Language Models with Prior-Corrected Token Reduction
+
+URL Source: https://arxiv.org/pdf/2606.24156v1
+
+Published Time: Wed, 24 Jun 2026 00:35:05 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Accelerating Multimodal Large Language Models with Prior-Corrected Token Reduction 
+
+Zengjie Chen 1,2 Yuxiang Cai 1,2* Jingcai Guo 3 Taotao Cai 4 Jianwei Yin 1,2 Zhi Chen 4 * 
+
+> 1
+
+School of Software Technology, Zhejiang University, Ningbo, China  
+
+> 2
+
+Zhejiang Key Laboratory of Digital-Intelligence Service Technology, China  
+
+> 3
+
+Hong Kong Polytechnic University, Hong Kong SAR  
+
+> 4
+
+The University of Southern Queensland, Toowoomba, QLD, Australia 
+
+uqzhichen@gmail.com, caiyuxiang@zju.edu.cn 
+
+https://github.com/CodeChildCZJ/PriorTR 
+
+Abstract 
+
+Visual token reduction has emerged as an effective strat-egy for accelerating Multimodal Large Language Models (MLLMs). Many existing methods prune tokens by rank-ing text–visual attention scores. However, we show that at-tention is often dominated by a model-induced prior: even without textual instruction, MLLMs tend to focus on certain task-agnostic regions. Consequently, the attention scores of instruction-conditioned tokens are suppressed, increasing the risk that these tokens are discarded during pruning. To address this issue, we propose Prior-Corrected Token Re-duction (PriorTR), a training-free token reduction method that explicitly separates task-conditioned attention from the model-induced prior. PriorTR estimates the attention map of the prior, and contrasts it with the task-conditioned at-tention distribution to measure the additional usable infor-mation contributed by each visual token. Importantly, Pri-orTR computes both the model-induced prior and the task-conditioned posterior within a single forward pass by intro-ducing a null token that serves as an instruction-agnostic probe in the attention block. This design avoids duplicated propagation. Extensive experiments across multiple multi-modal benchmarks and MLLMs demonstrate that PriorTR consistently improves the trade-off between accuracy and efficiency over strong training-free baselines, particularly under aggressive token budgets. 
+
+1. Introduction 
+
+Multimodal Large Language Models (MLLMs) [4, 8, 41, 43] extend large language models (LLMs) [5, 49] with vi-sual perception, enabling instruction following over images 
+
+> *Corresponding Authors: Zhi Chen, Yuxiang Cai
+
+for tasks such as visual question answering, reasoning, and interactive assistants. A common design converts an im-age into a long sequence of visual tokens that are fused with text tokens and processed by an LLM. While effective, this token-heavy interface makes inference expensive. The cost becomes especially pronounced for high-resolution im-ages [36] and videos [40]. Consequently, reducing the num-ber of visual tokens during inference has become a practical solution to accelerate MLLMs [65]. Recent methods [6, 7, 50, 69, 88] observe that text–visual attention scores can serve as a training-free signal for vi-sual token pruning. At an early layer, visual tokens are ranked according to an attention-derived importance score, and only the top-K tokens are retained for subsequent lay-ers. This plug-and-play paradigm is attractive because it requires no additional training and can be readily applied across different model backbones. However, these methods implicitly rely on a key assumption: the magnitude of atten-tion weights is a reliable proxy for instruction-conditioned semantic relevance. In this paper, we show that this assumption may fail due to a model-induced prior in attention, as illustrated in Fig. 1. Even without any instruction, MLLMs tend to allocate high attention to certain task-agnostic regions. When pruning relies on absolute posterior attention scores, this prior can dominate the ranking. As a result, task-agnostic regions may be preserved, while instruction-conditioned evidence is suppressed. The problem becomes particularly severe under strict token budgets, where a small number of incor-rect selections can irreversibly remove the visual evidence required for correct reasoning. This observation motivates a central question: how can we rank visual tokens accord-ing to instruction-conditioned semantics rather than model-induced prior? 
+
+To address this challenge, we propose PriorTR , a              
+
+> arXiv:2606.24156v1 [cs.CV] 23 Jun 2026 Instruction :What is the
+> person doing in this image ?
+> Layer 1Layer 3Layer 5Layer 10 Layer 20Layer 30
+> Prefilling Transformer Layers
+> Null
+> Token
+> Vision
+> Tokens
+> Instruction
+> Tokens
+> Null
+> Instruction
+> Task
+> Instruction
+> Prior -
+> Corrected
+
+MHSA 
+
+Prior  Correction       
+
+> Prior Posterior Figure 1. Left : Visualization of text-to-visual attention maps across LLM decoding layers for a sample instruction (“ What is the person doing in this image? ”). (a) Null instruction : even without textual input, the model consistently attends to certain instruction-agnostic regions, revealing a strong model-induced prior. (b) Task instruction : attention distribution is partially influenced by the model-induced prior. (c) Prior-corrected attention : by correcting the prior, the resulting attention better highlights instruction-conditioned regions.
+> Right : schematic illustration of our idea. A null token estimates the prior attention while the instruction produces the posterior attention within the same attention block; their contrast yields a prior-corrected signal used for visual token selection.
+
+training-free visual token reduction method that ranks to-kens using token-level V-usable information. As illustrated in Fig. 1, the key idea is to explicitly disentangle two fac-tors that are entangled in raw attention: (i) a model-induced prior that reflects what the model attends to even without instruction, and (ii) the additional semantic evidence intro-duced by the instruction. By contrasting these two compo-nents, PriorTR scores tokens according to how much usable 
+
+instruction-conditioned information they contribute, rather than their raw attention magnitude. This relative ranking criterion directly mitigates model-induced prior and pro-vides a more reliable token selection strategy, particularly under aggressive token budgets. PriorTR is implemented efficiently within a single for-ward pass. Instead of executing a separate prior stream, we exploit the causal attention structure of autoregressive decoders: the null token (e.g., the separator \n) placed im-mediately after the image tokens cannot attend to any in-struction tokens under the causal mask, making its attention distribution over visual tokens a natural instruction-agnostic prior. At the designated pruning layer, we simultaneously obtain the task-conditioned posterior from the attention of instruction tokens to the visual sequence within the same attention matrix. We then apply our prior-corrected rank-ing rule and physically prune the visual sequence by re-taining only the selected hidden states and KV-cache en-tries, allowing subsequent layers to operate on a truly short-ened sequence. In this way, PriorTR achieves the effect of two forward passes at the cost of one, remains fully plug-and-play, requires no additional training, and provides real reductions in computation and memory during inference. Notably, our method is orthogonal to existing attention-based pruning approaches and can be seamlessly integrated with them. Extensive experiments on multiple MLLMs and multimodal benchmarks demonstrate that PriorTR consis-tently improves the trade-off between accuracy and effi-ciency compared with strong training-free baselines. Our main contributions are: • We identify and formalize a model-induced prior in attention-based token pruning for MLLMs, showing that absolute attention ranking can be dominated by instruction-agnostic attention patterns, particularly under aggressive token budgets. • We propose PriorTR, a training-free token reduction method that ranks visual tokens using V-usable informa-tion by explicitly separating instruction-induced seman-tics from the model-induced prior. • We design an efficient single-pass implementation that es-timates the prior using a null token and performs physi-cal pruning of hidden states and KV cache, enabling real compute and memory savings during inference. • Extensive experiments across multiple MLLMs and mul-timodal benchmarks demonstrate that PriorTR consis-tently improves the accuracy–efficiency trade-off and can be seamlessly integrated with existing token pruning methods. 2. Related Work 
+
+Multimodal Large Language Models (MLLMs) [4, 8, 41, 43] commonly convert images into hundreds or thousands of visual tokens that are then processed jointly with text, leading to substantial inference cost. There are many ap-plications where efficiency matters [9–18, 35, 39, 51, 57, 62, 63, 78, 79, 82, 87, 89–91]. To improve efficiency for MLLMs, existing efforts explore architectural changes (e.g., more compact visual encoders [67, 92] or fewer visual tokens during training [2, 59]), model compression [34, 60], parameter-efficient fine-tuning [52, 74, 77], and inference-time acceleration [7, 31, 88]. Reducing visual token re-dundancy has emerged as an effective strategy to acceler-ate multimodal large language models (MLLMs) without retraining. Training-free token reduction methods typically identify informative visual tokens during inference and dis-card redundant ones before they are processed by later Transformer layers. Existing approaches can be broadly categorized into four groups based on the criteria used to estimate token importance. Similarity-based methods re-move tokens that are highly similar to others in the fea-ture space, assuming that redundant tokens contribute lit-tle additional information. Representative methods include DART [66], which prunes tokens based on similarity to surrounding patches, and subsequent variants that refine similarity-based selection using feature clustering or lo-cal redundancy estimation [3, 26, 30, 54, 73, 80]. While similarity-based pruning effectively reduces spatial redun-dancy, these methods rely on instantaneous feature similar-ity and often ignore how token representations evolve across layers. Attention-based methods use attention scores as an importance signal. FastV [7] is a representative plug-and-play approach that ranks image tokens using attention weights at a selected Transformer layer and prunes tokens with the lowest scores. Subsequent work further explores attention-based token selection in multimodal Transform-ers [23, 24, 38, 44, 56, 58, 61, 68, 76, 85, 93]. These ap-proaches are simple to implement and often achieve sig-nificant speedup. However, attention magnitude may not always reflect true semantic contribution, and it can be bi-ased toward structurally dominant tokens. Instead of mea-suring redundancy directly, diversity-based methods aim to preserve tokens that maximize coverage of the feature space. Methods such as EntropyPrune [64] and related ap-proaches [84, 86] select tokens that maintain a diverse set of visual representations. Although diversity criteria can mitigate redundancy more effectively than simple similarity measures, they still rely on single-layer statistics and may overlook the dynamic evolution of token representations across network depth. Several recent hybrid methods com-bine multiple importance signals to improve robustness. For example, VisPruner [20] integrates attention-based impor-tance with diversity constraints, while ToDre [33] jointly considers attention and redundancy to select representative tokens. Hybrid strategies often improve pruning quality but introduce additional heuristics and still primarily rely on instantaneous token statistics. Beyond pruning, token merging methods as another line of work reduce token count through token merging, where similar tokens are ag-gregated instead of discarded. Representative approaches include methods such as LightVLM [25], CrossGet [53], VisionZip [75], and SparseVLM [88]. Token merging can preserve more information than pruning, but it introduces additional merging operations and may alter the semantic structure of token representations. In contrast to these ap-proaches, our method revisits the fundamental assumption underlying attention-based token ranking. We observe that attention scores are often influenced by saliency prior rather than instruction-specific relevance. PriorTR explicitly cor-rects this saliency prior and ranks tokens based on their ad-ditional usable information for the given instruction. 
+
+3. Method 
+
+3.1. Preliminaries 
+
+We consider a Multimodal Large Language Model (MLLM), in which the input comprises a visual token se-quence V = {v1, . . . , v N } and an instruction token se-quence X. During the LLM autoregressive decoding pro-cess, the full visual token sequence V is involved in the computation at every token generation step. We formulate visual token pruning as a constrained feature selection prob-lem. Given a strict budget constraint | ˆV| ≤ K, the objec-tive is to identify an optimal subset ˆV∗ that maximizes the conditional likelihood of the target response Y:
+
+ˆV∗ = arg max 
+
+> ˆV⊂V
+
+P (Y | ˆV, X). (1) To approximate the objective above, existing works typi-cally adopt a scoring and selection paradigm that uses the attention weights from the causal self-attention from the transformer as indicators of importance. Consequently, ex-isting works interpret this score as the model’s approximate posterior belief conditioned on the instruction: 
+
+Sbase (v) ≈ Pθ (v | X). (2) We abuse notation and write Pθ (vi | X) to denote the nor-malized attention mass assigned to token index i. This prac-tice implicitly treats the attention distribution as a proxy for semantic relevance. 
+
+3.2. Motivation 
+
+Model-Induced Prior. Empirical observations, as shown in Fig. 1, indicate that MLLMs exhibit a strong model-induced prior over visual tokens: even without any instruc-tion, the model tends to concentrate attention on certain Null Instruction 
+
+Task 
+
+Instruction: 
+
+“What is on the 
+
+green sign?” 
+
+𝐒 = P ⋅ log (P/Q)
+
+Posterior Map 
+
+Prior Map 
+
+LLM Decoder    
+
+> (Layer 0–L)
+
+LLM Decoder   
+
+> (Layers L+1 →end)
+
+Marietta street .
+
+𝑄 ! 𝑣 ≜ 𝑃 ! 𝑣 ∅
+
+𝑃 ! 𝑣 𝐗 Pruned Visual Tokens Visual Tokens 
+
+> Visual
+> Encoder
+> LLM
+> Token izer
+> LLM
+> Token izer
+
+Prior Correction 
+
+𝐕 
+
+𝐗 
+
+∅
+
+Token 
+
+Pruning Figure 2. Overview of PriorTR. Given an input image and a task instruction, PriorTR performs a single forward pass up to layer L of the shared LLM decoder. At layer L, attention from the null token to visual tokens estimates the model-induced saliency prior, while attention from instruction tokens to visual tokens estimates the task-conditioned posterior. Visual tokens are then scored by their V-usable information contribution, and the top-K tokens are physically retained. The LLM decoder continues from layer L+1 using the pruned visual tokens to generate the final response, achieving efficient inference while preserving instruction-relevant visual evidence. 
+
+instruction-agnostic regions that are visually prominent but may not be relevant to the given task. This implies that the observed posterior distribution Pθ (v | X) is not a pure task signal, but rather a mixture confounded by prior noise and task semantics. To decouple this prior, we first define the model-induced prior to represent the model’s attention re-sponse to the null instruction input: 
+
+Qθ (v) ≜ Pθ (v | ∅ ), (3) where ∅ means a task-agnostic null token, such as a sepa-rator \n. It captures the model’s intrinsic saliency prefer-ences. Subsequently, we decompose the posterior attention 
+
+Pθ (v | X) into the product of a prior and a relative gain: 
+
+Pθ (v | X) ≡ Qθ (v) ·
+
+ Pθ (v | X)
+
+Qθ (v)
+
+| {z } 
+
+> Semantic Lift L(v, X)
+
+, (4) where the term L(v, X) is defined as the semantic lift, which quantifies the multiplicative increase in the impor-tance of token v relative to its prior, induced by the inter-vention of instruction X.
+
+Prior-Dominated Masking. We refer to this failure mode as prior-dominated masking: an important token receives stronger instruction-conditioned evidence but is ranked lower under absolute posterior magnitude due to the model-induced prior. The outcome of posterior ranking depends on both the prior term Q and the lift term L. When a back-ground token vbg possesses extremely high prior such that 
+
+Qθ (vbg ) ≫ Qθ (vtgt ), even if a target token vtgt exhibits a high semantic lift Ltgt ≫ L bg , its final posterior prob-ability may still be suppressed. Specifically, the sufficient condition for ranking failure can be characterized as: 
+
+Pθ (vtgt | X) < P θ (vbg | X) ⇐⇒ L(vtgt , X)
+
+L(vbg , X) < Qθ (vbg )
+
+Qθ (vtgt ) .
+
+(5) Under attention-based pruning, this condition is sufficient for the background token to be retained while the task-conditioned token is discarded. This indicates that as long as the prior discrepancy between background and target is greater than the semantic lift discrepancy induced by the instruction in magnitude, the baseline method Sbase will inevitably preserve background noise while discarding se-mantic signals. Therefore, the ideal metric should be the decoupled L or its logarithmic form, rather than the raw Pθ .
+
+3.3. V-Usable Information for Token Selection 
+
+Our goal is to select a compact set of K visual tokens that preserves the information induced by the instruction 
+
+X, rather than the model-induced prior. To this end, we contrast the task-conditioned posterior token distribution 
+
+Pθ (· | X) with a model-induced prior baseline Qθ (·)
+
+computed from a null instruction in §3.2. Following the usable-information perspective under computational con-straints [72], we quantify Pointwise V-Information (PVI) with instruction-induced evidence at the token level via a log-likelihood ratio: 
+
+PVI( v) ≜ log Pθ (v | X)
+
+Qθ (v) , (6) which measures the semantic lift contributed by X beyond the prior. Importantly, for prior-driven regions where Pθ (v |
+
+X) ≈ Qθ (v), PVI( v) ≈ 0, naturally suppressing prior-only tokens. 
+
+Masked Total Usable Information. To model a strict token budget, we introduce a binary selection mask m ∈ { 0, 1}N
+
+and PNi=1 mi = K. We define the usable information re-tained after masking as the posterior expectation of point-wise lift restricted to selected tokens: 
+
+Imask (m; X → V) ≜
+
+> N
+
+X
+
+> i=1
+
+mi Pθ (vi | X) log Pθ (vi | X)
+
+Qθ (vi) ,
+
+(7) which is an additive masked surrogate of the full divergence 
+
+DKL (Pθ (· | X) ∥ Qθ (·)) and explicitly decomposes token utility into two factors: (i) relevance mass Pθ (vi | X),which avoids selecting negligible-probability outliers, and (ii) debiasing density log Pθ (vi|X)  
+
+> Qθ(vi)
+
+, which discounts prior-dominated tokens. This objective optimizes a masked addi-tive surrogate of the full divergence under a strict token bud-get, rather than the original likelihood objective in Eq. (1). 
+
+Closed-Form Optimal Selection. The optimal subset is obtained by selecting the K tokens with the largest per-token contributions. This yields the PriorTR importance score: 
+
+SPriorTR (vi) ≜ Pθ (vi | X) log Pθ (vi | X)
+
+Qθ (vi) . (8) We rank tokens by SPriorTR in descending order and keep the top-K tokens for subsequent layers. In §3.4, we describe an efficient single forward pass to simultaneously estimate 
+
+Pθ (· | X) and Qθ (·) with negligible overhead. 
+
+3.4. Prior-Corrected Token Reduction Procedure 
+
+Single-Pass Prior Estimation. Algorithm 1 shows the to-ken reduction procedure. Instead of performing two sepa-rate forward passes, PriorTR estimates both the prior and the posterior within a single forward pass. Specifically, we utilize the null token (implemented as the text token \n in LLaVA models) between the visual tokens and the instruc-tion tokens. This token acts as an instruction-agnostic probe that attends to the visual sequence without being influenced by the instruction. Because the decoder is causal, the null token precedes the instruction tokens and therefore cannot attend to them, ensuring that its attention over visual tokens remains instruction-independent. 
+
+Attention Aggregation. At the pruning layer L, we ob-tain two distributions over visual token indices: (i) attention 
+
+Algorithm 1 PriorTR: Prior-Corrected Visual Token Re-duction  
+
+> 1:
+
+Input : Model weights θ, Image tokens V, Instruction tokens X, Pruning layer L, Budget K. 
+
+> 2:
+
+Output : Response Y. 
+
+> 3:
+
+// Phase 1: Single-Pass Prior and Posterior Estimation  
+
+> 4:
+
+Insert null token ∅ between the visual and instruction tokens:  
+
+> 5:
+
+Z ← [ V, ∅, X ] 
+
+> 6:
+
+Forward pass up to layer L: 
+
+> 7:
+
+(H, KV , A) ← FORWARD (Z; θ, depth =L) 
+
+> 8:
+
+Extract saliency prior from null-token attention:  
+
+> 9:
+
+Q ← AGG (A[∅ → V]) ▷ Q i ≈ Pθ (vi | ∅ ) 
+
+> 10:
+
+Extract task-conditioned posterior from instruction at-tention:  
+
+> 11:
+
+P ← AGG (A[X → V]) ▷ P i ≈ Pθ (vi | X) 
+
+> 12:
+
+// Phase 2: Prior-Corrected Scoring  
+
+> 13:
+
+Compute PriorTR scores:  
+
+> 14:
+
+S ← P ⊙ log (( P + ϵ)/(Q + ϵ))  
+
+> 15:
+
+Select top-K token indices:  
+
+> 16:
+
+Itop ← TOP K(S, K ) 
+
+> 17:
+
+// Phase 3: Physical Pruning and Decoding  
+
+> 18:
+
+Gather selected visual hidden states and KV cache:  
+
+> 19:
+
+ˆH ← H[Itop ] ; dKV ← GATHER (KV , Itop ) 
+
+> 20:
+
+Continue decoding from layer L+1 : 
+
+> 21:
+
+Y ← GENERATE (θ; ˆH, dKV , depth >L )
+
+from the null token to visual tokens, which serves as the saliency prior, and (ii) attention from instruction tokens to visual tokens, which captures task-conditioned relevance. We aggregate attention across heads and normalize each to form comparable categorical distributions; the explicit ag-gregation is defined in Appendix A. 
+
+Token Scoring and Selection. Using these two distribu-tions, we compute per-token importance scores according to the prior-corrected formulation in §3.3. The computation is performed element-wise in a fully vectorized manner with a small numerical stabilizer ϵ. We then select the top-K token indices via a standard Top-K operation. 
+
+Physical Pruning and Continued Decoding. PriorTR per-forms physical pruning rather than masking. We gather only the hidden states and KV-cache entries corresponding to the selected visual tokens. All other visual tokens are removed from memory. The decoder then resumes autore-gressive generation from layer L+1 using the compacted hidden states and KV cache. Consequently, both attention and feed-forward computation in deeper layers scale with 
+
+K instead of the original visual token count. Table 1. Performance comparison with state-of-the-art methods with different vision tokens preserved in LLaVA-1.5-7B. There are 576 visual tokens in the vanilla setting. Avg. reports the average of normalized results on all datasets. Best results in Bold .
+
+Method GQA POPE MME MMB TextVQA SEED VizWiz SQA Flickr NoCaps OKVQA MMVet Avg. (%) 
+
+Upper Bound, 576 Tokens (100%) 
+
+Vanilla 61.9 85.9 1864 64.6 58.3 66.2 50.0 69.5 74.9 1.05 53.4 30.9 100 
+
+Retain 192 Tokens (↓ 66 .7%) 
+
+FastV (ECCV24) 52.6 61.0 1605 61.0 52.5 63.9 50.8 52.5 72.8 1.03 51.3 26.7 89.8 PDrop (CVPR25) 57.1 82.3 1766 63.2 56.1 54.7 51.1 68.8 74.2 1.02 51.8 30.5 96.0 SparseVLM (ICML25) 57.6 83.6 1721 62.5 56.1 64.1 50.5 68.7 72.0 1.01 51.9 33.1 97.4 PruMerge (ICCV25) 54.3 71.3 1626 58.9 54.3 57.4 50.1 67.9 58.4 0.89 46.1 29.0 89.1 VisPruner (ICCV25) 59.6 86.2 1796 63.3 57.7 63.7 50.3 68.2 72.8 1.02 52.1 32.4 98.5 
+
+PriorTR (Ours) 60.4 83.8 1845 63.6 57.5 64.8 50.9 68.6 75.6 1.06 52.1 32.5 99.5 
+
+Retain 128 Tokens (↓ 77 .8%) 
+
+FastV (ECCV24) 49.6 53.4 1490 56.1 50.5 48.1 51.3 60.2 69.1 0.99 49.1 26.3 85.1 PDrop (CVPR25) 56.0 82.3 1644 61.1 55.1 53.3 51.0 68.3 65.6 0.92 49.8 30.8 92.7 SparseVLM (ICML25) 56.0 80.5 1696 60.0 54.9 58.2 51.4 67.1 58.2 0.82 51.0 29.0 91.2 PruMerge (ICCV25) 53.3 67.1 1544 58.1 54.3 55.0 50.3 67.1 54.9 0.83 43.7 24.4 85.3 VisPruner (ICCV25) 58.1 84.3 1761 62.2 57.0 61.6 51.2 68.7 70.4 0.99 50.3 31.6 96.6 
+
+PriorTR (Ours) 59.1 81.7 1820 62.4 56.9 63.8 51.3 68.6 74.8 1.05 51.4 31.4 98.2 
+
+Retain 64 Tokens (↓ 88 .9%) 
+
+FastV (ECCV24) 46.1 38.2 1255 47.2 47.8 43.7 50.8 51.1 45.1 0.71 40.0 19.6 70.7 PDrop (CVPR25) 41.9 55.9 1092 33.3 45.9 40.0 49.5 68.6 51.1 0.70 42.2 30.7 74.4 SparseVLM (ICML25) 52.7 75.1 1505 56.2 51.8 52.2 50.1 62.2 42.0 0.59 46.1 24.9 81.4 PruMerge (ICCV25) 51.9 65.3 1549 55.1 54.0 53.7 50.1 68.1 52.0 0.77 43.4 22.2 83.0 VisPruner (ICCV25) 55.4 80.4 1687 59.6 55.3 57.8 52.2 68.6 63.4 0.89 47.2 28.3 91.7 
+
+PriorTR (Ours) 56.6 76.3 1745 61.2 54.9 60.1 51.5 68.8 71.2 1.01 49.2 29.4 94.5 
+
+4. Experiments 
+
+4.1. Image Understanding Tasks 
+
+Experimental Settings. We evaluate PriorTR on twelve multimodal benchmarks spanning visual reasoning (GQA [27], SQA [46], VizWiz [22], OKVQA [47]), hallu-cination detection (POPE [37]), OCR (TextVQA [55]), cap-tioning (Flickr [48], NoCaps [1]), and holistic understand-ing (MME [21], MMB [45], SEED [32], MMVet [81]). We compare against five state-of-the-art training-free methods: FastV [7], PDrop [69], SparseVLM [88], VisPruner [86], and PruMerge [50]. To assess cross-model generalizability, we evaluate on LLaVA-1.5-7B [43], LLaVA-1.5-13B [43], and Qwen3-VL-8B [4]. 
+
+Implementation Details. We apply PriorTR to each model’s standard inference pipeline without modifying model weights or requiring additional training. Following FastV [7], we prune at layer L=2 ; early pruning maximizes downstream savings, and Appendix B.4 confirms PriorTR is robust. As detailed in §3.4, both distributions are extracted from a single forward pass: the prior Q is derived from the post-image separator token, and the task-conditioned poste-rior P is aggregated from the instruction tokens. The prior-corrected score is computed per visual token, and the top-
+
+K tokens are physically retained in hidden states and KV cache. All experiments are conducted on NVIDIA RTX PRO 6000 GPUs. 
+
+Results on LLaVA-1.5-7B. We evaluate all methods un-der three token budgets ( K ∈ { 192 , 128 , 64 }). As shown in Table 1, PriorTR achieves the highest average accuracy across all compression levels. The margin over FastV [7] is largest at the tightest budget ( K=64 , 89% token reduc-tion), precisely the regime in which prior ranking most severely misidentifies instruction-relevant tokens. More-over, PriorTR maintains the highest absolute accuracy at ev-ery evaluated budget, confirming that prior-corrected scor-ing consistently preserves instruction-relevant tokens under increasingly aggressive compression. 
+
+Generalization to other MLLMs. Table 2 extends our evaluation to Qwen3-VL-8B under dynamic resolution, comparing PriorTR against the posterior baseline FastV [7] to isolate the benefits of prior correction relative to raw at-tention ranking. PriorTR consistently outperforms FastV and remains advantaged compared to more recent methods PDrop and VisPruner. This accelerating advantage confirms that correcting for intrinsic saliency bias becomes increas-ingly critical as visual token scarcity intensifies. Avg 
+
+> GQA
+> MMB
+> MMB-CN
+> MME
+> POPE
+> SQA
+> VQAText
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+
+(a) 64 Tokens 
+
+> Avg
+> GQA
+> MMB
+> MMB-CN
+> MME
+> POPE
+> SQA
+> VQAText
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+
+(b) 128 Tokens 
+
+> Avg
+> GQA
+> MMB
+> MMB-CN
+> MME
+> POPE
+> SQA
+> VQAText
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+
+(c) 192 Tokens    
+
+> SparseVLM FastV PDrop PriorTR
+
+Figure 3. Performance comparison under different token budgets on LLaVA-1.5-13B. These radar plots illustrate normalized performance across six representative benchmarks for four pruning methods under three token budgets. Table 2. Performance comparison on Qwen3-VL-8B under dif-ferent token ratios. Avg. reports the mean of per-dataset scores normalized by the baseline.                                                                                             
+
+> Method GQA MME MMB POPE TextVQA Avg. (%) Baseline (Full Tokens)
+> Qwen3-VL 61.5 2346 (100.0) 84.7 88.0 80.2 100.0
+> Ratio 33.3%
+> FastV 55.5 2190 (93.4) 80.4 85.4 75.4 93.9 PDrop 57.4 2090 (89.1) 78.4 85.4 72.3 92.4 VisPruner 58.7 2224 (94.8) 81.8 86.7 76.0 96.0
+> PriorTR (Ours) 58.3 2333 (99.5) 81.1 86.0 76.0 96.5 Ratio 22.2%
+> FastV 52.1 1961 (83.6) 75.2 81.3 72.5 88.0 PDrop 54.5 2008 (85.6) 75.9 81.2 69.3 88.5 VisPruner 56.5 2026 (86.4) 78.1 84.6 72.0 91.3
+> PriorTR (Ours) 56.7 2208 (94.1) 79.3 84.4 74.0 93.6 Ratio 11.1%
+> FastV 46.0 1619 (69.0) 64.1 68.9 64.0 75.5 PDrop 41.7 1542 (65.7) 55.8 58.2 50.5 65.7 VisPruner 50.3 1713 (73.0) 67.3 74.7 60.7 79.0
+> PriorTR (Ours) 53.5 2047 (87.3) 75.7 78.8 68.8 87.8
+
+Scalability. In Fig. 3, we further evaluate on LLaVA-1.5-13B to assess cross-scale generalizability. PriorTR achieves the highest accuracy at all three token prun-ing ratios. Fig. 3 visualizes the accuracy–budget trade-off across six representative benchmarks, and full per-benchmark results are reported in Appendix B.1. These re-sults confirm that decoupling instruction-induced semantics from the model-induced prior yields a consistently superior accuracy–efficiency trade-off over all evaluated training-free baselines when generalizing to larger models. 
+
+4.2. Video Understanding Tasks 
+
+Experimental Settings. We apply PriorTR to Video-LLaVA [40] and evaluate on four video question-answering benchmarks: MSVD-QA [70], MSRVTT-QA [71], TGIF-QA [29], and ActivityNet-QA [83]. The 2048 video to-kens are compressed to 194 (over 90% reduction) at layer 
+
+L=2 . We compare against two attention-based baselines that share the same raw-attention scoring but differ in down-stream strategy. FastV applies hard pruning, discarding low-scored tokens entirely. SparseVLM [88] augments pruning with token merging by clustering and reintegrating discarded tokens as compact cluster representatives to pre-serve spatial-temporal context. We also test our method by combining it with token merging as another variant, as the merging strategy is particularly useful in video tasks with many duplicate visual tokens. We report Accuracy (%) and Score (0–5) under both GPT-4o-mini [28] and Gemini-2.5-Flash [19] evaluation. 
+
+Results. As shown in Table 3, among pruning-only meth-ods, PriorTR outperforms FastV by +4 .6 average accuracy points (GPT), demonstrating that prior-corrected scores identify more instruction-relevant tokens. SparseVLM in-volves token merging that effectively preserves spatial-temporal context, bringing it to near-baseline accuracy. However, because it still relies on biased raw-attention scores to dictate which tokens are pruned and merged, the quality of its aggregated representations remains limited by prior noise. PriorTR+Merging applies a complementary to-ken merging strategy guided by prior-corrected scores in-stead, so it matches the uncompressed baseline under GPT (38.7%) and exceeds it under Gemini (41.6% vs. 40.4%), surpassing SparseVLM in both settings. Table 3. The results of Video-LLaVA with different pruning strategies on video question answering tasks. The original number of video tokens is 2048, while our experiment collectively prunes it down to 194 tokens. We report Accuracy (%) and Score (0-5) evaluated by GPT-4o-mini (GPT) and Gemini-2.5-Flash (Gem). 
+
+Method Strategy Eval MSVD MSRVTT TGIF ActivityNet Avg. 
+
+Acc. Score Acc. Score Acc. Score Acc. Score Acc. Score Video-LLaVA Vanilla GPT 58.9 3.31 42.7 2.69 11.3 1.19 42.0 2.20 38.7 2.35  
+
+> Gem
+
+57.3 2.93 47.5 2.32 14.2 0.77 42.5 2.12 40.4 2.04 FastV Pruning  
+
+> GPT
+
+35.9 2.36 31.4 2.19 2.8 1.16 34.2 1.83 26.1 1.89  
+
+> Gem
+
+35.5 1.88 34.3 1.69 2.3 0.14 34.2 1.74 26.6 1.36 PriorTR (Ours) GPT 43.6 2.65 35.1 2.35 4.1 1.20 40.0 2.04 30.7 2.06  
+
+> Gem
+
+45.3 2.33 39.4 1.95 4.8 0.27 40.1 2.00 32.4 1.64 SparseVLM Merging  
+
+> GPT
+
+56.0 3.20 41.9 2.63 10.7 1.03 43.6 2.21 38.1 2.27  
+
+> Gem
+
+58.2 3.05 48.0 2.38 13.1 0.71 44.0 2.20 40.8 2.09 PriorTR(Ours) GPT 56.6 3.26 42.9 2.66 10.9 1.05 44.3 2.25 38.7 2.31 
+
++Merging Gem 59.2 3.08 48.3 2.36 14.2 0.74 44.8 2.24 41.6 2.11 
+
+Table 4. Efficiency comparison on LLaVA-1.5-7B. All measure-ments averaged over 100 runs (10-run warmup). Prefill latency excludes ViT/Proj. FLOPs as fraction of vanilla. Performance from Table 1.                                                                                                               
+
+> Method Prefill ↓
+> (ms) KV Cache ↓
+> (MB) FLOPs ↓Performance ↑Throughput ↑
+> (samples/s) Speedup ↑
+> LLaVA-1.5-7B 40.7 312 100.0% 100% 21.2 1.00 ×
+> Retain 192 Tokens (↓66 .7%) +FastV 20.6 120 49.5% 89.8% 34.2 1.98 ×
+> +PDrop 33.7 205 70.0% 96.0% 24.0 1.21 ×
+> +SparseVLM 34.0 128 45.7% 97.4% 25.2 1.20 ×
+> +PriorTR (Ours) 20.7 120 49.5% 99.5% 34.5 1.97 ×
+> Retain 128 Tokens (↓77 .8%) +FastV 19.9 88 41.1% 85.1% 35.5 2.05 ×
+> +PDrop 34.9 182 63.3% 92.7% 23.0 1.17 ×
+> +SparseVLM 29.5 97 36.8% 91.2% 24.2 1.38 ×
+> +PriorTR (Ours) 20.1 88 41.1% 98.2% 35.2 2.02 ×
+> Retain 64 Tokens (↓88 .9%) +FastV 18.0 56 32.8% 70.7% 38.0 2.26 ×
+> +PDrop 29.9 156 55.4% 74.4% 26.1 1.36 ×
+> +SparseVLM 31.0 66 28.1% 81.4% 24.8 1.31 ×
+> +PriorTR (Ours) 18.4 56 32.8% 94.5% 37.9 2.21 ×
+
+4.3. Analysis 
+
+Efficiency Analysis. Table 4 presents a comprehensive efficiency evaluation on LLaVA-1.5-7B under different to-ken budgets. We report prefilling latency, KV cache size, FLOPs (relative to vanilla) and throughput. All measure-ments are averaged over 100 runs (with 10-run warmup). PriorTR consistently achieves the fastest or near-fastest prefilling latency across all budgets. At 64 retained to-kens, prefilling is reduced to 18.4 ms, corresponding to a 2.21 × speedup over the vanilla model. Importantly, Pri-orTR matches the smallest KV cache footprint (56 MB), demonstrating that physical token pruning effectively re-duces memory usage. PriorTR achieves substantial compu-tational savings. Across budgets, FLOPs scale proportion-ally with retained tokens, confirming that pruning directly reduces attention and feed-forward computation rather than merely masking tokens. Despite aggressive token reduc-
+
+Table 5. Ablation study of token scoring functions on LLaVA-1.5-7B. 
+
+K Method Formula MME MMB GQA POPE TextVQA Avg .(%) 
+
+576 Vanilla 1864 64.6 61.9 85.9 58.3 100 
+
+128 
+
+Prior Q 1722.3 61.6 55.2 72.8 54.1 90.9 Posterior P 1774.3 62.4 56.7 76.1 56.2 93.7 Entropy P log P −Qlog Q 1603.8 55.2 54.9 66.4 44.1 82.6 Log Ratio log( P/Q ) 1700.8 57.7 56.7 75.6 53.7 90.5 Diff P −Q 1757.0 60.6 57.0 78.8 55.7 93.5 
+
+PriorTR P · log( P/Q ) 1804.0 62.4 58.5 80.5 56.9 95.8 64 
+
+Prior Q 1461.0 54.6 50.5 57.3 49.8 79.3 Posterior P 1641.6 59.6 52.8 65.2 53.7 86.7 Entropy P log P −Qlog Q 1401.8 43.0 50.8 54.3 43.5 72.3 Log Ratio log( P/Q ) 1501.3 52.3 52.6 64.5 50.7 81.7 Diff P −Q 1635.2 57.7 53.3 71.5 53.2 87.6 
+
+PriorTR P ·log( P/Q ) 1713.0 60.7 55.7 75.0 54.9 91.5 32 
+
+Prior Q 1183.8 36.8 43.8 26.3 45.2 59.9 Posterior P 1366.5 51.7 47.8 47.4 50.5 74.5 Entropy P log P −Qlog Q 1146.9 29.6 44.3 30.5 42.9 57.6 Log Ratio log( P/Q ) 1304.5 46.2 48.4 52.9 47.8 72.7 Diff P −Q 1448.6 51.7 47.6 57.8 48.2 76.9 
+
+PriorTR P ·log( P/Q ) 1627.0 56.8 51.6 63.4 52.4 84.5 
+
+tion, PriorTR consistently achieves the highest throughput in all settings. Notably, unlike SparseVLM, which achieves the lowest FLOPs but fails to translate this into throughput gains, PriorTR consistently translates theoretical compute reduction into practical runtime gains. Across all budgets, PriorTR achieves the strongest balance between efficiency and accuracy. While other methods may achieve similar FLOPs reduction, they incur larger performance drops. 
+
+Ablation on Prior Correction Functions. Table 5 com-pares PriorTR’s scoring rule against several alternative cri-teria, including saliency prior ( Q), posterior attention mag-nitude ( P ), entropy-based measures ( P log P − Q log Q), log-ratio scoring ( log( P/Q )), and simple difference ( P −
+
+Q). The prior baseline performs worse than posterior-based Posterior   
+
+> Prior
+> Prior -
+> Corrected
+> What team does
+> she play for?
+> What time does
+> the clock show?
+> Is this a bed or a
+> cabinet?"
+> Are there any seals
+> or in the picture?
+> What is the person
+> doing in this image?
+> Which symbol is on
+> the tail of the plane?
+> What is the person
+> doing in this image?"
+> Image
+> Input
+> Instruction
+
+Figure 4. Qualitative comparison of prior, posterior, and prior-corrected attention maps. 
+
+methods, confirming that saliency alone is insufficient for token selection. Posterior attention ( P ) improves perfor-mance but remains limited under strict compression, in-dicating that absolute attention magnitude still conflates saliency and instruction relevance. Entropy-based scor-ing and pure log-ratio ranking underperform compared to difference-based metrics, suggesting that overly aggressive normalization or scale-invariant ranking can discard useful relevance magnitude. The difference rule ( P − Q) con-sistently improves over posterior-only scoring, validating the importance of subtracting the saliency baseline. How-ever, PriorTR’s V-information formulation P · log( P/Q )
+
+achieves the best overall performance across most bench-marks and token budgets. Unlike the simple difference rule, PriorTR jointly accounts for both relevance magnitude ( P )and relative lift over the prior ( log( P/Q )), yielding more stable and discriminative token ranking. The advantage of PriorTR is most pronounced at smaller budgets, where in-correct token ranking has a larger impact. 
+
+Debiasing Qualitative Analysis. Figure 4 provides qualita-tive comparisons between the intrinsic saliency prior, task-conditioned posterior attention, and the prior-corrected im-portance maps produced by PriorTR. Across diverse ques-tion types—including object recognition, attribute reason-ing, action understanding, and scene description—we ob-serve a consistent pattern. The saliency prior, estimated via the null token, strongly activates on high-contrast regions and textured backgrounds, independent of the task instruc-tion. While posterior attention incorporates instruction sig-nals, it often remains partially biased toward these visually dominant regions. This effect is especially evident in scenes with complex backgrounds or strong lighting contrasts. Af-ter prior correction, the resulting token importance maps ex-hibit sharper focus on instruction-relevant visual evidence. For example, in the sports image, the corrected map empha-sizes the team logo rather than surrounding crowd or back-ground textures. In reasoning-heavy examples ( e.g., iden-tifying animals or describing actions), the corrected maps concentrate on semantically meaningful entities rather than peripheral salient regions. These qualitative results support our hypothesis that absolute attention magnitude conflates intrinsic saliency with task-driven relevance, and demon-strate that prior correction yields more semantically aligned token selection. 
+
+Additional Experiments in Appendix. We provide com-plementary analyses in the appendix to further validate Pri-orTR. These include experimental setup details ( e.g., base-line methods, implementation, and datasets), the impact of different null tokens beyond the default separator token \n,details of a PriorTR variant with token merging, ablation on pruning at different layers, experiments on additional MLLMs (LLaVA-Next [42] and InternVL [8]), complete numeric results for LLaVA-1.5-13B, and a detailed com-putational complexity analysis. 
+
+5. Conclusion 
+
+We introduced PriorTR, a training-free visual token reduc-tion method for accelerating multimodal large language models. We identify that text–visual attention is often dominated by a model-induced prior, which can suppress instruction-agnostic tokens when ranking purely by atten-tion magnitude. PriorTR corrects this bias by selecting tokens based on their additional usable information be-yond the prior baseline. Across multiple benchmarks and token budgets, PriorTR consistently improves the accu-racy–efficiency trade-off while delivering real reductions in latency, memory usage, and FLOPs through physical prun-ing. Our results suggest that separating intrinsic saliency from task-driven relevance provides a principled and effec-tive direction for efficient multimodal inference. 
+
+Acknowledgements 
+
+This work is supported by the National Natural Science Foundation of China under Grant No. 62502429, and the Zhejiang Key Laboratory Project (2024E10001). 
+
+References 
+
+[1] Agrawal, H., Desai, K., Wang, Y., Chen, X., Jain, R., Johnson, M., Batra, D., Parikh, D., Lee, S., Anderson, P.: Nocaps: Novel object captioning at scale. In: Pro-ceedings of the IEEE/CVF international conference on computer vision. pp. 8948–8957 (2019) [2] Alayrac, J.B., Donahue, J., Luc, P., Miech, A., Barr, I., Hasson, Y., Lenc, K., Mensch, A., Millican, K., Reynolds, M., et al.: Flamingo: a visual language model for few-shot learning. Advances in neural infor-mation processing systems 35 , 23716–23736 (2022) [3] Alvar, S.R., Singh, G., Akbari, M., Zhang, Y.: Di-vprune: Diversity-based visual token pruning for large multimodal models. In: Proceedings of the Computer Vision and Pattern Recognition Conference. pp. 9392– 9401 (2025) [4] Bai, S., Cai, Y., Chen, R., Chen, K., Chen, X., Cheng, Z., Deng, L., Ding, W., Gao, C., Ge, C., et al.: Qwen3-vl technical report. arXiv preprint arXiv:2511.21631 (2025) [5] Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J.D., Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G., Askell, A., et al.: Language models are few-shot learners. Advances in neural information processing systems 33 , 1877–1901 (2020) [6] Chen, B., Cai, Y., Luo, Y., Zhang, Y., Chen, Z.: Spec-tral evolution-guided token pruning in multimodal large language models. In: European Conference on Computer Vision. Springer (2026) [7] Chen, L., Zhao, H., Liu, T., Bai, S., Lin, J., Zhou, C., Chang, B.: An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models. In: European Conference on Com-puter Vision. pp. 19–35. Springer (2024) [8] Chen, Z., Wu, J., Wang, W., Su, W., Chen, G., Xing, S., Zhong, M., Zhang, Q., Zhu, X., Lu, L., et al.: In-ternvl: Scaling up vision foundation models and align-ing for generic visual-linguistic tasks. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 24185–24198 (2024) [9] Chen, Z., Li, J., Luo, Y., Huang, Z., Yang, Y.: Canzsl: Cycle-consistent adversarial networks for zero-shot learning from natural language. In: WACV 2020. pp. 874–883 (2020) [10] Chen, Z., Luo, Y., Huang, Z., Li, J., Wang, S., Yu, X.: Distributed zero-shot learning for visual recognition. IEEE Transactions on Multimedia (2026) [11] Chen, Z., Luo, Y., Qiu, R., Wang, S., Huang, Z., Li, J., Zhang, Z.: Semantics disentangling for generalized zero-shot learning. ICCV 2021 (2021) [12] Chen, Z., Luo, Y., Wang, S., Li, J., Huang, Z.: Gsm-flow: Generation shifts mitigating flow for generalized zero-shot learning. IEEE Transactions on Multimedia (2022) [13] Chen, Z., Luo, Y., Wang, S., Qiu, R., Li, J., Huang, Z.: Mitigating generation shifts for generalized zero-shot learning. In: ACM MM 2021 (2021) [14] Chen, Z., Wang, S., Li, J., Huang, Z.: Rethinking gen-erative zero-shot learning: An ensemble learning per-spective for recognising visual patches. In: ACM MM 2020. pp. 3413–3421 (2020) [15] Chen, Z., Yu, X., Tao, X., Li, Y., Huang, Z.: Cluster-aware prompt ensemble learning for few-shot vision– language model adaptation. Pattern Recognition p. 112596 (2025) [16] Chen, Z., Zhang, P., Li, J., Wang, S., Huang, Z.: Zero-shot learning by harnessing adversarial samples. In: ACM MM 2023 (2023) [17] Chen, Z., Zhao, Z., Guo, J., Li, J., Huang, Z.: Svip: Semantically contextualized visual patches for zero-shot learning. In: ICCV 2025 (2025) [18] Chen, Z., Zhao, Z., Luo, Y., Li, Y., Tao, X., Huang, Z.: Fastedit: Fast text-guided single-image editing via semantic-aware diffusion fine-tuning. Pattern Recog-nition p. 112583 (2025) [19] Comanici, G., Bieber, E., Schaekermann, M., Pasu-pat, I., Sachdeva, N., Dhillon, I., Blistein, M., Ram, O., Zhang, D., Rosen, E., et al.: Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 (2025) [20] Fan, Y., Zhao, A., Fu, J., Tong, J., Su, H., Pan, Y., Zhang, W., Shen, X.: Visipruner: Decoding discontin-uous cross-modal dynamics for efficient multimodal llms. In: Proceedings of the 2025 Conference on Em-pirical Methods in Natural Language Processing. pp. 18896–18913 (2025) [21] Fu, C., Chen, P., Shen, Y., Qin, Y., Zhang, M., Lin, X., Yang, J., Zheng, X., Li, K., Sun, X., et al.: Mme: A comprehensive evaluation benchmark for multimodal large language models. In: The Thirty-ninth Annual Conference on Neural Information Processing Sys-tems Datasets and Benchmarks Track (2025) [22] Gurari, D., Li, Q., Stangl, A.J., Guo, A., Lin, C., Grau-man, K., Luo, J., Bigham, J.P.: Vizwiz grand chal-lenge: Answering visual questions from blind people. In: Proceedings of the IEEE conference on computer vision and pattern recognition. pp. 3608–3617 (2018) [23] Han, Y., Liu, X., Ding, P., Wang, D., Chen, H., Yan, Q., Huang, S.: Rethinking token reduction in mllms: Towards a unified paradigm for training-free accelera-tion. arXiv preprint arXiv:2411.17686 2(3) (2024) [24] He, Y., Chen, F., Liu, J., Shao, W., Zhou, H., Zhang, K., Zhuang, B.: Zipvl: Efficient large vision-language models with dynamic token sparsification. arXiv preprint arXiv:2410.08584 (2024) [25] Hu, L., Shang, F., Feng, W., Wan, L.: Lightvlm: Ac-celeraing large multimodal models with pyramid to-ken merging and kv cache compression. arXiv preprint arXiv:2509.00419 (2025) [26] Huang, K., Zou, H., Xi, Y., Wang, B., Xie, Z., Yu, L.: Ivtp: Instruction-guided visual token pruning for large vision-language models. In: European conference on computer vision. pp. 214–230. Springer (2024) [27] Hudson, D.A., Manning, C.D.: Gqa: A new dataset for real-world visual reasoning and compositional question answering. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recogni-tion. pp. 6700–6709 (2019) [28] Hurst, A., Lerer, A., Goucher, A.P., Perelman, A., Ramesh, A., Clark, A., Ostrow, A., Welihinda, A., Hayes, A., Radford, A., et al.: Gpt-4o system card. arXiv preprint arXiv:2410.21276 (2024) [29] Jang, Y., Song, Y., Yu, Y., Kim, Y., Kim, G.: Tgif-qa: Toward spatio-temporal reasoning in visual question answering. In: Proceedings of the IEEE conference on computer vision and pattern recognition. pp. 2758– 2766 (2017) [30] Jeddi, A., Baghbanzadeh, N., Dolatabadi, E., Taati, B.: Similarity-aware token pruning: Your vlm but faster. arXiv preprint arXiv:2503.11549 (2025) [31] Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C.H., Gonzalez, J., Zhang, H., Stoica, I.: Efficient memory management for large language model serv-ing with pagedattention. In: Proceedings of the 29th symposium on operating systems principles. pp. 611– 626 (2023) [32] Li, B., Ge, Y., Ge, Y., Wang, G., Wang, R., Zhang, R., Shan, Y.: Seed-bench: Benchmarking multi-modal large language models. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pat-tern Recognition. pp. 13299–13308 (2024) [33] Li, D., Yang, Z., Lu, S.: Todre: Visual token prun-ing via diversity and task awareness for efficient large vision-language models. arXiv e-prints pp. arXiv– 2505 (2025) [34] Li, S., Hu, Y., Ning, X., Liu, X., Hong, K., Jia, X., Li, X., Yan, Y., Ran, P., Dai, G., et al.: Mbq: Modality-balanced quantization for large vision-language mod-els. In: Proceedings of the Computer Vision and Pat-tern Recognition Conference. pp. 4167–4177 (2025) [35] Li, X., Zhang, D., Du, Z., Zhu, L., Chen, Z., Li, J.: Pataug: Augmentation of augmentation for test-time adaptation. In: ACM MM 2025, pp. 5080–5089 (2025) [36] Li, Y., Zhang, Y., Wang, C., Zhong, Z., Chen, Y., Chu, R., Liu, S., Jia, J.: Mini-gemini: Mining the poten-tial of multi-modality vision language models. IEEE Transactions on Pattern Analysis and Machine Intelli-gence (2025) [37] Li, Y., Du, Y., Zhou, K., Wang, J., Zhao, W.X., Wen, J.R.: Evaluating object hallucination in large vision-language models. In: Proceedings of the 2023 Confer-ence on Empirical Methods in Natural Language Pro-cessing. pp. 292–305 (2023) [38] Liang, X., Guan, C., Lu, J., Chen, H., Wang, H., Hu, H.: Dynamic token reduction during gen-eration for vision language models. arXiv preprint arXiv:2501.14204 (2025) [39] Lim, J.S., Chen, Z., Chen, Z., Baktashmotlagh, M., Yu, X., Huang, Z., Luo, Y.: Dipex: Dispersing prompt expansion for class-agnostic object detection. NeurIPS2024 (2024) [40] Lin, B., Ye, Y., Zhu, B., Cui, J., Ning, M., Jin, P., Yuan, L.: Video-llava: Learning united visual repre-sentation by alignment before projection. In: Proceed-ings of the 2024 conference on empirical methods in natural language processing. pp. 5971–5984 (2024) [41] Liu, H., Li, C., Li, Y., Lee, Y.J.: Improved baselines with visual instruction tuning. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 26296–26306 (2024) [42] Liu, H., Li, C., Li, Y., Li, B., Zhang, Y., Shen, S., Lee, Y.J.: Llava-next: Improved reasoning, ocr, and world knowledge (January 2024), https:// llava-vl.github.io/blog/2024-01-30-llava-next/ 
+
+[43] Liu, H., Li, C., Wu, Q., Lee, Y.J.: Visual instruction tuning (2023) [44] Liu, Y., Wu, F., Li, R., Tang, Z., Li, K.: Par: Prompt-aware token reduction method for efficient large multimodal models. arXiv preprint arXiv:2410.07278 (2024) [45] Liu, Y., Duan, H., Zhang, Y., Li, B., Zhang, S., Zhao, W., Yuan, Y., Wang, J., He, C., Liu, Z., et al.: Mmbench: Is your multi-modal model an all-around player? In: European conference on computer vision. pp. 216–233. Springer (2024) [46] Lu, P., Mishra, S., Xia, T., Qiu, L., Chang, K.W., Zhu, S.C., Tafjord, O., Clark, P., Kalyan, A.: Learn to ex-plain: Multimodal reasoning via thought chains for science question answering. Advances in Neural In-formation Processing Systems 35 , 2507–2521 (2022) [47] Marino, K., Rastegari, M., Farhadi, A., Mottaghi, R.: Ok-vqa: A visual question answering benchmark re-quiring external knowledge. In: Proceedings of the IEEE/cvf conference on computer vision and pattern recognition. pp. 3195–3204 (2019) [48] Plummer, B.A., Wang, L., Cervantes, C.M., Caicedo, J.C., Hockenmaier, J., Lazebnik, S.: Flickr30k enti-ties: Collecting region-to-phrase correspondences for richer image-to-sentence models. In: Proceedings of the IEEE international conference on computer vision. pp. 2641–2649 (2015) [49] Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., Sutskever, I., et al.: Language models are unsuper-vised multitask learners. OpenAI blog 1(8), 9 (2019) [50] Shang, Y., Cai, M., Xu, B., Lee, Y.J., Yan, Y.: Llava-prumerge: Adaptive token reduction for efficient large multimodal models. In: Proceedings of the IEEE/CVF International Conference on Computer Vision. pp. 22857–22867 (2025) [51] Shao, Y., Lin, D., Yan, M., Chen, S., Zeng, F., Liao, M., Ma, A., Yan, Z., Wang, H., Wang, Y., et al.: Tr-dq: Time-rotation diffusion quantization. In: AAAI 2026 (2026) [52] Shao, Z., Wang, M., Yu, Z., Pan, W., Yang, Y., Wei, T., Zhang, H., Mao, N., Chen, W., Yu, J.: Growing a twig to accelerate large vision-language models. In: Pro-ceedings of the IEEE/CVF International Conference on Computer Vision. pp. 20064–20074 (2025) [53] Shi, D., Tao, C., Rao, A., Yang, Z., Yuan, C., Wang, J.: Crossget: Cross-guided ensemble of tokens for accel-erating vision-language transformers. arXiv preprint arXiv:2305.17455 (2023) [54] Si, G., Yin, H., Li, X., Liao, W., He, T., Peng, P., Zhu, W., et al.: Infoprune: Revisiting visual token pruning from an information-theoretic perspective (2025) [55] Singh, A., Natarajan, V., Shah, M., Jiang, Y., Chen, X., Batra, D., Parikh, D., Rohrbach, M.: Towards vqa models that can read. In: Proceedings of the IEEE/CVF conference on computer vision and pattern recognition. pp. 8317–8326 (2019) [56] Song, D., Wang, W., Chen, S., Wang, X., Guan, M.X., Wang, B.: Less is more: A simple yet effective token reduction method for efficient multi-modal llms. In: Proceedings of the 31st International Conference on Computational Linguistics. pp. 7614–7623 (2025) [57] Su, H., Li, J., Chen, Z., Zhu, L., Lu, K.: Distinguish-ing unseen from seen for generalized zero-shot learn-ing. CVPR 2022 (2022) [58] Sun, Z., Ma, Y., Liu, G., Chen, Y., Tang, X., Hu, Y., Xu, Y.: Ivc-prune: Revealing the implicit visual coordinates in lvlms for vision token pruning. arXiv preprint arXiv:2602.03060 (2026) [59] Vasu, P.K.A., Faghri, F., Li, C.L., Koc, C., True, N., Antony, A., Santhanam, G., Gabriel, J., Grasch, P., Tuzel, O., et al.: Fastvlm: Efficient vision encod-ing for vision language models. In: Proceedings of the Computer Vision and Pattern Recognition Confer-ence. pp. 19769–19780 (2025) [60] Wang, C., Wang, Z., Xu, X., Tang, Y., Zhou, J., Lu, J.: Q-vlm: Post-training quantization for large vision-language models. Advances in Neural Informa-tion Processing Systems 37 , 114553–114573 (2024) [61] Wang, Q., Ye, H., Chung, M.Y., Liu, Y., Lin, Y., Kuo, M., Ma, M., Zhang, J., Chen, Y.: Core-matching: A co-adaptive sparse inference framework with token and neuron pruning for comprehensive ac-celeration of vision-language models. arXiv preprint arXiv:2505.19235 (2025) [62] Wang, T., Guo, J., Li, D., Chen, Z.: On the discrim-ination and consistency for exemplar-free class incre-mental learning. In: IJCAI 2025 (2025) [63] Wang, W., Guo, J., Cai, Y., Chen*, Z.: Learning multi-modal prototypes for cross-domain few-shot object detection. In: CVPR 2026 Findings (2026) [64] Wang, Y., Wu, J., Ni, Z., Yang, C., Liu, Y., Yang, L., Zhou, Y., Wen, Y., He, L.: Entropy-prune: Matrix entropy guided visual token pruning for multimodal large language models. arXiv preprint arXiv:2602.17196 (2026) [65] Wen, Z., Gao, Y., Li, W., He, C., Zhang, L.: To-ken pruning in multimodal large language models: Are we solving the right problem? In: Findings of the Association for Computational Linguistics, ACL 2025, Vienna, Austria, July 27 - August 1, 2025. pp. 15537–15549. Association for Computational Lin-guistics (2025) [66] Wen, Z., Gao, Y., Wang, S., Zhang, J., Zhang, Q., Li, W., He, C., Zhang, L.: Stop looking for “important tokens” in multimodal language models: Duplication matters more. In: Proceedings of the 2025 Conference on Empirical Methods in Natural Language Process-ing. pp. 9972–9991 (2025) [67] Wu, Q., Xu, W., Liu, W., Tan, T., Liujianfeng, L., Li, A., Luan, J., Wang, B., Shang, S.: Mobilevlm: A vision-language model for better intra-and inter-ui un-derstanding. In: Findings of the Association for Com-putational Linguistics: EMNLP 2024. pp. 10231– 10251 (2024) [68] Xing, L., Wang, A.J., Yan, R., Shu, X., Tang, J.: Vision-centric token compression in large language model. arXiv preprint arXiv:2502.00791 (2025) [69] Xing, L., Huang, Q., Dong, X., Lu, J., Zhang, P., Zang, Y., Cao, Y., He, C., Wang, J., Wu, F., et al.: Pyramid-drop: Accelerating your large vision-language models via pyramid visual redundancy reduction. In: In Pro-ceedings of the IEEE Conference on Computer Vision and Pattern Recognition (2025) [70] Xu, D., Zhao, Z., Xiao, J., Wu, F., Zhang, H., He, X., Zhuang, Y.: Video question answering via gradually refined attention over appearance and motion. In: Pro-ceedings of the 25th ACM international conference on Multimedia. pp. 1645–1653 (2017) [71] Xu, J., Mei, T., Yao, T., Rui, Y.: Msr-vtt: A large video description dataset for bridging video and language. In: Proceedings of the IEEE conference on computer vision and pattern recognition. pp. 5288–5296 (2016) [72] Xu, Y., Zhao, S., Song, J., Stewart, R., Ermon, S.: A theory of usable information under computational constraints. In: International Conference on Learning Representations (2020) [73] Yang, C., Sui, Y., Xiao, J., Huang, L., Gong, Y., Li, C., Yan, J., Bai, Y., Sadayappan, P., Hu, X., et al.: Topv: Compatible token pruning with inference time opti-mization for fast and low-memory multimodal vision language model. In: Proceedings of the Computer Vi-sion and Pattern Recognition Conference. pp. 19803– 19813 (2025) [74] Yang, C., Dong, X., Zhu, X., Su, W., Wang, J., Tian, H., Chen, Z., Wang, W., Lu, L., Dai, J.: Pvc: Pro-gressive visual token compression for unified image and video processing in large vision-language models. In: Proceedings of the Computer Vision and Pattern Recognition Conference. pp. 24939–24949 (2025) [75] Yang, S., Chen, Y., Tian, Z., Wang, C., Li, J., Yu, B., Jia, J.: Visionzip: Longer is better but not nec-essary in vision language models. In: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. pp. 19792–19802 (2025) [76] Ye, W., Wu, Q., Lin, W., Zhou, Y.: Fit and prune: Fast and training-free visual token pruning for multi-modal large language models. In: Proceedings of the AAAI Conference on Artificial Intelligence. vol. 39, pp. 22128–22136 (2025) [77] Ye, X., Gan, Y., Ge, Y., Zhang, X.P., Tang, Y.: Atp-llava: Adaptive token pruning for large vision lan-guage models. In: Proceedings of the IEEE/CVF Con-ference on Computer Vision and Pattern Recognition. pp. 24972–24982 (2025) [78] You, F., Li, J., Chen, Z., Zhu, L.: Pixel exclu-sion: Uncertainty-aware boundary discovery for ac-tive cross-domain semantic segmentation. In: ACM MM 2022 (2022) [79] You, F., Li, J., Zhu, L., Chen, Z., Huang, Z.: Domain adaptive semantic segmentation without source data. In: ACM MM 2021. pp. 3293–3302 (2021) [80] Yu, H., Li, W., Qu, X., Wang, S., Chen, J., Zhu, J.: Visiontrim: Unified vision token compression for training-free mllm acceleration. arXiv preprint arXiv:2601.22674 (2026) [81] Yu, W., Yang, Z., Li, L., Wang, J., Lin, K., Liu, Z., Wang, X., Wang, L.: Mm-vet: Evaluating large mul-timodal models for integrated capabilities. In: Forty-first International Conference on Machine Learning (2024) [82] Yu, Z., Liao, Z., Li, J., Chen, Z., Zhu, L.: Dynamic tar-get distribution estimation for source-free open-set do-main adaptation. In: AAAI 2025. vol. 39, pp. 22254– 22262 (2025) [83] Yu, Z., Xu, D., Yu, J., Yu, T., Zhao, Z., Zhuang, Y., Tao, D.: Activitynet-qa: A dataset for understanding complex web videos via question answering. In: Pro-ceedings of the AAAI Conference on Artificial Intel-ligence. vol. 33, pp. 9127–9134 (2019) [84] Zamini, M., Shukla, D.: Delta-llava: Base-then-specialize alignment for token-efficient vision-language models. In: Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vi-sion. pp. 3648–3657 (2026) [85] Zeng, Q.S., Li, Y., Wang, Q., Jiang, P.T., Wu, Z., Cheng, M.M., Hou, Q.: A glimpse to compress: Dy-namic visual token pruning for large vision-language models. arXiv preprint arXiv:2508.01548 (2025) [86] Zhang, Q., Cheng, A., Lu, M., Zhang, R., Zhuo, Z., Cao, J., Guo, S., She, Q., Zhang, S.: Beyond text-visual attention: Exploiting visual cues for ef-fective token pruning in vlms. In: Proceedings of the IEEE/CVF International Conference on Computer Vi-sion. pp. 20857–20867 (2025) [87] Zhang, Y., Wang, S., Chen, Z., Xu, X., Funiak, S., Liu, J.: Towards cost-efficient federated multi-agent rl with learnable aggregation. In: PAKDD 2024, pp. 171–183. Springer Nature Singapore (2024) [88] Zhang, Y., Fan, C.K., Ma, J., Zheng, W., Huang, T., Cheng, K., Gudovskiy, D.A., Okuno, T., Nakata, Y., Keutzer, K., et al.: Sparsevlm: Visual token sparsifi-cation for efficient vision-language model inference. In: Forty-second International Conference on Ma-chine Learning (2025) [89] Zhao, Z., Chen, Z., Huang, Z., Sadiq, S., Chen, T.: Continual text-to-video retrieval with frame fusion and task-aware routing. In: SIGIR 2025. pp. 1011– 1021 (2025) [90] Zhao, Z., Chen, Z., Huang, Z., Sadiq, S., Chen, T.: Generative recall, dense reranking: Learning multi-view semantic ids for efficient text-to-video retrieval. arXiv preprint arXiv:2601.21193 (2026) [91] Zhao, Z., Song, S., Chen, T., Chen, Z., Sadiq, S., Luo, Y.: Are synthetic videos useful? a benchmark for retrieval-centric evaluation of synthetic videos. In: ACM MM 2025 (2025) [92] Zhou, B., Hu, Y., Weng, X., Jia, J., Luo, J., Liu, X., Wu, J., Huang, L.: Tinyllava: A framework of small-scale large multimodal models. arXiv preprint arXiv:2402.14289 (2024) [93] Zhuang, X., Zhu, Z., Xie, Y., Liang, L., Zou, Y.: Vasparse: Towards efficient visual hallucination mit-igation via visual-aware token sparsification. In: Pro-ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR). pp. 4189– 4199 (June 2025) Appendix 
+
+A. Implementation Details 15 
+
+A.1. Benchmark Datasets . . . . . . . . . . . . . 15 A.2. Baselines and MLLMs . . . . . . . . . . . . 17 A.3. PriorTR Implementation Details . . . . . . . 17 
+
+B. Additional Experiments 18 
+
+B.1. Full Results on LLaVA-1.5-13B . . . . . . . 18 B.2. Generalization to Additional MLLMs . . . . 18 B.3. Robustness of the Null Token Choice . . . . 19 B.4. Effect of Pruning Layer . . . . . . . . . . . 20 B.5. Failure Cases under Extreme Budgets . . . . 20 
+
+C. Efficiency Analysis 20 D. Multi-turn Dialogue Qualitative Analysis 20 
+
+A. Implementation Details 
+
+A.1. Benchmark Datasets 
+
+We provide a comprehensive evaluation of PriorTR across a diverse suite of 16 multimodal benchmarks, deliberately chosen to assess a wide spectrum of perceptual and cogni-tive capabilities of MLLMs after pruning redundant visual tokens. These datasets are broadly categorized into image understanding and video understanding tasks. Representa-tive examples from each image understanding benchmark are illustrated in Figure 5. 
+
+Image Understanding. 
+
+GQA [27] evaluates compositional question answering through complex queries grounded in dense scene graphs. Since it demands precise comprehension of localized object attributes and spatial relationships, it serves as a rigorous benchmark to verify that efficient architectures and visual token pruning strategies retain essential fine-grained details without performance degradation. 
+
+POPE [37] is a polling-based benchmark designed to quan-tify object hallucination in large multimodal models. By querying models with binary yes/no questions regarding the presence of specific objects, it serves as a critical metric to ensure that our multimodal visual token pruning strategy does not inadvertently discard essential foreground features, thereby preventing an increase in hallucination. 
+
+MME [21] evaluates both perceptual and cognitive mul-timodal abilities across 14 diverse subtasks. Through its rigorous, manually curated instruction-answer pairs, it pro-vides a comprehensive metric to ensure that our token prun-ing strategy maintains general-purpose visual comprehen-sion without sacrificing performance across broad cognitive domains. 
+
+MMBench & MMBench-CN [45] utilizes a hierarchical framework of multiple-choice queries to assess capabili-ties ranging from basic perception to advanced reasoning. Alongside its Chinese counterpart MMBench-CN, it serves as a robust benchmark to confirm that efficient architectures maintain their all-around generalization and cross-lingual reasoning capacities even under significant token compres-sion. 
+
+TextVQA [55] challenges models to read and reason about embedded textual content within images. Since optical character recognition is highly sensitive to structural in-formation loss, this dataset is exceptionally critical for validating whether our visual token reduction mechanism can accurately identify and preserve the fine-grained, high-frequency text tokens essential for precise comprehension. 
+
+SEEDBench [32] acts as a targeted diagnostic tool specif-ically engineered to isolate and quantify fine-grained spa-tial and temporal relationships using a multiple-choice for-mat. By evaluating models across 12 explicit dimen-sions—including instance attributes, spatial configurations, and action understanding—this benchmark rigorously ver-ifies whether our token compression mechanism compro-mises essential localized features and dynamic context. 
+
+VizWiz [22] assesses visual question answering using real-world, often low-quality images captured by visually im-paired users. Because these images frequently suffer from severe noise, blur, and occlusion, this benchmark rigorously tests the robustness of our token pruning strategy. It requires the model to precisely isolate and retain sparse but critical visual signals from degraded inputs, while also evaluating its capacity to accurately judge visual unanswerability. 
+
+ScienceQA (SQA) [46] focuses on multi-modal scientific reasoning by challenging models with highly structured vi-sual contexts, such as academic diagrams and charts. Span-ning natural and social science domains with hierarchically categorized questions, it serves as a critical testbed to en-sure that our efficient architecture successfully preserves the topological and semantic integrity of visual tokens neces-sary for multi-step cognitive deduction. 
+
+Flickr30k [48] complements our evaluations on rare ob-jects and complex reasoning. It focuses on capturing ev-eryday human activities and common visual events. With each image paired with multiple independently written hu-man captions, it serves as an essential benchmark for de-scriptive language grounding. For our visual token pruning mechanism, this dataset verifies that the model can maintain coherent, globally aware narrative generation even when re-dundant spatial tokens are aggressively compressed. 
+
+NoCaps [1] evaluates open-domain captioning with a fo-cus on long-tail and scarce real-world objects. It provides a stringent test to confirm that our token reduction strategy effectively retains the fine-grained visual tokens associated with rare entities, preventing the over-pruning of critical but infrequent visual signals. 
+
+OKVQA [47]. To assess reasoning that extends beyond Flickr30k 
+
+> Q: Describe the image.
+> A: A dog running on a rocky beach. GQA
+> Q: What is the airplane flying above?
+> A: Ocean MMBench (EN & CN)
+> Q: Which is the main topic
+> of the image?
+> A: Coffee and Dessert
+> Q:
+> A: MME
+> Q: Is there a dog in the picture?
+> A: Yes MM-Vet
+> Q: What fruit is to the right of plums?
+> A: Orange NoCaps
+> Q: Describe the image.
+> A: A blue jay on a tree. OK-VQA
+> Q: Egyptians worshiped these animals?
+> A: Cats POPE
+> Q: Is there a dog in the image?
+> A: Yes SEEDBench
+> Q: What is the man wearing in the image?
+> A: A suit and tie ScienceQA
+> Q: What is the capital of Wyoming?
+> A: Cheyenne TextVQA
+> Q: What kind of airline is this?
+> A: Lufthansa VizWiz
+> Q: What kind of phone is this?
+> A: BlackBerry
+
+Figure 5. Representative examples from the 12 image understanding benchmarks used in our evaluation. Each panel shows a sample image together with the associated question and ground-truth answer. 
+
+explicit visual content, we utilize the Outside Knowledge VQA (OKVQA) dataset. Since answering its queries re-quires retrieving external commonsense and factual knowl-edge based on specific visual cues, it serves as a crucial benchmark to verify whether our token pruning strategy ef-fectively preserves the semantic anchors necessary for ac-curate cross-modal knowledge retrieval. 
+
+MMVet [81] targets the integration of distinct vision-language capabilities, testing whether models can fuse mul-tiple foundational skills to solve multifaceted problems. By systematically evaluating specific combinations of core multimodal competencies, it provides a rigorous metric to ensure that our highly compressed token representations still retain the complex visual features required for ad-vanced skill integration and generalist problem-solving. 
+
+Video Understanding. 
+
+MSVD-QA [70]. Based on the Microsoft Research Video Description dataset, MSVD-QA includes 1,970 video clips paired with approximately 50.5K question-answer pairs. The benchmark features open-ended questions categorized into what, who, how, when, and where types to test basic video comprehension. 
+
+MSRVTT-QA [71] is a large-scale benchmark comprising 10K videos and 243K question-answer pairs. It addresses the complexity of understanding and reasoning about video content, challenging models to effectively integrate and pro-cess continuous visual and temporal information. 
+
+TGIF-QA [29] extends visual question answering to the domain of animated GIFs, featuring 165,000 QA pairs. It introduces unique tasks that explicitly require spatio-temporal reasoning, such as counting action repetitions, rec-ognizing repeating actions, and identifying state transitions. 
+
+ActivityNet-QA [83] contains 58,000 human-annotated QA pairs spanning 5,800 complex videos. The questions are carefully designed to cover a diverse range of types, including motion analysis, spatial relationships, and long-range temporal relationships. It tests models’ capability of reasoning about video content at multiple granular levels. 
+
+A.2. Baselines and MLLMs 
+
+Baselines. We analyze multiple representative training-free methods for accelerating MLLMs through visual token re-duction. These methods share the goal of improving infer-ence efficiency by mitigating visual redundancy, yet they differ in their specific criteria for token selection, such as attention magnitude, diversity constraints, or token merging strategies. 
+
+FastV [7] focuses on early-stage token pruning by leverag-ing text-visual attention maps. It ranks image tokens using attention weights at a selected early Transformer layer and physically discards the lowest-scoring tokens, effectively reducing computational overhead in subsequent layers. 
+
+PDrop [69] adopts a progressive visual redundancy reduc-tion strategy across model stages. Rather than pruning all tokens at a single layer, it drops tokens iteratively at prede-fined intervals, forming a pyramid-like token structure that balances inference efficiency and reasoning performance. 
+
+SparseVLM [88] ranks token importance using cross-modal attention and introduces an adaptive visual token sparsification approach. It is complemented by token recy-cling that clusters and integrates discarded tokens as com-pact representatives to preserve spatial-temporal context, which is particularly beneficial for video tasks. 
+
+PruMerge [50] combines adaptive pruning and merging strategies to compress visual representations. It dynami-cally identifies and removes less important visual tokens based on sparse visual attention from the CLS token, and subsequently clusters the retained tokens based on key sim-ilarity to further compact the representation. 
+
+VisPruner [86] employs a hybrid token reduction strategy that goes beyond text-visual attention. It incorporates both text-guided semantic relevance and vision-guided spatial diversity constraints, aiming to preserve both instruction-critical regions and broad scene coverage under high com-pression ratios. These methods collectively highlight diverse approaches to training-free token reduction, providing a comprehensive set of strong baselines to evaluate the effectiveness of ex-plicitly correcting the model-induced prior in our PriorTR. 
+
+Multimodal Large Language Models. We implement and evaluate PriorTR across a diverse spectrum of MLLM archi-tectures to validate its cross-model generalizability, rang-ing from standard fixed-resolution models to dynamic-resolution and video-centric frameworks. 
+
+LLaVA-1.5 [43] serves as our primary testbed, evaluated at the 7B and 13B parameter scales. By utilizing a standard vi-sion encoder to project images into a fixed sequence of 576 visual tokens before mapping them to the language back-bone via an MLP projector, it provides a highly controlled, fixed-resolution environment ideal for rigorously testing our aggressive token pruning strategies. 
+
+Video-LLaVA [40] extends the LLaVA architecture to the temporal domain by jointly training on images and videos. We utilize this model to demonstrate PriorTR’s capability in handling sequences with extreme spatial-temporal redun-dancy, where thousands of video tokens must be aggres-sively compressed. 
+
+LLaVA-Next-7B [42] features dynamic high-resolution processing (AnyRes) that encodes images into significantly more tokens (e.g., up to 2880) via multi-patch grids. We in-clude this model in our generalization experiments to con-firm that prior-corrected scoring remains robust under vary-ing aspect ratios and resolutions. 
+
+InternVL2.5-8B [8] features a distinct dynamic resolution strategy and a highly capable vision encoder (InternViT). Testing PriorTR on this architecture verifies that the model-induced prior is a universal property of multimodal atten-tion mechanisms rather than an artifact specific to the CLIP encoder. 
+
+Qwen3-VL-8B [4] provides a crucial comparative base-line against LLaVA-1.5 due to its fundamentally different visual encoding paradigm. Unlike LLaVA’s rigid, fixed-length sequence of 576 tokens, Qwen3-VL employs a na-tive dynamic resolution mechanism that generates a vari-able number of tokens based on the input image’s arbitrary aspect ratio and size. Evaluating PriorTR on this model demonstrates that our prior correction strategy is not overfit-ted to static grids, but rather scales seamlessly to complex, variable-length token sequences. 
+
+A.3. PriorTR Implementation Details 
+
+Single-Pass Prior and Posterior Extraction. Following §3.4, PriorTR extracts both the model-induced prior Q and the task-conditioned posterior P from the self-attention ma-trix at layer L=2 within a single forward pass. Let [is, i e)
+
+denote the index range of visual tokens in the input se-quence, and ie the index of the separator token immediately following the visual sequence. 
+
+Separator Token. In standard MLLM input templates, a separator token is placed immediately after the visual to-ken sequence. Due to causal masking, this token can only attend to the preceding visual tokens, making its attention row a natural instruction-agnostic distribution over visual tokens. PriorTR repurposes this existing token as the prior probe without inserting or modifying any token. The spe-cific separator token differs across model families: LLaVA-1.5 and Video-LLaVA use the newline token ( \n) appended after the image token sequence in the LLaVA chat template; Qwen3-VL uses the dedicated <|vision end|> token in Qwen3’s multimodal input format; and InternVL2.5 uses its 
+
+<image end> boundary token. In all cases the slot is fixed by position—the boundary between the visual and instruc-tion tokens—rather than by the token’s semantic content. 
+
+Extracting Q and P . At pruning layer L, let A ∈
+
+RNh×T ×T be the multi-head self-attention matrix ( Nh
+
+heads, T tokens). The raw model-induced prior is extracted from the separator token’s attention row: 
+
+˜Qi = Agg h(Ah, i e, i s+i) , i = 0 , . . . , N −1, (9) where N =ie − is and Agg h denotes aggregation across attention heads. The raw task-conditioned posterior ˜Pi is obtained by averaging the attention from all instruction to-kens (at positions j ≥ ie) to visual tokens across both the instruction-token dimension and attention heads. 
+
+Computing Scores. Both vectors are L1-normalized to valid probability distributions: Qi = ˜Qi/P 
+
+> k
+
+˜Qk and Pi =˜Pi/P 
+
+> k
+
+˜Pk. The per-token importance score is then: 
+
+Si = Pi · log 
+
+ Pi + ϵQi + ϵ
+
+
+
+, ϵ = 10 −6. (10) The top-K visual tokens ranked by Si are physically re-tained in hidden states and KV cache; all remaining tokens are discarded before layer L+1 .
+
+PriorTR+Merging Variant. PriorTR+Merging replaces hard pruning with a cluster-and-merge strategy. At the prun-ing layer, visual tokens are ranked by prior-corrected S
+
+scores, where the prior Q is extracted from the attention of the \n separator token. Rather than a fixed budget, the num-ber of retained tokens K is determined adaptively as the ma-trix rank of the text-to-visual attention matrix. The top-K
+
+tokens are kept; the remaining tokens are not discarded— instead, the top 30% among them by S score are selected as cluster candidates and grouped into ⌊count /10 ⌋+1 clus-ters via K-means, with each cluster compressed into a single representative token appended to the sequence. This variant reuses the cluster-and-merge pipeline of SparseVLM [88], replacing its raw-attention scoring with prior-corrected S
+
+scores in both token selection and cluster candidate identi-fication. 
+
+B. Additional Experiments 
+
+B.1. Full Results on LLaVA-1.5-13B 
+
+Table 6 details the LLaVA-1.5-13B [43] results across three token budgets ( K ∈ { 192 , 128 , 64 }), complementing our 
+
+Table 6. Comparative experiments on LLaVA-1.5-13B.                                                                                                                                                             
+
+> Method GQA MMB MMB-CN MME POPE SQA VQA Text Avg .LLaVA-1.5-13B Upper Bound, 576 Tokens (100%)
+> Vanilla 63.3 68.5 62.3 1816 85.9 74.9 61.2 100% LLaVA-1.5-13B Retain 192 Tokens (↓66 .7%)
+> FastV (ECCV24) 59.1 54.0 51.2 1641 82.3 56.4 51.6 85.7% SparseVLM (ICML25) 58.7 67.4 61.0 1768 82.2 73.1 45.4 93.4% PDrop (CVPR25) 59.6 67.5 62.4 1786 85.0 74.9 59.5 98.2% VisPruner (ICCV25) 59.1 66.8 60.1 1751 85.2 73.7 59.4 96.9%
+> PriorTR (Ours) 62.3 68.3 60.7 1839 85.1 75.2 59.4 99.1%
+> LLaVA-1.5-13B Retain 128 Tokens (↓77 .8%)
+> FastV (ECCV24) 57.7 57.9 48.8 1673 79.3 57.0 56.0 86.6% SparseVLM (ICML25) 57.9 65.8 55.8 1774 81.1 69.9 49.9 92.0% PDrop (CVPR25) 57.2 65 59.2 1744 82.3 75.4 58.3 95.4% VisPruner (ICCV25) 57.8 66.5 60.3 1730 83.3 73.8 59.2 96.1%
+> PriorTR (Ours) 61.3 67.3 60.9 1823 83.5 75.2 58.4 98.0%
+> LLaVA-1.5-13B Retain 64 Tokens (↓88 .9%)
+> FastV (ECCV24) 53.7 50.9 42.1 1567 69.3 56.8 47.1 78.1% SparseVLM (ICML25) 50.6 61.3 54.8 1402 65.0 69.0 22.7 77.1% PDrop (CVPR25) 50.7 59.2 50.7 1441 62.6 74.2 52.9 83.7% VisPruner (ICCV25) 55.9 63.2 57.7 1678 77.1 74.0 57.7 92.6%
+> PriorTR (Ours) 58.7 65.8 59.1 1761 78.2 75.0 55.9 94.7%
+
+7B findings. 
+
+Overall performance. PriorTR achieves the highest aver-age normalized accuracy across all budgets (99.1%, 98.0%, and 94.7%). Crucially, its advantage amplifies under com-pression: at the extreme K=64 budget, PriorTR outper-forms the second-best VisPruner by 2.1%. This confirms that mitigating model-induced prior becomes increasingly vital as token capacities shrink. 
+
+Robust semantic reasoning. PriorTR consistently dom-inates GQA, MMBench, and MME. By effectively cor-recting the instruction-agnostic prior, our method accu-rately isolates task-critical tokens from model-induced bi-ases, maintaining strong compositional and cognitive rea-soning capabilities even at aggressive prune rates. 
+
+Performance analysis on TextVQA. TextVQA presents a unique exception. While PriorTR remains competitive at 
+
+K=192 , it slightly trails VisPruner at K=64 (55.9% vs. 57.7%). Table 6 reveals a structural OCR bottleneck under extreme compression: purely attention-based methods suf-fer severe degradation ( e.g ., FastV drops to 47.1%, PDrop to 52.9%). PriorTR’s correction mechanism substantially mit-igates this collapse, outperforming direct competitors by a wide margin. VisPruner’s slight edge relies entirely on ex-plicit spatial diversity constraints [86] that act as an archi-tectural safety net. Integrating such spatial regularizers into PriorTR’s scoring framework offers a clear direction for fu-ture work. 
+
+B.2. Generalization to Additional MLLMs 
+
+We evaluate PriorTR on two additional architectures, in-cluding LLaVA-Next-7B [42] and InternVL2.5-8B [8], to assess whether prior correction transfers beyond the pri-mary LLaVA-1.5 backbone. 
+
+LLaVA-Next. Table 7 shows results on LLaVA-Next-7B Table 7. Comparative experiments are performed on LLaVA-Next-7B using the same settings as LLaVA-1.5-7B. 
+
+Method GQA MMB MMB-CN MME POPE SQA VQA Text VizWiz OCRBench Avg .LLaVA-Next-7B Upper Bound, 2880 Tokens (100%) 
+
+Vanilla 64.2 67.4 60.6 1851 86.5 70.1 64.9 57.6 51.7 100.0% LLaVA-Next-7B Retain 320 Tokens (↓ 88 .9%) 
+
+FastV (ECCV24) 55.9 61.6 51.9 1661 71.7 62.8 55.7 53.1 37.4 86.3% PruMerge (ICCV25) 53.6 61.3 55.3 1534 60.8 66.4 50.6 54.0 14.6 79.2% SparseVLM (ICML25) 56.1 60.6 54.5 1533 82.4 66.1 58.4 52.0 27.0 85.8% PDrop (CVPR25) 56.4 63.4 56.2 1663 77.6 67.5 54.4 54.1 25.9 86.5% 
+
+PriorTR (Ours) 60.7 63.6 54.4 1745 82.3 68.1 56.3 59.0 39.9 92.4% 
+
+Table 8. Comparative experiments on InternVL2.5-8B. Due to dy-namic resolution, visual token counts vary per image (max 1792 tokens with 7 tiles). Avg is computed over all evaluated datasets.                                                                     
+
+> Method GQA MMB MMB-CN MME POPE SQA TextVQA Avg .InternVL2.5-8B Upper Bound, 1792 Tokens (100%)
+> Vanilla 63.1 84.7 82.6 2332 90.5 98.0 76.8 100.0% InternVL2.5-8B Retain 33.3% Tokens
+> FastV (ECCV24) 61.1 83.3 81.5 2251 90.3 97.3 75.1 98.2%
+> PriorTR (Ours) 61.0 83.8 83.1 2275 90.5 97.3 73.5 98.4%
+> InternVL2.5-8B Retain 22.2% Tokens
+> FastV (ECCV24) 59.6 81.0 80.3 2176 89.6 94.9 73.3 96.0%
+> PriorTR (Ours) 60.2 82.7 81.4 2263 90.8 95.7 71.9 97.2%
+> InternVL2.5-8B Retain 11.1% Tokens
+> FastV (ECCV24) 53.1 74.0 72.8 1970 84.7 88.0 65.3 87.5%
+> PriorTR (Ours) 56.8 80.8 78.7 2150 89.0 91.2 67.5 93.2%
+
+with 320 retained tokens (88.9% reduction), following the same evaluation protocol as the main experiments. PriorTR achieves 92.4% average normalized accuracy, outperform-ing FastV (86.3%), PDrop (86.5%), SparseVLM (85.8%), and PruMerge (79.2%). The consistent lead in average score across nine benchmarks confirms that prior-corrected scoring generalizes to higher-resolution inputs (2880 tokens vs. 576 in LLaVA-1.5). 
+
+InternVL2.5-8B. Table 8 shows results on InternVL2.5-8B under three keep ratios. PriorTR consistently outperforms FastV across all compression levels, with the gap widening as the budget decreases: +0 .2% at 33.3%, +1 .2% at 22.2%, and +5 .7% at 11.1% (93.2% vs. 87.5%). This pattern mir-rors the trend observed on LLaVA-1.5: the advantage of prior correction grows under tighter budgets, where model-induced bias has the largest impact on token choice. 
+
+B.3. Robustness of the Null Token Choice 
+
+PriorTR extracts the instruction-agnostic prior Q from the 
+
+null token , the separator token at position ie, which is iso-lated from all subsequent instruction tokens by the causal mask. In our main experiments, we employ the na-tive boundary token defined by each model’s pre-training chat template ( e.g ., \n in LLaVA-1.5). To investigate whether the method’s effectiveness is sensitive to the spe-cific identity of this token, we conduct a systematic abla-tion on LLaVA-1.5-7B ( K=64 ) across MME, MMBench, 
+
+Table 9. Ablation on the null token choice (LLaVA-1.5-7B, 
+
+K=64 ). Tokens in the upper group belong to the model’s mid-sequence training distribution; <bos> appears only at sequence boundaries and is positionally out-of-distribution. 
+
+Null Token MME MMBench (%) POPE F1 
+
+\n (default) 1745.5 61.17 0.7635 
+
+. 1773.2 61.17 0.7560 
+
+, 1733.9 60.65 0.7587 
+
+‘‘Image’’ 1739.9 60.74 0.7484 
+
+‘‘Look’’ 1742.0 60.57 0.7469 
+
+<bos> 1464.0 54.38 0.6002 and POPE. 
+
+In-distribution null tokens. We replace the default sep-arator with four alternative tokens: two semantically neu-tral punctuation marks ( period , comma ) and two tokens carrying explicit visual or instructional semantics ( Image ,
+
+Look ). As shown in Table 9, all four replacements per-form within ±0.6% of the baseline on MMBench and within ±0.017 F1 on POPE. While tokens with seman-tic content ( Image , Look ) incur a slightly larger POPE degradation ( −0.015 –0.017 F1), the overall impact remains marginal. These results confirm that the architectural isola-tion enforced by the causal mask—not the token’s semantic identity—is the fundamental mechanism behind PriorTR’s prior extraction. 
+
+Positionally out-of-distribution null token. We addition-ally test the <bos> (<s> ) token, which, although present in the model’s vocabulary, appears only at sequence-initial positions during pre-training. Forcibly inserting it at ie cre-ates an out-of-distribution contextual anomaly, causing sig-nificant distortion of the extracted prior. This leads to se-vere degradation across all three benchmarks ( −281 MME, 
+
+−6.8% MMBench, −0.163 POPE F1)—an order of magni-tude larger than any in-distribution variation. This confirms that in-distribution positional usage is a necessary condi-tion: tokens that commonly occur at mid-sequence posi-tions during pre-training can serve as valid null tokens. 1 2 3 4 5 6 7 8 9                          
+
+> Layer
+> 1500
+> 1600
+> 1700
+> 1800
+> Score
+> MME
+> 123456789
+> Layer
+> 54
+> 56
+> 58
+> 60
+> 62
+> 64
+> 66
+> Score
+> MMBench
+> 123456789
+> Layer
+> 60
+> 65
+> 70
+> 75
+> 80
+> 85
+> Score
+> POPE (F1)
+> 123456789
+> Layer
+> 50
+> 52
+> 54
+> 56
+> 58
+> Score
+> TextVQA
+> PriorTR FastV Baseline
+
+Figure 6. Effect of pruning layer (K=64 , LLaVA-1.5-7B). The dashed line denotes the full-token baseline. PriorTR is stable across depths and consistently outperforms FastV; FastV degrades noticeably at shallow layers. 
+
+B.4. Effect of Pruning Layer 
+
+We study how the choice of pruning layer L affects down-stream performance. Figure 6 compares PriorTR and FastV across pruning depths on LLaVA-1.5-7B over four bench-marks (MME, MMBench, POPE, TextVQA). PriorTR ex-hibits stable or improving performance as pruning is applied at deeper layers and consistently outperforms FastV across all settings, whereas FastV degrades noticeably when prun-ing is applied too early. 
+
+B.5. Failure Cases under Extreme Budgets 
+
+While PriorTR substantially improves token selection un-der aggressive compression, it does not overcome the in-formation loss inherent to extremely small budgets. Fig-ure 7 shows representative cases at K=64 where the full-token model answers correctly but both FastV and PriorTR fail, spanning object counting, left–right spatial relations, and depth ordering. These are not method-specific weak-nesses but a budget-level ceiling: when the answer depends on token-sparse evidence or fine-grained spatial detail, re-taining only 64 of 576 visual tokens ( ↓ 88 .9% ) can discard the evidence required for a correct answer regardless of the ranking criterion. PriorTR mitigates prior-dominated prun-ing, but cannot recover details the budget itself removes; consistent with the main results (Tab. 1), this gap narrows as K grows. 
+
+C. Efficiency Analysis 
+
+Table 4 summarizes the efficiency comparison of PriorTR against baseline methods on LLaVA-1.5-7B. 
+
+Measurement setup. All metrics are profiled on a sin-gle NVIDIA RTX PRO 6000 Blackwell GPU using CUDA events under inference mode. To precisely attribute latency to the components affected by token reduction, we decom-pose inference into four stages: ViT encoder, multimodal projector, LLM prefill, and end-to-end generation. Prefill (ms) reports the LLM decoder latency on the full prompt context, with ViT and projector time excluded; for PriorTR, the prior forward pass cost is included to ensure a fair com-parison against single-pass baselines. KV Cache (MB) 
+
+measures the memory occupied by all cached key and value tensors immediately after prefill. Throughput (samples/s) 
+
+and Speedup capture end-to-end generation efficiency at batch size 1 with greedy decoding, with Speedup reported relative to the vanilla baseline. Performance is the normal-ized average score from the primary benchmarks (Table 1). 
+
+FLOPs computation. We compute theoretical FLOPs ana-lytically following the protocol of FastV [7]. For a LLaMA transformer layer with hidden dimension D, SwiGLU in-termediate size H, and sequence length P , the per-layer FLOPs are: 
+
+F(P ) = 8 P D 2 + 2 P 2D + 6 P DH, (11) where the three terms correspond to Q/K/V/O projections, self-attention, and the SwiGLU feed-forward network, re-spectively. For methods that prune at layer L with K visual tokens retained, the LLM FLOPs are evaluated piecewise: FLOPs LLM = L · F (P ) + ( T − L) · F ( ˆP ), (12) where T = 32 is the total number of transformer layers, 
+
+P is the full prefill sequence length, and ˆP = Ptext + K
+
+is the reduced sequence after pruning. Total FLOPs fur-ther include the ViT encoder, projector, autoregressive de-code, and LM head; since ViT and projector costs are shared across all methods, the reduction arises entirely from the LLM stages. Results are reported as a percentage of the vanilla model’s total FLOPs. 
+
+D. Multi-turn Dialogue Qualitative Analysis 
+
+We examine PriorTR’s robustness in multi-turn visual dialogue—a practically important setting where the visual KV cache is established at Turn 1 and reused for all sub-sequent turns. All cases use LLaVA-1.5-7B with prun-ing layer L=2 ; visual tokens are pruned once at Turn 1 Counting  Spatial Relation  Depth Reasoning 
+
+Q:  How many fences are in the 
+
+image? 
+
+Q:  Q: Is the bicycle to the left or right of 
+
+the person wearing a jacket? 
+
+Which object is closer to the 
+
+camera, television or books? 
+
+GT:  4 Baseline : 4
+
+FastV : 0 FastV : Left  PriorTR : Left 
+
+GT:  Right  Baseline:  Right  Baseline :Books 
+
+FastV :Television 
+
+GT:Books 
+
+PriorTR :Television PriorTR : 0Figure 7. Failure cases at K=64 (↓ 88 .9% ). Representative examples where the full-token baseline is correct but both FastV and PriorTR fail, across counting, left–right spatial relations, and depth ordering—a budget-level ceiling rather than a method-specific weakness. What does the large black-and-white sign mounted on the pole say?       
+
+> Base line The large black-and-white sign mounted on the pole says " One Way ."
+> FastV The large black-and-white sign mounted on the pole says " No Standing Anytime ."
+> Prior TR The large black-and-white sign mounted on the pole says " One Way ." What does the smaller red sign mounted directly above it on the same pole say?
+> Base line The smaller red sign mounted directly above the "One Way" sign says " No Standing ."
+> FastV The smaller red sign mounted directly above the "No Standing Anytime" sign says " One Way ."
+> Prior TR The smaller red sign mounted directly above it on the same pole says " No Standing Anytime ."
+
+Figure 8. FastV completely swaps the two signs, reading the large sign as “No Standing Anytime” and the small sign as “One Way”—an exact reversal that persists across both turns. PriorTR and Baseline correctly identify “One Way” and “No Standing Anytime”. 
+
+and the resulting cache is frozen throughout the conver-sation. Responses are decoded greedily. A key vul-nerability revealed by these cases is hallucination prop-agation : any perceptual error introduced at Turn 1 is silently inherited by every later turn, because the frozen KV cache carries the corrupted visual representation for-ward. FastV’s last-token attention selects tokens based on model-induced prior alone and is therefore susceptible to this failure mode; PriorTR’s question-mean prior correc-tion retains the instruction-specified regions from the out-set, preventing early-turn errors and their downstream com-pounding. We present four cases at two token budgets (K=192 and K=64 ). Figures 8 and 9 ( K=192 , 33.3% re-tention) show that even a moderate budget is insufficient What park name is written in large decorative letters on the front panel of the horse-drawn trolley car?  
+
+> Base line
+
+The name " Disneyland " is written in large decorative letters on the front panel of the horse-drawn trolley car.  
+
+> FastV
+
+The name " Central Park " is written in large decorative letters on the front panel of the horse-drawn trolley car.  
+
+> Prior TR
+
+The name " Disneyland " is written in large decorative letters on the front panel of the horse-drawn trolley car. What three stop names are listed in smaller text on the line directly below the park name on that same front panel?  
+
+> Base line
+
+The three stop names listed in smaller text on the line directly below the park name are " Main Street ," " Toontown ," and " Tomorrowland ."  
+
+> FastV
+
+The three stop names listed in smaller text on the line directly below the park name are " South, North, and West ."  
+
+> Prior TR
+
+The three stop names listed in smaller text on the line directly below the park name are " Main Street ," " Toontown ," and " Tomorrowland ." Figure 9. A bright white horse monopolizes FastV’s prior-driven attention, leaving the trolley’s front panel with virtually no token budget. FastV hallucinates “Central Park” (T1) and invents “South, North, and West” (T2). PriorTR correctly reads “Disneyland” and “Main Street / Toontown / Tomorrowland”. Image FastV PriorTR 
+
+Describe both the umbrella and the bird in the image. Be specific 
+
+about each one. Q
+
+> Base
+> line
+
+A bird stands on a rock by the ocean; an umbrella is on the beach to the left. 
+
+> FastV
+
+A bird perched on a pole near a red umbrella , located close to the bird , in a tropical setting. 
+
+> Prior
+> TR
+
+A bird stands on a rock near the ocean; an umbrella is on the beach, providing shade. 
+
+Figure 10. FastV’s prior-biased attention concentrates on the prominent teddy bear, leaving insufficient tokens for the sheep’s woolly texture; it misidentifies the second animal as “rabbit” in T1 and T2. PriorTR retains sufficient spatial coverage and correctly names “sheep” throughout. All three methods correctly read the shirt text in T3. 
+
+to protect against prior-driven failures when visually domi-nant distractors monopolize the token allocation. Figures 10 and 11 ( K=64 , 11.1% retention) expose the same mecha-nism under extreme compression, where the gap between FastV and PriorTR widens further. In all four cases, Pri-orTR’s outputs match or closely approach the full-token Baseline, confirming that prior correction provides consis-tent multi-turn grounding without any modification to the decoding procedure. Describe the image. 
+
+Base line The image features a baseball  fi eld with a baseball player standing in the grass , wearing a baseball uniform . The player is holding a baseball glove , ready to catch the ball . The player appears to be in the middle of a game, possibly preparing to throw the ball . The scene captures the essence of a baseball game, with the player in the center of the action. 
+
+FastV The image features a baseball player wearing a white uniform and a blue cap , standing on a  fi eld . He is holding a baseball bat and appears to be in the middle of a swing , possibly just after hitting the ball . The player is the main focus of the scene, with the baseball bat being the most prominent object in the image. 
+
+Prior TR The image features a baseball player standing on a  fi eld, wearing a baseball uniform and a glove . The player is pointing his  fi nger upwards , possibly indicating a speci fi c direction or giving instructions to his teammates. The player appears to be the center of attention, possibly leading a play or discussing strategy with his teammates. What sport is being played, and what action is the player performing? 
+
+Base line The sport being played is baseball , and the player is performing the action of throwing the ball. 
+
+FastV The sport being played is baseball , and the player is performing the action of swinging a baseball bat , likely after hitting the ball. 
+
+Prior TR The sport being played is baseball , and the player is performing the action of pointing his  fi nger upwards , which could be a signal to his teammates or indicating a speci fi c direction. What team name is written on the player's jersey? 
+
+Base line The player's jersey has the name " Mariners " written on it, indicating that they are a member of the Mariners baseball team. 
+
+FastV The team name written on the player's jersey is the Mariners .
+
+Prior TR The team name written on the player's jersey is " Mariners ." Figure 11. No bat is present, yet FastV hallucinates “holding a baseball bat” in T1 and compounds this into “swinging a baseball bat” in T2. PriorTR avoids the bat hallucination (glove, pointing upward) though remains imprecise on the action. All three methods correctly read “Mariners” in T3.
