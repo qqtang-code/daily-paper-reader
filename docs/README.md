@@ -6,58 +6,62 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-28
-- 运行时间：2026-06-28 21:32:49 UTC
+- 最新运行日期：2026-06-29
+- 运行时间：2026-06-29 21:48:27 UTC
 - 运行状态：成功
-- 本次总论文数：12
-- 精读区：4
-- 速读区：8
+- 本次总论文数：14
+- 精读区：7
+- 速读区：7
 
 ### 今日简报（AI）
-1. 今日精读聚焦于结构感知文生图与多模态大模型感知演进综述，同时速读多模态基准、文档检索评测及世界模型幻觉预防研究。
-2. 重磅推荐IV-CoT（结构感知图像生成的隐式视觉思维链）与多模态大模型感知范式演化综述，二者均获9.0高分。
-3. 建议优先阅读IV-CoT的技术细节，理解隐式CoT如何提升布局准确性；同时关注多模态感知综述中从表征到协同的进化脉络。
-- 详情：[/202606/28/README](/202606/28/README)
+今日精读两篇9分论文，聚焦结构感知文本到图像生成与并行生成的上下文建模，速读涵盖序列滑窗、长视频自校正及艺术描述理解。最值得关注的方向是隐式视觉链式思维（IV-CoT）实现精准空间布局，以及非对称双向上下文推动并行生成效率。建议优先精读《IV-CoT》和《Reflect-R1》，前者创新图像结构控制，后者提升长视频理解的自我纠错能力。
+- 详情：[/202606/29/README](/202606/29/README)
 
 ### 精读区论文标签
-1. [IV-CoT: Implicit Visual Chain-of-Thought for Structure-Aware Text-to-Image Generation](/202606/28/2606.24849v1-iv-cot-implicit-visual-chain-of-thought-for-structure-aware-text-to-image-generation)  
+1. [IV-CoT: Implicit Visual Chain-of-Thought for Structure-Aware Text-to-Image Generation](/202606/29/2606.24849v1-iv-cot-implicit-visual-chain-of-thought-for-structure-aware-text-to-image-generation)  
    标签：评分：9.0/10、query:mm-cot
-   evidence：隐式视觉链式思维用于结构化文本到图像生成
-2. [From Structure to Synergy: A Survey of Vision-Language Perception Paradigm Evolution in Multimodal Large Language Models](/202606/28/2606.26196v1-from-structure-to-synergy-a-survey-of-vision-language-perception-paradigm-evolution-in-multimodal-large-language-models)  
+   evidence：用于结构感知文本到图像生成的隐式视觉思维链
+2. [Bifocal Diffusion Language Models: Asymmetric Bidirectional Context for Parallel Generation](/202606/29/2606.27732v1-bifocal-diffusion-language-models-asymmetric-bidirectional-context-for-parallel-generation)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：非对称双向上下文实现高效注意力机制
+3. [Vision-Default, Prior-Override: Causal Mechanisms of Perception-Knowledge Conflict in Vision-Language Models](/202606/29/2606.28273v1-vision-default-prior-override-causal-mechanisms-of-perception-knowledge-conflict-in-vision-language-models)  
    标签：评分：9.0/10、query:multimodal
-   evidence：多模态大语言模型中视觉-语言感知范式演变的全面综述
-3. [Epiphany-Aware KV Cache Eviction Without the Attention Matrix](/202606/28/2606.26472v1-epiphany-aware-kv-cache-eviction-without-the-attention-matrix)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：提出基于显性分数的KV缓存驱逐方法，无需注意力矩阵
-4. [ProtoKV: Streaming Video Understanding under Delayed Query with Summary-State Memory](/202606/28/2606.26762v1-protokv-streaming-video-understanding-under-delayed-query-with-summary-state-memory)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：流式视频理解中的KV缓存压缩
+   evidence：多模态大模型幻觉检测的因果机制分析
+4. [From Structure to Synergy: A Survey of Vision-Language Perception Paradigm Evolution in Multimodal Large Language Models](/202606/29/2606.26196v1-from-structure-to-synergy-a-survey-of-vision-language-perception-paradigm-evolution-in-multimodal-large-language-models)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多模态大模型中视觉-语言感知演变的综述
+5. [Flexformer: Flexible Linear Transformer with Learnable Attention Kernel](/202606/29/2606.27748v1-flexformer-flexible-linear-transformer-with-learnable-attention-kernel)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：可学习线性注意力核，实现高效Transformer
+6. [Video-MME-Logical: A Controlled Diagnostic Benchmark for Video Temporal-Logical Reasoning](/202606/29/2606.27828v1-video-mme-logical-a-controlled-diagnostic-benchmark-for-video-temporal-logical-reasoning)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多模态大模型视频时序逻辑推理的可控诊断基准
+7. [ProMSA:Progressive Multimodal Search Agents for Knowledge-Based Visual Question Answering](/202606/29/2606.27974v1-promsaprogressive-multimodal-search-agents-for-knowledge-based-visual-question-answering)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：用于基于知识视觉问答的渐进式多模态搜索代理
 
 ### 速读区论文标签
-1. [MMGist: A Comprehensive Multimodal Benchmark for 2027](/202606/28/2606.22437v2-mmgist-a-comprehensive-multimodal-benchmark-for-2027)  
+1. [NLL-Guided Full-Attention Layer Selection for Training-Free Sliding-Window Adaptation](/202606/29/2606.27791v1-nll-guided-full-attention-layer-selection-for-training-free-sliding-window-adaptation)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：无训练方法选择混合模型中保留全注意力的层以实现高效长上下文推理
+2. [Reflect-R1: Evidence-Driven Reflection for Self-Correction in Long Video Understanding](/202606/29/2606.27922v1-reflect-r1-evidence-driven-reflection-for-self-correction-in-long-video-understanding)  
    标签：评分：7.0/10、query:multimodal
-   evidence：用于评估大视觉语言模型理解能力的全面多模态基准
-2. [Invoice Haystack: Benchmarking Document Retrieval and Visual Question Answering Under Strong Visual Homogeneity](/202606/28/2606.25343v1-invoice-haystack-benchmarking-document-retrieval-and-visual-question-answering-under-strong-visual-homogeneity)  
+   evidence：证据驱动的自我修正减少长视频理解中的幻觉
+3. [Understanding How MLLMs Describe Artworks Using Token Activation Maps](/202606/29/2606.27947v1-understanding-how-mllms-describe-artworks-using-token-activation-maps)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多模态文档检索与视觉问答基准
-3. [Hallucination in World Models is Predictable and Preventable](/202606/28/2606.27326v1-hallucination-in-world-models-is-predictable-and-preventable)  
+   evidence：分析多模态大模型在艺术作品描述中的视觉定位
+4. [HumanMoveVQA: Can Video MLLMs reason about human movement in videos?](/202606/29/2606.27999v1-humanmovevqa-can-video-mllms-reason-about-human-movement-in-videos)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多模态幻觉检测与缓解
-4. [Gated MLPs as Symmetry-Broken Rank-1 Bilinear Attention](/202606/28/2606.22172v1-gated-mlps-as-symmetry-broken-rank-1-bilinear-attention)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：将门控MLP重新解释为秩一双线性注意力，为高效架构设计提供启示
-5. [Asymptotic Signal Subspace Recovery in Softmax Attention Models](/202606/28/2606.22406v1-asymptotic-signal-subspace-recovery-in-softmax-attention-models)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：Softmax注意力理论分析，为基础高效注意力提供理论依据
-6. [Asymptotic Signal Subspace Recovery in Softmax Attention Models](/202606/28/2606.22406v2-asymptotic-signal-subspace-recovery-in-softmax-attention-models)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：Softmax注意力理论分析，为基础高效注意力提供理论依据
-7. [Data Selection Through Iterative Self-Filtering for Vision-Language Settings](/202606/28/2606.23611v1-data-selection-through-iterative-self-filtering-for-vision-language-settings)  
+   evidence：多模态推理基准，评估人体运动理解
+5. [Evaluating the Interpretability of Sparse Autoencoders with Concept Annotations](/202606/29/2606.24716v1-evaluating-the-interpretability-of-sparse-autoencoders-with-concept-annotations)  
    标签：评分：6.0/10、query:multimodal
-   evidence：视觉-语言模型的自过滤数据选择
-8. [Memory Depth, Not Memory Access: Selective Parametric Consolidation for Long-Running Language Agents](/202606/28/2606.26806v1-memory-depth-not-memory-access-selective-parametric-consolidation-for-long-running-language-agents)  
+   evidence：用于视觉语言模型可解释性的稀疏自编码器
+6. [Toward Low-Latency Vision-Language Models with Doubly-Correct Predictions in Egocentric Visual Understanding](/202606/29/2606.25160v1-toward-low-latency-vision-language-models-with-doubly-correct-predictions-in-egocentric-visual-understanding)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：选择性参数化记忆巩固；与KV缓存优化相关
+   evidence：针对视觉语言模型的权重剪枝以实现低延迟
+7. [Mitigating Position Bias in Transformers via Layer-Specific Positional Embedding Scaling](/202606/29/2606.27705v1-mitigating-position-bias-in-transformers-via-layer-specific-positional-embedding-scaling)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：层特定位置缩放改善长上下文注意力分布
 
 
 <div class="dpr-home-promo-card">
