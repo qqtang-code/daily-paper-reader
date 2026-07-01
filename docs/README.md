@@ -6,89 +6,81 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-30
-- 运行时间：2026-06-30 22:22:57 UTC
+- 最新运行日期：2026-07-01
+- 运行时间：2026-07-01 21:19:48 UTC
 - 运行状态：成功
-- 本次总论文数：23
-- 精读区：11
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日推荐23篇注意力机制优化论文，精读重点聚焦静态稀疏注意力与无注意力矩阵的KV缓存淘汰。最值得关注的是Depth-Staggered Fibonacci Spacing在稀疏注意力中超越学习扩张，以及Epiphany-Aware KV缓存在不依赖注意力矩阵下的高效淘汰。建议读者优先关注静态调度策略与传统稀疏方法的对比实验，以及KV缓存优化对长上下文推理的实际影响。
-- 详情：[/202606/30/README](/202606/30/README)
+今日精读两篇满分论文，聚焦长上下文注意力调制与多模态对齐，速读三篇8分研究涉及组合指令、文档理解及可编辑记忆。
+
+最值得关注的方向：MATCH通过上下文检索调节注意力以扩展Transformer长度，ADAPT利用偏好对齐提升多模态模型忠实度。
+
+建议优先精读这两篇10分论文，再速读COMPASS多模态组合指令与Graph RAG长文档理解，以把握当前峰值技术趋势。
+- 详情：[/202607/01/README](/202607/01/README)
 
 ### 精读区论文标签
-1. [Depth-Staggered Fibonacci Spacing for Sparse Attention: Static Schedules Beat Learned Dilation and Extrapolate Where Dense Attention Fails](/202606/30/2606.28560v1-depth-staggered-fibonacci-spacing-for-sparse-attention-static-schedules-beat-learned-dilation-and-extrapolate-where-dense-attention-fails)  
+1. [MATCH: Modulating Attention via In-Context Retrieval for Long-Context Transformers](/202607/01/2606.29844v1-match-modulating-attention-via-in-context-retrieval-for-long-context-transformers)  
    标签：评分：10.0/10、query:sparse-attn
-   evidence：使用斐波那契间隔偏移和静态调度的稀疏自注意力
-2. [Epiphany-Aware KV Cache Eviction Without the Attention Matrix](/202606/30/2606.26472v2-epiphany-aware-kv-cache-eviction-without-the-attention-matrix)  
+   evidence：通过上下文检索增强稀疏注意力，用于长上下文Transformer
+2. [ADAPT: Attention Dynamics Alignment with Preference Tuning for Faithful MLLMs](/202607/01/2606.31054v1-adapt-attention-dynamics-alignment-with-preference-tuning-for-faithful-mllms)  
+   标签：评分：10.0/10、query:multimodal
+   evidence：注意力动态对齐以缓解多模态大语言模型幻觉
+3. [Hierarchical Global Attention (HGA)](/202607/01/2606.30709v1-hierarchical-global-attention-hga)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：基于顿悟分数的KV缓存逐出，无需注意力矩阵
-3. [Enhancing Layer Interaction Using Key-Correlated Layer Attention](/202606/30/2606.28405v1-enhancing-layer-interaction-using-key-correlated-layer-attention)  
+   evidence：提出分层全局注意力作为长上下文变换器的稀疏注意力方法
+4. [SeKV: Resolution-Adaptive KV Cache with Hierarchical Semantic Memory for Long-Context LLM Inference](/202607/01/2606.31145v1-sekv-resolution-adaptive-kv-cache-with-hierarchical-semantic-memory-for-long-context-llm-inference)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：关键相关层注意力实现线性复杂度，用于高效Transformer设计
-4. [Detecting Clinical Hallucinations in LVLMs via Counterfactual Visual Grounding Uncertainty](/202606/30/2606.28520v1-detecting-clinical-hallucinations-in-lvlms-via-counterfactual-visual-grounding-uncertainty)  
+   evidence：用于长上下文LLM推理的分辨率自适应KV缓存与层次语义记忆
+5. [RaBitQCache: Rotated Binary Quantization for KVCache in Long Context LLM Inference](/202607/01/2606.31519v1-rabitqcache-rotated-binary-quantization-for-kvcache-in-long-context-llm-inference)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：旋转二进制量化用于KV缓存稀疏注意力
+6. [ERA: Entropy-Guided Visual Token Pruning with Rectified Attention for Efficient MLLMs](/202607/01/2606.31982v1-era-entropy-guided-visual-token-pruning-with-rectified-attention-for-efficient-mllms)  
    标签：评分：9.0/10、query:multimodal
-   evidence：通过视觉接地检测LVLM幻觉
-5. [HARD-KV: Head-Adaptive Regularization for Decoding-time KV Compression](/202606/30/2606.28831v1-hard-kv-head-adaptive-regularization-for-decoding-time-kv-compression)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：解码时KV压缩的头自适应正则化
-6. [KernelFlume: Elastic Core-Attention Scaling for Agentic Long-Context Decoding](/202606/30/2606.29207v1-kernelflume-elastic-core-attention-scaling-for-agentic-long-context-decoding)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：将注意力计算分离以弹性缩放KV缓存，用于长上下文解码
-7. [Enhancing Part-Level Point Grounding for Any Open-Source MLLMs](/202606/30/2606.29267v1-enhancing-part-level-point-grounding-for-any-open-source-mllms)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：增强任意开源多模态大模型的部件级点定位
-8. [FADE: Mitigating Hallucinations by Reducing Language-Prior Dominance in Large Vision-Language Models](/202606/30/2606.29431v1-fade-mitigating-hallucinations-by-reducing-language-prior-dominance-in-large-vision-language-models)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：分析FFN中语言先验主导作为幻觉原因并提出缓解方法
-9. [Coverage-Driven KV Cache Eviction for Efficient and Improved Inference of LLM](/202606/30/2606.29563v1-coverage-driven-kv-cache-eviction-for-efficient-and-improved-inference-of-llm)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：覆盖驱动的KV缓存驱逐策略，减少内存同时保持长上下文推理性能
-10. [Clearer Sight, Fewer Lies: Oriented Pickup Preference Optimization for Multimodal Hallucination Mitigation](/202606/30/2606.29805v1-clearer-sight-fewer-lies-oriented-pickup-preference-optimization-for-multimodal-hallucination-mitigation)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：通过偏好优化缓解多模态幻觉
-11. [Predict, Reuse, and Repair: Accelerating Dynamic Sparse Attention for Long-Context LLM Decoding](/202606/30/2606.30389v1-predict-reuse-and-repair-accelerating-dynamic-sparse-attention-for-long-context-llm-decoding)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：直接处理长上下文LLM解码中的动态稀疏注意力，使用预测和推测加速
+   evidence：熵引导视觉token剪枝与修正注意力，用于高效多模态大语言模型
+7. [LLM-Guided Planning for Multi-hop Reasoning over Multimodal Nuclear Regulatory Documents](/202607/01/2606.29399v1-llm-guided-planning-for-multi-hop-reasoning-over-multimodal-nuclear-regulatory-documents)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：LLM指导的多模态文档多跳推理规划
 
 ### 速读区论文标签
-1. [IV-CoT: Implicit Visual Chain-of-Thought for Structure-Aware Text-to-Image Generation](/202606/30/2606.24849v1-iv-cot-implicit-visual-chain-of-thought-for-structure-aware-text-to-image-generation)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：面向多模态生成的隐式视觉思维链
-2. [CARVE: Content-Aware Recurrent with Value Efficiency for Chunk-Parallel Linear Attention](/202606/30/2606.27229v2-carve-content-aware-recurrent-with-value-efficiency-for-chunk-parallel-linear-attention)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：内容感知递归与值效率的块并行线性注意力
-3. [Flexformer: Flexible Linear Transformer with Learnable Attention Kernel](/202606/30/2606.27748v2-flexformer-flexible-linear-transformer-with-learnable-attention-kernel)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：可学习注意核的线性Transformer，降低二次复杂度
-4. [HKVLM: Faithful Reasoning Grounding by Binding Language Queries to a Frozen Detector](/202606/30/2606.28862v1-hkvlm-faithful-reasoning-grounding-by-binding-language-queries-to-a-frozen-detector)  
+1. [COMPASS: Grounding Composition-Intent Guidance in Unified Multimodal Models](/202607/01/2606.28696v1-compass-grounding-composition-intent-guidance-in-unified-multimodal-models)  
    标签：评分：8.0/10、query:multimodal
-   evidence：解决视觉语言模型中的幻觉和绑定失败，实现忠实推理
-5. [ATMA: Length-Invariant Language Modeling via Polar Attention and Gated-Delta Compression Memory](/202606/30/2606.25156v2-atma-length-invariant-language-modeling-via-polar-attention-and-gated-delta-compression-memory)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：引入门控增量压缩记忆用于KV缓存压缩和长上下文建模
-6. [Prism Transformer: Progressive Head Schedules for Hierarchical Attention Processing](/202606/30/2606.27449v1-prism-transformer-progressive-head-schedules-for-hierarchical-attention-processing)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：渐进式头部调度实现层级注意力处理，克服均匀头部分配瓶颈
-7. [TAP-VLA: Tactile Annotation Prompting for Vision Language Action Models](/202606/30/2606.29089v1-tap-vla-tactile-annotation-prompting-for-vision-language-action-models)  
+   evidence：统一多模态框架实现构图感知与生成
+2. [Multimodal Graph RAG for Long-range Visually Rich Document Understanding](/202607/01/2606.28780v1-multimodal-graph-rag-for-long-range-visually-rich-document-understanding)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多模态图RAG用于长距离富视觉文档理解
+3. [Memory-Managed Long-Context Attention: A Preliminary Study of Editable Request-Local Memory](/202607/01/2606.28876v1-memory-managed-long-context-attention-a-preliminary-study-of-editable-request-local-memory)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：内存管理长上下文注意力，包含稀疏回退机制
+4. [Bridging VideoQA and Video-Guided Agentic Tasks via Generalized Keyframe Extraction](/202607/01/2606.29445v1-bridging-videoqa-and-video-guided-agentic-tasks-via-generalized-keyframe-extraction)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：通过通用关键帧提取评估MLLM的视频理解和智能体任务
+5. [Vision-Language Model Reasoning for Contextual Semantic Mapping in Intralogistics](/202607/01/2606.24814v2-vision-language-model-reasoning-for-contextual-semantic-mapping-in-intralogistics)  
    标签：评分：7.0/10、query:multimodal
-   evidence：将触觉反馈集成到VLA模型中以增强多模态理解
-8. [Event-VLA: Action-Conditioned Event Fusion for Robust Vision-Language-Action Model](/202606/30/2606.29384v1-event-vla-action-conditioned-event-fusion-for-robust-vision-language-action-model)  
+   evidence：使用VLM进行多视角推理构建语义地图
+6. [Mural: Transferring LLM knowledge to image generation via Mixture-of-Transformers](/202607/01/2606.29013v1-mural-transferring-llm-knowledge-to-image-generation-via-mixture-of-transformers)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多模态VLA模型，在变化光照下实现鲁棒操作
-9. [Compression and Retrieval: Implicit Memory Retrieval for Video World Models](/202606/30/2606.23105v1-compression-and-retrieval-implicit-memory-retrieval-for-video-world-models)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：注意力驱动的记忆压缩与检索，用于高效处理扩展上下文
-10. [Invoice Haystack: Benchmarking Document Retrieval and Visual Question Answering Under Strong Visual Homogeneity](/202606/30/2606.25343v2-invoice-haystack-benchmarking-document-retrieval-and-visual-question-answering-under-strong-visual-homogeneity)  
+   evidence：通过Mixture-of-Transformers共享注意力融合冻结LLM与扩散架构
+7. [SAFE-DiT: Semantics-Aware Fast-path Execution for High-Resolution Diffusion Transformers](/202607/01/2606.29360v1-safe-dit-semantics-aware-fast-path-execution-for-high-resolution-diffusion-transformers)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：通过语义感知执行实现扩散Transformer的高效注意力
+8. [MIRROR: Aligning Semantic Relations from Language to Image via Gromov--Wasserstein](/202607/01/2606.29462v1-mirror-aligning-semantic-relations-from-language-to-image-via-gromov--wasserstein)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：通过最优传输对齐从语言到图像的语义关系
+9. [IV-CoT: Implicit Visual Chain-of-Thought for Structure-Aware Text-to-Image Generation](/202607/01/2606.24849v1-iv-cot-implicit-visual-chain-of-thought-for-structure-aware-text-to-image-generation)  
+   标签：评分：6.0/10、query:mm-cot
+   evidence：隐式视觉链式思维用于结构感知文本到图像生成
+10. [Safe Autoregressive Image Generation with Iterative Self-Improving Codebooks](/202607/01/2606.27147v1-safe-autoregressive-image-generation-with-iterative-self-improving-codebooks)  
    标签：评分：6.0/10、query:multimodal
-   evidence：针对视觉同质性下的多模态文档检索和VQA基准
-11. [Multimodal Graph RAG for Long-range Visually Rich Document Understanding](/202606/30/2606.28780v1-multimodal-graph-rag-for-long-range-visually-rich-document-understanding)  
+   evidence：处理自回归多模态生成的安全性问题，与幻觉缓解相关
+11. [Dynamic Parsing and Updating Natural Language Specification using VLMs for Robust Vision-Language Tracking](/202607/01/2606.29357v1-dynamic-parsing-and-updating-natural-language-specification-using-vlms-for-robust-vision-language-tracking)  
    标签：评分：6.0/10、query:multimodal
-   evidence：多模态图RAG用于长文档理解
-12. [Low-cost concept-based localized explanations: How far can we get with training-free approaches?](/202606/30/2606.29069v1-low-cost-concept-based-localized-explanations-how-far-can-we-get-with-training-free-approaches)  
+   evidence：视觉语言跟踪中的幻觉问题
+12. [Visual Semantic Entropy: Do Vision Language Models Recognize Visual Ambiguity?](/202607/01/2606.31407v1-visual-semantic-entropy-do-vision-language-models-recognize-visual-ambiguity)  
    标签：评分：6.0/10、query:multimodal
-   evidence：评估MLLM在局部概念命名上的能力，与多模态理解相关
+   evidence：分析视觉模糊性导致视觉语言模型产生有偏预测
 
 
 <div class="dpr-home-promo-card">

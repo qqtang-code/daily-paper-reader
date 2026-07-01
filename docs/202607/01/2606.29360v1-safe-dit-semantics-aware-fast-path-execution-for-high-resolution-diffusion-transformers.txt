@@ -1,0 +1,952 @@
+Title: SAFE-DiT: Semantics-Aware Fast-path Execution for High-Resolution Diffusion Transformers
+
+URL Source: https://arxiv.org/pdf/2606.29360v1
+
+Published Time: Tue, 30 Jun 2026 01:22:13 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# SAFE-DiT: Semantics-Aware Fast-path Execution for High-Resolution Diffusion Transformers 
+
+## Xuanhua Yin * Yuxuan Jia * Chuanzhi Xu Weidong Cai †
+
+## School of Computer Science, The University of Sydney, Australia 
+
+{xuanhua.yin, yjia0539, chuanzhi.xu, tom.cai }@sydney.edu.au 
+
+## Abstract 
+
+High-resolution Diffusion Transformer (DiT) inference con-tains substantial spatial redundancy, but many spatially adaptive implementations encode regional computation as attention masks, which can inadvertently move scaled dot-product attention (SDPA) away from FlashAttention fast paths. We identify this avoidable systems bottle-neck as Mask-Induced Dispatch Tax (MIDT) and show that it grows with latent sequence length. We introduce SAFE-DiT, a training-free Semantics-Aware Fast-path Ex-ecution framework that separates exact mask elision from approximation-based spatial scheduling. SAFE-DiT re-moves only provenance-certified image self-attention masks that induce a row-wise constant shift in attention logits, preserves semantics-bearing masks such as text-padding masks, and realizes spatial adaptation through prompt-conditioned token partitioning, selective state updates with global context, and periodic context refresh. We call this acceleration-only configuration SAFE-Core, and re-port sensitivity-weighted classifier-free guidance separately as SAFE-DiT+SW. On the evaluated PyTorch SDPA stack, redundant masks make long-sequence attention 4.1–5.8×
+
+slower than the mask-free path. On Lumina-Next, SAFE-DiT achieves 2.69 × end-to-end acceleration at 1024 2 and 
+
+5.09 × at 2560 2, reduces peak memory at 2560 2 from 94 .1
+
+to 27 .9 GB, and enables 3072 2 generation when dense inference runs out of memory. Paired metrics, compo-nent ablations, and a blinded human study support visual non-inferiority of SAFE-Core to the dense fast-path base-line, while SAFE-DiT+SW provides a separate prompt-alignment operating point without reintroducing spatial self-attention masks. Code is available at https:// github.com/xuanhuayin/SAFE-DiT .
+
+> *Equal contribution.
+> †Corresponding author.
+
+## 1. Introduction 
+
+High-resolution text-to-image generation needs selective computation: only some regions require frequent updates, yet efficient spatial adaptation in Transformer-based diffu-sion and flow models remains difficult. Denoising diffusion models established iterative gen-eration [21], latent diffusion made synthesis practical in compressed latent spaces [41], and Diffusion Transform-ers, or DiTs, replaced convolutional denoisers with scal-able token architectures derived from Transformers and Vi-sion Transformers [15, 37, 51]. Large systems such as GLIDE [36], DALL-E 2 [40], Imagen [42], eDiff-I [2], and SDXL [38] established prompt-conditioned synthesis at scale; recent DiT-style and rectified-flow models, includ-ing PixArt-α [8], PixArt-Σ [7], Stable Diffusion 3 [16], and Lumina-T2X [17], extend prompt following, typography, and native high-resolution generation. This scaling creates a stringent inference problem: the image-token sequence grows quadratically with linear resolution, making repeated attention and block evaluation major sources of latency and memory pressure. Spatial adaptation is natural because generation diffi-culty is not uniform over the canvas. Prompt-critical ob-jects, text, and fine foreground structures may need frequent updates, whereas context regions can change slowly across adjacent denoising steps. This motivates regional prompt-ing, inpainting, grounded control [23, 58], cross-attention intervention [6, 19, 50], spatial guidance [4], and condi-tional or semantic-aware guidance strengths [13, 20, 47]. In parallel, inference accelerators shorten trajectories [31, 48], distill generation [49], or reuse features [28, 34]. These ap-proaches expose temporal and spatial redundancy, but leave an orthogonal systems question: how should a spatial deci-sion be represented so that its algorithmic savings survive attention-kernel dispatch? The representation is consequential because attention masks can conflate semantics and routing. Some masks encode padding, causality, blocked connectivity, or non-uniform attention bias; others are introduced only as rout-1 
+
+> arXiv:2606.29360v1 [cs.CV] 28 Jun 2026 S: Recompute C: Reuse Cache
+
+Unmasked     
+
+> Queries
+> S Only
+> Keys / Value S+C
+> Queries
+> B
+> F
+> Keys / Value
+> FB
+> C (Context)
+> S (Sensitive)
+> Higher Memory
+> Lower Memory
+> B (Background)
+> F (Foreground)
+
+Prior Work – Slow Path 
+
+SAFE -DiT – Fast Path  
+
+> Unmasked Masked
+> High -Resolution Image
+
+# OOM     
+
+> High -Resolution Image
+> Self
+> Attention
+> Self
+> Attention
+> At non -anchor step
+> At non -anchor step
+> Sensitivity Partitioning
+> Spatial Mask Construction
+> 1.00 1.50 2.00 2.50
+> 0.30
+> 0.40
+> 0.50
+> 0.60
+
+Speed - Quality 
+
+> Latency (s)
+> ImageReward
+
+Memory Frontier       
+
+> 1024 !1536 !3072 !
+> 2560 !
+> 2048 !
+> Resolution
+> 2.7 ×3.5 ×4.4×5.1×
+> runs
+> Peak Memory (GB)
+> 20
+> 40
+> 80
+> 60
+> 100
+> Dense OOM
+> Dense
+> FORA
+> S-CFG
+> TeaCache
+> DeltaDiT
+> SDiT
+> ClusCa
+> TaylorSeer RAS
+> AccelAes
+> DPCache
+> SAFE -DiT
+> Better
+
+Figure 1. SAFE-DiT separates exact mask elision from mask-free spatial scheduling. Certified redundant image self-attention masks are removed to avoid the Mask-Induced Dispatch Tax, semantics-bearing text masks are retained, and non-anchor computation is expressed through sensitive-query updates and context reuse. 
+
+ing metadata, even when they leave the mathematical at-tention operator unchanged. Modern inference stacks rely on FlashAttention-style kernels that avoid materializing the full attention matrix [11, 12], while PyTorch scaled dot-product attention, or SDPA, selects among backends ac-cording to the supplied inputs and constraints [39]. Systems such as FlashMask [52] and FlexAttention [14] improve ex-ecution when customized masks are necessary. However, passing a functionally redundant mask can still select a slower or more memory-intensive path. We call this avoid-able interface cost Mask-Induced Dispatch Tax , or MIDT .Under our evaluated stack, paired attention probes show a 
+
+2.79 –5.91 × gap between masked SDPA and the mask-free Flash path as sequence length grows. MIDT is therefore not an argument against masked attention; it identifies the nar-rower case in which a mask is supplied despite having no semantic effect. Safe elimination requires an operator-level criterion rather than a mask-type heuristic. For additive attention, a mask is removable exactly when every query row adds only a constant shift to all key logits, since row-wise soft-max cancels that shift. All-valid Boolean and all-zero addi-tive masks are special cases; text padding, causal or block masks, and finite non-uniform biases alter the normalized attention distribution and must be preserved. This distinc-tion separates exact mask elision from approximate selec-tive state reuse, whose speed–fidelity trade-off must be mea-sured independently. In this paper, we propose SAFE-DiT , a Semantics-Aware Fast-path Execution framework for spatially adap-tive high-resolution DiT inference. As illustrated in Fig. 1, 
+
+SAFE-DiT rewrites only masks whose provenance certi-fies operator redundancy, then represents spatial adapta-tion outside the self-attention mask interface. Prompt-Conditioned Sensitivity Partitioning , or PCSP , aggre-gates early image-to-text attention responses into sensi-tive and context token sets; Sensitive-Region State Up-date , or SRSU , evaluates sensitive query rows while re-taining global keys and values; and Context Anchor Re-fresh , or CAR , periodically recomputes all states to limit cache drift. We call this acceleration configuration with global classifier-free guidance SAFE-Core . Sensitivity-Weighted CFG , or SW-CFG , reuses the same sensitivity field as SAFE-DiT’s prompt-alignment guidance module. It changes prediction-level guidance rather than attention execution. This decomposition makes the claim boundary explicit: the fast-path rewrite is exact, SRSU/CAR pro-vides controlled approximate scheduling, and SW-CFG tar-gets prompt alignment without reintroducing a spatial self-attention mask. Across kernel diagnostics, matched-output checks, high-resolution stress tests, and multiple DiT-style backbones, 
+
+SAFE-DiT improves the speed–memory frontier and en-ables resolutions where dense inference exhausts mem-ory. Fidelity uses paired prompts and seeds, perceptual distances, and blind pairwise judgments; automatic prefer-ence rewards provide auxiliary prompt-alignment evidence rather than proof of perceptual superiority [54, 55]. Our contributions are summarized as follows: • We identify and characterize Mask-Induced Dispatch 
+
+2Tax , showing that a mathematically redundant mask can erase the intended efficiency of spatially adaptive DiT in-ference by changing attention-backend dispatch. • We formulate an exact semantics criterion for mask eli-sion : additive masks that are constant within each query row can be removed without changing normalized atten-tion, while padding, causal, block, and non-uniform bias masks are conservatively retained. • We introduce SAFE-DiT , which combines this ex-act fast-path execution rewrite with mask-free, prompt-conditioned query scheduling and anchor-based cache re-fresh. By reporting SAFE-Core and SAFE-DiT+SW 
+
+side by side, the evaluation distinguishes acceleration fi-delity from the guidance module’s alignment effect. 
+
+## 2. Related Work 
+
+Diffusion Transformers and Spatial Guidance. Mod-ern text-to-image systems progress from denoising diffu-sion and classifier-free guidance to latent diffusion and Transformer-based denoisers [3, 13, 15, 20, 21, 37, 41, 51], with large-scale systems relying on scalable Transformer or rectified-flow backbones whose attention cost grows quadratically with resolution [2, 7, 8, 16, 17, 36, 38, 40, 42, 57]. Spatially adaptive guidance exploits a related non-uniformity—cross-attention exposes text-region cor-respondences and S-CFG assigns region-dependent guid-ance [6, 19, 47, 50]. SAFE-DiT shares this premise but asks which spatial decisions can be made without passing redundant masks into self-attention. 
+
+Training-free Acceleration. Diffusion inference is accel-erated by shortening the trajectory, reusing computation, or updating selected regions. Numerical solvers cut sam-pling cost [31, 32, 48], and distillation reduces the step count with extra training [24, 33, 43, 44, 49]. Training-free methods instead exploit inference-time redundancy, reusing or forecasting intermediate features along the tra-jectory [9, 10, 28, 29, 34, 45, 53]. Closest to SAFE-DiT are token- and region-aware methods that cache or reallocate computation over tokens or regions [25, 27, 30, 56, 60, 61]. These works already establish partial-query updates, cached context, dense refresh, and spatially varying guidance as useful ingredients; Appendix A gives a component-level comparison. SAFE-DiT’s distinct contribution is narrower: it identifies and certifies redundant self-attention masks as an execution-level dispatch tax, then expresses prompt-sensitive spatial scheduling outside the taxed mask inter-face. 
+
+Fast Attention and Mask-aware Execution. Efficient attention kernels are essential for high-resolution DiTs: FlashAttention variants provide IO-aware exact atten-tion [11, 12, 46], and PyTorch SDPA selects among back-ends according to the supplied inputs [39]. A separate line accelerates necessary masked or custom attention [14, 52], and spatial-control methods show why masks are useful in-terfaces [1, 4, 23, 35, 58]. SAFE-DiT addresses the comple-mentary case where the mask is not necessary: it removes all-valid image self-attention masks, which preserve the vis-ible key set, while retaining cross-attention text padding masks, which carry conditioning. It is thus not a new kernel but a semantics-aware rewrite that keeps spatial adaptation off the taxed self-attention interface whenever mathemati-cally safe. 
+
+## 3. Methodology 
+
+SAFE-DiT accelerates high-resolution Diffusion Trans-formers, or DiTs, by separating an operator-preserving ex-ecution rewrite from approximation-based spatial schedul-ing. Rather than using a spatial self-attention mask simulta-neously as a semantic constraint and a routing mechanism, SAFE-DiT asks two questions: does the supplied mask change the normalized attention distribution, and, when it does not, how can spatially non-uniform computation be represented without that mask? The resulting design re-moves only provably redundant image self-attention masks, retains semantics-bearing text masks, and moves spatial adaptation off the mask interface entirely, building on the standard Transformer attention abstraction and on evidence that text–image cross-attention provides useful spatial attri-bution in diffusion models [6, 19, 50, 51]. 
+
+3.1. Problem Setup and Method Overview 
+
+Let Xt ∈ RN ×d denote the image latent tokens at denoising step t, where N is the number of image tokens and d is the hidden dimension. Let Y ∈ RM ×dy denote the text-token representation. For one attention head, we define the projected queries, keys, and values as: 
+
+Q = XW Q, K = ZW K , V = ZW V , (1) where X supplies queries, Z supplies keys and values, and 
+
+WQ, W K , W V are learned projections. With an additive mask m ∈ (R ∪ {−∞} )nq ×nk , scaled dot-product atten-tion is: 
+
+SDPA( Q, K, V, m ) = Softmax 
+
+ QK ⊤
+
+√dh
+
++ m
+
+
+
+V, (2) where dh is the per-head dimension. We use m = ∅ to denote that no mask argument is supplied, equivalently a zero additive bias at the mathematical operator level. For clarity, we write a DiT block as image self-attention followed by image-text cross-attention: 
+
+Aself (Xt; mimg ) = SDPA( Qx, K x, V x, m img ), (3) 3Ramen Steam Natural light 
+
+> Aggerate
+> +
+> Smooth
+
+## Σ 
+
+> Q (Sensitive Only)
+> K / V (Sensitive + Context)
+> Noise 𝑍 !
+> Context
+> At non -anchor step
+> Q (Sensitive + Context)
+> Context
+> At anchor step
+> Reuse Refresh
+> Top K
+
+SAFE -DiT                         
+
+> SDPA –No Spatial Mask
+> Context
+> 𝛾 !=𝛾 "+(𝛾 #-𝛾 ")s!
+> 𝜀 "=𝜀 #+𝛾 $⨀(𝜀 %-𝜀 #)
+> Sensitive
+> SW -CFG
+> Abowl of fresh ramen
+> with steam rising,
+> overhead natural light,
+> food photography .
+> Prompt
+> K / V (Sensitive + Context)
+> High Resolution Image
+
+…Figure 2. SAFE-DiT pipeline. A short warm-up aggregates image-to-text attention into a sensitivity map and fixes sensitive/context tokens. Anchor steps refresh all tokens; non-anchor steps update sensitive queries, reuse context keys/values, elide certified redundant self-attention masks, and keep text masks. SW-CFG applies sensitivity-weighted per-token guidance. 
+
+and the corresponding image-text cross-attention as: 
+
+Across (Xt, Y ; mtext ) = SDPA( Qx, K y , V y , m text ). (4) Here mimg is an image-token mask and mtext is a text-token padding mask. For joint-attention backbones, Eq. (4) de-notes the image-query/text-key sub-block of the joint atten-tion matrix. SAFE-DiT classifies masks by their effect on attention, not by tensor name: an all-valid image mask may be removable, whereas a text padding mask changes valid keys and must be retained. As shown in Fig. 2, SAFE-DiT combines an exact fast-path execution rewrite, mask-free spatial scheduling, drift-control refresh, and a prompt-alignment guidance module. First, the SAFE execution rewrite exactly removes masks that induce only a row-wise constant shift of the atten-tion logits. Second, Prompt-Conditioned Sensitivity Parti-tioning, or PCSP, converts early image-to-text attention re-sponses into a sensitive set S and a context set C. Third, Sensitive-Region State Update, or SRSU, evaluates only sensitive query and row-wise block outputs, while Context Anchor Refresh, or CAR, periodically performs a dense up-date to bound cache drift. Finally, Sensitivity-Weighted CFG, or SW-CFG, adjusts guidance strength across space using the same sensitivity field. We use SAFE-Core for the acceleration-fidelity operating point with the original global CFG scale, and SAFE-DiT+SW for the operating point that includes the SW-CFG guidance module. 
+
+3.2. Exact Semantics-Aware Fast-path Rewrite 
+
+Let L = QK ⊤/√dh be the unmasked attention logits; for query row i, define the masked attention distribution as: 
+
+πi(m; L) = Softmax( Li, : + mi, :) , (5) where πi(m; L) denotes the normalized attention distribu-tion for query i, and mi, : is the i-th mask row. A mask is universally removable when πi(m; L) = πi(∅; L) for every query row and arbitrary finite logits L. For additive masks, this is characterized by the row-constant class: 
+
+R = {m | ∀ i, ∃ci ∈ R such that mij = ci, ∀j} . (6) For batched or head-specific masks, the criterion is applied independently to every broadcasted query row. The row-constant invariance follows from: 
+
+Softmax( Li, : + ci1) = Softmax( Li, :), (7) where 1 is the all-ones row vector; the common factor 
+
+exp( ci) cancels in row-wise normalization. Conversely, a non-constant row changes the attention distribution for some logits. Thus Eq. (6) is sufficient and, for equality un-der arbitrary logits, necessary. An all-valid Boolean mask and an all-zero additive mask are special cases. A finite non-uniform bias is not removable even if every key remains vis-ible, and any mask containing blocked positions must also be preserved. SAFE-DiT therefore applies the certified rewrite: 
+
+SAFE -SDPA( Q, K, V, m )=
+
+(
+
+SDPA( Q, K, V, ∅), m ∈ R ,
+
+SDPA( Q, K, V, m ), m / ∈ R ,
+
+(8) where R is the row-constant mask class in Eq. (6), and 
+
+m = ∅ denotes a mask-free SDPA call as in Eq. (2). The implementation does not scan the mask at runtime; it ap-plies the rewrite only when mask provenance certifies an all-valid, zero, or row-broadcast constant mask, and otherwise keeps the original call, so redundant image self-attention masks are removed while mtext , causal, and block masks are retained. Equation (8) is exact in real arithmetic; fast and masked kernels may still differ by small accumulation-order effects, so we evaluate operator equivalence and bit-wise identity separately. 43.3. Prompt-Conditioned Sensitivity Partitioning 
+
+PCSP estimates where the prompt warrants more frequent computation using early image-to-text attention, following prior evidence that diffusion cross-attention maps local-ize prompt concepts and support editing or semantic guid-ance [6, 19, 50]. We use the following image-to-text atten-tion tensor: 
+
+At,ℓ,h ∈ [0 , 1] N ×M , (9) where At,ℓ,h denotes the attention probabilities from image queries to text keys at denoising step t, layer ℓ, and head 
+
+h. In a joint-attention backbone, At,ℓ,h is the corresponding image-to-text probability submatrix after the model’s native masking and normalization. For image token i, we aggre-gate responses to content tokens: 
+
+˜si = 1
+
+|W||L||H| 
+
+X
+
+> t∈W
+
+X
+
+> ℓ∈L
+
+X
+
+> h∈H
+
+X
+
+> j∈T
+
+wj At,ℓ,h [i, j ], (10) where W is a short dense warm-up window, L and H
+
+are fixed layer and head subsets, T contains non-padding content-token indices, and wj ≥ 0 are normalized con-tent weights with P 
+
+> j∈T
+
+wj = 1 . Padding and special to-kens receive zero weight. Instrumentation runs only during the warm-up calls and retains a single N -dimensional score vector rather than full attention tensors. We smooth and normalize the score on the latent grid: 
+
+s = Norm ( Gσ ∗ ˜s) , (11) where Gσ is a Gaussian kernel and Norm( ·) maps the field to [0 , 1] . Given a target sensitive-token ratio ρ, PCSP selects exactly k = ⌈ρN ⌉ tokens: 
+
+S = TopK( s, k ), C = {1, . . . , N } \ S , (12) where TopK( s, k ) returns the k image-token indices with the largest normalized sensitivity scores, and C is the com-plementary context set. The partition is fixed after warm-up, avoiding repeated routing overhead, and requires neither an external segmentation model nor a regional self-attention mask. It only supplies indices to the scheduler. 
+
+3.4. Fast-path Sensitivity-Conditioned State Scheduling 
+
+Let Ht,ℓ ∈ RN ×dℓ be the hidden states at denoising step 
+
+t and layer ℓ. Row-selection operators PS and PC define selected states as: 
+
+HS 
+
+> t,ℓ
+
+= PS Ht,ℓ , HC 
+
+> t,ℓ
+
+= PC Ht,ℓ , (13) where HS 
+
+> t,ℓ
+
+and HC 
+
+> t,ℓ
+
+are the sensitive and context rows of 
+
+Ht,ℓ , respectively. Let A ⊆ { 1, . . . , T } be the anchor-step set and let a(t) = max {τ ∈ A : τ < t } denote the most recent anchor before a non-anchor step t. The context cache stores layerwise context states from that anchor: 
+
+eHC 
+
+> t,ℓ
+
+= PC Ha(t),ℓ , (14) where eHC 
+
+> t,ℓ
+
+is the cached context state reused at non-anchor step t. At a non-anchor step, SRSU evaluates a row-selective version BS 
+
+> ℓ
+
+of the ℓ-th DiT block: 
+
+HS 
+
+> t,ℓ +1
+
+= BS
+
+> ℓ
+
+
+
+HS
+
+> t,ℓ
+
+, eHC
+
+> t,ℓ
+
+, Y 
+
+
+
+, HC 
+
+> t,ℓ +1
+
+= eHC
+
+> t,ℓ +1
+
+,
+
+(15) where BS 
+
+> ℓ
+
+preserves the original block order and parame-ters but computes attention outputs, residual updates, and row-wise MLP outputs only for S. Context output rows are copied from the cache. For self-attention, sensitive queries retain global spatial context: 
+
+OS 
+
+> self
+
+= SDPA ( QS , K S∪C , V S∪C , ∅) , (16) where QS is formed from current sensitive states, while 
+
+KS∪C and VS∪C are assembled in the original token or-der from current sensitive states and cached context states. SRSU therefore restricts query rows, not visible keys: each updated token can still attend to the full image context. For cross-attention, the row-selective output is: 
+
+OS 
+
+> cross
+
+= SDPA ( QS , K y , V y , m text ) , (17) where Ky , Vy , and mtext are the text keys, values, and padding mask from Eq. (4). Thus, the same query reduc-tion is used without removing text semantics. Relative to dense self-attention, the dominant attention term changes from O(N 2dh) to O(|S| N d h), while row-wise block com-putation scales from N to |S| , up to the cost of forming global keys and values. CAR bounds the approximation error introduced by stale context states. For every t ∈ A , SAFE-DiT evaluates the original dense block: 
+
+Ht,ℓ +1 = Bℓ(Ht,ℓ , Y ), (18) and refreshes the layerwise context cache: 
+
+eHC 
+
+> t,ℓ +1
+
+← PC Ht,ℓ +1 , (19) where the arrow denotes replacement of the cached context rows after a dense anchor update. For t / ∈ A , Eq. (15) is used. The ratio ρ and anchor schedule A expose the prin-cipal speed–fidelity trade-off: smaller ρ and fewer anchors reduce computation, whereas larger values track the dense trajectory more closely. 53.5. Sensitivity-Weighted Guidance and Inference 
+
+SW-CFG reuses the sensitivity field as a prompt-alignment guidance module. Let fc(Xt, Y )i and fu(Xt)i be condi-tional and unconditional predictions for token i. Standard CFG uses a global scale γ. SW-CFG instead defines: 
+
+γi = γctx + ( γsens − γctx ) si, (20) where si is the normalized sensitivity score from Eq. (11), and γctx and γsens are the context and sensitive-region guid-ance scales. The guided token prediction is: 
+
+ˆfi = fu(Xt)i + γi (fc(Xt, Y )i − fu(Xt)i) , (21) where ˆfi denotes the SW-CFG prediction for token i. Abinary variant assigns γsens to S and γctx to C. Because this operation is applied after the conditional and unconditional forward passes, it introduces no self-attention mask. Setting 
+
+γsens = γctx = γ recovers SAFE-Core and preserves the dense model’s original guidance rule; using unequal scales gives the SAFE-DiT+SW operating point. At inference, dense warm-up steps build the partition and context cache; anchor steps then refresh all states while non-anchor steps update only sensitive rows, reuse cached context rows, elide certified-redundant self-attention masks, and retain text masks, with the sampler applying global CFG for SAFE-Core or SW-CFG for SAFE-DiT+SW. Any mask the rewrite cannot certify as redundant is left un-touched, so correctness never depends on the elision fir-ing. This makes the method’s claims explicit: mask eli-sion is an exact execution rewrite, SRSU and CAR give a controlled speed–fidelity trade-off, and SW-CFG sets the prompt-alignment operating point. 
+
+## 4. Experiments and Results 
+
+4.1. Experimental Setup 
+
+Backbones and Prompts. Lumina-Next is the primary backbone because its high-resolution inference exposes a strong attention bottleneck and represents recent scalable DiT-style systems [17]. We additionally evaluate SD3-Medium [16], FLUX.1-dev [5], and PixArt-Σ-style high-resolution settings [7] to test whether the conclusions de-pend on a single implementation stack. The main bench-mark uses 200 DrawBench prompts [42] with three paired seeds per prompt, giving 600 generations per method. We also use a 300-prompt stratified suite informed by MS-COCO, PartiPrompts, GenEval, and T2I-CompBench prompt categories [18, 22, 26, 57], a high-resolution stress suite from 1024 2 to 3072 2, a blinded human study, and a 100-prompt VLM subset as an auxiliary perceptual check. 
+
+Protocol and Metrics. All methods are evaluated with paired prompts, paired seeds, the same sampler, the same number of function evaluations, and bf16 precision unless otherwise stated. Latency is measured after three warm-up runs with CUDA synchronization before and after each timed run. We record both wall-clock latency and peak GPU memory under the same inference configuration. Im-ageReward, abbreviated IR, is the primary prompt-aware re-ward metric [55], with HPSv2 [54], LPIPS [59], pixel dif-ference, human preference, and auxiliary VLM win/tie/loss judgments as complementary quality and fidelity checks. SDPA backend dispatch is logged, since it varies with the supplied inputs across FlashAttention-style, memory-efficient, and math kernels [11, 12, 39]. 
+
+Systems Protocol. All measurements use one NVIDIA RTX PRO 6000 Blackwell GPU under PyTorch 2.8 / CUDA 12.8 with the Flash, memory-efficient, and math SDPA backends enabled. Reported end-to-end latency covers prompt encoding, denoising, PCSP, VAE decod-ing, and post-processing after three warm-up runs with CUDA synchronization; denoiser-only latency is recorded separately. With VAE scale factor 8 and patch size 2, 
+
+1024 2/2560 2/3072 2 map to 4,096/25,600/36,864 latent to-kens. Appendix B gives full implementation and timing de-tails. 
+
+4.2. Main Results 
+
+Certified removable masks agree with an explicit FP32 reference, softmax( QK ⊤/√dh + m)V , to within 9 ×
+
+10 −8. The observed 0.22% bf16 attention-output differ-ence after removing the all-valid image self-attention mask comes from fused-kernel accumulation order, while drop-ping the text padding mask is not equivalent, with LPIPS 0.169. SAFE-DiT therefore elides only redundant image self-attention masks and retains text masks. The redun-dant mask is expensive: at head dimension 72, masked SDPA is 4.1–5.8× slower than the mask-free call, and com-piled FlexAttention closes only part of the gap. The official 
+
+diffusers Lumina processor passes the all-valid mask unconditionally, and RAS [30] inherits this path; SAFE-DiT removes the certified-redundant mask automatically, without custom kernels. Full dispatch and exactness results are in Appendices C and D. As shown in Table 1, a paired, prompt-clustered bootstrap using 10,000 resamples gives significant re-ward gains over Dense for SAFE-DiT, ∆IR = +0 .043 
+
+[+0 .022 , +0 .065 ], and AccelAes, ∆IR = +0 .044 
+
+[+0 .026 , +0 .062 ], whereas DPCache’s +0 .017 is not sig-nificant. Under our Lumina-Next adaptation and threshold range, FastCache is the only faster method but has no fast high-reward operating point, so the high-reward compari-son is AccelAes. SAFE-DiT reaches statistically indistin-guishable quality from AccelAes, with ∆IR = −0.001 and CI [−0.016 , +0 .014] , while giving a 1.29 × speedup, 3.34 6Table 1. Main Lumina-Next comparison on DrawBench using 200 prompts and three paired seeds per prompt. Deltas are computed relative to Dense; LPIPS and pixel difference are paired distances to Dense. Dense+FP applies only the certified fast-path rewrite, SAFE-Core additionally applies mask-free spatial scheduling with global CFG, and SAFE-DiT+SW further enables SW-CFG. Bold values indicate the best result in each column among non-Dense methods, with ties retained. 
+
+Method Efficiency Reward Metrics Fidelity to Dense 
+
+Method Lat., s ↓ Speedup ↑ Mem., GB ↓ IR ↑ HPSv2 ↑ ∆IR ∆HPS LPIPS ↓ Pixel diff. ↓
+
+Dense 8.983 1.00 × 11.34 0.477 0.2787 0.000 0.0000 – –FastCache [27] 2.559 3.51 × 12.65 -0.573 0.2555 -1.050 -0.0232 0.484 18.80 DPCache [10] 3.930 2.29 × 11.71 0.494 0.2794 +0.017 +0.0007 0.105 6.71 TaylorSeer [29] 4.300 2.09 × 11.34 0.419 0.2778 -0.058 -0.0009 0.116 7.65 AccelAes [56] 4.319 2.08 × 11.96 0.521 0.2805 +0.044 +0.0018 0.092 6.08 ClusCa [60] 5.413 1.66 × 12.53 0.384 0.2747 -0.093 -0.0040 0.187 8.69 SDiT [25] 5.521 1.63 × 11.63 0.243 0.2719 -0.234 -0.0068 0.248 12.59 RAS [30] 5.999 1.50 × 11.76 0.475 0.2787 -0.001 -0.0001 0.016 1.91 
+
+∆-DiT [9] 6.077 1.48 × 12.36 0.274 0.2727 -0.202 -0.0061 0.239 13.23 TeaCache [28] 8.689 1.03 × 11.34 0.469 0.2784 -0.008 -0.0003 0.014 1.34 
+
+FORA [45] 9.189 0.98 × 12.39 0.353 0.2708 -0.123 -0.0079 0.439 19.32 S-CFG [47] 9.210 0.98 × 11.68 0.443 0.2779 -0.034 -0.0008 0.125 8.45 Dense+FP 5.442 1.65 × 11.34 0.478 0.2787 +0.001 +0.0000 0.040 3.43 SAFE-Core 3.339 2.69 × 11.68 0.486 0.2795 +0.009 +0.0008 0.043 3.61 
+
+SAFE-DiT+SW 3.344 2.69 × 11.69 0.520 0.2807 +0.043 +0.0020 0.119 7.15 
+
+Table 2. Fair fast-path audit on high-resolution Lumina-Next. 2560 2 values are medians over three stress prompts; 3072 2 tests runnability on one prompt. “Mask” marks whether the all-valid image self-attention mask is kept or elided. 
+
+Variant Components 2560 2 Stress 3072 2 Status 
+
+Variant Mask FP PCSP/Q FFN/cache SW Lat., s ↓ Mem., GB ↓ Speedup ↑ Lat./Mem. or OOM Dense-original kept no – – – 209.3 94.1 1.00 × OOM Dense + mask elision elided yes – – – 62.6 24.7 3.34 × 126.7s / 26.9GB Spatial sched. w/o elision kept no on on on OOM OOM – OOM SAFE query-only elided yes query – – 63.5 27.7 3.30 × 127.1s / 31.1GB SAFE-Core elided yes on on – 41.6 27.9 5.03 × 87.6s / 36.2GB 
+
+SAFE-DiT+SW elided yes on on on 41.1 27.9 5.09 × 87.6s / 36.2GB 
+
+vs. 4.32 s, as the MIDT rewrite removes a dispatch cost Ac-celAes still pays. The ordering holds on a 300-prompt strat-ified suite, where IR is 0.594 vs. 0.550 for DPCache. As shown in Table 2, the exact rewrite is separated from the scheduling. “Dense + mask elision” applies only the rewrite and already removes most of the tax, reducing la-tency from 209 to 63 s and memory from 94 to 25 GB at 
+
+2560 2. SAFE-Core then adds a further 1.5× on top of 
+
+this strengthened baseline, so the scheduling gain is gen-uine rather than an artifact of a taxed reference. Here mask elision dominates as the tax grows with sequence length, while query scheduling is latency-neutral and the SW-CFG module adds no measurable compute. As shown in Fig. 3, the advantage widens with reso-lution, from 2.7× at 1024 2 to 5.1× at 2560 2. Tempo-ral caches materialize full attention per step. They do not reduce peak memory and run out of memory at 2560 2;SAFE-DiT completes 2560 2 and 3072 2 by shrinking per-step token computation. Appendix G reports the full high-
+
+Table 3. Cross-backbone generalization. Results are paired and use 1024 2 unless noted. Speedup and ∆IR are measured vs. Dense; “Mem.” reports peak GB from Dense to SAFE. “Self-attn” marks whether the backbone triggers MIDT.                                  
+
+> Backbone Efficiency Quality
+> Backbone Self-attn Speedup ↑Mem. ↓∆IR LPIPS ↓
+> Lumina-Next masked 2.69 ×11.3 →11.7 +0.043 0.119 SD3-Medium mask-free 1.30 ×18.1 →18.1 +0.004 0.026
+> FLUX.1-dev mask-free 5.14 ×26.5 →26.5 −0.009 0.154 PixArt-Σ*mask-free 1.87 ×23.2 →23.2 +0.028 0.307
+> *PixArt-Σat 2048 2; other rows at 1024 2.
+
+resolution frontier. As shown in Table 3, the cross-backbone results dou-ble as an end-to-end test of the MIDT boundary: speedup tracks the mask column. On the masked Lumina-Next back-bone, the rewrite and scheduling compound, and the gain 
+
+scales with resolution , from 2.7 to 5.1×, as the mask tax 71024 2 1536 2 2048 2 2560 2 3072 2        
+
+> 3
+> 4
+> 5
+> Speedup
+> 2.69× 3.50×
+> 4.41×
+> 5.09×
+> Dense OOM
+> SAFE runs
+> (a) Speedup vs resolution
+> 1024 21536 22048 22560 23072 2
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Peak memory (GB)  98 GB cap
+> Dense
+> OOM
+> (b) Memory vs resolution
+> SAFE-DiT
+> Dense
+> 1024 21536 22048 22560 2
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> ΔIR (SAFE − Dense)
+> +0.036
+> +0.090
+> +0.180
+> +0.260
+> (c) Quality vs resolution
+
+Figure 3. High-resolution speed–memory frontier. SAFE-DiT’s advantage increases with resolution on Lumina-Next and enables 3072 2
+
+generation where dense inference runs out of memory. Table 4. Component ablation on DrawBench 200 ×3 at 1024 2.Each row removes one module from Full-SAFE. LPIPS is drift vs. Dense. Variant Lat., s ↓ IR ↑ LPIPS ↓
+
+Full-SAFE 3.33 0.520 0.119 w/o fast-path 4.10 0.525 0.119 w/o SRSU 5.16 0.543 0.116 w/o CAR 2.94 0.471 0.292 w/o PCSP 3.33 0.492 0.066 w/o SW-CFG 3.34 0.486 0.043 
+
+grows. Mask-free backbones such as SD3, FLUX, and PixArt cannot pay that tax, so their gain is scheduling-only and model-dependent, from 1.3× on SD3 to 5.14 × on the step-heavy FLUX. Quality remains stable on Lumina-Next, SD3, FLUX, and the selected PixArt-Σ 2048 2 oper-ating point; PixArt-Σ shows larger reward drops at 1024 2
+
+and 3072 2 under the tested scheduling configuration. Ap-pendix I expands the backbone table. 
+
+4.3. Ablation Results 
+
+As shown in Table 4, component ablations give each mod-ule a distinct, measurable role. Removing the fast-path rewrite or SRSU increases latency while leaving paired fi-delity nearly unchanged; the modest reward increase, with IR 0.525 and 0.543 , respectively, versus 0.520 for Full-SAFE, indicates that these variants occupy slower, more conservative operating points rather than dominating the full configuration. Removing CAR is faster but drifts badly, with LPIPS rising from 0.12 to 0.29 , while remov-ing PCSP or SW-CFG leaves latency unchanged but low-ers IR, separating drift control from prompt-alignment re-ward. The latency attribution is resolution dependent: at 
+
+1024 2, SRSU contributes the larger incremental latency re-duction; at 2560 2, mask elision dominates because MIDT scales with sequence length, as shown in Table 2. Addi-tional sweeps and drift curves are in Appendix J. On T2I-CompBench, using 300 validation prompts per category, SAFE-Core matches Dense alignment across all a Japanese garden 
+
+Dense SAFE-DiT 
+
+b Sports car 
+
+Dense SAFE-DiT 
+
+Figure 4. Paired 2048 2 examples with matched prompt/seed and PixArt-Σ-style generation. SAFE-DiT improves local detail while keeping composition close to Dense. 
+
+categories while the SW-CFG module lifts the attribute-binding average from 0.404 to 0.419 , showing that SAFE-DiT’s guidance module mainly affects prompt alignment. 
+
+4.4. Visualization 
+
+As shown in Fig. 4, two paired 2048 2 examples improve local detail while staying compositionally close to Dense. They are illustrative; paired metrics and a blinded human study support the preservation claim. SAFE-Core has no prompt-level loss against Dense+FP on visual quality and passes the 5% non-inferiority criterion. VLM pairwise checks are auxiliary: GPT-5 scores SAFE-DiT vs. Dense at 37/32/31 win/tie/loss, while GPT-4o judges most pairs tied. Failures concentrate in text rendering and dense multi-object scenes. Appendix N details the human-study proto-8col. 
+
+## 5. Conclusion 
+
+SAFE-DiT reframes spatial adaptation for high-resolution Diffusion Transformers as semantics-aware execution. It removes only masks that induce row-wise constant shifts, preserves text padding masks, and schedules spatial com-putation through PCSP, SRSU, CAR, and SW-CFG. Across MIDT diagnostics, equivalence checks, baseline compar-isons, ablations, high-resolution stress tests, and blind pref-erence studies, it improves the speed–memory frontier while preserving perceptual quality under matched prompts and seeds. By separating exact fast-path rewriting from approximate scheduling and the SW-CFG guidance mod-ule, SAFE-DiT keeps acceleration fidelity and prompt-alignment effects inspectable rather than entangled. Its gains are largest where redundant masked self-attention is present, and on hard cases such as text rendering, dense multi-object scenes, and precise layout, SAFE-DiT tracks rather than reshapes the backbone. These results support a narrow principle: spatial adaptation should use semantics-preserving scheduling rather than attention masks. 
+
+## References 
+
+[1] Omri Avrahami, Dani Lischinski, and Ohad Fried. Blended diffusion for text-driven editing of natural images. In Pro-ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 18208–18218, 2022. 3[2] Yogesh Balaji, Seungjun Nah, Xun Huang, Arash Vahdat, Jiaming Song, Qinsheng Zhang, Karsten Kreis, Miika Ait-tala, Timo Aila, Samuli Laine, Bryan Catanzaro, Tero Kar-ras, and Ming-Yu Liu. eDiff-I: Text-to-image diffusion mod-els with an ensemble of expert denoisers. arXiv preprint arXiv:2211.01324 , 2022. 1, 3 [3] Fan Bao, Shen Nie, Kaiwen Xue, Yue Cao, Chongxuan Li, Hang Su, and Jun Zhu. All are worth words: A ViT back-bone for diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 22669–22679, 2023. 3 [4] Omer Bar-Tal, Lior Yariv, Yaron Lipman, and Tali Dekel. Multidiffusion: Fusing diffusion paths for controlled image generation. In International Conference on Machine Learn-ing (ICML) , 2023. 1, 3 [5] Black Forest Labs. FLUX.1 models, 2024. 6 [6] Hila Chefer, Yuval Alaluf, Yael Vinker, Lior Wolf, and Daniel Cohen-Or. Attend-and-excite: Attention-based se-mantic guidance for text-to-image diffusion models. ACM Transactions on Graphics (TOG) , 42(4), 2023. 1, 3, 5 [7] Junsong Chen, Chongjian Ge, Enze Xie, Yue Wu, Lewei Yao, Xiaozhe Ren, Zhongdao Wang, Ping Luo, Huchuan Lu, and Zhenguo Li. Pixart-σ: Weak-to-strong training of dif-fusion transformer for 4k text-to-image generation. In Euro-pean Conference on Computer Vision (ECCV) , 2024. 1, 3, 6[8] Junsong Chen, Jincheng Yu, Chongjian Ge, Lewei Yao, Enze Xie, Zhongdao Wang, James Kwok, Ping Luo, Huchuan Lu, and Zhenguo Li. Pixart-α: Fast training of diffusion trans-former for photorealistic text-to-image synthesis. In Inter-national Conference on Learning Representations (ICLR) ,2024. 1, 3 [9] Pengtao Chen, Mingzhu Shen, Peng Ye, Jianjian Cao, Chongjun Tu, Christos-Savvas Bouganis, Yiren Zhao, and Tao Chen. ∆-DiT: A training-free acceleration method tailored for diffusion transformers. arXiv preprint arXiv:2406.01125 , 2024. 3, 7 [10] Bowen Cui, Yuanbin Wang, Huajiang Xu, Biaolong Chen, Aixi Zhang, Hao Jiang, Zhengzheng Jin, Xu Liu, and Pipei Huang. Denoising as path planning: Training-free acceler-ation of diffusion models with DPCache. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2026. 3, 7 [11] Tri Dao. FlashAttention-2: Faster attention with better par-allelism and work partitioning. In International Conference on Learning Representations (ICLR) , 2024. 2, 3, 6 [12] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher R´ e. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Processing Systems (NeurIPS) , pages 16344– 16359, 2022. 2, 3, 6 [13] Prafulla Dhariwal and Alexander Nichol. Diffusion models beat GANs on image synthesis. In Advances in Neural In-formation Processing Systems (NeurIPS) , 2021. 1, 3 [14] Juechu Dong, Boyuan Feng, Driss Guessous, Yanbo Liang, and Horace He. FlexAttention: A programming model for generating fused attention variants. In Proceedings of Ma-chine Learning and Systems (MLSys) , 2025. 2, 3 [15] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Syl-vain Gelly, Jakob Uszkoreit, and Neil Houlsby. An image is worth 16x16 words: Transformers for image recognition at scale. In International Conference on Learning Representa-tions (ICLR) , 2021. 1, 3 [16] Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas M¨ uller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, Dustin Podell, Tim Dockhorn, Zion English, and Robin Rombach. Scaling rec-tified flow transformers for high-resolution image synthesis. In Proceedings of the 41st International Conference on Ma-chine Learning (ICML) , pages 12606–12633. PMLR, 2024. 1, 3, 6 [17] Peng Gao, Le Zhuo, Dongyang Liu, Ruoyi Du, Xu Luo, Longtian Qiu, Yuhang Zhang, Rongjie Huang, Shijie Geng, Renrui Zhang, Junlin Xie, Wenqi Shao, Zhengkai Jiang, Tianshuo Yang, Weicai Ye, Tong He, Jingwen He, Junjun He, Yu Qiao, and Hongsheng Li. Lumina-T2X: Scalable flow-based large diffusion transformer for flexible resolution generation. In International Conference on Learning Repre-sentations (ICLR) , 2025. 1, 3, 6 [18] Dhruba Ghosh, Hannaneh Hajishirzi, and Ludwig Schmidt. GenEval: An object-focused framework for evaluating text-
+
+9to-image alignment. In Advances in Neural Information Pro-cessing Systems (NeurIPS) , 2023. 6 [19] Amir Hertz, Ron Mokady, Jay Tenenbaum, Kfir Aberman, Yael Pritch, and Daniel Cohen-Or. Prompt-to-prompt image editing with cross-attention control. In International Confer-ence on Learning Representations (ICLR) , 2023. 1, 3, 5 [20] Jonathan Ho and Tim Salimans. Classifier-free diffusion guidance. arXiv preprint arXiv:2207.12598 , 2022. 1, 3 [21] Jonathan Ho, Ajay N. Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. In Advances in Neural Infor-mation Processing Systems , pages 6840–6851, 2020. 1, 3 [22] Kaiyi Huang, Kaiyue Sun, Enze Xie, Zhenguo Li, and Xi-hui Liu. T2I-CompBench: A comprehensive benchmark for open-world compositional text-to-image generation. In Ad-vances in Neural Information Processing Systems (NeurIPS) ,2023. 6 [23] Yuheng Li, Haotian Liu, Qingyang Wu, Fangzhou Mu, Jian-wei Yang, Jianfeng Gao, Chunyuan Li, and Yong Jae Lee. GLIGEN: Open-set grounded text-to-image generation. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vi-sion and Pattern Recognition (CVPR) , pages 22511–22521, 2023. 1, 3 [24] Yanyu Li, Huan Wang, Qing Jin, Ju Hu, Pavlo Chemerys, Yun Fu, Yanzhi Wang, Sergey Tulyakov, and Jian Ren. Snap-Fusion: Text-to-image diffusion model on mobile devices within two seconds. In Advances in Neural Information Pro-cessing Systems (NeurIPS) , 2023. 3 [25] Bowen Lin, Fanjiang Ye, Yihua Liu, Zhenghui Guo, Boyuan Zhang, Weijian Zheng, Yufan Xu, Tiancheng Xing, Yuke Wang, and Chengming Zhang. SDiT: Semantic region-adaptive for diffusion transformers. arXiv preprint arXiv:2601.12283 , 2026. 3, 7 [26] Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Doll´ ar, and C. Lawrence Zitnick. Microsoft COCO: Common objects in context. In 
+
+European Conference on Computer Vision (ECCV) , pages 740–755, 2014. 6 [27] Dong Liu, Yanxuan Yu, Jiayi Zhang, Yifan Li, Ben Lengerich, and Ying Nian Wu. FastCache: Fast caching for diffusion transformer through learnable linear approxi-mation. arXiv preprint arXiv:2505.20353 , 2025. 3, 7 [28] Feng Liu, Shiwei Zhang, Xiaofeng Wang, Yujie Wei, Haonan Qiu, Yuzhong Zhao, Yingya Zhang, Qixiang Ye, and Fang Wan. Timestep embedding tells: It’s time to cache for video diffusion model. In Proceedings of the IEEE/CVF Confer-ence on Computer Vision and Pattern Recognition (CVPR) ,2025. 1, 3, 7 [29] Jiacheng Liu, Chang Zou, Yuanhuiyi Lyu, Junjie Chen, and Linfeng Zhang. From reusing to forecasting: Accelerat-ing diffusion models with taylorseers. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , pages 15853–15863, 2025. 3, 7 [30] Ziming Liu, Yifan Yang, Chengruidong Zhang, Yiqi Zhang, Lili Qiu, Yang You, and Yuqing Yang. Region-adaptive sampling for diffusion transformers. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2026. 3, 6, 7 [31] Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. DPM-Solver: A fast ODE solver for diffu-sion probabilistic model sampling in around 10 steps. In Ad-vances in Neural Information Processing Systems (NeurIPS) ,2022. 1, 3 [32] Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu. DPM-Solver++: Fast solver for guided sam-pling of diffusion probabilistic models. Machine Intelligence Research , 22:730–751, 2025. 3 [33] Simian Luo, Yiqin Tan, Longbo Huang, Jian Li, and Hang Zhao. Latent consistency models: Synthesizing high-resolution images with few-step inference. arXiv preprint arXiv:2310.04378 , 2023. 3 [34] Xinyin Ma, Gongfan Fang, and Xinchao Wang. DeepCache: Accelerating diffusion models for free. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 15762–15772, 2024. 1, 3 [35] Chenlin Meng, Yutong He, Yang Song, Jiaming Song, Jia-jun Wu, Jun-Yan Zhu, and Stefano Ermon. SDEdit: Guided image synthesis and editing with stochastic differential equa-tions. In International Conference on Learning Representa-tions (ICLR) , 2022. 3 [36] Alexander Quinn Nichol, Prafulla Dhariwal, Aditya Ramesh, Pranav Shyam, Pamela Mishkin, Bob Mcgrew, Ilya Sutskever, and Mark Chen. GLIDE: Towards photorealis-tic image generation and editing with text-guided diffusion models. In Proceedings of the 39th International Conference on Machine Learning (ICML) , pages 16784–16804. PMLR, 2022. 1, 3 [37] William Peebles and Saining Xie. Scalable diffusion mod-els with transformers. In Proceedings of the IEEE/CVF In-ternational Conference on Computer Vision (ICCV) , pages 4195–4205, 2023. 1, 3 [38] Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas M¨ uller, Joe Penna, and Robin Rombach. SDXL: Improving latent diffusion models for high-resolution image synthesis. In International Con-ference on Learning Representations (ICLR) , 2024. 1, 3 [39] PyTorch Contributors. PyTorch Documentation: Scaled Dot Product Attention . PyTorch, 2026. 2, 3, 6 [40] Aditya Ramesh, Prafulla Dhariwal, Alex Nichol, Casey Chu, and Mark Chen. Hierarchical text-conditional image gener-ation with CLIP latents. arXiv preprint arXiv:2204.06125 ,2022. 1, 3 [41] Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Bj¨ orn Ommer. High-resolution image synthesis with latent diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 10684–10695, 2022. 1, 3 [42] Chitwan Saharia, William Chan, Saurabh Saxena, Lala Li, Jay Whang, Emily L. Denton, Kamyar Ghasemipour, Raphael Gontijo Lopes, Burcu Karagol Ayan, Tim Sali-mans, Jonathan Ho, David J. Fleet, and Mohammad Norouzi. Photorealistic text-to-image diffusion models with deep lan-guage understanding. In Advances in Neural Information Processing Systems (NeurIPS) , pages 36479–36494, 2022. 1, 3, 6 
+
+10 [43] Tim Salimans and Jonathan Ho. Progressive distillation for fast sampling of diffusion models. In International Confer-ence on Learning Representations (ICLR) , 2022. 3 [44] Axel Sauer, Frederic Boesel, Tim Dockhorn, Andreas Blattmann, Patrick Esser, and Robin Rombach. Fast high-resolution image synthesis with latent adversarial diffusion distillation. In ACM SIGGRAPH Asia Conference Papers (SIGGRAPH Asia) , 2024. 3 [45] Pratheba Selvaraju, Tianyu Ding, Tianyi Chen, Ilya Zharkov, and Luming Liang. FORA: Fast-forward caching in diffusion transformer acceleration. arXiv preprint arXiv:2407.01425 ,2024. 3, 7 [46] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. FlashAttention-3: Fast and accurate attention with asynchrony and low-precision. In Ad-vances in Neural Information Processing Systems (NeurIPS) ,2024. 3 [47] Dazhong Shen, Guanglu Song, Zeyue Xue, Fu-Yun Wang, and Yu Liu. Rethinking the spatial inconsistency in classifier-free diffusion guidance. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 9370–9379, 2024. 1, 3, 7 [48] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denois-ing diffusion implicit models. In International Conference on Learning Representations (ICLR) , 2021. 1, 3 [49] Yang Song, Prafulla Dhariwal, Mark Chen, and Ilya Sutskever. Consistency models. In International Conference on Machine Learning (ICML) , 2023. 1, 3 [50] Raphael Tang, Linqing Liu, Akshat Pandey, Zhiying Jiang, Gefei Yang, Karun Kumar, Pontus Stenetorp, Jimmy Lin, and Ferhan Ture. What the DAAM: Interpreting stable dif-fusion using cross attention. In Proceedings of the Annual Meeting of the Association for Computational Linguistics (ACL) , pages 5644–5659, 2023. 1, 3, 5 [51] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszko-reit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems (NeurIPS) , 2017. 1, 3 [52] Guoxia Wang, Jinle Zeng, Xiyuan Xiao, Siming Wu, Jiabin Yang, Lujing Zheng, Zeyu Chen, Jiang Bian, Dianhai Yu, and Haifeng Wang. FlashMask: Efficient and rich mask ex-tension of FlashAttention. In International Conference on Learning Representations (ICLR) , 2025. 2, 3 [53] Felix Wimbauer, Bichen Wu, Edgar Schoenfeld, Xiaoliang Dai, Ji Hou, Zijian He, Artsiom Sanakoyeu, Peizhao Zhang, Sam Tsai, Jonas Kohler, Christian Rupprecht, Daniel Cre-mers, Peter Vajda, and Jialiang Wang. Cache me if you can: Accelerating diffusion models through block caching. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 6211–6220, 2024. 3 [54] Xiaoshi Wu, Yiming Hao, Keqiang Sun, Yixiong Chen, Feng Zhu, Rui Zhao, and Hongsheng Li. Human preference score v2: A solid benchmark for evaluating human preferences of text-to-image synthesis. arXiv preprint arXiv:2306.09341 ,2023. 2, 6 [55] Jiazheng Xu, Xiao Liu, Yuchen Wu, Yuxuan Tong, Qinkai Li, Ming Ding, Jie Tang, and Yuxiao Dong. ImageRe-ward: Learning and evaluating human preferences for text-to-image generation. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. 2, 6 [56] Xuanhua Yin, Chuanzhi Xu, Haoxian Zhou, Boyu Wei, and Weidong Cai. AccelAes: Accelerating diffusion transform-ers for training-free aesthetic-enhanced image generation. 
+
+arXiv preprint arXiv:2603.12575 , 2026. 3, 7 [57] Jiahui Yu, Yuanzhong Xu, Jing Yu Koh, Thang Luong, Gun-jan Baid, Zirui Wang, Vijay Vasudevan, Alexander Ku, Yin-fei Yang, Burcu Karagol Ayan, Ben Hutchinson, Wei Han, Zarana Parekh, Xin Li, Han Zhang, Jason Baldridge, and Yonghui Wu. Scaling autoregressive models for content-rich text-to-image generation. Transactions on Machine Learn-ing Research , 2022. 3, 6 [58] Lvmin Zhang, Anyi Rao, and Maneesh Agrawala. Adding conditional control to text-to-image diffusion models. In 
+
+Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) , pages 3836–3847, 2023. 1, 3 [59] Richard Zhang, Phillip Isola, Alexei A. Efros, Eli Shecht-man, and Oliver Wang. The unreasonable effectiveness of deep features as a perceptual metric. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recogni-tion (CVPR) , pages 586–595, 2018. 6 [60] Zhixin Zheng, Xinyu Wang, Chang Zou, Shaobo Wang, and Linfeng Zhang. Compute only 16 tokens in one timestep: Accelerating diffusion transformers with cluster-driven fea-ture caching. In Proceedings of the ACM International Con-ference on Multimedia (ACM MM) , pages 10181–10189, 2025. 3, 7 [61] Chang Zou, Xuyang Liu, Ting Liu, Siteng Huang, and Lin-feng Zhang. Accelerating diffusion transformers with token-wise feature caching. In International Conference on Learn-ing Representations (ICLR) , 2025. 3 
+
+11 Appendix Overview 
+
+This appendix provides the full experimental record behind the main paper: the component-level relation to the closest spatial accelerators (Sec. A); the implementation and timing protocol (Sec. B); the kernel-level and third-party evidence for the Mask-Induced Dispatch Tax (Sec. C); the complete mask-exactness matrix (Sec. D); paired significance for ev-ery comparison method and the FastCache threshold sweep (Sec. E); the fair fast-path decomposition and instrumented breakdown (Sec. F); the full high-resolution frontier with acceleration baselines (Sec. G); the A800 cross-architecture evaluation (Sec. H); the complete cross-backbone table (Sec. I); module ablations, hyperparameter sweeps, and the CAR drift curve (Sec. J); the perceptual evaluation details (Sec. L); and the completed human-study protocol with its non-inferiority analysis (Sec. N). 
+
+## A. Component-Level Relation To Prior Work 
+
+The closest spatial accelerators share several high-level in-gredients with SAFE-DiT, so we state the novelty bound-ary at component granularity rather than using only a broad “complementary” distinction. As shown in Table 5, the comparison is a boundary map, not a novelty count: partial-query updates, cached context, dense refresh, and spatial guidance are prior ingredients. The contribution claimed here is narrower: certified exact rewriting of redundant im-age self-attention masks, plus prompt-sensitive scheduling that keeps spatial adaptation off the self-attention mask in-terface. 
+
+## B. Implementation And Timing Protocol 
+
+All measurements use one NVIDIA RTX PRO 6000 Black-well Server Edition GPU (97,887 MiB, driver 590.44.01) with Python 3.12.3, CUDA 12.8, PyTorch 2.8.0+cu128, Tri-ton 3.4.0, diffusers 0.30.3, and transformers 4.44.2. The PyTorch SDPA flash, memory-efficient, and math back-ends are enabled; standalone flash-attn and xForm-ers are not installed. The generation path uses no 
+
+torch.compile ; compiled FlexAttention appears only in the attention microbenchmark. Unless stated otherwise the prompt batch size is one, classifier-free guidance is packed as a two-sample transformer batch, Lumina-Next uses 30 bf16 denoising steps, and the text encoder uses a maximum prompt length of 24 tokens. With VAE scale fac-tor 8 and patch size 2, 1024 2, 2560 2, and 3072 2 correspond to 4,096, 25,600, and 36,864 latent image tokens. Microbenchmarks use 100 warm-up and 500 to 1000 timed repetitions; end-to-end runs use at least three warm-up and 30 timed repetitions with CUDA synchro-nization before and after each measurement. End-to-end latency includes prompt encoding, denoising, PCSP construction when enabled, VAE decoding, and post-processing; denoiser-only latency is the synchronized sum of transformer.forward calls. Peak memory is read after reset peak memory stats . OOM is defined un-der a fixed memory cap and allocator setting. 
+
+## C. Mask-Induced Dispatch Tax 
+
+Kernel Dispatch. Table 6 records the ex-act SDPA dispatch for a head-dimension-72 call. Without a mask, SDPA dispatches to 
+
+scaled dot product flash attention and a pytorch flash::flash fwd kernel . Pass-ing an all-valid Boolean mask switches dispatch to 
+
+scaled dot product efficient attention 
+
+(a CUTLASS fmha kernel), making the call 4.1× to 
+
+5.8× slower even though every key is visible. Compiled FlexAttention with an all-true block mask narrows but does not close the gap (Fig. 5). 64 72 80 128     
+
+> Head dimension
+> 0
+> 2
+> 4
+> 6
+> 8
+> Mask tax (masked / Flash)
+> a
+> MIDT appears across head dimensions
+> Seq. length
+> N=1024 N=2048 N=4096
+> 2048 4096 8192
+> Sequence length
+> 10 −1
+> 10 0
+> Attention latency (ms, log)  b
+> 6.0x lower than masked
+> Maskless Flash remains fastest
+> Masked SDPA
+> FlexAttention
+> SAFE maskless
+
+Figure 5. Mask-Induced Dispatch Tax. A redundant mask makes attention several times slower than the mask-free Flash path; the masked/Flash ratio grows with sequence length and persists across head dimensions. Table 5. Component-level comparison with the closest spatial/token accelerators. Shared checkmarks mark prior ingredients, not novelty claims. SAFE-DiT’s distinct claim is the certified exact rewrite that removes redundant image self-attention masks before dispatch, together with a mask-free scheduling decomposition. 
+
+Method Region signal Partial Q Global K/V Context cache Dense refresh Spatial CFG Certified exact rewrite RAS model focus yes yes yes yes no no SDiT semantic region yes yes yes yes no no AccelAes cross-attn/aesthetic yes yes yes yes yes no SAFE-DiT prompt sensitivity yes yes yes yes yes yes 
+
+12 Table 6. Attention latency by mask and backend (head dim 72, bf16; ms, median of 10 timed runs after 100 warm-ups). 
+
+N no mask all-valid mask ratio 2048 0.132 0.549 4.1×
+
+4096 0.370 2.131 5.8×
+
+Table 7. MIDT impact surface across published implementations. “Mask to SDPA?” is the default code path; “Flash?” is whether the FlashAttention fast path is reached.                  
+
+> Implementation Mask to SDPA? Flash? diffusers Lumina-Next yes (uncond.) no (fallback) RAS (default) yes no (fallback) RAS ( flash flag) no (bypass) yes (ext. dep.) RAS on SD3 / PixArt no (mask-free) yes SDiT-style block mask yes (region) no (fallback) S-CFG (UNet) N/A (no SDPA) never SAFE-DiT elided (certified) yes (automatic)
+
+Third-Party Impact Surface. The tax is not specific to our pipeline. Table 7 audits published implementations: the official diffusers LuminaAttnProcessor2 0 
+
+passes an all-valid image self-attention mask to SDPA un-conditionally; the published RAS inherits the same masked path and ships a manual replace with flash attn 
+
+switch that bypasses SDPA via an external flash-attn 
+
+dependency, independently confirming both the tax and its cost. Region/block-mask methods (SDiT-style) fall in the same fallback tier, and guidance-map methods (S-CFG) read attention probabilities and so cannot use FlashAtten-tion at all. Measured against the no-mask Flash baseline at 
+
+N =4096 , an all-ones Boolean mask costs 4.23 ×, a real text padding mask 4.28 ×, a block-diagonal region mask 4.18 ×,and a float additive bias 3.45 ×.
+
+## D. Mask-Exactness Matrix 
+
+We characterize which attention masks the fast-path rewrite may remove. Using an explicit FP32 reference 
+
+softmax( QK ⊤/√d + m)V , we measure, for six mask families across N ∈ {1024 , 2048 , 4096 , 8192 }, dh ∈{64 , 72 , 128 }, and three seeds: (i) the FP32 error of SAFE-DiT’s actual decision, (ii) the FP32 error of naively eliding the mask regardless of provenance, and (iii) the bf16 nu-merical floor of masked SDPA against the FP32 reference. Table 8 reports the worst case over all configurations. All-valid, all-zero, and row-constant masks are remov-able to machine precision ( ≤ 9e−8 in FP32), whereas text-padding, block-local, and finite non-uniform masks change the softmax and would introduce errors of 6e−2 to 1.35 if elided. SAFE-DiT removes only the former and preserves the latter, so correctness never depends on the elision firing. 
+
+Table 8. Mask exactness (FP32 reference; worst-case max-abs er-ror over all N , dh, seeds). Removable (row-constant) masks incur zero error under SAFE-DiT; non-removable masks would incur large error if naively elided, so SAFE-DiT preserves them. The bf16 column is the kernel-level numerical floor. Mask family SAFE SAFE Naive bf16 vs. decision err. elide err. FP32 All-valid Boolean elide 0 0 1.6e−3
+
+All-zero additive elide 0 0 1.6e−3
+
+Row-constant additive elide 9e−8 9e−8 1.6e−3
+
+Text padding preserve 0 2.4e−1 1.5e−3
+
+Block-local preserve 0 1.35 3.9e−3
+
+Finite non-uniform bias preserve 0 6.0e−2 1.2e−3
+
+Table 9. ImageReward and ∆IR vs. Dense with 95% paired-bootstrap confidence intervals (DrawBench, 200 prompts × 3seeds). “Sig.” marks intervals excluding zero. Method IR ∆IR 95% CI Sig. AccelAes 0.521 +0 .044 [+0 .026 , +0 .062] Y
+
+SAFE-DiT 0.520 +0 .043 [+0 .022 , +0 .065] Y
+
+DPCache 0.494 +0 .017 [−0.001 , +0 .035] N/A RAS 0.475 −0.001 [−0.008 , +0 .005] N/A TeaCache 0.469 −0.008 [−0.014 , −0.001] Y
+
+S-CFG 0.443 −0.034 [−0.064 , −0.005] Y
+
+TaylorSeer 0.419 −0.058 [−0.085 , −0.033] Y
+
+ClusCa 0.384 −0.093 [−0.124 , −0.064] Y
+
+FORA 0.353 −0.123 [−0.161 , −0.086] Y
+
+∆-DiT 0.274 −0.202 [−0.244 , −0.161] Y
+
+SDiT 0.243 −0.234 [−0.275 , −0.195] Y
+
+FastCache −0.573 −1.050 [−1.148 , −0.955] Y
+
+## E. Full Statistics And FastCache Sweep 
+
+Table 9 reports, for every method in the main compari-son, the ImageReward and its change versus Dense with a prompt-clustered paired bootstrap (10,000 resamples; the three seeds of each prompt form one cluster). AccelAes is included because it is the closest high-reward baseline: both AccelAes and SAFE-DiT show significant positive reward gains over Dense, so the main claim is matched quality at lower latency rather than uniqueness of reward significance. A direct paired SAFE-DiT versus AccelAes check gives a nonsignificant ImageReward difference (SAFE-DiT −
+
+AccelAes = −0.001 , 95% CI [−0.016 , +0 .014] ). On the same 600 aligned prompt/seed timing samples, SAFE-DiT is 0.792 s faster (95% CI [0 .787 , 0.797] s), corresponding to an AccelAes/SAFE-DiT speed ratio of 1.225 × (95% CI 
+
+[1 .223 , 1.226] ). 
+
+FastCache Has No Fast High-Reward Operating Point. 
+
+Under our Lumina-Next adaptation, we sweep FastCache’s 13 4 6 8 10     
+
+> Latency (s) ↓
+> −0.6
+> −0.4
+> −0.2
+> 0.0
+> 0.2
+> 0.4
+> ImageReward  ↑
+> SAFE-DiT (ours) Dense
+> DPCache RAS TeaCache
+> S-CFG
+> TaylorSeer
+> ClusCa
+> FORA DeltaDiT
+> SDiT
+> FastCache
+> (training-free fails)
+
+Speed–Quality Pareto (Lumina, DrawBench) Figure 6. Speed and quality Pareto on Lumina-Next (DrawBench). SAFE-DiT occupies the top-left frontier (fast and high reward); FastCache is faster but low reward under the tested setting. Table 10. FastCache threshold sweep on Lumina-Next (24 prompts). Acceleration and high reward are not obtained simul-taneously in the tested range. Threshold IR ∆IR vs. Dense 0.00 (no cache) 0.318 +0 .000 
+
+0.01 0.246 −0.072 
+
+0.02 −0.008 −0.326 
+
+0.05 (main table) −0.639 −0.957 
+
+0.10 −1.525 −1.843 
+
+0.20 −2.016 −2.333 
+
+cache threshold on 24 prompts (Table 10). A threshold of 0 disables caching and recovers Dense (no speedup); within the tested threshold range, every accelerating setting drives IR negative. Thus, under this adaptation and sweep, Fast-Cache has no fast high-reward operating point, so we do not use it as the primary high-reward comparator. 
+
+## F. Fair Fast-Path Decomposition 
+
+The main paper isolates the exact rewrite from the ap-proximate scheduling on the high-resolution stress suite. At 2560 2, keeping Lumina-Next’s all-valid mask (Dense-original) costs 209.3 s and 94.1 GB; applying only the ex-act rewrite (Dense+FP) drops this to 62.6 s and 24.7 GB; adding query-only scheduling is approximately latency-neutral (63.5 s) after PCSP overhead; FFN and cache reuse then bring SAFE-Core to 41.6 s and 27.9 GB, and SAFE-DiT+SW gives 41.1 s and 27.9 GB. At 3072 2, Dense-original and scheduling-without-elision both run out of memory, Dense+FP completes at 126.7 s / 26.9 GB, and full 
+
+Table 11. Lumina-Next speed and memory frontier (SAFE-DiT vs. Dense). At 3072 2 Dense is OOM. Res. Speedup Dense mem. (GB) SAFE mem. (GB) 
+
+1024 2 2.69 × 11.3 11.7 
+
+1536 2 3.50 × 20.2 15.0 
+
+2048 2 4.41 × 44.1 19.7 
+
+2560 2 5.09 × 94.1 27.9 
+
+3072 2 OOM →runs N/A 36.2 Table 12. High-resolution comparison with acceleration baselines (latency s / peak GB). Temporal caches do not reduce memory and OOM at 2560 2.Method 2048 2 2560 2
+
+Dense 92.9 / 44.1 OOM TeaCache 86.9 / 44.4 OOM DPCache 31.1 / 44.7 OOM SAFE-DiT 21.3 / 21.3 41.1 / 27.9 
+
+SAFE-DiT completes at 87.6 s / 36.2 GB. An instrumented 1024 2 breakdown confirms the speedup lives in the denoiser rather than in skipped peripheral stages: end-to-end / denoiser latency falls from 9.32 / 8.89 s (Dense) to 5.43 / 5.01 s (mask elision) to 3.52 / 3.19 s (SAFE-DiT+SW), while transformer calls drop from 30 to 19. Text encoding, VAE decoding, and post-processing stay small and stable ( ∼0.03 / 0.13 / 0.02 s), and the sched-uler/PCSP overhead is 0.16 to 0.26 s. 
+
+## G. High-Resolution Frontier 
+
+Table 11 gives the full numeric frontier on Lumina-Next, and Table 12 adds the strongest acceleration baselines. Temporal caches skip steps but still materialize full atten-tion per computed step, so their peak memory stays near Dense; consequently at 2560 2 Dense, DPCache, and Tea-Cache all run out of memory while only SAFE-DiT, which reduces per-step token computation, completes. 
+
+## H. A800 Cross-Architecture Evaluation 
+
+We additionally evaluate SAFE-DiT on an NVIDIA A800-SXM4-80GB GPU (Ampere; PyTorch 2.8.0+cu128; CUDA runtime 12.8) to test whether MIDT and the resulting ac-celeration persist outside the RTX PRO 6000 Blackwell stack. This experiment is not intended to match Blackwell speedups; it checks whether redundant masks still change SDPA dispatch, and whether Dense+FP and SAFE-Core still provide stable gains. Table 13 shows that the A800 stack dispatches no-mask SDPA to FlashAttention, but an all-valid mask to the memory-efficient backend. FlexAttention uses Triton ker-14 Table 13. A800 kernel microbenchmark. Entries report median latency in ms and the observed dispatch. 
+
+N No mask All-valid mask FlexAttention 2048 0.268 / Flash 0.919 / mem-eff. 0.863 / Triton 4096 0.805 / Flash 3.425 / mem-eff. 2.739 / Triton 8192 3.004 / Flash 10.830 / mem-eff. 8.344 / Triton 
+
+nels and is faster than the all-valid mask path but still slower than the no-mask Flash path at all tested sequence lengths. Table 14 reports the matched end-to-end comparison on 20 DrawBench prompts with one fixed seed. Dense+FP removes the mask-dispatch tax, and SAFE-Core adds a further scheduling gain of about 1.55 × to 1.57 × over Dense+FP from 1024 2 to 2048 2. SAFE-DiT+SW has nearly identical latency and memory to SAFE-Core, con-firming that SW-CFG is not a compute bottleneck on this stack. Table 15 gives the A800 stress frontier. Dense runs out of memory at both 2560 2 and 3072 2. Dense+FP completes both settings, and SAFE-Core / SAFE-DiT+SW further re-duce latency by 1.56 × at 2560 2 and 1.43 × at 3072 2 relative to Dense+FP. 
+
+## I. Cross-Backbone Generalization 
+
+Table 16 expands the main-paper cross-backbone summary. Speedup tracks the self-attention mask: the masked back-bone (Lumina-Next) gains the most and scales with resolu-tion because the rewrite and scheduling compound, while mask-free backbones obtain scheduling-only gains that de-pend on the model (large on the step-heavy FLUX, smaller on PixArt-Σ). Quality is stable for Lumina-Next, SD3-Medium, FLUX.1-dev, and the selected PixArt-Σ 2048 2 op-erating point. PixArt-Σ shows larger reward drops at 1024 2
+
+and 3072 2, which we attribute to relying on approximate scheduling alone without an exact mask-elision anchor un-der the tested configuration. 
+
+## J. Ablations And Sensitivity 
+
+Hyperparameter Sweeps. Table 17 sweeps the sensitive-token ratio ( ρ / skip ratio), the dense warm-up length, and the anchor interval on a development set with 50 to 60 prompts (IR is on this set’s scale). Each knob trades la-tency for fidelity, and the released default sits at the speed and fidelity knee rather than at an extreme. 
+
+CAR Drift. Table 18 lengthens the anchor-refresh inter-val. Without context anchor refresh, cached context states drift and LPIPS rises sharply ( 0.10 → 0.28 ); short refresh intervals keep drift bounded. This isolates CAR as a drift-control rather than a speed component. Lumina 
+
+(hd 72) 
+
+SD3-Med 
+
+(hd 64) 
+
+FLUX 
+
+(hd 128) 
+
+0
+
+5
+
+10 
+
+15 
+
+20 
+
+25 
+
+30 
+
+> Latency (s)
+
+2.69x 
+
+IR: 0.48 → 0.52 
+
+1.30x 
+
+IR: 0.91 → 0.91 5.14x 
+
+IR: 1.02 → 1.01 
+
+Cross-backbone acceleration 
+
+Dense 
+
+SAFE-DiT 
+
+Figure 7. Cross-backbone speedup. The masked backbone (Lumina-Next) gains most and scales with resolution; mask-free backbones obtain model-dependent scheduling-only gains. 0 2 4 6     
+
+> Latency (s)
+> Full SAFE
+> w/o fast-path
+> w/o SRSU
+> w/o CAR
+> w/o PCSP
+> w/o SW-CFG
+> 3.33s
+> 4.10s (+0.77)
+> 5.16s (+1.83)
+> 2.94s (-0.40)
+> 3.33s
+> 3.34s
+> a
+> Removing speed modules increases latency
+> 0.05 0.10 0.15 0.20 0.25 0.30
+> LPIPS vs Dense (drift)
+> 0.48
+> 0.50
+> 0.52
+> 0.54
+> ImageReward
+> Full SAFE
+> w/o fast-path
+> w/o SRSU
+> w/o CAR
+> w/o PCSP
+> w/o SW-CFG
+> b
+> CAR controls drift; PCSP/SW-CFG control reward
+
+Figure 8. Module roles. Left: removing a speed module (fast-path, SRSU) inflates latency, placing those variants at slower con-servative operating points. Right: in the reward and drift plane, removing CAR drives drift (LPIPS) while removing PCSP/SW-CFG lowers reward. 
+
+## K. PCSP Is Content-Driven 
+
+PCSP partitions tokens from early image-to-text attention rather than from a fixed spatial prior. Across captured prompts (Fig. 10), the sensitivity-map center of mass is displaced from the image center by 0.061 ± 0.024 and varies with the prompt, confirming a content-driven parti-tion rather than a center bias. 
+
+## L. Perceptual Evaluation 
+
+Blind VLM Judgments. On a 100-prompt paired Draw-Bench subset with randomized left/right order, GPT-5 scored SAFE-DiT versus Dense at 37 wins, 32 ties, and 31 losses (tie-excluded win rate 54.4%, binomial p=0 .54 ); GPT-4o scored 14 / 82 / 4, with most pairs tied. Both sup-port quality parity rather than improvement, so we phrase the perceptual claim as preservation. 15 Table 14. A800 matched comparison on 20 prompts × 1 seed. Latency is the median wall-clock time in seconds; memory is peak allocated GB.                                                                               
+
+> Res. Config OK/OOM/Error Latency Memory Speedup vs Dense Speedup vs Dense+FP
+> 1024 2Dense 20/0/0 14.826 11.342 1.000 ×0.594 ×
+> 1024 2Dense+FP 20/0/0 8.804 11.342 1.684 ×1.000 ×
+> 1024 2SAFE-Core 20/0/0 5.694 11.529 2.604 ×1.546 ×
+> 1024 2SAFE-DiT+SW 20/0/0 5.731 11.529 2.587 ×1.536 ×
+> 1536 2Dense 20/0/0 50.873 20.179 1.000 ×0.454 ×
+> 1536 2Dense+FP 20/0/0 23.078 14.534 2.204 ×1.000 ×
+> 1536 2SAFE-Core 20/0/0 14.691 14.955 3.463 ×1.571 ×
+> 1536 2SAFE-DiT+SW 20/0/0 14.697 14.955 3.461 ×1.570 ×
+> 2048 2Dense 20/0/0 140.261 44.068 1.000 ×0.371 ×
+> 2048 2Dense+FP 20/0/0 52.007 19.000 2.697 ×1.000 ×
+> 2048 2SAFE-Core 20/0/0 33.186 19.747 4.227 ×1.567 ×
+> 2048 2SAFE-DiT+SW 20/0/0 33.422 19.747 4.197 ×1.556 ×
+
+Table 15. A800 stress frontier on 20 prompts × 1 seed. Latency and memory are reported only for completed runs. 
+
+Res. Config OK/OOM Latency Memory Speedup vs FP 
+
+2560 2 Dense 0/20 N/A N/A N/A 
+
+2560 2 Dense+FP 20/0 104.869 24.743 1.000 ×
+
+2560 2 SAFE-Core 20/0 67.222 25.915 1.560 ×
+
+2560 2 SAFE-DiT+SW 20/0 67.402 25.915 1.556 ×
+
+3072 2 Dense 0/20 N/A N/A N/A 
+
+3072 2 Dense+FP 20/0 228.000 26.931 1.000 ×
+
+3072 2 SAFE-Core 20/0 159.126 33.451 1.433 ×
+
+3072 2 SAFE-DiT+SW 20/0 159.074 33.451 1.433 ×
+
+Table 16. Cross-backbone results (paired prompts/seeds). Self-attn indicates whether the backbone triggers MIDT. 
+
+Backbone Res. Self-attn Speed. ∆IR LPIPS Lumina-Next 1024 2 masked 2.69 × +0 .043 0.119 Lumina-Next 2560 2 masked 5.09 × N/A N/A SD3-Medium 1024 2 mask-free 1.30 × +0 .004 0.026 FLUX.1-dev 1024 2 mask-free 5.14 × −0.009 0.154 PixArt-Σ 1024 2 mask-free 1.76 × −0.188 N/A PixArt-Σ 2048 2 mask-free 1.87 × +0 .028 0.307 PixArt-Σ 3072 2 mask-free 1.55 × −0.116 0.360 
+
+T2I-CompBench. On 300 validation prompts per cat-egory, SAFE-Core matches Dense across categories (attribute-binding average 0.406 vs. 0.404), while SW-CFG raises the attribute-binding average to 0.419 (color 0.481 → 0.509, texture 0.421 → 0.432) without changing non-spatial relations (Table 19). This shows that the SW-CFG module mainly acts on prompt alignment, while SAFE-Core isolates acceleration fidelity. 
+
+GenEval. We further evaluate object-centric composi-tional alignment with the official GenEval detector-based protocol: 553 prompts, four images per prompt, and the standard task-average score over single object, two object, counting, colors, position, and color attribution. SAFE-
+
+Table 17. Hyperparameter sweeps (development set). Higher skip ratio and longer anchor interval are faster but drift; longer warm-up improves fidelity at a latency cost. Setting IR LPIPS skip ratio 0.3 0.765 0.105 skip ratio 0.5 (default) 0.747 0.103 skip ratio 0.7 0.725 0.109 warm-up 3 0.777 0.145 warm-up 7 0.733 0.078 warm-up 9 0.743 0.061 anchor interval 1 0.747 0.103 anchor interval 4 0.759 0.113 anchor interval 8 0.753 0.173 Table 18. CAR drift vs. refresh interval (development set). Weak-ening CAR is faster but drifts. Refresh interval IR LPIPS 1 0.817 0.102 4 0.823 0.111 8 0.813 0.169 16 0.789 0.235 none 0.779 0.283 Table 19. T2I-CompBench alignment on Lumina-Next. Category Dense SAFE-Core SAFE-DiT+SW Color 0.481 0.481 0.509 
+
+Shape 0.310 0.312 0.317 
+
+Texture 0.421 0.425 0.432 
+
+Non-spatial 0.303 0.303 0.303 Attr.-binding avg. 0.404 0.406 0.419 
+
+Core remains matched to Dense in the overall score (0.449 vs. 0.449), while SAFE-DiT+SW gives a small alignment 16 1 2 4 8 16 off 
+
+CAR refresh interval (steps) 
+
+0.100 
+
+0.125 
+
+0.150 
+
+0.175 
+
+0.200 
+
+0.225 
+
+0.250 
+
+0.275 
+
+> LPIPS vs Dense  ↓
+
+CAR is drift control, not a heuristic 
+
+> LPIPS vs Dense (drift)
+> ImageReward
+
+0.78 
+
+0.79 
+
+0.80 
+
+0.81 
+
+0.82 
+
+> ImageReward  ↑
+> optimum (interval=4)
+
+Figure 9. Context-state drift over denoising steps. Without CAR, cached context states drift monotonically; anchor refreshes reset the error, bounding drift. 0.00 0.05 0.10 
+
+> CoM dist. from centre
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> # prompts
+> centre prior
+> ( ≈ 0)
+> mean 0.061
+> ±0.024
+> (a) content-driven, not centred
+> (b) PCSP sensitivity maps (per-prompt)
+
+Figure 10. PCSP sensitivity. (a) The partition’s center of mass is displaced from the image center, not centered. (b) Per-prompt sensitivity maps localize on prompt-relevant regions. 0 20 40 60 80 100 
+
+# blind paired judgments 
+
+GPT-5 
+
+GPT-4o 
+
+37 32 31 
+
+14 82 4
+
+VLM blind preference: perceptual parity 
+
+SAFE wins Tie Dense wins 
+
+Figure 11. Blind VLM win/tie/loss for SAFE-DiT vs. Dense. Both judges place most pairs at parity, supporting preservation rather than improvement. 
+
+gain to 0.458, mainly from counting, position, and color attribution (Table 20). The low absolute position scores are shared by all three configurations, so we treat spatial-relation failures as a backbone limitation rather than an ac-celeration artifact. The table is therefore used as a compact sanity check: acceleration leaves the detector-based failure modes nearly unchanged, while SW-CFG gives only a mod-est alignment shift. 
+
+Table 20. GenEval object-centric alignment on Lumina-Next.                            
+
+> Method Overall Img. ok Prompt ok Single Two Count Color Pos. Attr. Dense 0.449 43.17 58.95 90.94 43.43 38.44 72.61 8.00 16.00 SAFE-Core 0.449 43.17 60.04 90.94 44.19 37.81 71.81 8.00 16.50 SAFE-DiT+SW 0.458 44.03 60.58 90.62 44.70 42.19 71.54 8.50 17.25
+
+## M. Qualitative Comparisons 
+
+Figure 12 compares SAFE-DiT with Dense and four accel-eration baselines on Lumina-Next under matched prompt and seed. SAFE-DiT tracks the Dense reference, while the strongest-quality baselines remain close and FastCache de-grades visibly. 17 Figure 12. Paired qualitative comparison (matched prompt/seed). Columns: Dense, SAFE-DiT, DPCache, TeaCache, ClusCa, FastCache. SAFE-DiT preserves the Dense composition and detail; FastCache (rightmost) visibly degrades. 
+
+18 Table 21. Blinded human-study results after quality control. “Target” and “reference” denote the first and second methods, respectively, in the comparison column. Preference rates and bootstrap confidence intervals exclude ties. The lower confidence bound is the one-sided 95% Wilson bound computed over decisive prompt-level outcomes. Comparison Criterion Target wins Ties Ref. wins Tie-excl. pref. Bootstrap 95% CI Wilson LCB / conclusion SAFE-Core vs. Dense+FP Visual quality 4 196 0 1.000 [1.000 , 1.000 ] 0.597; non-inferior SAFE-Core vs. Dense+FP Prompt alignment 1 199 0 1.000 [1.000 , 1.000 ] 0.270; descriptive only SAFE-DiT+SW vs. SAFE-Core Visual quality 4 41 5 0.444 [0.111 , 0.800 ] 0.218; no preference claim SAFE-DiT+SW vs. SAFE-Core Prompt alignment 1 48 1 0.500 [0.000 , 1.000 ] 0.121; no preference claim 
+
+## N. Human Study Protocol and Non-Inferiority Analysis 
+
+To complement the automatic metrics and VLM-based eval-uation, we conducted a blinded paired human study that separates acceleration fidelity from the effect of the SW-CFG guidance module. The primary comparison evalu-ates Dense+FP against SAFE-Core and tests whether the exact fast-path rewrite and approximate spatial scheduling preserve perceived visual quality under matched prompts, seeds, samplers, numbers of function evaluations, and 
+
+1024 2 resolution. The secondary comparison evaluates SAFE-Core against SAFE-DiT+SW and examines whether SW-CFG changes prompt alignment or perceived visual quality. We analyze these comparisons separately rather than combining acceleration fidelity and guidance effects into a single preference endpoint. The study was implemented using a public Hugging Face Space with a private result store. Each trial displayed the full text prompt and two anonymized images labelled only as Image A and Image B. The left–right order was ran-domized independently for each rater assignment. Method names, filenames, runtime measurements, and automatic metric values were hidden from the raters. For each pair, raters first selected which image better matched the prompt and then selected which image had better visual quality. A tie option was available for both questions. We recruited adult raters who were not involved in the project and stored only anonymous participant identifiers. Five raters each completed 160 trials, yielding 800 re-sponses in total. These comprised 200 primary pairs eval-uated by three raters ( 600 judgments), 50 stratified sec-ondary pairs evaluated by three raters ( 150 judgments), and 50 attention-check trials. Before data collection, we fixed the prompt identifiers, random seeds, image files, rater-assignment file, quality-control rules, and non-inferiority margin. Quality control was applied at the rater level using two types of attention checks. Identical-image checks required a tie response for both visual quality and prompt align-ment. For original-versus-blurred checks, the visual-quality response was required to select the sharp original image; for prompt alignment, either the original image or a tie was ac-cepted because the blur manipulation primarily tests visual quality. One rater was excluded after failing three identical-image checks. After exclusion, the valid dataset contained 600 formal judgments covering all 250 prespecified formal pairs. Of these pairs, 100 retained three valid ratings and 150 retained two valid ratings. We first aggregate valid ratings independently for each prompt-level image pair. The majority outcome is catego-rized as a target-method win, a tie, or a reference-method win. A split vote with no strict majority between the two methods is counted as a tie. All subsequent statistical analy-ses operate on these prompt-level outcomes; individual rater judgments are not treated as independent observations. For a comparison with Ntarget target-method wins and Nreference reference-method wins, we define the tie-excluded preference rate as 
+
+ptarget = Ntarget 
+
+Ntarget + Nreference 
+
+.
+
+This quantity is conditional on a prompt-level comparison being decisive. Because ties are excluded from its denomi-nator, we report the numbers of wins, ties, and losses along-side every preference rate. We report two complementary uncertainty summaries. First, we compute a two-sided 95% nonparametric boot-strap confidence interval by resampling the prompt-level majority outcomes with replacement and recomputing the tie-excluded preference rate. Bootstrap replicates con-taining no decisive outcome are omitted because the tie-excluded rate is undefined in those replicates. Second, we compute a one-sided 95% Wilson lower confidence bound over the decisive prompt-level outcomes. The Wil-son bound is used for the prespecified non-inferiority deci-sion, while the bootstrap interval is reported as a descriptive uncertainty summary. For the primary visual-quality endpoint, we use a 5% non-inferiority margin relative to equal preference and test 
+
+H0 : pSAFE ≤ 0.45 against H1 : pSAFE > 0.45 .
+
+SAFE-Core is declared non-inferior to Dense+FP in per-ceived visual quality only when the one-sided 95% Wil-son lower confidence bound exceeds 0.45 . Endpoints that do not satisfy this criterion are reported descriptively using 19 their prompt-level wins, ties, losses, preference rates, and confidence intervals. For the secondary comparison involving SW-CFG, we do not apply the primary non-inferiority test. A human pref-erence claim for prompt alignment would require the two-sided prompt-level confidence interval to lie entirely above 
+
+0.5. Otherwise, the result is interpreted descriptively and no preference claim is made. As shown in Table 21, SAFE-Core received four prompt-level visual-quality wins, 196 ties, and no losses against Dense+FP. Its one-sided 95% Wilson lower confidence bound is 0.597 , which exceeds the prespecified non-inferiority threshold of 0.45 . SAFE-Core therefore satisfies the stated 5% non-inferiority criterion for perceived visual quality. This result does not establish visual superiority be-cause the comparison is overwhelmingly tie dominated. The secondary comparison between SAFE-DiT+SW and SAFE-Core is also dominated by ties. Its prompt-alignment confidence interval includes 0.5, and the study therefore does not support a human preference claim for SW-CFG. Overall, the human evaluation supports perceptual non-inferiority of SAFE-Core to Dense+FP under the evaluated configuration, rather than evidence that either SAFE-Core or SAFE-DiT+SW is perceptually superior. 20
