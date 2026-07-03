@@ -6,79 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-02
-- 运行时间：2026-07-02 21:09:07 UTC
+- 最新运行日期：2026-07-03
+- 运行时间：2026-07-03 21:48:52 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日精选19篇论文，聚焦大模型长上下文压缩与多模态感知，精读7篇速读12篇。  
-最值得关注MosaicKV的动态双KV缓存压缩方案（10分）和视觉-语言感知范式演化综述（9分）。  
-建议深读MosaicKV掌握高效推理技术，并参考综述梳理多模态领域脉络。
-- 详情：[/202607/02/README](/202607/02/README)
+今日精选19篇论文，精读7篇，其中《Multimodal Continuous Reasoning》与《HYPIC》均获9.0高分。最值得关注多模态连续推理的非对称互变分学习方法，以及混合注意力LLM服务中位置无关缓存加速技术。普通读者可优先研读这两篇精读论文，并留意速读中视觉推理与长视频对齐的8分工作。
+- 详情：[/202607/03/README](/202607/03/README)
 
 ### 精读区论文标签
-1. [MosaicKV: Serving Long-Context LLM with Dynamic Two-D KV Cache Compression](/202607/02/2607.00760v1-mosaickv-serving-long-context-llm-with-dynamic-two-d-kv-cache-compression)  
-   标签：评分：10.0/10、query:sparse-attn
-   evidence：长上下文大语言模型的动态二维KV缓存压缩
-2. [From Structure to Synergy: A Survey of Vision-Language Perception Paradigm Evolution in Multimodal Large Language Models](/202607/02/2606.26196v1-from-structure-to-synergy-a-survey-of-vision-language-perception-paradigm-evolution-in-multimodal-large-language-models)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：关于多模态大模型中视觉语言感知范式的综述
-3. [FADE: Mitigating Hallucinations by Reducing Language-Prior Dominance in Large Vision-Language Models](/202607/02/2606.29431v2-fade-mitigating-hallucinations-by-reducing-language-prior-dominance-in-large-vision-language-models)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：通过减少语言先验主导性来减轻大型视觉语言模型中的幻觉
-4. [Clearer Sight, Fewer Lies: Oriented Pickup Preference Optimization for Multimodal Hallucination Mitigation](/202607/02/2606.29805v2-clearer-sight-fewer-lies-oriented-pickup-preference-optimization-for-multimodal-hallucination-mitigation)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：通过偏好优化缓解多模态幻觉
-5. [M2Note: Continual Evolution of Vision Language Models via Mistake Notebook Learning](/202607/02/2607.00685v1-m2note-continual-evolution-of-vision-language-models-via-mistake-notebook-learning)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：错误笔记本学习处理VLM中的反复失败和幻觉
-6. [Towards Memory-Efficient Autoregressive Video Generation via Instance-Specific Parametric Absorption](/202607/02/2607.00712v1-towards-memory-efficient-autoregressive-video-generation-via-instance-specific-parametric-absorption)  
+1. [Multimodal Continuous Reasoning via Asymmetric Mutual Variational Learning](/202607/03/2607.00461v1-multimodal-continuous-reasoning-via-asymmetric-mutual-variational-learning)  
+   标签：评分：9.0/10、query:mm-cot
+   evidence：直接提出多模态连续推理方法，匹配多模态长链推理需求
+2. [HYPIC: Accelerating Hybrid-Attention LLM Serving with Position-Independent Caching](/202607/03/2607.01299v1-hypic-accelerating-hybrid-attention-llm-serving-with-position-independent-caching)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：实例特定参数吸收用于KV缓存压缩
-7. [Multimodal Continuous Reasoning via Asymmetric Mutual Variational Learning](/202607/02/2607.00461v1-multimodal-continuous-reasoning-via-asymmetric-mutual-variational-learning)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：多模态连续推理用于思维链
+   evidence：混合注意力LLM的位置无关缓存，实现KV重用
+3. [InduceKV: Fixed-Footprint Continual Adaptation of Multimodal LLMs via Inducing KV Memories](/202607/03/2607.02010v1-inducekv-fixed-footprint-continual-adaptation-of-multimodal-llms-via-inducing-kv-memories)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：用于多模态LLM持续适应的KV缓存压缩
+4. [A Hippocampus for Linear Attention: An Exact Memory for What the Recurrent State Forgets](/202607/03/2607.02303v1-a-hippocampus-for-linear-attention-an-exact-memory-for-what-the-recurrent-state-forgets)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：为线性注意力添加有界精确KV缓存
+5. [EVLA: An Electro-Aware Multimodal Assistant for Physically-Grounded Driving Reasoning and Control](/202607/03/2606.28938v1-evla-an-electro-aware-multimodal-assistant-for-physically-grounded-driving-reasoning-and-control)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：用于驾驶推理与控制的多模态助手
+6. [CORTEX: Token-Level Hallucination Detection in RAG via Comparative Internal Representations](/202607/03/2606.31033v1-cortex-token-level-hallucination-detection-in-rag-via-comparative-internal-representations)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：令牌级幻觉检测方法
+7. [Spatial Reasoning via Modality Switching Between Language and Symbolic Representation](/202607/03/2606.31285v1-spatial-reasoning-via-modality-switching-between-language-and-symbolic-representation)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：通过语言与符号模态切换实现多模态推理
 
 ### 速读区论文标签
-1. [Latent Noise Mask for Reducing Visual Redundancy in Multimodal Large Language Models](/202607/02/2606.30168v1-latent-noise-mask-for-reducing-visual-redundancy-in-multimodal-large-language-models)  
+1. [Information-Regularized Attention for Visual-Centric Reasoning](/202607/03/2607.00434v1-information-regularized-attention-for-visual-centric-reasoning)  
    标签：评分：8.0/10、query:multimodal
-   evidence：减少多模态大模型视觉冗余以改进细粒度推理
-2. [Before Thinking, Learn to Decide: Proactive Routing for Efficient Visual Reasoning](/202607/02/2606.30217v1-before-thinking-learn-to-decide-proactive-routing-for-efficient-visual-reasoning)  
+   evidence：针对多模态模型中的物体幻觉和弱视觉基础
+2. [StochasT: Learning with Stochastic Turn Depth for Visual Instruction Tuning](/202607/03/2607.00465v1-stochast-learning-with-stochastic-turn-depth-for-visual-instruction-tuning)  
    标签：评分：8.0/10、query:multimodal
-   evidence：主动路由用于多模态模型的高效视觉推理
-3. [VisReflect: Latent Visual Reflection for Fine-Grained Perception in Long Visual Context](/202607/02/2606.30288v1-visreflect-latent-visual-reflection-for-fine-grained-perception-in-long-visual-context)  
+   evidence：随机轮次深度用于视觉指令微调以增强多模态推理
+3. [MoVA: Learning Asymmetric Dual Projections for Modular Long Video-Text Alignment](/202607/03/2607.00858v1-mova-learning-asymmetric-dual-projections-for-modular-long-video-text-alignment)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：长视频-文本对齐用于多模态理解
+4. [GSRQ: Gain-Shape Residual Quantization for Sub-1-bit KV Cache](/202607/03/2607.01065v1-gsrq-gain-shape-residual-quantization-for-sub-1-bit-kv-cache)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：解决长上下文中视觉注意力沉没问题以实现细粒度感知
-4. [Morphing into Hybrid Attention Models](/202607/02/2606.30562v1-morphing-into-hybrid-attention-models)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：面向长上下文效率的混合注意力模型及其层选择优化
-5. [Rank-Aware Hyperbolic Alignment for Vision-Language Dataset Distillation](/202607/02/2606.29464v1-rank-aware-hyperbolic-alignment-for-vision-language-dataset-distillation)  
+   evidence：面向低于1比特的KV缓存量化
+5. [Before Thinking, Learn to Decide: Proactive Routing for Efficient Visual Reasoning](/202607/03/2606.30217v2-before-thinking-learn-to-decide-proactive-routing-for-efficient-visual-reasoning)  
+   标签：评分：7.0/10、query:mm-cot
+   evidence：面向长链思维的高效视觉推理的主动路由方法
+6. [MS-Resampler: Multi-Scope Visual Resampling for Efficient Multimodal LLMs](/202607/03/2606.31383v1-ms-resampler-multi-scope-visual-resampling-for-efficient-multimodal-llms)  
    标签：评分：7.0/10、query:multimodal
-   evidence：视觉-语言数据集蒸馏用于多模态理解
-6. [Dynamo: Dynamic Skill-Tool Evolution for Vision-Language Agents](/202607/02/2606.30185v1-dynamo-dynamic-skill-tool-evolution-for-vision-language-agents)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：视觉语言代理的技能和工具进化以提升推理
-7. [Unsupervised Data-Efficient Cross-Modal Retrieval with Global-Neighborhood Alignment Hashing](/202607/02/2606.31517v1-unsupervised-data-efficient-cross-modal-retrieval-with-global-neighborhood-alignment-hashing)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：无监督跨模态检索的全局邻域对齐哈希方法
-8. [Attend, Transform, or Silence: Operator-Level Visual Skipping for Efficient Multimodal LLM Inference](/202607/02/2606.31903v1-attend-transform-or-silence-operator-level-visual-skipping-for-efficient-multimodal-llm-inference)  
+   evidence：多范围视觉重采样器用于高效多模态LLM架构
+7. [ERA: Entropy-Guided Visual Token Pruning with Rectified Attention for Efficient MLLMs](/202607/03/2606.31982v1-era-entropy-guided-visual-token-pruning-with-rectified-attention-for-efficient-mllms)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：算子级视觉跳过提升Transformer推理效率
-9. [LLM-Guided Planning for Multi-hop Reasoning over Multimodal Nuclear Regulatory Documents](/202607/02/2606.29399v1-llm-guided-planning-for-multi-hop-reasoning-over-multimodal-nuclear-regulatory-documents)  
+   evidence：视觉token修剪与注意力修正，提升多模态大模型效率
+8. [Ghost in the Kernel: In-Context Learning with Efficient Transformers via Domain Generalization](/202607/03/2607.00479v1-ghost-in-the-kernel-in-context-learning-with-efficient-transformers-via-domain-generalization)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：线性transformer高效上下文学习的理论分析
+9. [MemLeak: Diagnosing Information Leaks in Multimodal Agent Memory](/202607/03/2606.29788v1-memleak-diagnosing-information-leaks-in-multimodal-agent-memory)  
    标签：评分：6.0/10、query:multimodal
-   evidence：LLM引导的多模态文档多跳推理规划
-10. [ScAle: Attention Head Scaling as a Minimal Adapter for Spatial Reasoning in Vision Language Models](/202607/02/2606.29579v1-scale-attention-head-scaling-as-a-minimal-adapter-for-spatial-reasoning-in-vision-language-models)  
+   evidence：诊断多模态代理记忆中的信息泄露
+10. [HyFL-CLIP: Hyperbolic Fine-Tuning of CLIP for Robust Long-Context Understanding](/202607/03/2607.00428v1-hyfl-clip-hyperbolic-fine-tuning-of-clip-for-robust-long-context-understanding)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：关注CLIP的长上下文理解，与长上下文注意力和多模态理解相关
+11. [Retrieved Images as Visual Thought: Training-Free Multimodal In-Context Learning for the Open-vs-Closed Gap](/202607/03/2607.00606v1-retrieved-images-as-visual-thought-training-free-multimodal-in-context-learning-for-the-open-vs-closed-gap)  
    标签：评分：6.0/10、query:multimodal
-   evidence：通过注意力头缩放提升VLM空间推理
-11. [Efficient Visual Pointing for Embodied AI:Agent-Driven Data Synthesis, Cross-Block Attention, and Iterative Correction](/202607/02/2606.29850v1-efficient-visual-pointing-for-embodied-aiagent-driven-data-synthesis-cross-block-attention-and-iterative-correction)  
+   evidence：训练-free多模态上下文学习，利用检索图像进行推理
+12. [AdaBoosting Text Prompts for Vision-Language Models](/202607/03/2607.00684v1-adaboosting-text-prompts-for-vision-language-models)  
    标签：评分：6.0/10、query:multimodal
-   evidence：结合视觉与语言的多模态视觉指点
-12. [ALM2Vec: Learning Audio Embeddings for Universal Audio Retrieval with Large Audio-Language Models](/202607/02/2606.30682v1-alm2vec-learning-audio-embeddings-for-universal-audio-retrieval-with-large-audio-language-models)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：多模态音频语言理解与检索
+   evidence：提出文本提示提升方法用于视觉语言模型分类，直接改进多模态理解
 
 
 <div class="dpr-home-promo-card">
