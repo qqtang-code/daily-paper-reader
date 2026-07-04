@@ -1,0 +1,953 @@
+Title: When Classic Cache Policies Fail: Learning-Augmented Replacement for Semantic Retrieval Buffers
+
+URL Source: https://arxiv.org/pdf/2607.00394v1
+
+Published Time: Thu, 02 Jul 2026 00:27:18 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# When Classic Cache Policies Fail: Learning-Augmented Replacement for Semantic Retrieval Buffers 
+
+# Yushi Sun ∗
+
+LIGHTSPEED, Tencent Shenzhen, China ysunbp@connect.ust.hk 
+
+# Bowen Cao ∗
+
+The Chinese University of Hong Kong Hong Kong, China bwcao@link.cuhk.edu.hk 
+
+# Wai Lam 
+
+The Chinese University of Hong Kong Hong Kong, China wlam@se.cuhk.edu.hk 
+
+## ABSTRACT 
+
+LLM agents increasingly rely on retrieval buffers to store and reuse past experience, yet the cache management policies governing these buffers remain largely ad-hoc. We formalize this as an online seman-tic cache replacement problem with switching costs, where items are matched by embedding similarity and hit quality is continuous rather than binary. Through experiments on two datasets from MemoryBench-Full (LoCoMo, DialSim) with 8 replacement policies, we reveal a surprising finding: classic heuristics (LRU, LFU) consis-tently underperform the naive FIFO baseline on semantic workloads, due to the absence of temporal locality and frequency concentra-tion. We propose SOLAR, a learning-augmented framework that derives modification timing from regret accumulation (achieving 
+
+∼17% modification rate) and content selection from Bayesian online learning over implicit retrieval feedback. We prove SOLAR achieves a constant competitive ratio ≤ 3, independent of cache size and horizon (vs. Ω(𝐾 ) for FIFO), and eviction regret 𝑂 (√︁ 𝐾𝑇 log 𝑇 ),matching the Ω(√𝐾𝑇 ) lower bound up to logarithmic factors. Ex-periments demonstrate 5–75% relative improvement over FIFO at tight cache sizes, with a clearly characterized phase transition at the working set boundary. Synthetic experiments with 5000-item pools further reveal an inverted-U relationship between pool size and retrieval quality, justifying capacity constraints as a retrieval noise phenomenon rather than a storage limitation. 
+
+PVLDB Reference Format: 
+
+Yushi Sun, Bowen Cao, and Wai Lam. When Classic Cache Policies Fail: Learning-Augmented Replacement for Semantic Retrieval Buffers. PVLDB, 14(1): XXX-XXX, 2027. doi:XX.XX/XXX.XX 
+
+## 1 INTRODUCTION 
+
+Large language model (LLM) agents are deployed in increasingly complex, long-running tasks: personal assistants maintaining months of conversation history [ 22 ], game-playing agents accumulating strategies over thousands of episodes [ 33 ], and research agents that iteratively refine their knowledge through tool use [ 23 ]. A common architectural pattern has emerged across these systems: the agent maintains a retrieval buffer of past experience that is queried at each 
+
+> ∗Both authors contributed equally to this research. This work was done during Bowen’s internship at Tencent LIGHTSPEED. This work is licensed under the Creative Commons BY-NC-ND 4.0 International License. Visit https://creativecommons.org/licenses/by-nc-nd/4.0/ to view a copy of this license. For any use beyond those covered by this license, obtain permission by emailing info@vldb.org. Copyright is held by the owner/author(s). Publication rights licensed to the VLDB Endowment. Proceedings of the VLDB Endowment, Vol. 14, No. 1 ISSN 2150-8097. doi:XX.XX/XXX.XX
+
+step to inform its current response. This buffer serves as the agent’s long-term memory, supplementing the fixed context window of the underlying language model. The retrieval buffer operates as follows. At each interaction step, the agent generates a new experience item: in conversational de-ployments this is typically a user utterance or a stated preference, while in fully agentic deployments it is more often an environment observation, a tool-invocation result, or a completed subtask trace. The agent also receives a query (the current user question, task specification, or sub-goal). It retrieves the top-𝑘 most relevant items from its buffer via embedding similarity search, injects them into the LLM prompt as additional context, and generates a response. When the buffer reaches its capacity limit 𝐾 , the agent must decide whether to admit the new item and, if so, which existing item to evict. This architecture closely parallels buffer pool management 
+
+in database systems: a fixed-capacity buffer holds a working sub-set of items selected from a much larger (potentially unbounded) pool of candidates, and the system must continually decide which items to admit and which to evict as the workload evolves. The admission decision corresponds to whether to bring a page into the buffer pool; the eviction decision to which page to flush. This analogy suggests that decades of research on cache replacement and buffer management policies (LRU [ 4], LFU [ 10 ], ARC [ 20 ], and their variants) should directly apply. 
+
+Current practice and a surprising finding. Production agent memory systems predominantly inherit these classical heuristics: MemGPT [ 22 ] and LangChain [ 6 ] default to FIFO/sliding-window eviction [ 34 ], while many recent agent frameworks adopt LRU or recency-based scoring. To stress-test this reliance, we conduct com-prehensive experiments with 8 cache replacement policies across 4 capacity settings on two datasets from MemoryBench-Full [ 2 ]: LoCoMo (10 conversational sessions) and DialSim (3 TV-show dia-logue datasets). Our results reveal a counter-intuitive phenomenon: 
+
+classic cache heuristics consistently underperform even the naive FIFO baseline on semantic workloads . Specifically: 
+
+• LRU (Least Recently Used) performs no better than FIFO across the tested cache sizes, falling clearly below it at 𝐾 ∈ { 20 , 50 } and only matching it at 𝐾 = 10 . Recency of retrieval is not predictive of future utility in conversational agents. 
+
+• LFU (Least Frequently Used) and ARC (Adaptive Replacement Cache) rank consistently among the worst, with LFU below FIFO at every 𝐾 . Frequency accumulation is actively misleading when topics are diverse and non-repeating. 
+
+• These failures are systematic : they persist across two datasets with vastly different signal densities (LoCoMo: ∼30% hit rate; Di-alSim: ∼4% hit rate), strengthening as 𝐾 approaches the working set size, and replicate across multiple random seeds. 
+
+> arXiv:2607.00394v1 [cs.DB] 1 Jul 2026
+
+What’s really different about semantic memory? The failures above share a common cause. Classic cache theory rests on three implicit assumptions: (i) hits are binary (a page is either in cache or not), (ii) items are addressed by exact ID, and (iii) item utility is determined by access pattern alone (recency, frequency, or some combination). None of these holds for LLM agent memory. Retrieval quality is continuous: a query may be partially answered by a se-mantically related item. Items are matched by embedding similarity, so a cached item can serve queries from nearby topics even if it has never been accessed exactly. And item value drifts as conversation topics evolve, so any policy that conflates “previously useful” with “currently useful” will systematically misallocate the cache. Existing policies therefore inherit assumptions that the workload no longer satisfies. 
+
+Problem formalization. This motivates a new problem formula-tion that explicitly captures the three departures above. We define the online semantic cache replacement problem with switching costs ,with three defining features: (1) Soft hits : Cache utility is continuous (measured by retrieval quality ∈ [ 0, 1]), not binary. A “miss” here means poor retrieval quality, not the complete absence of an item. (2) Semantic matching : Items are retrieved by embedding simi-larity rather than exact ID match. A cached item can partially serve queries from related (but not identical) topics. (3) Non-stationary utility : Item value changes over time as con-versation topics evolve. An item highly relevant at turn 50 may become irrelevant by turn 200. Within this formulation, we express the total cost as the sum of cumulative miss cost (retrieval quality loss) and switching cost (penalties for cache modifications), enabling competitive analysis against an offline optimal policy. 
+
+Our approach: SOLAR. The new formulation calls for two coupled decisions: when to modify the cache, and what to put in. SOLAR is built around these two questions, with each component motivated by a specific failure mode of classic policies. (1) When to modify (cost-aware admission control). Always admitting (as classic policies do) wastes the switching budget on noise items and amplifies non-stationarity: useful items get displaced before their value can be observed. We instead gate admission by accumulated regret : a new item enters the cache only when the cumulative cost of not having it exceeds an adaptive threshold 𝜏 . The threshold tracks workload difficulty via exponential moving average. This drives the admission rate down to roughly 17%, keeping the cache populated by genuinely valuable items and turning the switching budget into a scarce resource that is spent only when the cache is demonstrably inadequate. (2) What to put in (Bayesian online eviction). When admission fires and the cache is full, we must pick an eviction target despite uncertainty about each item’s true utility . Heuristics like LRU/LFU collapse this uncertainty into a single proxy statistic (recency or frequency) and ignore the exploration–exploitation tradeoff entirely. We instead maintain a Beta posterior over each item’s utility, updated from implicit retrieval feedback, and evict by Thompson sampling: naturally exploiting items believed to be low-utility while preserving under-observed items long enough to learn whether they are valuable. The two components interact synergistically. Admission control ensures the cache contains predominantly high-value items, which provides cleaner feedback signals for the Thompson Sampling poste-riors. In turn, better eviction decisions preserve the highest-quality items, amplifying the value of selective admission. We empirically verify this super-additive interaction: the combined effect (+0.014 F1 over FIFO at K=50) exceeds the sum of individual effects (+0.003 from eviction alone + +0.007 from admission alone = +0.010). 
+
+Theoretical guarantees. We prove that our combined policy achieves: 
+
+• Competitive ratio ≤ 3 (a universal constant, independent of 𝐾 ,
+
+𝑇 , and the switching cost 𝜆 ) against the offline optimal in the worst case, in the standard sense of competitive analysis, and converging to 1 under piecewise-stationary workloads. FIFO, by contrast, has unbounded competitive ratio: we construct a cycling workload where FIFO achieves exactly 0% hit rate while OPT achieves near-perfect performance. 
+
+• Eviction regret 𝑂 (√︁ 𝐾𝑇 log 𝑇 ) where 𝐾 is cache size and 𝑇 is the time horizon, matching the information-theoretic lower bound 
+
+Ω(√𝐾𝑇 ) up to logarithmic factors. 
+
+Experimental validation. Beyond the two real-world benchmarks, we design three controlled synthetic experiments, each isolating one structural question that real datasets confound: 
+
+• Why do classic policies fail? A cycling workload (working set size > 𝐾 ) instantiates the worst case behind our Ω(𝐾 ) competitive-ratio theorem: FIFO drops to exactly 0% hit rate, providing a clean empirical witness that the failure is structural rather than an artifact of any particular dataset. 
+
+• When does our policy stop winning? A working-set sweep traces the boundary between the regime where selective admission matters and the regime where raw coverage suffices, locating the phase transition as a function of 𝐾 and the effective working-set size. 
+
+• Why is capacity a constraint at all in the LLM era, where storage is cheap? A retrieval-noise experiment with 5000-item pools demonstrates an inverted-U relationship between pool size and retrieval quality: enlarging the pool past ∼1000 items degrades 
+
+retrieval quality because near-duplicates confuse the embedder. Capacity in semantic memory is therefore bounded by retrieval precision, not by disk space. 
+
+Contributions. Our main contributions are: (1) We formalize LLM agent experience memory as an online se-mantic cache replacement problem, establishing a bridge be-tween the well-studied theory of online algorithms and the emerging challenge of LLM memory management (§2). (2) We reveal the systematic failure of classic cache heuristics on semantic workloads and analyze its root cause: the absence of temporal locality and frequency concentration (§6). (3) We propose a learning-augmented admission-eviction frame-work with provable competitive ratio and regret bounds, re-quiring no external predictors or model training (§4, §5). 
+
+> 2
+
+(4) We conduct comprehensive experiments on 2 real benchmarks, 3 synthetic workloads, 8 methods, and 4 capacity settings, pro-viding actionable insights including the phase transition char-acterization and retrieval noise justification (§6). 
+
+## 2 PROBLEM FORMULATION 
+
+We formalize LLM agent memory management as an online cache replacement problem in a semantic embedding space. Our formula-tion captures the key properties that distinguish this setting from traditional paging while remaining amenable to competitive analy-sis and regret bounds. 
+
+## 2.1 System Model 
+
+Consider an LLM agent that interacts with a user (or environment) over 𝑇 discrete time steps. The system maintains: 
+
+• A cache (retrieval buffer) 𝑆 𝑡 ⊆ U of experience items, with 
+
+|𝑆 𝑡 | ≤ 𝐾 where 𝐾 is the capacity limit. 
+
+• An embedding function 𝜙 : U → R𝑑 mapping items to a 𝑑 -dimensional vector space. 
+
+• A similarity function sim (𝑎, 𝑏 ) = 𝜙 (𝑎 ) · 𝜙 (𝑏 )∥𝜙 (𝑎 ) ∥ ∥ 𝜙 (𝑏 ) ∥ (cosine similarity). At each time step 𝑡 = 1, 2, . . . ,𝑇 , the following sequence of events occurs: (1) Query arrival. A query 𝑞 𝑡 arrives, representing the user’s current question or the agent’s current information need. (2) Retrieval. The system retrieves the top-𝑘 items from 𝑆 𝑡 ranked by sim (𝑞 𝑡 , ·) . Let 𝑅 𝑡 = top-𝑘 (𝑆 𝑡 , 𝑞 𝑡 ) denote the retrieved set. (3) Response generation. The agent uses 𝑅 𝑡 as context to gener-ate a response, incurring miss cost ℓ𝑡 (𝑆 𝑡 ).(4) Experience generation. A new experience item 𝑒 𝑡 is produced from the interaction (the user’s feedback, the agent’s observa-tion, or a summary of the exchange). (5) Cache decision. The policy 𝜋 makes two decisions: 
+
+• Admission : whether to insert 𝑒 𝑡 into 𝑆 𝑡 .
+
+• Eviction : if |𝑆 𝑡 | = 𝐾 and 𝑒 𝑡 is admitted, which item 𝑖 ∗ ∈ 𝑆 𝑡 to remove. 
+
+Definition 2.1 (Semantic Cache). A semantic cache is the tuple 
+
+C = (𝑆 𝑡 , 𝐾, 𝜙, 𝑘 ) where 𝑆 𝑡 is the cached item set, 𝐾 is capacity, 𝜙 
+
+is the embedding function, and 𝑘 is the retrieval depth. The cache evolves over time according to the decisions of the management policy 𝜋 .
+
+## 2.2 Miss Cost Function 
+
+The miss cost ℓ𝑡 (𝑆 𝑡 ) ∈ [ 0, 1] quantifies the quality degradation from using cache state 𝑆 𝑡 to answer query 𝑞 𝑡 . In our experiments, we define: 
+
+ℓ𝑡 (𝑆 𝑡 ) = 1 − F1 (𝑞 𝑡 , 𝑆 𝑡 ) (1) where F1 (𝑞 𝑡 , 𝑆 𝑡 ) is the token-level F1 score of the agent’s response when augmented with items retrieved from 𝑆 𝑡 , compared against a ground-truth reference answer. This definition captures several important properties: 
+
+• Continuity : Unlike traditional caching where a hit is binary, 
+
+ℓ𝑡 is continuous. Even a partial match (some relevant items in cache, some missing) yields intermediate cost. 
+
+• Composition : The cost depends on the set of retrieved items, not individual items. Two individually weak items may jointly provide good coverage. 
+
+• Query-dependence : The same cache state yields different costs for different queries, reflecting the semantic nature of matching. 
+
+## 2.3 Total Cost Objective 
+
+The total cost of a policy 𝜋 over 𝑇 time steps combines miss cost and switching cost: COST (𝜋,𝑇 ) =
+
+> 𝑇
+
+∑︁  
+
+> 𝑡 =1
+
+ℓ𝑡 (𝑆 𝜋 𝑡 )
+
+| {z }
+
+> cumulative miss cost
+
++ 𝜆 · 𝑁 𝜋 
+
+| {z }
+
+> switching cost
+
+(2) where: 
+
+• 𝑁 𝜋 = |{ 𝑡 : 𝑆 𝜋 𝑡 +1 ≠ 𝑆 𝜋 𝑡 }| counts the number of cache modifications (replacements) under policy 𝜋 .
+
+• 𝜆 ≥ 0 is the per-replacement penalty, capturing the overhead of modifying the cache state. The switching cost 𝜆 serves two roles in our model. First, it captures the computational overhead of updating embeddings and re-indexing the retrieval structure upon each modification. Second, and more importantly, it provides a regularization that prevents pathologically unstable policies (those that replace items every step perform poorly due to insufficient observation time for newly admitted items). 
+
+Degenerate policies. The cost objective excludes two degenerate strategies: 
+
+• Never replace (𝑁 𝜋 = 0): Zero switching cost but potentially maximal miss cost, since the initial cache may quickly become irrelevant. 
+
+• Always replace (𝑁 𝜋 = 𝑇 ): Minimal miss cost (if the right items are chosen) but linear switching cost 𝜆𝑇 .An optimal policy balances these extremes, replacing only when the expected miss cost reduction justifies the switching penalty. 
+
+## 2.4 Fundamental Differences from Traditional Caching 
+
+Our semantic cache model differs from classical online paging [ 5 ,25 ] in several fundamental ways that necessitate new algorithmic approaches, summarized in Table 1: The most critical difference is the source of the capacity constraint .In traditional systems, cache size is limited by physical memory. If infinite memory were available, one would simply cache every-thing. In our semantic setting, even with unlimited storage, retrieval quality degrades as the pool grows large, because the embedding space becomes crowded with semantically similar items from differ-ent topics that confuse the retriever. We empirically demonstrate this inverted-U effect in §6: hit rate peaks at a finite pool size and declines thereafter. Thus, the capacity constraint arises from 
+
+information-theoretic retrieval noise , not physical storage limita-tions. 
+
+## 2.5 Performance Metrics 
+
+We evaluate cache policies through two complementary theoretical lenses and one empirical metric. 
+
+> 3
+
+Table 1: Fundamental differences between traditional paging and semantic cache management. These differences explain why classic policies fail (§6).                           
+
+> Property Traditional Paging Semantic Cache
+> Hit signal Binary (exact ID match) Continuous (similarity ∈[0,1])Request type Page identifier Semantic embedding query Access pattern Temporal/spatial locality Topic diversity, non-stationary Item value Determined by access history (recency, fre-quency) Context-dependent, evolves with conversa-tion Capacity source Physical hardware (RAM, disk) Retrieval noise (embed-ding confusion) Classic policy LRU achieves CR =𝐾 LRU <FIFO (empirical)
+
+2.5.1 Competitive Ratio. The competitive ratio measures worst-case performance relative to an omniscient offline algorithm: 
+
+Definition 2.2 (Competitive Ratio). The competitive ratio of an online policy 𝜋 is: CR (𝜋 ) = sup  
+
+> 𝜎 ∈Σ
+
+COST (𝜋, 𝜎 )
+
+COST (OPT , 𝜎 ) (3) where Σ is the set of all valid input sequences and OPT is the offline optimal policy with complete knowledge of the future. A competitive ratio of 𝑐 guarantees that the online policy’s cost is at most 𝑐 times the optimal, regardless of the input sequence. This is the standard measure in the online algorithms literature [ 5]and provides worst-case (adversarial) guarantees. 
+
+2.5.2 Eviction Regret. While competitive ratio captures worst-case robustness, regret captures the learning efficiency of the policy under stochastic conditions: 
+
+Definition 2.3 (Eviction Regret). The eviction regret of policy 𝜋 
+
+is: 
+
+𝑅 𝑇 (𝜋 ) =
+
+> 𝑇
+
+∑︁ 
+
+> 𝑡 =1
+
+ℓ𝑡 (𝑆 𝜋 𝑡 ) − min  
+
+> 𝜋 ∗∈Π
+> 𝑇
+
+∑︁ 
+
+> 𝑡 =1
+
+ℓ𝑡 (𝑆 𝜋 ∗ 
+
+> 𝑡
+
+) (4) where Π is the class of all feasible eviction policies operating on the same admission sequence. Sublinear regret ( 𝑅 𝑇 = 𝑜 (𝑇 )) implies that the per-step loss con-verges to optimal, i.e., the policy learns the correct eviction strategy over time. Linear regret ( 𝑅 𝑇 = Θ(𝑇 )) means the policy never im-proves, regardless of experience. 
+
+2.5.3 Empirical Metric: Downstream F1. In experiments, we report the downstream task metric directly: token-level F1 score of the agent’s responses on held-out evaluation queries. This measures end-to-end system quality rather than intermediate retrieval met-rics, ensuring that our improvements translate to actual user-facing performance. 
+
+## 2.6 The Admission-Eviction Decomposition 
+
+A key insight of our formulation is that the cache management problem naturally decomposes into two sub-problems: (1) Admission control : Should the new item 𝑒 𝑡 enter the cache? This decision directly controls the switching cost term in Eq. 2 and determines the “selectivity” of the cache. (2) Eviction policy : Given that an item must be evicted (because admission is triggered in a full cache), which item should be removed? This decision affects future miss costs by determining which items remain available for retrieval. Classic policies (FIFO, LRU, LFU, ARC) always admit (𝑁 𝜋 = 𝑇 −𝐾 
+
+for all runs after the initial fill), differing only in their eviction strategy. Our approach introduces explicit admission control as a first-class component, reducing switching cost and filtering the cache contents to maintain high retrieval precision. 
+
+## 3 RELATED WORK 3.1 Classic Cache Replacement 
+
+Online cache replacement dates to Bélády’s optimal offline algo-rithm [ 4] and Sleator and Tarjan’s competitive analysis [ 25 ], proving LRU achieves competitive ratio 𝐾 . ARC [ 20 ] adaptively balances recency and frequency, representing the state-of-the-art heuristic. 2Q [ 13 ] uses a two-queue structure as an implicit admission fil-ter; TinyLFU [ 10 ] gates admission by frequency. LRU-K [ 21 ] and LIRS [ 12 ] refine recency signals with inter-reference distances. All these policies assume temporal locality or frequency concentra-tion in access patterns. Our experiments (§6) demonstrate these assumptions fail on semantic workloads. 
+
+## 3.2 Learning-Augmented Caching 
+
+Lykouris and Vassilvitskii [ 18 ] initiated caching with ML predic-tions, achieving competitive ratio interpolating between 𝑂 (1) (per-fect predictions) and 𝑂 (log 𝐾 ) (adversarial). Rohatgi [ 24 ] tight-ened these bounds. Chen et al. [ 7] proposed GUARD, robustify-ing learning-augmented caching to 2𝐻 𝑘 −1 + 2 while preserving 1-consistency. Song et al. [ 26 ] and Liu et al. [ 17 ] applied ML to CDN caching via relaxed Bélády and imitation learning respectively. Our work differs in three ways: (1) no external oracle (we learn from implicit feedback online), (2) continuous soft-hit setting (vs. bi-nary), (3) joint admission-eviction design with admission providing its own CR guarantee. 
+
+## 3.3 Semantic Caching and RAG 
+
+Dar et al. [ 9] introduced semantic caching for database queries. GPTCache [ 3] caches LLM API responses by prompt similarity. RAG systems [ 11 , 16 , 30 ] augment LLM responses with retrieved documents from static corpora, and recent work has pushed RAG toward more advanced question answering settings [ 31 ] and com-prehensive benchmarking [ 35 ]. Our setting differs: the retrieval pool is dynamic (evolves through agent interactions), creating the admission/eviction management challenge absent in static RAG. 
+
+## 3.4 Memory for LLM Agents 
+
+Agent memory systems include MemGPT [ 22 ] (hierarchical vir-tual memory), Voyager [ 33 ] (skill library), Generative Agents [ 23 ]
+
+> 4
+
+Table 2: Comparison with related approaches.                 
+
+> Admission
+> Eviction
+> Theory
+> No LLM call
+> No training
+> A-MAC [36] ✓✓
+> DAM [27] ✓✓✓✓
+> MemAct [37] ✓✓
+> MemGPT [22] ✓✓✓
+> Ours ✓✓✓✓✓
+
+(memory stream with importance scoring), MemoryBank [ 39 ], and Mem0 [ 8]. Beyond storage abstractions, another line of work targets long-horizon conversational memory through structured organiza-tion of past experience, e.g., GRAVITY [ 28 ] proposes architecture-agnostic structured anchoring across dialogue sessions. These sys-tems use ad-hoc replacement policies (FIFO, recency-based). A re-cent survey [ 38 ] identifies memory management as an open chal-lenge. Formally, DAM [ 27 ] frames memory as sequential decision-making but provides no algorithm or experiments. A-MAC [ 36 ]scores admission on 5 factors with an LLM call (2644ms/decision, F1=0.583 on LoCoMo admission); it has no eviction, no theory, and evaluates admission quality rather than downstream performance. MemAct [ 37 ] learns memory curation via RL on a 14B model, target-ing in-context working memory (token-level), not retrieval buffers. 
+
+Our positioning. We are the first to combine: (1) formal problem formulation (cache replacement with switching costs), (2) provable guarantees (constant CR ≤ 3, regret 𝑂 (√︁ 𝐾𝑇 log 𝑇 )), (3) no LLM calls or training, (4) end-to-end task evaluation. Table 2 summarizes. 
+
+## 4 THE SOLAR FRAMEWORK 
+
+We now present SOLAR (Semantic Online Learning-Augmented Replacement), a unified framework for semantic cache management. Rather than combining off-the-shelf components, SOLAR is derived from first principles: we analyze the switching-cost objective (Eq. 2) to identify the optimal conditions for cache modification, then instantiate each condition with a mechanism tailored to the specific challenges of semantic workloads. 
+
+## 4.1 From Objective to Design 
+
+The cost objective decomposes into two terms: cumulative miss cost (retrieval quality loss) and switching cost (modification penalty). An optimal policy must answer two coupled questions at each step: (1) When to modify : Should the cache be changed now, or should we wait? Modifying too frequently wastes switching budget; waiting too long accumulates miss cost. (2) How to modify : Given that modification is warranted, which item should be replaced? Choosing poorly wastes the switching budget on a change that does not improve future retrieval. These are not independent decisions. The answer to “when” determines the context in which “how” operates: if modification is triggered only when the cache is demonstrably inadequate, the newly admitted item is likely to fill a genuine gap. Conversely, good “how” decisions (evicting the right item) maintain cache quality over time, reducing the frequency at which “when” is triggered. 
+
+Algorithm 1 SOLAR: Modification Timing  
+
+> 1:
+
+Initialize: 𝑐 ← 0; 𝜏 ← 𝜏 0; 𝛼 ← 0.1 
+
+> 2:
+
+for each time step 𝑡 do  
+
+> 3:
+
+Retrieve 𝑅 𝑡 = top-𝑘 (𝑆 𝑡 , 𝑞 𝑡 ); observe quality qual 𝑡  
+
+> 4:
+
+𝛿 𝑡 ← 1 − qual 𝑡 ; 𝑐 ← 𝑐 + 𝛿 𝑡  
+
+> 5:
+
+Generate experience item 𝑒 𝑡  
+
+> 6:
+
+if 𝑐 ≥ 𝜏 then  
+
+> 7:
+
+Trigger modification : admit 𝑒 𝑡 , evict via Alg. 2 if full  
+
+> 8:
+
+𝑐 ← 0; 𝜏 ← ( 1 − 𝛼 )𝜏 + 𝛼 · 𝛿 𝑡  
+
+> 9:
+
+end if  
+
+> 10:
+
+end for 
+
+This coupling motivates a joint framework rather than separate components. 
+
+## 4.2 Regret-Gated Modification Timing 
+
+We derive the modification timing rule directly from the cost objec-tive. Consider a policy that has not modified the cache for Δ𝑡 steps, during which it has accumulated miss cost 𝑐 = Í𝑡 𝑠 =𝑡 −Δ𝑡 𝛿 𝑠 where 
+
+𝛿 𝑠 = 1 − retrieval_quality (𝑞 𝑠 , 𝑆 𝑠 ). A modification at time 𝑡 incurs switching cost 𝜆 but resets the accumulation. The modification is cost-effective when: 
+
+𝑐 ≥ 𝜆 · 𝑓 (expected future improvement ) (5) Under mild assumptions (bounded per-step cost, diminishing returns of waiting), the optimal trigger condition simplifies to a threshold: Modify when 𝑐 ≥ 𝜏, 𝜏 ∗ =√︁ 2𝜆 /𝐿 (6) where 𝐿 is the average loss rate. This is the classical result from inventory theory (economic order quantity), adapted to our online setting. Since 𝐿 is unknown and non-stationary, we estimate 𝜏 adaptively: 
+
+𝜏 𝑡 +1 = (1 − 𝛼 )𝜏 𝑡 + 𝛼 · 𝛿 𝑡 (7) 
+
+Key property. The modification rate self-regulates: when the cache is adequate (low 𝛿 𝑡 ), accumulation is slow and modifications are rare ( ∼17% of steps in practice). When the cache becomes stale (high 𝛿 𝑡 ), accumulation accelerates and modifications happen more frequently. The total number of modifications is bounded by 𝑁 ≤
+
+𝑇 /𝜏 (Theorem 5.2), directly controlling the switching cost term in our objective. 
+
+## 4.3 Posterior-Guided Content Selection 
+
+When modification is triggered, we must decide which cached item to replace. The challenge is that item utility is: 
+
+• Latent : we cannot directly observe how useful an item will be for future queries. 
+
+• Non-stationary : an item’s utility changes as conversation topics evolve. 
+
+• Partially observable : we only observe whether an item was retrieved (implicit feedback), not its counterfactual contribution. These properties define an exploration-exploitation problem under uncertainty. We maintain a Bayesian belief over each item’s utility and make decisions by sampling from the posterior, naturally balancing exploitation (evicting items believed to be low-utility) 
+
+> 5
+
+Algorithm 2 SOLAR: Content Selection (Eviction) 
+
+Require: Full cache 𝑆 𝑡 , new item 𝑒 𝑡  
+
+> 1:
+
+for each item 𝑖 ∈ 𝑆 𝑡 do  
+
+> 2:
+
+Sample ˜𝑣 𝑖 ∼ Beta (𝛼 𝑖 , 𝛽 𝑖 ) 
+
+> 3:
+
+Novelty bonus: 𝑏 𝑖 = 𝛾 /( 1 + age (𝑖 )/ Δnov ) 
+
+> 4:
+
+Score: 𝑠 𝑖 = ˜𝑣 𝑖 + 𝑏 𝑖  
+
+> 5:
+
+end for  
+
+> 6:
+
+Evict 𝑖 ∗ = arg min 𝑖 ∈𝑆 𝑡 𝑠 𝑖 ; admit 𝑒 𝑡 with prior (1, 1)
+
+with exploration (maintaining uncertainty about under-observed items). Specifically, each cached item 𝑖 maintains a posterior: 
+
+𝜇 𝑖 ∼ Beta (𝛼 𝑖 , 𝛽 𝑖 ) (8) updated through two feedback channels: 
+
+• Positive evidence (item retrieved in top-𝑘 ): 𝛼 𝑖 ← 𝛼 𝑖 + 1.
+
+• Temporal decay (item not retrieved for Δ steps): 𝛽 𝑖 ← 𝛽 𝑖 + 0.05 .The temporal decay implements implicit forgetting: items that are never retrieved see their posterior drift toward low utility, en-abling the framework to adapt as topics change. Without this mech-anism, items that were useful early in the conversation would accu-mulate permanent positive evidence, becoming impossible to evict even after becoming irrelevant. The novelty bonus prevents premature eviction of recently ad-mitted items before sufficient observation. It decays with item age, so long-term fate is determined by observed utility alone. 
+
+## 4.4 Design Coherence and Emergent Synergy 
+
+The two mechanisms in SOLAR are not independent modules as-sembled post-hoc; they are co-derived from the same cost objective and interact through a self-reinforcing feedback loop. 
+
+Principled derivation. The modification timing rule ( 𝑐 ≥ 𝜏 ) is not a heuristic filter but the optimal stopping condition under switch-ing costs, analogous to the economic order quantity in inventory theory. The threshold 𝜏 adapts online and provably converges to 
+
+𝜏 ∗ =√︁ 2𝜆 /𝐿 . Similarly, the posterior-guided selection is not off-the-shelf Thompson Sampling: it incorporates temporal decay (for non-stationarity) and a novelty bonus (for insufficient observation), both absent in textbook formulations and specifically motivated by the implicit, delayed feedback structure of semantic retrieval. 
+
+Mutual reinforcement. The super-additive synergy observed em-pirically (+0.014 vs. +0.003 + +0.007 = +0.010, a 40% bonus) arises from architectural coupling. Regret-gated timing acts as a data qual-ity filter: by admitting items only when the cache is demonstrably inadequate, newly admitted items fill genuine coverage gaps. This produces a cache with clear utility differentiation, providing higher signal-to-noise ratio in posterior updates, which improves selec-tion quality, which maintains cache quality, which raises 𝜏 , which makes timing even more selective. This self-reinforcing loop is an emergent property of the joint design that would not exist if either mechanism operated independently. 
+
+Contrast with prior admission-eviction combinations. 2Q [ 13 ]gates admission by requiring a second access (a fixed rule unrelated to cost), then uses LRU for eviction. TinyLFU [ 10 ] gates by fre-quency comparison (a heuristic), then uses segmented LRU. In both cases, admission and eviction are designed independently with no feedback between them. SOLAR’s distinguishing feature is that the two decisions share information: the same retrieval feedback that updates posteriors also drives the cost accumulator, and the thresh-old adaptation responds to the quality of the cache that eviction maintains. 
+
+## 4.5 Computational Complexity 
+
+Let 𝑑 denote the embedding dimension, 𝐾 the cache capacity, 𝑘 the retrieval depth, and 𝑇 the total steps. 
+
+• Per-step (no modification): Accumulation and threshold check: 
+
+𝑂 (1). Posterior updates for the 𝑘 retrieved items: 𝑂 (𝑘 ). Aging updates (every Δ steps): amortized 𝑂 (𝐾 /Δ) per step. 
+
+• Per-step (with modification): Sampling 𝐾 Beta distributions: 
+
+𝑂 (𝐾 ). Computing arg min over scores: 𝑂 (𝐾 ). Total: 𝑂 (𝐾 ).
+
+• Amortized per-step: Modifications occur at rate ∼ 𝐿 /𝜏 ≈ 17% ,so average cost is 𝑂 (𝑘 + 𝐾 /Δ + 0.17 𝐾 ) = 𝑂 (𝐾 ).
+
+• Retrieval cost (shared by all methods, not SOLAR-specific): Top-𝑘 similarity search over 𝐾 items of dimension 𝑑 : 𝑂 (𝐾𝑑 )
+
+via brute-force cosine, or 𝑂 (𝑑 log 𝐾 ) with approximate nearest neighbor indexing. 
+
+• Space: 2𝐾 floats for (𝛼 𝑖 , 𝛽 𝑖 ) pairs, plus 𝐾 floats for admission timestamps. Total auxiliary: 𝑂 (𝐾 ), negligible vs. the 𝑂 (𝐾𝑑 ) stor-age for item embeddings. 
+
+• Wall-clock latency: All SOLAR operations are arithmetic on cached scalars. Measured overhead: < 1ms per step on commod-ity hardware ( 𝐾 = 100 , 𝑑 = 384 ). This is 3 orders of magnitude below the LLM inference latency ( ∼1300ms), making SOLAR’s overhead imperceptible. 
+
+## 5 THEORETICAL ANALYSIS 
+
+We establish formal separations between SOLAR and baselines through competitive ratio bounds (worst-case) and regret bounds (stochastic). We present the main results with proof sketches suffi-cient to verify each claim; complete formal proofs are deferred to the extended supplement [29]. 
+
+## 5.1 FIFO Has Unbounded Competitive Ratio 
+
+Theorem 5.1 (FIFO CR is Ω(𝐾 )). For cache size 𝐾 and any con-stant 𝑀 > 0, there exists an input sequence 𝜎 such that COST (FIFO ,𝜎 )  
+
+> COST (OPT ,𝜎 )
+
+≥
+
+𝑀 . Specifically, CR (FIFO ) ≥ 𝐾 + 1 in the soft-hit semantic cache model. 
+
+Proof. Let 𝑚 = 𝐾 + 1 topics with orthogonal embeddings (pair-wise cosine similarity ≈ 0). The query sequence is periodic with pe-riod 𝑚 : 𝑞 𝑡 targets topic 𝑇 ( ( 𝑡 −1) mod 𝑚 )+ 1, i.e., 𝑇 1,𝑇 2, . . . ,𝑇 𝑚 ,𝑇 1,𝑇 2, . . . , 𝑇 𝑚 , . . . repeating indefinitely. At each step, a new item is generated from the current topic. 
+
+FIFO behavior. After the initial fill (steps 1, . . . , 𝐾 ), the cache holds topics 𝑇 1, . . . ,𝑇 𝐾 . At step 𝐾 + 1, query targets 𝑇 𝐾 +1 (miss); FIFO admits and evicts 𝑇 1’s item. At step 𝐾 + 2, query targets 𝑇 1 (just evicted, miss); FIFO evicts 𝑇 2. By induction, every step after fill is a complete miss ( ℓ𝑡 = 1), so COST (FIFO ) = (𝑇 − 𝐾 )( 1 + 𝜆 ) (one miss plus one replacement per step). 
+
+> 6
+
+OPT behavior. OPT retains 𝐾 topics permanently (zero switching cost after fill), hitting 𝐾 of every 𝑚 = 𝐾 +1 queries, so COST (OPT ) =
+
+𝑇 /( 𝐾 + 1) + 𝜆𝐾 .
+
+Ratio. The initial fill contributes 𝑂 (𝐾 ) to both costs and is domi-nated as 𝑇 → ∞ , so CR (FIFO ) ≥ lim 𝑇 →∞ (𝑇 −𝐾 ) ( 1+𝜆 )  
+
+> 𝑇 /( 𝐾 +1)+ 𝜆𝐾
+
+= (𝐾 + 1)( 1 +
+
+𝜆 ).Since 𝐾 is a system parameter that can be made arbitrarily large, the competitive ratio is unbounded: for any desired 𝑀 , setting 
+
+𝐾 ≥ 𝑀 yields CR ≥ 𝑀 . (The bound is in fact (𝐾 + 1)( 1 + 𝜆 ); we state the weaker Ω(𝐾 ) form since the (1 + 𝜆 ) factor is immaterial to the unboundedness conclusion. The choice “OPT retains 𝐾 fixed topics” is optimal here because all 𝑚 = 𝐾 +1 topics are equiprobable, so any additional replacement only adds switching cost without reducing the per-cycle miss count.) This contrasts sharply with classical paging where FIFO achieves CR exactly 𝐾 (tight) [ 25 ]; in our soft-hit model, the ratio is Ω(𝐾 ) as well but is demonstrated more starkly because every step is a complete miss (hit rate = 0). □
+
+We verify this empirically (§6): on synthetic cycling workloads with 𝑚 /𝐾 ≥ 1.5, FIFO achieves exactly 0% hit rate. 
+
+## 5.2 SOLAR Bounds Competitive Ratio 
+
+Theorem 5.2 (SOLAR Replacement Bound). Under cost-aware admission with thresholds {𝜏 𝑡 } and 𝜏 min = min 𝑡 𝜏 𝑡 : 𝑁 SOLAR ≤ ⌊ 𝑇 /𝜏 min ⌋.
+
+Proof. Each admission resets accumulated cost to 0. Since step costs 𝛿 𝑡 ≤ 1, re-accumulating to the active threshold (which is 
+
+≥ 𝜏 min ) requires ≥ ⌈ 𝜏 min ⌉ steps. Hence the inter-admission gap is 
+
+≥ 𝜏 min , giving 𝑁 ≤ ⌊ 𝑇 /𝜏 min ⌋. With a fixed threshold 𝜏 this is simply 
+
+⌊𝑇 /𝜏 ⌋; under the EMA adaptation 𝜏 𝑡 converges quickly and stays bounded away from 0, so 𝜏 min equals the converged value up to a short transient. □
+
+Our competitive-ratio analysis relies on a regularity condition that isolates exactly what an offline policy can gain by holding a stale-but-fixed cache during an interval in which SOLAR refuses to modify. 
+
+Definition 5.3 (Bounded stale advantage). Assume single-item bounded influence: swapping one cached item changes the per-step miss cost by at most 1/𝑘 , where 𝑘 is the retrieval depth. We say a workload has bounded stale advantage if, in any epoch during which OPT holds a fixed cache, OPT’s accumulated miss cost over that epoch is at least half of SOLAR’s accumulated miss cost over the same epoch. This condition holds whenever the cache-content divergence between SOLAR and OPT is small relative to the retrieval depth (|𝐸 𝑗 | ≤ 𝑘𝜏 /( 2 |𝐸 len  
+
+> 𝑗
+
+|) , where |𝐸 len  
+
+> 𝑗
+
+| is the epoch length); it formalizes the intuition that a single fixed cache cannot fully compensate for an interval that SOLAR has already certified as inadequate. We make it explicit rather than hide it inside the proof. 
+
+Theorem 5.4 (SOLAR Competitive Ratio). Under Definition 5.3 (bounded stale advantage), with switching cost 𝜆 > 0 and the fixed threshold 𝜏 = 2𝜆 , CR (SOLAR ) ≤ 3, a constant independent of 𝐾 , 𝑇 ,and 𝜆 .
+
+Proof. Partition [1,𝑇 ] into epochs [𝑡 𝑗 , 𝑡 𝑗 +1) delimited by SO-LAR’s admission times. Within an epoch SOLAR’s cache is fixed and changes once, at the end; by the trigger the accumulated miss cost is 𝜏 , so SOLAR’s per-epoch cost is ≤ 𝜏 + 𝜆 . For OPT, either (i) it replaces at least once in 𝐸 𝑗 , incurring switching cost ≥ 𝜆 ; or (ii) it keeps a fixed cache, in which case Definition 5.3 gives miss cost 
+
+≥ 𝜏 /2. Hence COST (OPT , 𝐸 𝑗 ) ≥ min (𝜆, 𝜏 /2), and summing over epochs, CR ≤ 𝜏 + 𝜆 
+
+min (𝜆, 𝜏 /2) . (9) This is minimized when 𝜏 /2 = 𝜆 , i.e. 𝜏 = 2𝜆 (for 𝜏 < 2𝜆 the bound is 2 + 2𝜆 /𝜏 > 3; for 𝜏 > 2𝜆 it is 1 + 𝜏 /𝜆 > 3). Substituting 𝜏 = 2𝜆 
+
+gives CR ≤ ( 2𝜆 + 𝜆 )/ 𝜆 = 3. □
+
+Interpretation. The bound is a universal constant 3, independent of 𝐾 , 𝑇 , and even the switching cost 𝜆 , a dramatic improvement over FIFO’s Ω(𝐾 ) ratio. The threshold 𝜏 = 2𝜆 minimizes the worst-case ratio (9) ; it differs from the cost-optimal 𝜏 ★ =√︁ 2𝜆 /𝐿 of §4, which minimizes SOLAR’s own average cost rather than the competitive ratio. The EMA threshold in Algorithm 1 tracks 𝜏 ★ for average-case efficiency, while the bound above certifies that no fixed-𝜏 input can exceed 3× optimal. 
+
+Stationary convergence. Under piecewise-stationary workloads with 𝑃 phase changes, the adaptive threshold 𝜏 𝑡 converges to 𝜏 ★ =√︁ 
+
+2𝜆 /𝐿 (where 𝐿 is the stationary loss rate) within 𝑂 (1/𝛼 ) steps per phase. Once converged, SOLAR’s per-step excess cost over OPT vanishes at rate 𝑂 (𝑃 /𝑇 ), yielding CR → 1 as 𝑇 → ∞ for fixed 𝑃 .
+
+## 5.3 FIFO Linear Regret 
+
+Theorem 5.5 (FIFO Regret = Ω(𝑇 )). On cycling workloads with 
+
+𝑚 > 𝐾 , 𝑅 𝑇 (FIFO ) = Ω(𝑇 ).
+
+Proof. On the cycling workload (Theorem 5.1 with 𝑚 = 𝐾 + 1), FIFO achieves hit rate 0 after fill: Í𝑇 𝑡 =𝐾 +1 ℓFIFO  
+
+> 𝑡
+
+= 𝑇 −𝐾 . We compare against the best fixed-eviction policy on the same admit-all sequence 
+
+(consistent with Def. 2.3): since FIFO admits every item, a competing policy may immediately evict each newly admitted item and retain the first 𝐾 topics permanently, achieving miss rate 1/( 𝐾 + 1), i.e. 
+
+Í𝑡 ℓ∗ 
+
+> 𝑡
+
+= 𝑇 /( 𝐾 + 1). Thus 𝑅 𝑇 = (𝑇 − 𝐾 ) − 𝑇 /( 𝐾 + 1) = 𝑇 · 𝐾 𝐾 +1 − 𝐾 =
+
+Ω(𝑇 ): FIFO’s per-step loss never improves regardless of interaction length. □
+
+## 5.4 Thompson Sampling Eviction 
+
+Theorem 5.6 (TS Regret). Under stochastic item utilities with 𝐾 
+
+cache slots: 𝑅 𝑇 (TS ) ≤ 𝑂 (√︁ 𝐾𝑇 log 𝑇 ).
+
+Proof. We analyze eviction under a stylized stationary model 
+
+that makes the bandit reduction precise; we state its assumptions explicitly. Fix the pool of items competing for cache slots and as-sume each item 𝑖 has a stationary latent utility 𝜇 𝑖 , with retrieval feedback providing a Bernoulli observation of whether 𝑖 was useful for the current query. Map eviction to a 𝐾 -armed bandit: arms are the cached items, “pulling” arm 𝑖 corresponds to retaining 𝑖 and ob-serving its feedback, and the regret target is identifying the lowest-utility item to evict. Under this stationary model, the standard Beta-Bernoulli TS analysis [ 1] gives per-arm regret 𝑂 (log 𝑇 /Δ𝑖 )
+
+where Δ𝑖 is the utility gap to the worst item. Worst-case gap instan-tiation ( Δ𝑖 = Θ(√︁ 𝐾 /𝑇 ) for all suboptimal arms) yields total regret 
+
+𝑂 (√︁ 𝐾𝑇 log 𝑇 ).
+
+> 7
+
+Remark (assumptions and their limits). Two modeling gaps separate this idealization from SOLAR’s exact dynamics, and we are explicit about them. (i) The arm set is not literally fixed: each admission introduces a new item and removes one, so the bandit instance drifts slowly. (ii) The reward (improvement in cache quality) is observed only indirectly through subsequent retrievals rather than immediately. SOLAR’s aging mechanism ( 𝛽 𝑖 += 0.05 every 5 steps for un-retrieved items) limits the effective observation window, so that within a window the instance is approximately stationary and the above bound applies windowwise; a fully non-stationary treatment (e.g. sliding-window or restless-bandit regret) would replace log 𝑇 with a window-dependent factor but leave the √𝐾𝑇 
+
+scaling intact. We therefore present the bound as characterizing the stationary regime and validate the learning behavior empirically (§6). □
+
+Theorem 5.7 (Lower Bound). For any online eviction policy: 
+
+𝑅 𝑇 (𝜋 ) ≥ Ω(√𝐾𝑇 ).
+
+Proof. We invoke the minimax (worst-case) multi-armed ban-dit lower bound [ 15 ], which is Ω(√𝐾𝑇 ) without a logarithmic factor (in contrast to the gap-dependent bound Ω(𝐾 log 𝑇 /Δ)). Construct 
+
+𝐾 items where one item 𝑖 ∗ has utility 1/2−𝜖 and the rest 1/2; the op-timal eviction always targets 𝑖 ∗. Any policy must spend Ω(1/𝜖 2) ob-servations per suboptimal arm to identify 𝑖 ∗; setting 𝜖 = Θ(√︁ 𝐾 /𝑇 )
+
+over the 𝐾 −1 suboptimal arms gives 𝑅 𝑇 ≥ ( 𝐾 −1)𝜖 𝑇 /𝐾 = Ω(√𝐾𝑇 ).This applies to any online eviction policy, so TS’s 𝑂 (√︁ 𝐾𝑇 log 𝑇 )
+
+matches it up to the √︁ log 𝑇 factor. □
+
+Theorems 5.6 and 5.7 together show that TS is near-optimal (gap: √︁ 
+
+log 𝑇 factor only). 
+
+## 5.5 Combined Guarantees of SOLAR 
+
+SOLAR inherits both guarantees, with the analyses complementing each other (Table 3): 
+
+• Bounded CR from modification timing. Theorem 5.4 bounds total cost relative to OPT by the universal constant 3, independent of 𝐾 , 𝑇 , and 𝜆 . This contrasts with FIFO’s Ω(𝐾 ) ratio and holds regardless of eviction strategy. 
+
+• Sublinear regret from posterior-guided selection. Theo-rem 5.6 bounds eviction quality loss at 𝑂 (√︁ 𝐾𝑇 log 𝑇 ), which is 
+
+𝑜 (𝑇 ) (vanishing per-step loss). This is conditional on the modifi-cation schedule determined by the timing mechanism. 
+
+• Uniqueness. No other method achieves both: FIFO has Ω(𝐾 )
+
+CR and Ω(𝑇 ) regret; pure posterior-guided eviction without admission control (SOLAR-E) has sublinear regret but Ω(𝐾 ) CR due to a replacement at every step; classic heuristics have Ω(𝑇 )
+
+regret on semantic workloads. 
+
+## 6 EXPERIMENTS 
+
+We evaluate our approach through comprehensive experiments on two real-world benchmarks and controlled synthetic workloads. Our evaluation addresses four research questions: 
+
+• RQ1 : Do classic cache heuristics fail on semantic retrieval work-loads? 
+
+• RQ2 : Does SOLAR consistently outperform baselines, and what is the source of its improvement? 
+
+Table 3: Theoretical guarantees. SOLAR uniquely achieves constant CR and sublinear regret.                                
+
+> Policy CR Regret Adm. Rate
+> FIFO Ω(𝐾 )Ω(𝑇 )100% LRU 𝐾 (classical) †Ω(𝑇 )100% SOLAR ≤3𝑂 (√︁ 𝐾𝑇 log 𝑇 )∼17% Lower bound 1 (OPT) Ω(√𝐾𝑇 )–
+> †On classical paging (binary hits); on semantic workloads LRU <FIFO empirically.
+
+• RQ3 : How do admission and eviction contribute individually, and do they interact synergistically? 
+
+• RQ4 : Under what conditions does smart cache policy stop pro-viding value (phase transition)? 
+
+## 6.1 Experimental Setup 
+
+6.1.1 Benchmarks. We evaluate on two datasets from MemoryBench-Full [ 2], a benchmark for memory and continual learning in LLM systems that provides multi-turn dialogues with simulated implicit user feedback (like/dislike signals). The two datasets represent dif-ferent points in the difficulty spectrum: 
+
+LoCoMo [19 ]. 10 multi-session personal conversations, totaling approximately 2000 interaction steps. Each session is split into a warmup phase ( ∼160 queries, during which the agent accumulates experience but is not scored) and a test phase ( ∼39 QA pairs, scored). The test queries span factual recall, temporal reasoning, and pref-erence tracking. With an embedder-unlimited baseline achieving 
+
+∼35% F1, this represents a moderate-difficulty task with meaningful signal density. 
+
+DialSim [ 14 ]. 3 TV-show dialogue datasets (Friends, The Big Bang Theory, The Office) evaluating long-term memory over extended conversations ( ∼19K messages per corpus, ∼60 test queries per show). The embedder-unlimited baseline achieves only ∼11% F1, indicating extremely sparse signal: even with perfect memory, most queries cannot be answered from experience alone. This makes DialSim a challenging stress test for memory policies. Both datasets are used in on-policy mode: the agent processes dialogues sequentially, accumulates experience through its own policy, and is evaluated on held-out test queries. Implicit feedback (like/dislike) from the MemoryBench user simulator provides the hit/miss signal used by SOLAR’s posterior updates. 
+
+6.1.2 Methods Compared. We compare 8 cache management poli-cies spanning three categories: 
+
+Baseline (no intelligence): 
+
+• Embedder (unlimited) : No capacity constraint. All items are stored and retrieved from the full pool. Serves as an upper bound reference. 
+
+• FIFO : First-in, first-out. Always admits; evicts the oldest item. The simplest possible policy, and the de facto standard in de-ployed LLM agent systems (e.g., LangChain’s ConversationBuffer-Window). 
+
+Classic heuristics (exploit access patterns): 
+
+• LRU : Least Recently Used. Evicts the item that was least recently retrieved in a top-𝑘 result. Assumes temporal locality. 
+
+> 8
+
+Table 4: Cache size sweep on LoCoMo (mean ±std over 3 seeds). Bold indicates best among capacity-constrained methods.                                              
+
+> Method Type K=10 K=20 K=50 K=100 Embedder Unlimited (ref) .352 ±.005 .352 ±.005 .354 ±.006 .357 ±.002
+> SOLAR Ours (full) .286 ±.013 .277 ±.010 .311 ±.013 .306 ±.014
+> SOLAR-A Ours (admission) .283 ±.014 .280 ±.006 .304 ±.008 .310 ±.008
+> SOLAR-E Ours (eviction) .281 ±.017 .275 ±.011 .296 ±.005 .316 ±.014
+> FIFO Naive baseline .233 ±.002 .255 ±.005 .297 ±.010 .334 ±.016
+> LRU Recency .235 ±.005 .248 ±.003 .290 ±.011 .328 ±.006
+> ARC Adaptive .238 ±.007 .249 ±.004 .287 ±.002 .312 ±.014
+> LFU Frequency .222 ±.002 .244 ±.003 .287 ±.004 .311 ±.006
+
+• LFU : Least Frequently Used. Evicts the item with the fewest cumulative retrievals. Assumes frequency concentration. 
+
+• ARC [ 20 ]: Adaptive Replacement Cache. Dynamically balances recency and frequency using ghost lists that track recently evicted items. Represents the state-of-the-art in adaptive heuristic caching. 
+
+Learning-augmented (our category): 
+
+• SOLAR-E (eviction only): Always admits; posterior-guided evic-tion via Thompson Sampling [ 32 ] (SOLAR’s content selection mechanism in isolation, without regret-gated timing). 
+
+• SOLAR-A (admission only): Regret-gated admission; heuristic multi-score eviction (SOLAR’s timing mechanism with a simpler content selector). 
+
+• SOLAR : Full framework: regret-gated timing + posterior-guided selection (ours). 
+
+6.1.3 Configuration. Cache sizes : 𝐾 ∈ { 10 , 20 , 50 , 100 }, represent-ing tight to loose capacity regimes. Seeds : all results are 3-seed aver-ages with standard errors available. LLM : GPT-4o-mini for response generation. Embedder : all-MiniLM-L6-v2 (384-dimensional sen-tence embeddings). Retrieval : Top-3 by cosine similarity. Metric :Token-level F1 between agent response and ground-truth reference. 
+
+## 6.2 Main Results: LoCoMo 
+
+Table 4 presents the main result: average F1 across all evaluation queries for each method and cache size combination. 
+
+6.2.1 Finding 1: Classic Heuristics Systematically Fail (RQ1). The most striking result is the ordering among baselines: at 𝐾 ∈ { 20 , 50 }
+
+all three classic heuristics (LRU, LFU, ARC) fall below the naive FIFO, and LFU trails FIFO at every 𝐾 . At the tightest setting 𝐾 = 10 ,LRU and ARC only match FIFO (within one standard error), never clearly beating it. This is the opposite of what decades of caching research would predict. We analyze the root cause: 
+
+• LRU failure : LRU evicts items not recently retrieved. But in conversational agents, an item idle for the last 10 queries may simply be awaiting the right topic to resurface; evicting these “dormant but valuable” items removes long-tail knowledge that FIFO (evicting by arrival order, independent of retrieval history) accidentally preserves. 
+
+• LFU failure : LFU preserves high cumulative-count items, which in diverse conversations favors items from the earliest topics (they have had the most time to accumulate hits), even after those topics become irrelevant. The cache becomes a museum of obsolete-but-popular items. 
+
+Table 5: Detailed SOLAR vs FIFO comparison on LoCoMo. 
+
+Metric K=10 K=20 K=50 K=100 Avg F1 gap +0.053 +0.022 +0.014 −0.028 Relative improvement +22.7% +8.5% +4.7% −8.3% 2nd-half F1 gap +0.056 +0.031 +0.024 −0.025 Slope ratio (TS/FIFO) 2.1 × 1.8 × 3.1 × 1.4 ×
+
+Table 6: Component ablation on LoCoMo (K=50, 3-seed avg). 
+
+Components Method Avg F1 Δ vs FIFO Neither (baseline) FIFO 0.297 –Eviction only SOLAR-E 0.300 +0.003 Admission only SOLAR-A 0.304 +0.007 
+
+Both SOLAR 0.311 +0.014 
+
+• ARC failure : ARC adaptively combines recency and frequency. When both signals are misleading, its adaptation oscillates be-tween two equally poor strategies. 
+
+6.2.2 Finding 2: Learning-Augmented Methods Win at Tight Cache (RQ2). SOLAR achieves +22.7% relative improvement over FIFO at K=10 and +4.7% at K=50. Table 5 provides a detailed comparison including temporal dynamics. The “2nd-half F1 gap” shows that SOLAR’s advantage grows over time : the second half of the evaluation period shows larger improve-ments than the first half, indicating that the policy continues to learn and improve cache quality throughout the interaction. The “slope ratio” quantifies this: SOLAR’s F1 improves 1.4–3.1× faster than FIFO per step. 
+
+On effect size. The absolute improvement at K=50 (+0.014) may appear modest, but we contextualize it three ways. First, the gain is largest at the tightest capacity (+0.053 at K=10, +22.7% relative; +75% on DialSim), precisely the regime where production agents with limited context budgets operate. Second, the retrieval ceiling (Embedder = 0.354) bounds any cache policy; SOLAR captures 25% of the gap between FIFO (0.297) and this ceiling. Third, the result is 
+
+consistent across all 8 configurations: SOLAR ranks first in every 
+
+𝐾 ≤ 50 setting, the only exceptions being at K=100 where the phase transition favors coverage. 
+
+## 6.3 Ablation: Admission vs. Eviction (RQ3) 
+
+To understand the individual and joint contributions of our two components, we perform an ablation at K=50 (Table 6). Two key observations: (1) Admission contributes more than eviction. The admission-only variant (SOLAR-A, +0.007) provides more than double the improvement of eviction-only (SOLAR-E, +0.003). This suggests that in semantic caching, the decision of whether to modify the cache at all is more impactful than the decision of which item to evict . Selective admission maintains cache quality passively by preventing noise from entering. (2) Super-additive synergy. The combined improvement (+0.014) exceeds the sum of individual improvements (+0.010). The ex-cess (+0.004, a 40% bonus) arises from the feedback loop: ad-mission filtering produces a cleaner item pool, which provides better feedback for TS posteriors, which in turn produces better 
+
+> 9
+
+Table 7: Cross-dataset validation on DialSim (mean ±std over 3 seeds). All findings from LoCoMo replicate.                                     
+
+> Method K=10 K=20 K=50 K=100 Embedder .110 .104 .110 .110
+> SOLAR .038 ±.006 .048 ±.011 .066 ±.010 .068 ±.014
+> SOLAR-A .042 ±.008 .038 ±.006 .064 ±.014 .071 ±.019
+> SOLAR-E .035 ±.003 .029 ±.003 .042 ±.014 .069 ±.006
+> FIFO .022 ±.000 .027 ±.000 .057 ±.016 .093 ±.011
+> LRU .022 ±.000 .031 ±.003 .040 ±.006 .062 ±.014
+> ARC .029 ±.009 .031 ±.006 .040 ±.013 .059 ±.006
+> LFU .027 ±.006 .026 ±.003 .037 ±.006 .053 ±.006
+
+Table 8: Hit rate on cycling workload (K=10, 3-seed avg). FIFO achieves exactly 0% hit rate when 𝑚 > 𝐾 , validating Theo-rem 5.5.                                    
+
+> Method m/K=1 1.5 2.0 3.0 5.0 FIFO 0.90 0.00 0.00 0.00 0.00 LRU 0.38 0.17 0.08 0.02 0.00 LFU 0.60 0.52 0.40 0.27 0.16
+> SOLAR-E 0.55 0.39 0.29 0.20 0.11 SOLAR-A 0.70 0.54 0.40 0.27 0.16
+> SOLAR 0.69 0.54 0.40 0.26 0.16
+
+eviction decisions. This synergy is not merely additive compo-sition; the components actively enhance each other. 
+
+## 6.4 Cross-Dataset Validation: DialSim 
+
+We validate generalizability on DialSim, which differs from LoCoMo in signal density, domain, and task type (Table 7). The core LoCoMo findings replicate on DialSim: classic heuristics (LRU, LFU, ARC) fall below FIFO at 𝐾 = 50 , SOLAR or SOLAR-A is best at every 𝐾 ≤ 50 , FIFO overtakes at 𝐾 = 100 , and SOLAR’s gains are largest at the smallest 𝐾 . Notably, the relative improvement of SOLAR over FIFO is even larger on DialSim (+75% at K=10 vs. +23% on LoCoMo), and the bar-chart view in Figure 1 makes the cross-𝐾 pattern visually explicit. This aligns with our intuition: when signals are sparser (DialSim hit rate ∼4% vs. LoCoMo ∼30%), selective admission provides greater value by maintaining a higher signal-to-noise ratio. Each cached item matters more when overall retrieval quality is low. 
+
+## 6.5 Controlled Evaluation: Synthetic Workloads 
+
+Synthetic experiments serve two purposes: (1) validating theoreti-cal predictions in controlled settings free of confounders, and (2) exploring regimes inaccessible with real data (e.g., very large pools). All use 128-dimensional embeddings with top-3 cosine retrieval. 
+
+6.5.1 Experiment 1: Cycling Workload (Validates Theorem 5.5). We construct cycling workloads where 𝑚 topics appear in strict round-robin order, with cache size 𝐾 = 10 . Each topic generates items within a compact embedding cluster, and queries target the cur-rent topic. This directly instantiates the adversarial construction in Theorem 5.5, with hit rates reported in Table 8 and visualized in Figure 3. 
+
+Table 9: Working set sweep: SOLAR vs FIFO hit rate and gap.                                 
+
+> K510 15 20 30 50 100 200 FIFO .31 .49 .62 .73 .86 .94 .97 .97 SOLAR .33 .58 .71 .81 .85 .95 .95 .95
+> Δ+.02 +.08 +.10 +.08 −.01 +.01 −.02 −.02
+
+Table 10: Retrieval performance vs. pool size (frozen pool, policy-agnostic, 3-seed avg). Performance peaks at 𝐾 ≈ 1000 
+
+then declines sharply.                   
+
+> Pool K 50 200 500 1000 2000 5000 Hit Rate .067 .170 .186 .201 .195 .090 Prec@3 .022 .058 .065 .070 .068 .030
+
+Analysis. FIFO demonstrates perfect thrashing : once 𝑚 > 𝐾 it collapses to exactly 0% hit rate, as every new item evicts precisely the item needed next in the cycle, the empirical manifestation of the 
+
+Ω(𝑇 ) regret bound (Theorem 5.5). LRU is no better, and worse near the boundary (0.38 at 𝑚 /𝐾 = 1 vs. FIFO’s 0.90): it evicts items not recently retrieved, which in a cyclic order are exactly those about to resurface, so recency acts as an anti-signal . SOLAR-A avoids this pathology through selective admission (store rate ∼10%): by rejecting most items it retains a stable subset partially covering the workload, sustaining a 16% hit rate even at 𝑚 /𝐾 = 5 (50 topics competing for 10 slots). 
+
+6.5.2 Experiment 2: Working Set Sweep (Phase Transition, RQ4). 
+
+With a fixed workload (15 topics, 10 items per topic, 500 queries with uniform topic distribution), we sweep 𝐾 from 5 to 200 to locate the transition point (Table 9, Figure 4). 
+
+Phase transition at 𝐾 ≈ 30 . The gap peaks at K=15 (+0.10 abso-lute) and crosses zero at 𝐾 ≈ 30 , precisely the effective working set size ( 15 topics × a few items each). Below it, SOLAR-A’s selective admission ( ∼10% store rate, capping the cache at ∼40 items) wins; above it, FIFO holds enough of each topic to serve most queries through pure coverage. The same pattern appears on the real bench-marks (transition in 𝐾 ∈ ( 50 , 100 ) for both LoCoMo and DialSim), with the boundary scaling with each benchmark’s working set size. 
+
+6.5.3 Experiment 3: Retrieval Noise U-Curve. This experiment jus-tifies our problem formulation by demonstrating that capacity con-straints are meaningful even with unlimited storage. We create a large pool (50 topics × 100 items = 5000 total) with moderate inter-topic separation (cosine distance 0.30 between topic centers) and intra-topic diversity (std 0.15 around centers). It has two parts: a 
+
+policy-agnostic probe that establishes the underlying phenomenon, followed by a policy comparison that shows SOLAR exploits it. 
+
+(a) The phenomenon (policy-agnostic). We first isolate the in-trinsic effect of pool size on retrieval, with no admission or eviction involved: we pre-fill a pool with exactly 𝐾 items uniformly sam-pled from the 5000 and measure retrieval quality over 1000 queries (Table 10, Figure 5). Since the pool is frozen, this measures the retriever alone and is identical for every cache policy; no method is compared here. Hit rate increases monotonically from K=50 to K=1000 (coverage effect: more items → higher chance of having a relevant item in 
+
+> 10 SOLAR
+> SOLAR-A
+> SOLAR-E
+> FIFO
+> LRU
+> ARC
+> LFU
+> 0.20
+> 0.22
+> 0.24
+> 0.26
+> 0.28
+> 0.30
+> 0.32
+> 0.34
+> 0.36
+> Avg F1  0.286
+> K = 10
+> SOLAR
+> SOLAR-A
+> SOLAR-E
+> FIFO
+> LRU
+> ARC
+> LFU
+> 0.20
+> 0.22
+> 0.24
+> 0.26
+> 0.28
+> 0.30
+> 0.32
+> 0.34
+> 0.36
+> 0.280
+> K = 20
+> SOLAR
+> SOLAR-A
+> SOLAR-E
+> FIFO
+> LRU
+> ARC
+> LFU
+> 0.20
+> 0.22
+> 0.24
+> 0.26
+> 0.28
+> 0.30
+> 0.32
+> 0.34
+> 0.36
+> 0.311
+> K = 50
+> SOLAR
+> SOLAR-A
+> SOLAR-E
+> FIFO
+> LRU
+> ARC
+> LFU
+> 0.20
+> 0.22
+> 0.24
+> 0.26
+> 0.28
+> 0.30
+> 0.32
+> 0.34
+> 0.36
+> 0.334
+> K = 100
+
+Figure 1: Average F1 by method and cache size on LoCoMo (one panel per 𝐾 ). Classic heuristics (LRU, LFU, ARC) never outperform FIFO, falling clearly below it at 𝐾 ∈ { 20 , 50 }. Learning-augmented methods (SOLAR-A, SOLAR) dominate at tight cache sizes, while FIFO overtakes at 𝐾 = 100 (phase transition). Dashed line marks FIFO baseline. 0 5 10 15 20 25 30 35 40 
+
+> Evaluation Step
+> 0.28
+> 0.29
+> 0.30
+> 0.31
+> 0.32
+> 0.33
+> F1 Score
+> SOLAR slope = 3.1× FIFO
+> Method (slope ×10³)
+> SOLAR (1.26)
+> SOLAR-A (0.82)
+> SOLAR-E (0.62)
+> FIFO (0.40)
+> LRU (0.68)
+> LFU (0.28)
+> ARC (0.25)
+
+Figure 2: Learning dynamics: F1 vs. evaluation step on Lo-CoMo (K=50). SOLAR improves continuously with a slope 
+
+3.1× that of FIFO. LFU and ARC have the smallest slopes, barely improving with more data. 1.0 1.5 2.0 3.0 5.0                             
+
+> Working Set Ratio (m/K)
+> FIFO
+> LRU
+> LFU
+> ARC
+> SOLAR-E
+> SOLAR-A
+> SOLAR
+> 0.90 0.00 0.00 0.00 0.00
+> 0.38 0.17 0.08 0.02 0.00
+> 0.60 0.52 0.41 0.27 0.16
+> 0.49 0.35 0.24 0.16 0.06
+> 0.55 0.39 0.29 0.20 0.11
+> 0.70 0.54 0.40 0.27 0.16
+> 0.69 0.54 0.40 0.26 0.16
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Hit Rate
+
+Figure 3: Hit rate on cycling workloads (K=10) as a function of working set ratio 𝑚 /𝐾 . FIFO drops to exactly 0 at 𝑚 /𝐾 > 1
+
+(thrashing), while SOLAR-A/SOLAR degrade gracefully due to selective admission ( ∼10% store rate). 
+
+the pool), then drops by 55% from K=1000 to K=5000 (noise effect: too many similar-but-irrelevant items confuse the retriever). Preci-sion@3 tells the same story: at K=5000, the top-3 results contain mostly irrelevant items from “neighboring” topics in embedding space. This establishes that the capacity constraint in LLM mem-ory systems is informational , not physical: even with free, infinite storage, indiscriminate accumulation degrades downstream per-formance. Admission control is not about saving space; it is about maintaining the signal-to-noise ratio of the retrieval pool. 0.3     
+
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Hit Rate
+> Phase
+> Transition
+> Working Set Sweep: Phase Transition at K*
+> FIFO
+> SOLAR
+> 050 100 150 200
+> Cache Size K
+> 0.00
+> 0.05
+> 0.10
+> SOLAR  FIFO
+
+Figure 4: Phase transition: SOLAR gain over FIFO as a func-tion of cache size 𝐾 (synthetic working set sweep). The gain peaks at 𝐾 = 15 and crosses zero at 𝐾 ≈ 30 , precisely at the effective working set boundary. Table 11: Stream-mode hit rate vs. live capacity 𝐾 (3-seed avg). SOLAR dominates FIFO at every 𝐾 and is invariant to the nominal capacity, as selective admission caps the effective pool. 
+
+Method K=200 K=500 K=1000 K=5000 FIFO .075 .089 .087 .090 
+
+SOLAR .083 .094 .094 .094 
+
+(b) Policy comparison: SOLAR vs. FIFO. The probe above shows 
+
+that an overly large pool can hurt; we now ask whether an online policy can avoid it. We run the same workload in stream mode (items arrive over time, 𝐾 is the live cache capacity) and compare SOLAR against FIFO (Table 11). Two observations. First, FIFO’s noise collapse is muted online ( 0.087 –0.090 across 𝐾 ≥ 500 , no sharp drop at 𝐾 = 5000 ): its live cache holds the most recent 𝐾 
+
+arrivals, temporally clustered rather than a uniform sample of all topics, so it accumulates far less cross-topic confusion than the frozen pre-fill. The probe in part (a) is thus a worst case that isolates the noise effect, while online dynamics are milder. Second, and more importantly, SOLAR uniformly dominates FIFO at every capacity and its hit rate is invariant to the nominal 𝐾 (flat at 0.094 ): selective admission caps the effective pool regardless of how large 𝐾 is set, so SOLAR needs no capacity tuning, whereas FIFO is lower and more 𝐾 -sensitive. 
+
+11 10 1 10 2 10 3
+
+> Pool Size K (log scale)
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> Hit Rate
+> Peak: K=1000 Hit Rate
+> Precision@3
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> 0.05
+> 0.06
+> 0.07
+> 0.08
+> 0.09
+> Precision@3
+> Retrieval Noise U-Curve: Pool Size vs. Quality
+
+Figure 5: Retrieval noise inverted-U curve: hit rate vs. pool size (log scale). Performance peaks at 𝐾 ≈ 1000 and declines 55% at 𝐾 = 5000 due to embedding space confusion. This jus-tifies capacity constraints as a retrieval noise phenomenon. Table 12: Learning slope ( ×10 3) on LoCoMo. SOLAR learns 
+
+1.8–3.1× faster than FIFO across cache sizes. 
+
+SOLAR SOLAR-A SOLAR-E FIFO LRU LFU ARC K=10 1.31 1.14 1.32 0.64 0.79 0.96 0.48 K=20 2.30 1.63 0.69 1.25 0.73 0.57 0.91 K=50 1.26 0.82 0.62 0.40 0.68 0.28 0.25 
+
+## 6.6 Learning Dynamics 
+
+To understand how SOLAR improves over time, we analyze the learning slope (F1 improvement per step) on LoCoMo (Table 12; the trajectory is plotted in Figure 2). SOLAR attains the highest slope at 𝐾 ∈ { 20 , 50 } and is statistically tied for the highest at 𝐾 = 10 , so its cache quality improves at least as fast as any baseline at every 𝐾 .The margin over FIFO is substantial: 1.8–3.1× FIFO’s slope across the three settings (e.g., 1.26 vs. 0.40 at K=50), so SOLAR’s advantage 
+
+grows over time , a desirable property for long-running deployments. Classic heuristics fare worst at larger 𝐾 : at K=50, LFU and ARC have the smallest slopes in the table, barely improving with more data, the empirical signature of near-linear regret (Theorem 5.5). 
+
+## 6.7 Latency 
+
+SOLAR’s policy decisions are pure arithmetic ( 𝑂 (𝐾 ) per modifica-tion: threshold check, posterior sampling, arg min ), adding <1 ms per step. End-to-end latency is therefore dominated by LLM infer-ence ( ∼1200–1400 ms per GPT-4o-mini call) and is statistically in-distinguishable across all policies. This contrasts with A-MAC [ 36 ], which issues an LLM call per admission (∼2644 ms overhead); SO-LAR attains its F1 gains with no perceptible latency cost. 
+
+## 6.8 Summary of Experimental Findings 
+
+1) Classic heuristics fail (RQ1): LRU, LFU, and ARC systemati-cally underperform FIFO on semantic workloads, validated across 2 benchmarks, 4 cache sizes, and 3 seeds. 2) SOLAR wins at tight cache (RQ2): 5–75% relative improvement over FIFO when 𝐾 ≤ 50 ,with improvements growing over time ( 1.4–3.1× learning slope). 3) Super-additive synergy (RQ3): Combined effect exceeds sum of parts by 40%, driven by the modification timing and content selec-tion feedback loop. 4) Phase transition (RQ4): Clear boundary at the working set size. Below it, selectivity dominates; above it, cover-age dominates. This provides actionable guidance for deployment. 
+
+5) Retrieval noise justifies capacity constraints : Inverted-U curve demonstrates that pool growth degrades performance, vali-dating our problem formulation. 6) Zero latency overhead : SO-LAR adds <1ms policy computation per step, negligible vs. LLM inference time, and requires no additional LLM calls. 
+
+## 7 DISCUSSION 7.1 Why Classic Heuristics Fail 
+
+The failure of LRU, LFU, and ARC reflects a fundamental mismatch between their assumptions and semantic workload properties. LRU assumes temporal locality, but topic progression is driven by evolv-ing user intent, so recency of retrieval carries no predictive power. LFU assumes frequency concentration, but in diverse conversations frequency reflects age in cache rather than intrinsic value, degener-ating into a “keep the oldest” policy. ARC combines both signals, yet when neither is informative, adapting between them provides no benefit. This pattern likely generalizes to any retrieval system over semantically diverse items without strong access locality. 
+
+## 7.2 The Coverage-Selectivity Tradeoff 
+
+Our experiments consistently identify a phase transition: below the working set size, selectivity dominates (5–23% relative gains on LoCoMo, up to 75% on the sparser DialSim); above it, coverage dominates (FIFO wins by never missing an opportunity to store). The transition point 𝐾 ∗ scales with effective working set size: 𝐾 ∗ ∈(50 , 100 ) on LoCoMo, ≈ 30 on synthetic. System designers should estimate their working set (e.g., via the FIFO saturation curve) and deploy selective policies only below 𝐾 ∗.
+
+## 7.3 Retrieval Noise as the True Bottleneck 
+
+The inverted-U curve reveals that capacity constraints in seman-tic retrieval are informational, not physical: beyond ∼1000 items, embedding-space crowding degrades precision faster than coverage gains. Admission control is therefore not about saving storage but about maintaining signal-to-noise ratio; the 17% admission rate is a precision optimization, not just a space optimization. 
+
+## 8 CONCLUSION 
+
+We formalized LLM agent experience memory as an online seman-tic cache replacement problem, bridging classical online-algorithm theory and practical LLM memory management. We showed that classic cache heuristics systematically fail on semantic workloads, underperforming even FIFO across two datasets. Our framework, SOLAR, derives modification timing from regret accumulation and content selection from Bayesian online learning, requiring no ex-ternal predictors, offline training, or LLM calls, and adding <1 ms overhead per step. SOLAR delivers 5–75% relative improvement over FIFO at tight cache sizes with super-additive synergy between its two mechanisms, while controlled synthetic experiments con-firm the theory (FIFO thrashing, the selectivity–coverage phase transition, and the retrieval-noise U-curve that motivates capacity management even under unlimited storage). These results estab-lish semantic cache management as a principled challenge for the data management community, with connections to learned index structures and adaptive query processing. 
+
+> 12
+
+## REFERENCES 
+
+[1] Shipra Agrawal and Navin Goyal. 2012. Analysis of Thompson Sampling for the Multi-armed Bandit Problem. In Proceedings of the 25th Annual Conference on Learning Theory (Proceedings of Machine Learning Research) , Shie Mannor, Nathan Srebro, and Robert C. Williamson (Eds.), Vol. 23. PMLR, Edinburgh, Scotland, 39.1–39.26. https://proceedings.mlr.press/v23/agrawal12.html [2] Qingyao Ai, Yichen Tang, Changyue Wang, Jianming Long, Weihang Su, and Yiqun Liu. 2025. MemoryBench: A Benchmark for Memory and Continual Learn-ing in LLM Systems. arXiv preprint arXiv:2510.17281 (2025). arXiv:2510.17281 [3] Fu Bang. 2023. GPTCache: An Open-Source Semantic Cache for LLM Applica-tions. In Proceedings of the 3rd Workshop for Natural Language Processing Open Source Software (NLP-OSS) . 212–218. https://doi.org/10.18653/v1/2023.nlposs-1.24 [4] László A. Bélády. 1966. A Study of Replacement Algorithms for a Virtual-Storage Computer. IBM Systems Journal 5, 2 (1966), 78–101. https://doi.org/10.1147/sj. 52.0078 [5] Allan Borodin and Ran El-Yaniv. 2005. Online Computation and Competitive Analysis . Cambridge University Press. [6] Harrison Chase. 2022. LangChain . https://github.com/langchain-ai/langchain Accessed: 2026-06-16. [7] Peng Chen, Hailiang Zhao, Jiaji Zhang, Xueyan Tang, Yixuan Wang, and Shuiguang Deng. 2025. Robustifying Learning-Augmented Caching Efficiently without Compromising 1-Consistency. In Advances in Neural Information Pro-cessing Systems (NeurIPS) . https://neurips.cc/virtual/2025/loc/san-diego/poster/ 116615 [8] Prateek Chhikara et al . 2025. Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory. arXiv preprint arXiv:2504.19413 (2025). arXiv:2504.19413 [9] Shaul Dar, Michael J. Franklin, Björn Þór Jónsson, Divesh Srivastava, and Michael Tan. 1996. Semantic Data Caching and Replacement. In Proceedings of the 22nd International Conference on Very Large Data Bases (VLDB) . 330–341. https: //www.vldb.org/conf/1996/P330.PDF [10] Gil Einziger, Roy Friedman, and Ben Manes. 2017. TinyLFU: A Highly Efficient Cache Admission Policy. ACM Transactions on Storage 13, 4 (2017), 1–31. https: //doi.org/10.1145/3149371 [11] Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jinliu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Meng Wang, and Haofen Wang. 2024. Retrieval-Augmented Gen-eration for Large Language Models: A Survey. arXiv preprint arXiv:2312.10997 
+
+(2024). arXiv:2312.10997 [12] Song Jiang and Xiaodong Zhang. 2002. LIRS: An Efficient Low Inter-reference Recency Set Replacement Policy to Improve Buffer Cache Performance. In Pro-ceedings of the ACM SIGMETRICS International Conference on Measurement and Modeling of Computer Systems . 31–42. https://doi.org/10.1145/511334.511340 [13] Theodore Johnson and Dennis Shasha. 1994. 2Q: A Low Overhead High Performance Buffer Management Replacement Algorithm. In Proceedings of the 20th International Conference on Very Large Data Bases (VLDB) . 439–450. https://www.vldb.org/conf/1994/P439.PDF [14] Jiho Kim, Woosog Chay, Hyeonji Hwang, Daeun Kyung, Hyunseung Chung, Eunbyeol Cho, Yohan Jo, and Edward Choi. 2024. DialSim: A Real-Time Simulator for Evaluating Long-Term Dialogue Understanding of Conversational Agents. 
+
+arXiv preprint arXiv:2406.13144 (2024). arXiv:2406.13144 [15] Tor Lattimore and Csaba Szepesvári. 2020. Bandit Algorithms . Cambridge University Press. https://doi.org/10.1017/9781108571401 [16] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, Sebastian Riedel, and Douwe Kiela. 2020. Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. In Advances in Neural Informa-tion Processing Systems , Vol. 33. 9459–9474. arXiv:2005.11401 [17] Evan Zheran Liu, Milad Hashemi, Kevin Swersky, Parthasarathy Ranganathan, and Junwhan Ahn. 2020. An Imitation Learning Approach for Cache Replacement. In Proceedings of the 37th International Conference on Machine Learning (ICML) .6237–6247. arXiv:2006.16239 [18] Thodoris Lykouris and Sergei Vassilvitskii. 2018. Competitive Caching with Machine Learned Advice. In Proceedings of the 35th International Conference on Machine Learning (ICML) . 3296–3305. arXiv:1802.05399 [19] Adyasha Maharana, Dong-Ho Lee, Sergey Tuber, and Mohit Bansal. 2024. Evalu-ating Very Long-Term Conversational Memory of LLM Agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (ACL) .https://doi.org/10.18653/v1/2024.acl-long.747 [20] Nimrod Megiddo and Dharmendra S. Modha. 2003. ARC: A Self-Tuning, Low Overhead Replacement Cache. In Proceedings of the 2nd USENIX Conference on File and Storage Technologies (FAST) . 115–130. https://www.usenix.org/legacy/ events/fast03/tech/megiddo.html [21] Elizabeth J. O’Neil, Patrick E. O’Neil, and Gerhard Weikum. 1993. The LRU-K Page Replacement Algorithm for Database Disk Buffering. In Proceedings of the ACM SIGMOD International Conference on Management of Data . 297–306. https://doi.org/10.1145/170035.170081 [22] Charles Packer, Vivian Fang, Shishir G. Patil, Kevin Lin, Sarah Wooders, and Joseph E. Gonzalez. 2023. MemGPT: Towards LLMs as Operating Systems. arXiv preprint arXiv:2310.08560 (2023). arXiv:2310.08560 [23] Joon Sung Park, Joseph C. O’Brien, Carrie J. Cai, Meredith Ringel Morris, Percy Liang, and Michael S. Bernstein. 2023. Generative Agents: Interactive Simulacra of Human Behavior. In Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology (UIST) . 1–22. https://doi.org/10.1145/3586183. 3606763 [24] Dhruv Rohatgi. 2020. Near-Optimal Bounds for Online Caching with Machine Learned Advice. In Proceedings of the 31st Annual ACM-SIAM Symposium on Discrete Algorithms (SODA) . 1834–1845. arXiv:1910.12172 [25] Daniel D. Sleator and Robert E. Tarjan. 1985. Amortized Efficiency of List Update and Paging Rules. Commun. ACM 28, 2 (1985), 202–208. https://doi.org/10.1145/ 2786.2793 [26] Zhenyu Song, Daniel S. Berger, Kai Li, and Wyatt Lloyd. 2020. Learning Relaxed Belady for Content Distribution Network Caching. In Proceedings of the 17th USENIX Symposium on Networked Systems Design and Implementation (NSDI) .529–544. https://www.usenix.org/conference/nsdi20/presentation/song [27] Changzhi Sun, Xiangyu Chen, Jixiang Luo, Dell Zhang, and Xuelong Li. 2025. Beyond Heuristics: A Decision-Theoretic Framework for Agent Memory Man-agement. arXiv preprint arXiv:2512.21567 (2025). arXiv:2512.21567 [28] Yushi Sun, Bowen Cao, Dong Fang, Lingfeng Su, and Wai Lam. 2026. GRAVITY: Architecture-Agnostic Structured Anchoring for Long-Horizon Conversational Memory. arXiv preprint (2026). [29] Yushi Sun, Bowen Cao, and Wai Lam. 2026. SOLAR: Complete Proofs (Extended Supplement). https://github.com/ysunbp/SOLAR/blob/main/proof.pdf. Accessed: 2026. [30] Yushi Sun and Lei Chen. 2026. CacheRAG: A Semantic Caching System for Retrieval-Augmented Generation in Knowledge Graph Question Answering. 
+
+arXiv preprint (2026). arXiv:2604.26176 [31] Yushi Sun, Kai Sun, Ethan Yifan Xu, Xiao Yang, Xin Luna Dong, Nan Tang, and Lei Chen. 2025. KERAG: Knowledge-Enhanced Retrieval-Augmented Generation for Advanced Question Answering. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing (EMNLP) .[32] William R. Thompson. 1933. On the Likelihood that One Unknown Probability Exceeds Another in View of the Evidence of Two Samples. Biometrika 25, 3/4 (1933), 285–294. https://doi.org/10.1093/biomet/25.3-4.285 [33] Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. 2023. Voyager: An Open-Ended Embodied Agent with Large Language Models. arXiv preprint arXiv:2305.16291 (2023). arXiv:2305.16291 [34] Kin-Yeung Wong. 2006. Web cache replacement policies: a pragmatic approach. 
+
+IEEE Network 20, 1 (2006), 28–34. [35] Xiao Yang, Kai Sun, Hao Xin, Yushi Sun, Nikhil Bhalla, Xiangsen Chen, Sajal Choudhary, Rongze Daniel Gui, Ziran Will Jiang, Ziyu Jiang, Lingkun Kong, Brian Moran, Jiaqi Wang, Yifan Ethan Xu, An Yang, Eting Yuan, Hanwen Zha, Nan Tang, Lei Chen, Nicolas Scheffer, Yue Liu, Nirav Shah, Rakesh Wanga, Anuj Kumar, Wen-tau Yih, and Xin Luna Dong. 2024. CRAG – Comprehensive RAG Benchmark. In Advances in Neural Information Processing Systems (NeurIPS) .[36] Guilin Zhang, Wei Jiang, Xiejiashan Wang, Aisha Behr, Kai Zhao, Jeffrey Fried-man, Xu Chu, and Amine Anoun. 2026. Adaptive Memory Admission Control for LLM Agents. arXiv preprint arXiv:2603.04549 (2026). arXiv:2603.04549 [37] Yuxiang Zhang, Jiangming Shu, Ye Ma, Xueyuan Lin, Shangxi Wu, and Jitao Sang. 2025. Memory as Action: Autonomous Context Curation for Long-Horizon Agentic Tasks. arXiv preprint arXiv:2510.12635 (2025). arXiv:2510.12635 [38] Zeyu Zhang et al . 2024. A Survey on the Memory Mechanism of Large Language Model Based Agents. arXiv preprint arXiv:2404.13501 (2024). arXiv:2404.13501 [39] Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. 2024. Mem-oryBank: Enhancing Large Language Models with Long-Term Memory. In Pro-ceedings of the AAAI Conference on Artificial Intelligence , Vol. 38. 19724–19731. https://ojs.aaai.org/index.php/AAAI/article/view/29946
