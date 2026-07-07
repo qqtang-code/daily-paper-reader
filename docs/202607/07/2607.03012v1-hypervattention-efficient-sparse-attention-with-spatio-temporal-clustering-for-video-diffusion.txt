@@ -1,0 +1,754 @@
+Title: HyperVAttention: Efficient Sparse Attention with Spatio-Temporal Clustering for Video Diffusion
+
+URL Source: https://arxiv.org/pdf/2607.03012v1
+
+Published Time: Tue, 07 Jul 2026 00:33:09 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# HyperVAttention: Efficient Sparse Attention with Spatio-Temporal Clustering for Video Diffusion 
+
+Dongyeun Lee 1 Amir Zandieh 2 Vahab Mirrokni 2 Junmo Kim 1† Insu Han 1†
+
+> 1
+
+KAIST 2Google Research Prompt:  wide -angle, ultra -high definition clarity and an artistic, timeless touch. Several giant wooly mammoths approach treading throug h a snowy meadow, their long   
+
+> wooly fur lightly blows in the wind as they walk, snow covered trees and dramatic snow capped mountains in the distance, mid aft ernoon light with wispy clouds and a
+> sun high in the distance creates a warm glow, the low camera view is stunning capturing the large furry mammal with beautiful ph otography, depth of field.
+
+HunyuanVideo  Full Attention.  Latency: 27:00 
+
+HyperVAttention.  Latency:  12:41 (2.13 × Faster) 
+
+Figure 1: HyperVAttention is a training-free sparse attention framework for video diffusion that achieves 2.13 × speedup on HunyuanVideo while preserving the visual fidelity of full attention. 
+
+## Abstract 
+
+Video Diffusion Transformers (VDiTs) have demonstrated significant capabili-ties in high-fidelity video generation. However, their ability to produce long-duration videos is fundamentally constrained by the quadratic complexity of the self-attention mechanism. Recent clustering-based sparse attention methods im-prove the quality-speed trade-off by grouping semantically similar tokens, but their practical efficiency remains limited by two bottlenecks: substantial cluster-ing overhead and low CTA utilization caused by irregular cluster-induced blocks. We propose HyperVAttention (HVA), a training-free sparse attention framework that addresses both bottlenecks jointly. To reduce clustering overhead, we intro-duce 3D local-window clustering, which exploits the spatio-temporal locality of video tokens to restrict centroid search to fixed local neighborhoods, and imple-ment it with a custom Triton kernel for efficient execution. We further propose a hybrid clustering strategy that performs full clustering only at anchor steps and updates only subset tokens at intermediate steps, leveraging the temporal stability of cluster assignments across denoising steps. To improve CTA utilization, we present hardware-aware cluster merging that minimizes CTA-aligned execution cost through parallel agglomerative merging, improving block density and approxi-mation fidelity by utilizing idle tile capacity. Together, these components reduce clustering overhead, avoid redundant updates, and better align sparse attention with the fixed tile structure of modern GPU kernels. Experiments on Text-to-Video generation show that HVA establishes a new Pareto frontier for training-free sparse attention in video diffusion, reducing end-to-end latency by up to 2.13 × while improving fidelity over existing training-free sparse attention baselines. 
+
+> †
+
+Corresponding Authors. Preprint. 
+
+> arXiv:2607.03012v1 [cs.CV] 3 Jul 2026
+
+## 1 Introduction 
+
+Diffusion Transformers (DiTs) [33] have recently emerged as a powerful backbone for high-fidelity video generation [ 12 , 32 , 26 , 51 , 18 , 41 , 70 , 3 ]. However, practical deployment remains severely constrained by spatio-temporal self-attention, which jointly attends over all tokens across frames and spatial locations, resulting in extremely long token sequences and quadratic complexity. To address this bottleneck, various prior works [ 4, 59 , 43 , 46 , 63 , 36 , 45 ] construct block-sparse masks over the original token layout, using blocks aligned with Cooperative Thread Arrays (CTAs), the tile-level execution units of FlashAttention kernels [ 10 ]. these approaches treat all tokens in a block as a coarse unit and fail to capture fine-grained token-level relevance, often compromising visual quality. To overcome this limitation, recent studies [ 13 , 50 , 71 ] have introduced clustering-based sparse attention, which cluster tokens by fine-grained relevance and permute them so that similar tokens become contiguous, enabling sparse attention to be computed over clustered token groups, which are then processed as blocks by the attention kernel. These clustering-based methods generally offer a better quality-speed trade-off than sparse attention over the original token layout. Despite this progress, existing clustering-based approaches still face two key limitations that constrain their practical speedups. First, existing methods incur substantial clustering overhead by failing to fully exploit spatio-temporal locality and temporal stability. Prior methods often rely on generic global procedures such as k-means that compare every token against every centroid without exploiting the spatio-temporal locality of video tokens, making clustering itself a major bottleneck even with highly optimized kernels. They also overlook the temporal stability of token assignments across adjacent denoising steps, leading to redundant recomputation even though most assignments remain unchanged over time. Second, cluster-induced blocks often lead to low thread utilization and substantial efficiency loss. As noted above, clustering-based sparse attention uses token clusters as logical attention blocks. In practice, these cluster-induced blocks are executed after padding to fixed CTA tile sizes, as illustrated in Fig. 2(a). Because cluster sizes are often misaligned with the CTA tile shape of attention kernels [ 10 , 11 , 52 ], threads assigned to the padded region outside the true cluster extent remain underutilized, preventing theoretical sparsity from fully translating into actual speedup. Together, these limitations motivate a method that exploits spatio-temporal redundancy and temporal stability while improving the execution efficiency of sparse attention on modern GPUs. To this end, we present HyperVAttention(HVA), an efficient sparse attention framework for video diffusion that addresses both clustering overhead and low thread utilization. To reduce clustering overhead, we first introduce 3D local-window clustering , which restricts centroid search to local neighborhoods by exploiting the spatio-temporal locality of video tokens. Compared with generic global clustering (e.g. k-means), it converges faster, has lower complexity, and is implemented with a custom Triton kernel for efficient execution. We further introduce a hybrid clustering strategy that leverages the temporal stability of token assignments across denoising steps by performing full clustering only at anchor steps and clustering only a subset of tokens at intermediate steps. To address low thread utilization from irregular cluster blocks, we further propose hardware-aware cluster merging , which formulates the tiled execution cost of sparse attention as a hardware cost minimization problem and approximately solves it with efficient parallel agglomerative merging. By merging clusters to reduce hardware cost, this step improves CTA utilization and latency, while using unused tile capacity to accommodate a more accurate attention approximation at no extra hardware cost. Together, HVA preserves generation quality while outperforming prior sparse attention methods, reducing latency by up to 1.8× on Wan2.2 [41] and 2.3× on HunyuanVideo [18]. 
+
+## 2 Preliminaries 
+
+Let Q, K, V ∈ Rn×d denote the query, key, and value matrices of a multi-head self-attention with h
+
+heads, where n is the number of tokens and d is the per-head dimension. Yang et al. [50] proposed SVG2, a clustering-based sparse attention approximation for VDiT, which applies k-means clustering to query and key embeddings respectively, and consequently each one is partitioned into Nq and Nk
+
+clusters. Using the corresponding permutation matrices Πq and Πk, the reordered tensors are 
+
+Q′ = Π q Q, K′ = Π kK, V ′ = Π kV, (1) which place semantically similar tokens contiguously in memory. This produces cluster-induced blocks for block-sparse attention. Let sqi and skj denote the query and key cluster sizes, and let μqi
+
+2Cluster & Permuted  
+
+> Attention Map
+> Execution
+> Attention kernel
+> K CTA size
+> Q CTA
+> size
+> Thread
+> underutilization
+> Cluster Merging
+> (a) Clustering -based Sparse Attention (b) w/ Hardware -Aware Cluster Merging
+> Attention Kernel Cluster & Permuted
+> Attention Map
+> Execution
+> Merged clusters
+> Filling unused tile
+> capacity
+> Selected Tokens
+> with Cluster Colors
+
+Figure 2: Illustration of how existing clustering-based sparse attention methods lead to thread underutilization. (a) These methods form cluster-induced blocks, whose irregular sizes often misalign with fixed CTA tiles and leave padded regions idle. (b) Merging similar clusters better matches cluster-induced blocks to CTA tiles, reducing tiled execution cost. Darker regions show additional tokens placed in unused tile capacity, improving approximation fidelity without increasing CTA tiles. and μkj denote their corresponding centroids. A common approximation is to estimate cluster-pair importance using centroid-level scores 
+
+Sij = μqi , μ kj
+
+√d , P ′ 
+
+> ij
+
+= skj exp( Sij )
+
+PNk 
+
+> o=1
+
+sko exp( Sio ) . (2) where μqi and μkj are the centroids of the i-th query cluster and j-th key cluster, respectively. The cluster-level probabilities are converted into a sparse mask by a row-wise Top-p rule with threshold 
+
+p ∈ (0 , 1] . For each query cluster i, let TopP( P ′
+
+> i, :
+
+; p) denote the smallest set of key-cluster indices, taken in descending order of P ′
+
+> i, :
+
+, whose cumulative probability is at least p. We define 
+
+Ai = TopP( P ′
+
+> i, :
+
+; p), mij = 1[j ∈ A i] . (3) This yields a cluster-level sparse mask M = [ mij ] ∈ { 0, 1}Nq ×Nk . The selected key clusters define the block-sparse attention computation: 
+
+O′ 
+
+> i
+
+= Attn  Q′
+
+> i
+
+, {K′ 
+
+> j
+
+, V ′ 
+
+> j
+
+}j∈A i
+
+ , O = Π q −1O′. (4) Here, Attn denotes standard scaled dot-product attention restricted to the selected key/value clusters. However, the resulting cluster-induced blocks often have sizes misaligned with fixed CTA tile shapes, causing thread underutilization. Our method follows this clustering-based sparse attention pipeline, while reducing clustering overhead and improving hardware efficiency through cluster merging. 
+
+## 3 Motivation 
+
+Existing clustering-based sparse attention improves the quality-speed tradeoff by grouping seman-tically similar tokens, but its realized speedup remains limited by clustering overhead and low utilization of fixed GPU tiles. We analyze three observations behind these limits. Video tokens are locally coherent in space and time, cluster assignments are stable across denoising steps, and token sparsity does not always translate into efficient CTA execution. 
+
+Spatio-Temporal Locality of Video Tokens. Videos exhibit substantial redundancy in space and time: nearby regions are often similar, and consecutive frames change gradually. To verify whether this property also holds in diffusion latent space, we cluster tokens with k-means and visualize the assignments by projecting 128-dimensional head features into RGB space using Principal Component Analysis (PCA). As shown in Fig. 3a, spatially and temporally adjacent latent tokens tend to fall into the same or similar clusters. This observation suggests that meaningful assignments can often be identified from local neighborhoods alone, which motivates replacing global clustering with a local alternative that exploits the intrinsic 3D structure of video tokens and reduces clustering overhead. 3Query       
+
+> Layer 10, Head 9, Timestep 10 Layer 15, Head 4, Timestep 25
+> Layer 15, Head 31, Timestep 15 Layer 25, Head 14, Timestep 25
+> Layer 35, Head 1, Timestep 35 Layer 3 5, Head 32,Timestep 35
+> Key
+
+(a) Clustering Results of Video Latent Tokens. 5 25 45     
+
+> 0
+> 39 Layer
+> Query
+> 525 45
+> 0
+> 39 Layer
+> Key
+> Change rate
+> 0.86
+> 0.02
+> Diffusion step
+
+(b) Change Ratio 0.2 0.4 0.6 0.8 1.0 
+
+> Lowe's Ratio
+> 0
+> 10
+> 20
+> 30
+> 40
+> Density  Stable
+> Changed
+
+(c) Lowe’s Ratio 
+
+Figure 3: (a) Clustering results of video latent tokens. Frames are ordered from the top left to the bottom right. (b) Ratio of cluster assignment changes over a five-step interval ( t vs. t − 5). (c) Distributions of Lowe’s ratio (see Eq. (6)) for reassigned and unchanged tokens. 
+
+Temporal Stability across Denoising Steps. Recent works [ 27 , 42 , 67 , 30 ] show that diffusion latent features are stable across adjacent denoising steps. We find that this stability extends to per-token cluster assignments. As shown in Fig. 3b, cluster assignments remain stable across most layers and timesteps. Beyond denoising step 10, only 25.8% of query assignments and 27.6% of key assignments change on average. Moreover, to examine which tokens remain stable, we use Lowe’s ratio [ 29 ], defined as the ratio between the nearest- and second-nearest-centroid distances. A larger ratio indicates that the token lies near a cluster boundary and has an unstable assignment. As shown in Fig. 3c, tokens that later change clusters tend to have higher Lowe’s ratios, making it a useful signal for subset selection. This motivates a hybrid update rule with infrequent full clustering and partial updates of only a subset of tokens at intermediate steps. 
+
+From Theoretical Density to Hardware Efficiency. In clustering-based sparse attention, low theoretical token density is not sufficient to yield end-to-end speedup. Attention is executed on GPUs at the granularity of cooperative thread arrays (CTAs), whereas these methods construct sparse blocks from token clusters. These cluster-induced blocks are generally misaligned with the fixed CTA tile sizes of FlashAttention kernels (e.g., 128 queries and 96 keys on Hopper), resulting in thread underutilization. As detailed in Fig. 5c, a pattern with 39 .7% theoretical density still incurs 50 .4% 
+
+CTA density. This motivates a hardware-aware post-processing step that better aligns cluster-induced blocks with CTA tile sizes while preserving attention approximation quality. 
+
+## 4 HyperVAttention 
+
+4.1 3D Local-Window Clustering 
+
+As discussed in Section 3, video tokens exhibit strong spatio-temporal redundancy, making an expensive global centroid search often unnecessary. Building on this observation, we propose an efficient 3D local-window clustering, which restricts clustering to local neighborhoods instead of performing a global centroid search. Inspired by over-segmentation methods that partition images into a regular grid [ 72 , 1], we extend this principle to a 3D spatio-temporal token lattice, a design visually supported by the spatially coherent cluster assignments in Fig. 3a. As illustrated in Fig. 4a, we partition the spatio-temporal token lattice into regular 3D grids of size (kt, k h, k w), so that each token belongs to exactly one grid. The number of centroids is identical to the number of grids. Each centroid is initialized from the token at the center of a grid, and the resulting centroids preserve the same 3D topology as the underlying grid layout. Let xℓ ∈ Rd denote the embedding of token ℓ, and let μu ∈ Rd denote the centroid associated with grid u. For a token ℓ at coordinate (tℓ, h ℓ, w ℓ), let 
+
+g(ℓ) denote the grid containing token ℓ, and define its local assignment as 
+
+g(ℓ) = 
+
+ tℓ
+
+kt
+
+
+
+,
+
+ hℓ
+
+kh
+
+
+
+,
+
+ wℓ
+
+kw
+
+ 
+
+, aℓ = argmin  
+
+> u∈N (g(ℓ))
+
+∥xℓ − μu∥22, (5) 4Video Tokens           
+
+> Centroids
+> 2×2×2
+> Token Grid Centroid in
+> Target Window (a) 3D Local-Window Clustering (4, 4, 4) (2, 8, 8) (3, 8, 8)
+> Window Size
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> Latency (ms)
+> Pytorch Triton
+> 248 ×
+> 344 ×411 ×(b) Kernel Speed Comparison
+
+Figure 4: (a) Illustration of 3D Local-Window Clustering. (b) Latency comparison between PyTorch and Triton implementations of 3D Local-Window Clustering varying window sizes. where N (g(ℓ)) denotes the set of centroids in a local 3D window of size (wt, w h, w w) around the grid g(ℓ). This restricts the search to a local spatio-temporal neighborhood and avoids redundant comparisons against distant centroids. The centroids are then updated by averaging the embeddings of their assigned tokens, while the underlying grid partition remains fixed throughout the iterations. This avoids the usual quality-cost tradeoff in generic clustering, where more centroids improve quality but increase assignment cost. In methods such as k-means clustering, each of the n tokens must be compared against all Nc centroids, resulting in O(n N c) complexity. In video diffusion, where n is already large, this quickly becomes a bottleneck. By contrast, 3D local-window clustering restricts the search volume of each token to a fixed local window with volume wtwhww, yielding O(n w twhww)
+
+assignment cost independent of the total number of centroids. For HunyuanVideo at 720p, with 
+
+n = 118 .8K , Nc = 1215 , and (wt, w h, w w) = (3 , 8, 8) , this yields a 6.3× reduction in the per-token search space. This decouples clustering granularity from assignment overhead, allowing a larger centroid set to improve clustering quality without increasing assignment cost. 
+
+Efficient GPU Kernel Implementation. We implement 3D local-window clustering with a custom Triton kernel that performs local assignment and centroid accumulation directly on the native tensor layout. This avoids explicitly constructing overlapping 3D local grids from tokens stored in flattened 
+
+T ×H ×W layout, which would incur high memory overhead. Our design is inspired by implicit GEMM [ 40 ]. Following the same principle, the kernel forms 3D neighborhood tiles on the fly through index arithmetic rather than explicitly materializing overlapping local grids, and uses them for distance evaluation and centroid-statistics accumulation. Compared with a naive PyTorch implementation that explicitly rearranges tokens into overlapping local grids, our Triton kernel achieves up to a 411 ×
+
+speedup (Fig. 4b). Implementation details are provided in Section A.2. 
+
+4.2 Hybrid Clustering across Denoising Steps 
+
+As discussed in Section 3, most token assignments remain stable across adjacent denoising steps, and Lowe’s ratio [ 29 ] provides a useful signal for identifying the subset most likely to change. Based on this observation, we adopt a hybrid clustering strategy that performs full-token 3D local-window clustering only at anchor steps and updates only a subset of tokens at intermediate steps, as illustrated in Fig. 3c. Specifically, we use Lowe’s ratio, 
+
+ρℓ = dℓ, 1
+
+dℓ, 2
+
+, dℓ, 1 = min  
+
+> u
+
+∥xℓ − μu∥2, dℓ, 2 = min 
+
+> u̸=u⋆ℓ
+
+∥xℓ − μu∥2, (6) where u⋆ℓ = arg min u ∥xℓ − μu∥2 denotes the nearest centroid of token ℓ.At each first denoising step, we perform full-token 3D local-window clustering, compute the value ρℓ
+
+for all tokens, and cache the indices of a subset of tokens with the largest ρℓ values. At subsequent intermediate steps, we update only this subset by performing a standard k-means reassignment against the current centroid set and then updating the corresponding centroids. This substantially reduces computation, since most tokens are not revisited between anchor steps. It also complements 3D local-window clustering with a global refinement step: whereas local-window clustering restricts each 5token to nearby centroids, subset refinement allows unstable tokens to be reassigned using the full centroid set. In this way, the hybrid strategy combines low overhead with periodic global correction. 
+
+4.3 Hardware-Aware Cluster Merging 
+
+As discussed in Section 3, cluster sizes are often misaligned with the fixed CTA tile shapes of attention kernels, leading to thread underutilization. To address this issue, we formulate the hardware-efficiency objective of sparse attention as a cost minimization problem, and then present a parallel agglomerative heuristic for approximately solving it. 
+
+Hardware Cost Minimization. Since the softmax operation is applied independently to each row of the attention matrix, each query cluster constitutes a single block row and is executed independently. For each row, efficient modern sparse attention kernel [ 52 ] packs the selected key cluster blocks into contiguous memory, enabling efficient computation in units of CTA tiles while avoiding thread underutilization. Accordingly, the hardware cost of a single query cluster i can be written as 
+
+C(i) = 
+
+
+
+τq
+
+ sqi
+
+τq
+
+ 
+
+τk
+
+& P Nk 
+
+> j=1
+
+mij skj
+
+τk
+
+'! 
+
+, (7) where Nq and Nk denote the numbers of query and key clusters, τq and τk are the CTA tile sizes, 
+
+M = [ mij ] ∈ { 0, 1}Nq ×Nk is the cluster-level sparse mask, and sqi and skj are the sizes of query cluster i and key cluster j, respectively. In Eq. (7), the two terms are the CTA-aligned sizes of the query block and packed key blocks. Thus, C(i) measures tiled work rather than token sparsity. 
+
+Parallel Agglomerative Merging. A straightforward way to reduce this cost is to fill underutilized CTA tiles by merging query clusters with compatible key selections. We extend the row-wise cost in Eq. (7) from a single query cluster to a merged group. When multiple query clusters are merged, their query sizes add up, while the selected key clusters are given by the union of their row masks. For a group S ⊆ V with V = {1, . . . , N q }, we define sq (S) = P 
+
+> i∈S
+
+sqi and χj (S) = max i∈S mij .Then, the corresponding execution cost becomes 
+
+C(S) = 
+
+
+
+τq
+
+ sq (S)
+
+τq
+
+ 
+
+τk
+
+& P Nk 
+
+> j=1
+
+χj (S)skj
+
+τk
+
+'! 
+
+. (8) This induces the following partition problem over query clusters: 
+
+min  
+
+> P: Partition of V
+
+X
+
+> S∈P
+
+C(S). (9) Since Eq. (9) is a combinatorial set partitioning problem with a non-additive block cost, approximation strategies are possible including exact combinatorial solvers and sequential greedy agglomerative merging. In our setting, however, cluster merging is useful only if its overhead remains negligible relative to the hardware cost it saves. This makes both exact optimization and sequential greedy updates unattractive in practice. Thus, our goal is to avoid sequential single-merge updates and instead use a parallel merge scheme. To this end, we propose a parallel agglomerative algorithm: in each round, we randomly bipartition the active groups, evaluate only cross-partition candidates, and merge multiple disjoint cost-reducing pairs in parallel. Disjointness ensures that no group participates in more than one accepted merge and can therefore be applied in parallel without conflict. More formally, for two disjoint groups A and B, define the merge gain 
+
+∆C(A, B ) := C(A ∪ B) − C(A) − C(B). (10) If ∆C(A, B ) < 0, merging A and B reduces hardware cost. For each group in one subset, we select the group in the other subset with the smallest merge gain. If multiple groups select the same target, we keep only the best match, so the accepted pairs remain disjoint and can be executed in parallel. Repeating this procedure progressively builds larger groups over multiple rounds. Implementation details are provided in Algorithm 1. Although this procedure does not guarantee the global optimum of Eq. (9), it is highly parallelizable and directly targets the execution overhead caused by tile misalignment. Since merging takes the union of the selected clusters, it can introduce additional attention computations within idle tile capacity, improving approximation fidelity while reducing hardware cost. 6Algorithm 1 Parallel Agglomerative Merging for Hardware Cost Minimization  
+
+> 1:
+
+Inputs: query clusters V = {1, . . . , N q }, sizes {sqi }, {skj }, mask M = [ mij ], tile sizes τq , τ k,rounds R 
+
+> 2:
+
+Output: a disjoint partition P of V 
+
+> 3:
+
+P ← {i} | i ∈ V ▷ Initialize every query cluster as a singleton group  
+
+> 4:
+
+Initialize χj ({i}) ← mij for all i ∈ V and j = 1 , . . . , N k 
+
+> 5:
+
+for r = 1 to R do  
+
+> 6:
+
+Randomly bipartition the active groups in P into A and B 
+
+> 7:
+
+for each A ∈ A do  
+
+> 8:
+
+for each B ∈ B do  
+
+> 9:
+
+sq (A ∪ B) ← sq (A) + sq (B) ▷ Sum query sizes  
+
+> 10:
+
+χj (A ∪ B) ← max( χj (A), χ j (B)) for j = 1 , . . . , N k ▷ Logical OR  
+
+> 11:
+
+C(A ∪ B) ←
+
+
+
+τq
+
+l sq (A∪B)
+
+> τq
+
+m 
+
+τk
+
+ PNkj=1 χj (A∪B)skj
+
+> τk
+
+  
+
+> 12:
+
+∆C(A, B ) ← C(A ∪ B) −  C(A) + C(B) 
+
+> 13:
+
+π(A) ← arg min B∈B ∆C(A, B ) 
+
+> 14:
+
+M ← { (A, π (A)) | ∆C(A, π (A)) < 0 and A = arg min A′:π(A′)= π(A) ∆C(A′, π (A)) } 
+
+> 15:
+
+R ← S
+
+> (A,B )∈M
+
+{A, B } 
+
+> 16:
+
+P ← (P \ R ) ∪ { A ∪ B | (A, B ) ∈ M} ▷ Execute merges in parallel  
+
+> 17:
+
+return P
+
+## 5 Experiments 
+
+Experimental Settings. We evaluate HyperVAttention (HVA) using Wan2.2-I2V/T2V-A-14B [ 41 ]and HunyuanVideo-T2V-13B [ 18 ] for video generation on a single NVIDIA H200 GPU. We generate 81 and 129 frames at 720p resolution for Wan2.2 and HunyuanVideo, corresponding to token lengths of n = 75 ,600 and 118 ,800 , respectively. For Text-to-Video, we utilize the Penguin Benchmark 3,which provides optimized prompts derived from VBench [ 16 ] dataset. For image-to-video, we employ center-cropped images from VBench at 720p. We randomly sample 50 instances for each task as in [50 ]. We compare against state-of-the-art training-free sparse attention baselines for video diffusion, including SpargeAttn [ 59 ] and SVG [ 45 ], which operate on the original token layout, and SVG2 [ 50 ], a clustering-based baseline. Detailed hyperparameters are provided in Table 2. 
+
+Metrics. To measure fidelity in generated videos against the full-attention baseline, we em-ploy LPIPS [ 64 ], Structural Similarity Index Measure (SSIM) and PSNR. We also use scores in VBench [ 16 ] to evaluate overall video generation quality. We additionally report an LLM-Judge score, inspired by recent LLM-based evaluation protocols [ 69 , 5 ], to capture complementary aspects such as subject consistency, aesthetics, and temporal flickering. We choose gemini -3-flash preview [ 39 ]and more details including evaluation prompt are provided in Section B. 
+
+5.1 Results on Text/Image-to-Video Generation 
+
+Table 1 reports the benchmarking results evaluating visual quality against inference efficiency across Wan 2.2 and HunyuanVideo. Our main configuration, HVA, achieves the best fidelity to full attention among sparse methods across the evaluated settings. On HunyuanVideo text-to-video generation, it reaches 33.97 PSNR and 0.046 LPIPS, compared with 32.66 PSNR and 0.056 LPIPS for SVG2. On Wan 2.2 image-to-video and text-to-video generation, it also gives the lowest perceptual degradation among sparse methods. SpargeAttn obtains strong VBench scores in some settings, but its fidelity metrics are consistently worse than ours, indicating larger deviation from the full-attention output. In contrast, under the LLM-Judge evaluation based on a recent vision-language model, HVA achieves higher overall quality scores than the other sparse methods. To maximize hardware acceleration, we introduce HVA-Flash, which aggressively optimizes inference speed with minimal quality trade-offs. HVA-Flash reaches 1.81 × on Wan 2.2 image-to-video generation and 2.23 × on HunyuanVideo, 
+
+> 3https://github.com/Tencent-Hunyuan/HunyuanVideo/blob/main/assets/PenguinVideoBenchmark.csv
+
+7Table 1: Quantitative comparison of quality and efficiency across various methods. Bold and underline denote the best and second-best results, respectively.                                                                                                                                                       
+
+> Methods Quality Efficiency PSNR ↑SSIM ↑LPIPS ↓VBench ↑LLM-as-a-Judge ↑Density ↓Speedup ↑
+> Wan 2.2 (14B, Image-to-Video, 81 Frames, 720p, n=75,600 )Full Attention ---0.816 8.24 100% 1×
+> SpargeAttn 24.95 0.869 0.106 0.815 8.11 30.15% 1.77 ×
+> SVG 23.06 0.817 0.143 0.814 7.47 34.29% 1.76 ×
+> SVG2 25.55 0.894 0.095 0.814 7.97 29.54% 1.80 ×
+> HVA 26.84 0.916 0.077 0.816 8.15 36.95% 1.80 ×
+> HVA-Flash 25.92 0.903 0.090 0.814 7.95 33.47% 1.86 ×
+> Wan 2.2 (14B, Text-to-Video, 81 Frames, 720p, n=75,600 )Full Attention ---0.845 9.20 100% 1×
+> SpargeAttn 21.69 0.784 0.167 0.845 9.08 30.15% 1.77 ×
+> SVG 20.16 0.717 0.227 0.846 9.05 34.29% 1.78 ×
+> SVG2 24.33 0.866 0.117 0.843 9.15 33.57% 1.71 ×
+> HVA 25.50 0.894 0.094 0.845 9.35 42.05% 1.72 ×
+> HVA-Flash 24.42 0.867 0.116 0.843 9.18 36.72% 1.81 ×
+> HunyuanVideo (13B, Text-to-Video, 129 Frames, 720p, n=118,800 )Full Attention ---0.821 9.05 100% 1×
+> SpargeAttn 28.12 0.894 0.103 0.822 8.96 30.19% 1.94 ×
+> SVG 27.20 0.872 0.124 0.819 8.86 29.70% 1.91 ×
+> SVG2 32.66 0.947 0.056 0.817 8.89 26.27% 2.12 ×
+> HVA 33.97 0.958 0.046 0.819 9.18 31.34% 2.13 ×
+> HVA-Flash 32.92 0.949 0.055 0.818 8.92 28.35% 2.23 ×
+
+while still maintaining superior or competitive fidelity compared to the baselines. Notably, our theoretical density is slightly higher than SVG2, both of ours achieve superior wall-clock speedups. This empirical finding validates our cluster merging strategy, showing that GPU-friendly block utilization can effectively overcome the operational bottlenecks of clustering-based sparse attention. 
+
+5.2 Ablation Study End-to-End Speedup. As illustrated in Fig. 5a, the latency breakdown reveals the source of our efficiency. While SVG2 suffers from a heavy 83 s clustering overhead, our hybrid strategy with 3D local-window clustering requires only 26 s, accelerating the clustering stage by over 3.1×.Furthermore, cluster merging improves hardware efficiency by aligning cluster block sizes with CTA tile sizes, with only 4 s of additional overhead. Consequently, this combination of reduced clustering latency and efficient cluster merging enables our method to achieve up to a 2.23 × speedup over the full-attention model, delivering the fastest inference speeds among all baselines, as shown in Table 1. 
+
+Clustering Efficiency. To demonstrate the effectiveness of our 3D local-window clustering, we compare clustering error, which is closely correlated with the final output quality [ 50 ], against Flash k-means [ 50 ] across varying iterations in Fig. 5b. Leveraging the spatio-temporal locality of video tokens, our 3D local-window clustering strategy proves highly effective and converges rapidly. Our method requires only 10 iterations ( ∼40 ms) to achieve a clustering error comparable to what 
+
+k-means reaches after 50 iterations ( >250 ms). This achieves a remarkable 6.29 × latency reduction, effectively resolving the computational bottleneck of iterative token clustering. 
+
+3D Local-Window Clustering Kernel Speed Evaluation. As shown in Fig. 4b, when evaluated across varying local window sizes, the custom Triton implementation of 3D local-window clustering consistently outperforms its PyTorch counterpart, achieving up to a 411 × speedup. This gap is primarily a systems effect rather than an algorithmic one. The PyTorch baseline realizes the local search through a sequence of fine-grained tensor ops, incurring repeated kernel launches, global-memory round trips for intermediate tensors, and poor reuse across neighbor comparisons. In contrast, 8Dense SVG2 Ours  
+
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> Latency (s)
+> 1641
+> 121
+> 36
+> 83
+> 812
+> 121
+> 36
+> 426
+> 850
+> 121
+> 36
+> Attention
+> Clustering
+> Cluster Merging
+> FFN
+> Etc
+
+(a) End-to-End Latency Breakdown 0 100 200 300  
+
+> Latency (ms)
+> 0.66
+> 0.68
+> 0.70
+> 0.72
+> Clustering Error
+> 10 step 5 step
+> 1 step
+> 2 step
+> 50 step
+> 6.29 ×
+> Ours
+> K-means
+
+(b) Clustering Efficiency w/o  
+
+> Cluster Merging
+> w/
+> Cluster Merging
+> 30
+> 40
+> 50
+> 60
+> Density (%)
+> 39.70
+> 50.42
+> 42.24
+> 46.88
+> Theoretical Density
+> CTA Density
+> -7.02%
+
+(c) Density Comparison 
+
+Figure 5: Efficiency analysis on diverse component of HyperVAttention. our Triton kernel keeps the computation on the native T ×H ×W layout and fuses neighbor traversal, distance evaluation, Lowe’s ratio computation, and centroid accumulation into a single pass, so each token feature is loaded once and consumed immediately. This substantially improves locality and arithmetic intensity while eliminating most launch overhead and redundant memory traffic. 
+
+Hardware-Aware Cluster Merging. Fig. 5c compares the theoretical token density and the actual CTA density of the attention kernel with and without cluster merging. Due to the misalignment between cluster size and thread-block tiling, underutilization is inevitable and leads to computational inefficiency. By integrating cluster merging, our approach accommodates a more accurate approxima-tion of attention (theoretical density: 39 .70% → 42 .24% ) within idle tile capacity, while reducing the actual CTA density from 50 .42% to 46 .88% , corresponding to a 7.02% relative reduction. 
+
+## 6 Related Works 
+
+Existing methods are broadly divided into training-based [ 62 , 56 , 61 , 60 , 2, 22 , 37 , 25 ] and training-free approaches [ 4, 59 , 43 , 46 , 63 , 36 , 45 , 50 , 71 ]. Among training-free methods, several works [ 4, 59 , 43 , 46 , 63 , 36 , 45 ] construct block-sparse masks over the original token layout, which is hardware-friendly but often miss fine-grained token relevance. Clustering-based methods [ 50 , 71 ]instead cluster and permute tokens to form cluster-induced blocks, better preserving semantic structure but remaining bottlenecked by iterative clustering and inefficient CTA utilization. Our method targets these two bottlenecks jointly. Sparse Attention in LLMs has been extensively explored for long-context inference. Several studies identify critical tokens or local attention sinks and retain them within constrained KV caches [ 47 , 65 ], estimate block- or page-level importance using proxy metrics to adaptively allocate attention budgets [38 , 17 , 19 , 49 ], or reorder and hashe tokens to cluster relevant features efficiently [ 13 , 24 ]. However, these methods rely on 1D causal structure and target prefill or KV-cache efficiency, whereas video diffusion attention remains compute-bound over 3D spatiotemporal dependencies. Orthogonal acceleration techniques include linear attention [ 48 , 7 ], high-compression auto-encoders [ 8], quantization [ 34 , 23 , 15 , 21 , 20 , 44 , 66 , 14 , 35 , 58 , 55 , 57 ], caching [ 27 , 42 , 28 , 67 , 30 , 9, 31 ], and distillation [ 54 , 53 , 6, 68 ]. Our work is complementary to these directions and focuses specifically on the quality-efficiency trade-off of sparse attention in video diffusion transformers. 
+
+## 7 Conclusion 
+
+We presented HyperVAttention (HVA), a training-free sparse attention framework that accelerates video diffusion by reducing clustering overhead and improving CTA utilization. It combines 3D local-window clustering, hybrid clustering strategy, and hardware-aware cluster merging to improve both algorithmic and kernel-level execution efficiency. Experiments on Wan2.2 and HunyuanVideo show that our method improves the quality-efficiency Pareto frontier, achieving up to 2.23 × speedup while preserving visual fidelity. As a limitation, benefits are most pronounced for long videos where attention dominates runtime, and gains may be smaller for images or very short videos. 9References 
+
+[1] Radhakrishna Achanta, Appu Shaji, Kevin Smith, Aurelien Lucchi, Pascal Fua, and Sabine Süsstrunk. Slic superpixels compared to state-of-the-art superpixel methods. IEEE transactions on pattern analysis and machine intelligence , 34(11):2274–2282, 2012. 4 [2] Krish Agarwal, Zhuoming Chen, Cheng Luo, Yongqi Chen, Haizhong Zheng, Xun Huang, Atri Rudra, and Beidi Chen. Monarchrt: Efficient attention for real-time video generation. arXiv preprint arXiv:2602.12271 , 2026. 9 [3] Vladimir Arkhipkin, Vladimir Korviakov, Nikolai Gerasimenko, Denis Parkhomenko, Viach-eslav Vasilev, Alexey Letunovskiy, Nikolai Vaulin, Maria Kovaleva, Ivan Kirillov, Lev Novitskiy, et al. Kandinsky 5.0: A family of foundation models for image and video generation. arXiv preprint arXiv:2511.14993 , 2025. 2 [4] Shengqu Cai, Ceyuan Yang, Lvmin Zhang, Yuwei Guo, Junfei Xiao, Ziyan Yang, Yinghao Xu, Zhenheng Yang, Alan Yuille, Leonidas Guibas, et al. Mixture of contexts for long video generation. arXiv preprint arXiv:2508.21058 , 2025. 2, 9 [5] Dongping Chen, Ruoxi Chen, Shilin Zhang, Yaochen Wang, Yinuo Liu, Huichi Zhou, Qihui Zhang, Yao Wan, Pan Zhou, and Lichao Sun. Mllm-as-a-judge: Assessing multimodal llm-as-a-judge with vision-language benchmark. In Forty-first International Conference on Machine Learning , 2024. 7, 17 [6] Junsong Chen, Shuchen Xue, Yuyang Zhao, Jincheng Yu, Sayak Paul, Junyu Chen, Han Cai, Song Han, and Enze Xie. Sana-sprint: One-step diffusion with continuous-time consistency distillation. In Proceedings of the IEEE/CVF International Conference on Computer Vision ,pages 16185–16195, 2025. 9 [7] Junsong Chen, Yuyang Zhao, Jincheng Yu, Ruihang Chu, Junyu Chen, Shuai Yang, Xianbang Wang, Yicheng Pan, Daquan Zhou, Huan Ling, et al. Sana-video: Efficient video generation with block linear diffusion transformer. arXiv preprint arXiv:2509.24695 , 2025. 9 [8] Junyu Chen, Han Cai, Junsong Chen, Enze Xie, Shang Yang, Haotian Tang, Muyang Li, Yao Lu, and Song Han. Deep compression autoencoder for efficient high-resolution diffusion models. 
+
+arXiv preprint arXiv:2410.10733 , 2024. 9 [9] Zhiyuan Chen, Keyi Li, Yifan Jia, Le Ye, and Yufei Ma. Accelerating diffusion transformer via increment-calibrated caching with channel-aware singular value decomposition. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 18011–18020, 2025. 9 [10] Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. Flashattention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems , 35:16344–16359, 2022. 2 [11] Juechu Dong, Boyuan Feng, Driss Guessous, Yanbo Liang, and Horace He. Flex attention: A pro-gramming model for generating optimized attention kernels. arXiv preprint arXiv:2412.05496 ,2(3):4, 2024. 2 [12] Google DeepMind. Veo 3.1: Text-to-video generation model. https://gemini.google/ overview/video-generation/ , 2026. 2 [13] Insu Han, Rajesh Jayaram, Amin Karbasi, Vahab Mirrokni, David Woodruff, and Amir Zandieh. Hyperattention: Long-context attention in near-linear time. In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview.net/forum? id=Eh0Od2BJIM . 2, 9 [14] Yefei He, Jing Liu, Weijia Wu, Hong Zhou, and Bohan Zhuang. Efficientdm: Efficient quantization-aware fine-tuning of low-bit diffusion models. In International Conference on Learning Representations , 2024. 9 10 [15] Yushi Huang, Ruihao Gong, Jing Liu, Tianlong Chen, and Xianglong Liu. Tfmq-dm: Temporal feature maintenance quantization for diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 7362–7371, 2024. 9 [16] Ziqi Huang, Yinan He, Jiashuo Yu, Fan Zhang, Chenyang Si, Yuming Jiang, Yuanhan Zhang, Tianxing Wu, Qingyang Jin, Nattapol Chanpaisit, Yaohui Wang, Xinyuan Chen, Limin Wang, Dahua Lin, Yu Qiao, and Ziwei Liu. VBench: Comprehensive benchmark suite for video generative models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024. 7 [17] Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H. Abdi, Dongsheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. MInference 1.0: Accelerating pre-filling for long-context LLMs via dynamic sparse attention. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. URL 
+
+https://openreview.net/forum?id=fPBACAbqSN . 9 [18] Weijie Kong, Qi Tian, Zijian Zhang, Rox Min, Zuozhuo Dai, Jin Zhou, Jiangfeng Xiong, Xin Li, Bo Wu, Jianwei Zhang, et al. Hunyuanvideo: A systematic framework for large video generative models. arXiv preprint arXiv:2412.03603 , 2024. 2, 7 [19] Xunhao Lai, Jianqiao Lu, Yao Luo, Yiyuan Ma, and Xun Zhou. Flexprefill: A context-aware sparse attention mechanism for efficient long-sequence inference. In The Thirteenth International Conference on Learning Representations , 2025. URL https://openreview. net/forum?id=OfjIlbelrT . 9 [20] Dongyeun Lee, Jiwan Hur, Hyounguk Shon, Jae Young Lee, and Junmo Kim. Dmq: Dissecting outliers of diffusion models for post-training quantization. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 18510–18520, 2025. 9 [21] Muyang Li, Yujun Lin, Zhekai Zhang, Tianle Cai, Xiuyu Li, Junxian Guo, Enze Xie, Chenlin Meng, Jun-Yan Zhu, and Song Han. Svdquant: Absorbing outliers by low-rank components for 4-bit diffusion models. arXiv preprint arXiv:2411.05007 , 2024. 9 [22] Xingyang Li, Muyang Li, Tianle Cai, Haocheng Xi, Shuo Yang, Yujun Lin, Lvmin Zhang, Songlin Yang, Jinbo Hu, Kelly Peng, Maneesh Agrawala, Ion Stoica, Kurt Keutzer, and Song Han. Radial attention: O(n log n) sparse attention for long video generation. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL https: //openreview.net/forum?id=hYovE4nHTt . 9 [23] Xiuyu Li, Yijiang Liu, Long Lian, Huanrui Yang, Zhen Dong, Daniel Kang, Shanghang Zhang, and Kurt Keutzer. Q-diffusion: Quantizing diffusion models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 17535–17545, 2023. 9 [24] Yucheng Li, Huiqiang Jiang, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Amir H Abdi, Dongsheng Li, Jianfeng Gao, Yuqing Yang, and Lili Qiu. MMIference: Accelerating pre-filling for long-context vlms via modality-aware permutation sparse at-tention. In Forty-second International Conference on Machine Learning , 2025. URL 
+
+https://openreview.net/forum?id=me6PfbATWM . 9 [25] Cheng Liang, Haoxian Chen, Liang Hou, Qi Fan, Gangshan Wu, Xin Tao, and Limin Wang. Vmonarch: Efficient video diffusion transformers with structured attention. arXiv preprint arXiv:2601.22275 , 2026. 9 [26] Lightricks. Ltx-2: Real-time video generation model. https://www.lightricks.com/ltxv ,2025. 2 [27] Feng Liu, Shiwei Zhang, Xiaofeng Wang, Yujie Wei, Haonan Qiu, Yuzhong Zhao, Yingya Zhang, Qixiang Ye, and Fang Wan. Timestep embedding tells: It’s time to cache for video diffusion model. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 7353–7363, June 2025. 4, 9 11 [28] Haozhe Liu, Wentian Zhang, Jinheng Xie, Francesco Faccio, Mengmeng Xu, Tao Xiang, Mike Zheng Shou, Juan-Manuel Perez-Rua, and Jürgen Schmidhuber. Faster diffusion via temporal attention decomposition. Transactions on Machine Learning Research , 2025. URL 
+
+https://openreview.net/forum?id=xXs2GKXPnH . 9 [29] David G Lowe. Distinctive image features from scale-invariant keypoints. International journal of computer vision , 60(2):91–110, 2004. 4, 5 [30] Zhengyao Lv, Chenyang Si, Junhao Song, Zhenyu Yang, Yu Qiao, Ziwei Liu, and Kwan-Yee K. Wong. Fastercache: Training-free video diffusion model acceleration with high quality. In 
+
+The Thirteenth International Conference on Learning Representations , 2025. URL https: //openreview.net/forum?id=W49UjcpGxx . 4, 9 [31] Xuran Ma, Yexin Liu, Yaofu Liu, Xianfeng Wu, Mingzhe Zheng, Zihao Wang, Ser-Nam Lim, and Harry Yang. Model reveals what to cache: Profiling-based feature reuse for video diffusion models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 17150–17159, 2025. 9 [32] OpenAI. Sora: Creating video from text. https://openai.com/sora , 2024. 2 [33] William Peebles and Saining Xie. Scalable diffusion models with transformers. In Proceedings of the IEEE/CVF international conference on computer vision , pages 4195–4205, 2023. 2 [34] Yuzhang Shang, Zhihang Yuan, Bin Xie, Bingzhe Wu, and Yan Yan. Post-training quantization on diffusion models. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 1972–1981, 2023. 9 [35] Yang Sui, Yanyu Li, Anil Kag, Yerlan Idelbayev, Junli Cao, Ju Hu, Dhritiman Sagar, Bo Yuan, Sergey Tulyakov, and Jian Ren. Bitsfusion: 1.99 bits weight quantization of diffusion model. 
+
+arXiv preprint arXiv:2406.04333 , 2024. 9 [36] Wenhao Sun, Rong-Cheng Tu, Yifu Ding, Jingyi Liao, Zhao Jin, Shunyu Liu, and Dacheng Tao. VORTA: Efficient video diffusion via routing sparse attention. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL https://openreview. net/forum?id=gY9yOGYB48 . 2, 9 [37] Xin Tan, Yuetao Chen, Yimin Jiang, Xing Chen, Kun Yan, Nan Duan, Yibo Zhu, Daxin Jiang, and Hong Xu. Dsv: Exploiting dynamic sparsity to accelerate large-scale video dit training. 
+
+arXiv preprint arXiv:2502.07590 , 2025. 9 [38] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. Quest: Query-aware sparsity for efficient long-context llm inference. arXiv preprint arXiv:2406.10774 ,2024. 9 [39] Gemini Team, Rohan Anil, Sebastian Borgeaud, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth, Katie Millican, et al. Gemini: a family of highly capable multimodal models. arXiv preprint arXiv:2312.11805 , 2023. 7 [40] Vijay Thakkar, Pradeep Ramani, Cris Cecka, Aniket Shivam, Honghao Lu, Ethan Yan, Jack Kosaian, Mark Hoemmen, Haicheng Wu, Andrew Kerr, Matt Nicely, Duane Merrill, Dustyn Blasig, Aditya Atluri, Fengqi Qiao, Piotr Majcher, Paul Springer, Markus Hohnerbach, Jin Wang, and Manish Gupta. CUTLASS, January 2023. URL https://github.com/NVIDIA/ cutlass . 5 [41] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 , 2025. 2, 7 [42] Felix Wimbauer, Bichen Wu, Edgar Schoenfeld, Xiaoliang Dai, Ji Hou, Zijian He, Artsiom Sanakoyeu, Peizhao Zhang, Sam Tsai, Jonas Kohler, et al. Cache me if you can: Accelerating diffusion models through block caching. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 6211–6220, 2024. 4, 9 12 [43] Jianzong Wu, Liang Hou, Haotian Yang, Ye Tian, Pengfei Wan, Di ZHANG, and Yunhai Tong. VMoBA: Mixture-of-block attention for video diffusion models. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview. net/forum?id=oQaRElUdmh . 2, 9 [44] Junyi Wu, Haoxuan Wang, Yuzhang Shang, Mubarak Shah, and Yan Yan. Ptq4dit: Post-training quantization for diffusion transformers. In NeurIPS , 2024. 9 [45] Haocheng Xi, Shuo Yang, Yilong Zhao, Chenfeng Xu, Muyang Li, Xiuyu Li, Yujun Lin, Han Cai, Jintao Zhang, Dacheng Li, et al. Sparse video-gen: Accelerating video diffusion transformers with spatial-temporal sparsity. In International Conference on Machine Learning ,pages 68208–68224. PMLR, 2025. 2, 7, 9 [46] Yifei Xia, Suhan Ling, Fangcheng Fu, Yujie Wang, Huixia Li, Xuefeng Xiao, and Bin Cui. Training-free and adaptive sparse attention for efficient long video generation. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 15982–15993, 2025. 2, 9 [47] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. arXiv , 2023. 9 [48] Enze Xie, Junsong Chen, Junyu Chen, Han Cai, Haotian Tang, Yujun Lin, Zhekai Zhang, Muyang Li, Ligeng Zhu, Yao Lu, et al. Sana: Efficient high-resolution image synthesis with linear diffusion transformers. arXiv preprint arXiv:2410.10629 , 2024. 9 [49] Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han. Xattention: Block sparse attention with antidiagonal scoring. In Proceedings of the 42nd International Conference on Machine Learning (ICML) , 2025. 9 [50] Shuo Yang, Haocheng Xi, Yilong Zhao, Muyang Li, Jintao Zhang, Han Cai, Yujun Lin, Xiuyu Li, Chenfeng Xu, Kelly Peng, et al. Sparse videogen2: Accelerate video generation with sparse attention via semantic-aware permutation. arXiv preprint arXiv:2505.18875 , 2025. 2, 7, 8, 9 [51] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072 , 2024. 2 [52] Zihao Ye, Lequn Chen, Ruihang Lai, Wuwei Lin, Yineng Zhang, Stephanie Wang, Tianqi Chen, Baris Kasikci, Vinod Grover, Arvind Krishnamurthy, et al. Flashinfer: Efficient and customizable attention engine for llm inference serving. Proceedings of Machine Learning and Systems , 7, 2025. 2, 6 [53] Tianwei Yin, Michaël Gharbi, Taesung Park, Richard Zhang, Eli Shechtman, Fredo Durand, and William T Freeman. Improved distribution matching distillation for fast image synthesis. 
+
+Advances in neural information processing systems , 37:47455–47487, 2024. 9 [54] Tianwei Yin, Michaël Gharbi, Richard Zhang, Eli Shechtman, Fredo Durand, William T Freeman, and Taesung Park. One-step diffusion with distribution matching distillation. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 6613–6623, 2024. 9 [55] Jintao Zhang, Haofeng Huang, Pengle Zhang, Jia Wei, Jun Zhu, and Jianfei Chen. Sageatten-tion2: Efficient attention with thorough outlier smoothing and per-thread int4 quantization. In 
+
+International Conference on Machine Learning (ICML) , 2025. 9 [56] Jintao Zhang, Haoxu Wang, Kai Jiang, Shuo Yang, Kaiwen Zheng, Haocheng Xi, Ziteng Wang, Hongzhou Zhu, Min Zhao, Ion Stoica, et al. Sla: Beyond sparsity in diffusion transformers via fine-tunable sparse-linear attention. arXiv preprint arXiv:2509.24006 , 2025. 9 [57] Jintao Zhang, Jia Wei, Pengle Zhang, Xiaoming Xu, Haofeng Huang, Haoxu Wang, Kai Jiang, Jun Zhu, and Jianfei Chen. Sageattention3: Microscaling fp4 attention for inference and an exploration of 8-bit training. arXiv preprint arXiv:2505.11594 , 2025. 9 13 [58] Jintao Zhang, Jia Wei, Pengle Zhang, Jun Zhu, and Jianfei Chen. Sageattention: Accurate 8-bit attention for plug-and-play inference acceleration. In International Conference on Learning Representations (ICLR) , 2025. 9 [59] Jintao Zhang, Chendong Xiang, Haofeng Huang, Jia Wei, Haocheng Xi, Jun Zhu, and Jianfei Chen. Spargeattention: Accurate and training-free sparse attention accelerating any model inference. In International Conference on Machine Learning , pages 76397–76413. PMLR, 2025. 2, 7, 9 [60] Jintao Zhang, Kai Jiang, Chendong Xiang, Weiqi Feng, Yuezhou Hu, Haocheng Xi, Jianfei Chen, and Jun Zhu. Spargeattention2: Trainable sparse attention via hybrid top-k+ top-p masking and distillation fine-tuning. arXiv preprint arXiv:2602.13515 , 2026. 9 [61] Jintao Zhang, Haoxu Wang, Kai Jiang, Kaiwen Zheng, Youhe Jiang, Ion Stoica, Jianfei Chen, Jun Zhu, and Joseph E Gonzalez. Sla2: Sparse-linear attention with learnable routing and qat. 
+
+arXiv preprint arXiv:2602.12675 , 2026. 9 [62] Peiyuan Zhang, Yongqi Chen, Haofeng Huang, Will Lin, Zhengzhong Liu, Ion Stoica, Eric P. Xing, and Hao Zhang. Faster video diffusion with trainable sparse attention. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL https: //openreview.net/forum?id=VrYCLQ5inI . 9 [63] Peiyuan Zhang, Yongqi Chen, Runlong Su, Hangliang Ding, Ion Stoica, Zhengzhong Liu, and Hao Zhang. Fast video generation with sliding tile attention. In Forty-second Interna-tional Conference on Machine Learning , 2025. URL https://openreview.net/forum? id=U74MOXPEJd . 2, 9 [64] Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman, and Oliver Wang. The unreason-able effectiveness of deep features as a perceptual metric. In CVPR , 2018. 7 [65] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Processing Systems , 36:34661–34710, 2023. 9 [66] Tianchen Zhao, Tongcheng Fang, Enshu Liu, Wan Rui, Widyadewi Soedarmadji, Shiyao Li, Zinan Lin, Guohao Dai, Shengen Yan, Huazhong Yang, et al. Vidit-q: Efficient and accurate quantization of diffusion transformers for image and video generation. arXiv preprint arXiv:2406.02540 , 2024. 9 [67] Xuanlei Zhao, Xiaolong Jin, Kai Wang, and Yang You. Real-time video generation with pyramid attention broadcast. In The Thirteenth International Conference on Learning Representations ,2025. URL https://openreview.net/forum?id=hDBrQ4DApF . 4, 9 [68] Kaiwen Zheng, Yuji Wang, Qianli Ma, Huayu Chen, Jintao Zhang, Yogesh Balaji, Jianfei Chen, Ming-Yu Liu, Jun Zhu, and Qinsheng Zhang. Large scale diffusion distillation via score-regularized continuous-time consistency. arXiv preprint arXiv:2510.08431 , 2025. 9 [69] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, et al. Judging llm-as-a-judge with mt-bench and chatbot arena. Advances in neural information processing systems , 36:46595–46623, 2023. 7, 17 [70] Zangwei Zheng, Xiangyu Peng, Tianji Yang, Chenhui Shen, Shenggui Li, Hongxin Liu, Yukun Zhou, Tianyi Li, and Yang You. Open-sora: Democratizing efficient video production for all. 
+
+arXiv preprint arXiv:2412.20404 , 2024. 2 [71] Xuanyi Zhou, Qiuyang Mang, Shuo Yang, Haocheng Xi, Jintao Zhang, Huanzhi Mao, Joseph E Gonzalez, Kurt Keutzer, Ion Stoica, and Alvin Cheung. Svg-ear: Parameter-free linear compen-sation for sparse video generation via error-aware routing. arXiv preprint arXiv:2603.08982 ,2026. 2, 9 [72] C Lawrence Zitnick and Sing Bing Kang. Stereo for image-based rendering using image over-segmentation. International Journal of Computer Vision , 75(1):49–65, 2007. 4 14 A Implementation Details 
+
+A.1 Hyperparameters 
+
+For hybrid clustering, we perform full clustering every two denoising steps and cache the top 15% 
+
+most ambiguous tokens, ranked by Lowe’s ratio, for intermediate-step updates. For hardware-aware cluster merging, we use R = 3 rounds of parallel agglomerative merging. Table 2 summarizes the hyperparameters used for all methods and evaluation settings. To ensure a fair comparison, we apply the same warmup strategy to every sparse baseline. Below we clarify the meaning of each table entry. 
+
+Time warmup / Layer warmup. Time warmup uses full attention during the first few denoising timesteps, and layer warmup uses full attention in the first few transformer layers. Each entry is reported as warmup length / total number of timesteps or layers, with stage-specific values listed separately when applicable. To ensure a fair comparison, we apply identical warmup strategies across all evaluated methods. 
+
+Q/K grid size. The 3D temporal-height-width grid used to initialize the query and key centroids. 
+
+Q/K window size. The corresponding local search window used by 3D local-window clustering. 
+
+Nq , Nk. The numbers of query and key centroids, respectively. 
+
+Top-p. Following SVG2, the cumulative centroid-selection threshold used to build the cluster-level sparse map. For each query centroid, we compute centroid-to-centroid attention scores, apply a size-weighted softmax over key centroids, and keep the highest-probability key centroids until their cumulative probability reaches p.
+
+Min-kc . The minimum retained key-cluster ratio for each query row. We always preserve at least this fraction of key clusters even if the Top-p threshold is reached earlier. 
+
+Density. A parameter for SpargeAttn and SVG that controls their target block density. Table 2: Hyperparameters for all experiments including ours and baselines.                                                                                                                                                                                                                                               
+
+> Methods Time warmup Layer warmup Q grid size K grid size Q window size K window size NqNkTop-pMin-kc Density Wan 2.2 (14B, Image-to-Video, 81 Frames, 720p, n=75,600 )SpargeAttn 10 /50 1/40 ––––––––0.3 SVG 10 /50 1/40 ––––––––0.3 SVG2 10 /50 1/40 ––––300 1000 0.90.1–HVA 10 /50 1/40 (7 ,6,6) (6 ,4,4) (3 ,8,8) (3 ,8,8) 336 960 0.90.18 –HVA-Flash 10 /50 1/40 (7 ,6,6) (6 ,4,4) (3 ,8,8) (3 ,8,8) 336 960 0.90.12 –
+> Wan 2.2 (14B, Text-to-Video, 81 Frames, 720p, n=75,600 )SpargeAttn 10 /50 1/40 ––––––––0.3 SVG 10 /50 1/40 ––––––––0.3 SVG2 10 /50 1/40 ––––300 1000 0.90.1–HVA 10 /50 1/40 (7 ,6,6) (6 ,4,4) (3 ,8,8) (3 ,8,8) 336 960 0.90.2–HVA-Flash 10 /50 1/40 (7 ,6,6) (6 ,4,4) (3 ,8,8) (3 ,8,8) 336 960 0.90.1–
+> HunyuanVideo (13B, Text-to-Video, 129 Frames, 720p, n=118,800 )SpargeAttn 10 /50 1/20 ,1/40 ––––––––0.3 SVG 10 /50 1/20 ,1/40 ––––––––0.3 SVG2 10 /50 1/20 ,1/40 ––––400 1000 0.90.1–HVA 10 /50 1/20 ,1/40 (11 ,5,5) (11 ,3,3) (3 ,8,8) (3 ,8,8) 432 1215 0.90.15 –HVA-Flash 10 /50 1/20 ,1/40 (11 ,5,5) (11 ,3,3) (3 ,8,8) (3 ,8,8) 432 1215 0.90.1–
+
+A.2 Algorithms 3D Local-Window Clustering Kernel. Algorithm 2 summarizes the core computation of our 3D local-window clustering kernel. Rather than materializing overlapping local windows, the kernel derives local neighborhoods by index arithmetic on the native T × H × W layout, performs local nearest-centroid assignment, and accumulates centroid statistics for the subsequent update step. 15 Algorithm 2 3D Local-Window Clustering in Triton  
+
+> 1:
+
+Inputs: token tensor X ∈ RT ×H×W ×D , grid size (kt, k h, k w), local-window size (wt, w h, w w),iterations Niter  
+
+> 2:
+
+Output: assignments {aℓ}Nℓ=1 , centroids {μu}u∈G  
+
+> 3:
+
+Kt ← ⌈ T /k t⌉, K h ← ⌈ H/k h⌉, K w ← ⌈ W/k w⌉ 
+
+> 4:
+
+wt ← min( wt, K t), w h ← min( wh, K h), w w ← min( ww, K w) 
+
+> 5:
+
+G ← [0 , K t −1] × [0 , K h −1] × [0 , K w −1]  
+
+> 6:
+
+For token coordinate ℓ = ( tℓ, h ℓ, w ℓ), let 
+
+g(ℓ) ←
+
+j tℓ
+
+> kt
+
+k
+
+,
+
+j hℓ
+
+> kh
+
+k
+
+,
+
+j wℓ
+
+> kw
+
+k 
+
+, xℓ ← Xtℓ,h ℓ,w ℓ,: 
+
+> 7:
+
+for each grid u = ( ut, u h, u w) ∈ G do  
+
+> 8:
+
+ct ← min( utkt + ⌊kt/2⌋, T − 1)  
+
+> 9:
+
+ch ← min( uhkh + ⌊kh/2⌋, H − 1)  
+
+> 10:
+
+cw ← min( uwkw + ⌊kw/2⌋, W − 1)  
+
+> 11:
+
+μu ← Xct,c h,c w ,: 
+
+> 12:
+
+for η = 1 to Niter do  
+
+> 13:
+
+zu ← 0 ∈ RD , n u ← 0 ∀u ∈ G  
+
+> 14:
+
+for each grid u = ( ut, u h, u w) ∈ G in parallel do  
+
+> 15:
+
+¯ut ← clip( ut − ⌊ wt/2⌋, 0, K t − wt) 
+
+> 16:
+
+¯uh ← clip( uh − ⌊ wh/2⌋, 0, K h − wh) 
+
+> 17:
+
+¯uw ← clip( uw − ⌊ ww/2⌋, 0, K w − ww) 
+
+> 18:
+
+N (u) ← { (¯ ut + δt, ¯uh + δh, ¯uw + δw) | δt ∈ [0 , w t), δ h ∈ [0 , w h), δ w ∈ [0 , w w)} 
+
+> 19:
+
+for each token coordinate ℓ = ( tℓ, h ℓ, w ℓ) such that g(ℓ) = u do  
+
+> 20:
+
+aℓ ← arg min v∈N (u) ∥xℓ − μv ∥22 
+
+> 21:
+
+zaℓ ← zaℓ + xℓ, naℓ ← naℓ + 1 ▷ atomic accumulation  
+
+> 22:
+
+for each grid u ∈ G do  
+
+> 23:
+
+μu ←
+
+zu/n u, nu > 0,μu, nu = 0  
+
+> 24:
+
+return {aℓ}Nℓ=1 , {μu}u∈G 
+
+16 B LLMs as Judge Results 
+
+B.1 Evaluation Protocol 
+
+Inspired by recent LLM-as-a-judge evaluation approaches [ 69 , 5], we use an LLM judge to comple-ment automatic metrics with perceptual assessments of generated videos. We use a subset of VBench prompts as the text conditions and ask the judge to evaluate each generated video along three axes: 
+
+subject consistency , aesthetic quality , and temporal flickering . The judge assigns a score from 1 to 10 for each axis and returns a JSON object, from which we compute the overall LLM-Judge score as the average of the three scores. The detailed prompt is provided in Section B.3. Table 3: Quantitative comparison across different dimensions for video generation tasks. Bold and underline denote the best and second-best results among sparse methods, respectively. 
+
+Methods Subject Cons. ↑ Aesthetic Qual. ↑ Temp. Flickering ↑ Overall Score ↑
+
+Wan 2.2 (14B, Image-to-Video, 81 Frames, 720p, n =75,600 )Full Attention 7.49 8.68 8.55 8.24 SpargeAttn 7.56 8.13 8.64 8.11 SVG2 7.40 8.27 8.24 7.97 HVA 7.42 8.43 8.60 8.15 
+
+HVA-Flash 7.35 8.20 8.30 7.95 
+
+Wan 2.2 (14B, Text-to-Video, 81 Frames, 720p, n =75,600 )Full Attention 9.29 8.89 9.42 9.20 SpargeAttn 9.21 8.62 9.41 9.08 SVG2 9.19 8.84 9.42 9.15 HVA 9.48 8.95 9.62 9.35 
+
+HVA-Flash 9.20 8.89 9.45 9.18 
+
+HunyuanVideo (13B, Text-to-Video, 129 Frames, 720p, n =118,800 )Full Attention 9.09 8.65 9.41 9.05 SpargeAttn 8.88 8.72 9.28 8.96 SVG2 8.88 8.69 9.10 8.89 HVA 9.15 8.84 9.55 9.18 
+
+HVA-Flash 8.90 8.71 9.15 8.92 
+
+B.2 Detailed Evaluation Result 
+
+Table 3 reports the LLM-Judge results averaged over all evaluated samples. Overall, HyperVAtten-tion achieves the best overall score among sparse methods across all settings, while Ours-Flash maintains competitive perceptual quality under a more aggressive speed-oriented configuration. These results suggest that our method preserves video quality beyond frame-level fidelity metrics. 17 B.3 Evaluation Prompt 
+
+1. System Role - You are an expert Video Quality Assurance Engineer and Cinematographer. Your task is to evaluate an AI-generated video based on specific technical and artistic dimensions. You must provide objective, critical scores from 1 (Poor) to 10 (Excellent). 
+
+> ,→
+> ,→
+
+2. Evaluation Process - Analyze the video frame-by-frame to detect inconsistencies. - Assess the motion dynamics and temporal stability. - Score each dimension based on the strict criteria provided. - Calculate the final average. 3. Strict Evaluation Criteria Dimension | Description & Scoring Guidelines 1. Subject Consistency | Does the main subject maintain its identity (features, clothing, shape) throughout the entire duration? Penalty for morphing. ,→
+
+2. Aesthestic Quality| General visual appeal, composition, lighting, and "cinematic" feel. 3. Temporal Flickering | Presence of high-frequency noise or "flashing" brightness/texture changes between frames. ,→
+
+4. Required Output Format You MUST ONLY output a single, valid JSON object. Do NOT include any introductory text, analysis, or conversational response outside of the JSON. ,→
+
+The JSON object MUST contain three keys: overall_score, and metrics. - overall_score: the simple average of all the metric scores - metrics: a dictionary containing the required metrics and their scores (Type: Object) Required JSON Schema: {"overall_score": 0.0, "metrics": { "subject_consistency": 0, "aesthetic_quality": 0, "temporal_flickering": 0, }, }Your response to the following video input MSUT be this JSON object and nothing else. 
+
+## C Visual Results 
+
+Figs. 6 to 8 show additional qualitative comparisons on Wan2.2 Image-to-Video, Wan2.2 Text-to-Video, and HunyuanVideo Text-to-Video. Across all examples, Full Attention, Ours, and Ours-Flash produce nearly indistinguishable generations, preserving the same scene layout, subject appearance, and motion patterns. These results show that our sparse attention variants maintain the visual fidelity of full attention while enabling more efficient inference. 18 Full attention Ours Ours -Flash Full attention Ours Ours -Flash Full attention Ours Ours -Flash Full attention Ours Ours -Flash Figure 6: Visualization of generated videos from Wan2.2 on Image-to-Video generation. 19 Full attention Ours Ours -Flash Full attention Ours Ours -Flash  Full attention Ours Ours -Flash  Full attention Ours Ours -Flash Figure 7: Visualization of generated videos from Wan2.2 on Text-to-Video generation. 20 Full attention Ours Ours -Flash Full attention Ours Ours -Flash Full attention Ours Ours -Flash Full attention Ours Ours -Flash Figure 8: Visualization of generated videos from HunyuanVideo on Text-to-Video generation. 21
