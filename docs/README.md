@@ -6,80 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-07
-- 运行时间：2026-07-07 22:11:39 UTC
+- 最新运行日期：2026-07-08
+- 运行时间：2026-07-08 20:56:35 UTC
 - 运行状态：成功
-- 本次总论文数：20
-- 精读区：8
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日精读8篇、速读12篇，聚焦高效缓存压缩与前沿模型技术。最值得关注：KVpop以10分满分提出预测性在线剪枝的Key-Value缓存压缩，Gemma 4技术报告（9分）揭示新一代模型架构细节。建议优先精读这两篇高价值论文，速读中可关注MemLeak关于多模态智能体记忆信息泄露的诊断方法。
-- 详情：[/202607/07/README](/202607/07/README)
+今日推荐19篇论文，聚焦长上下文LLM的KV缓存压缩，其中两篇精读均获满分评价。  
+最值得关注的方向：FreqDepthKV和DepthWeave-KV两种高效缓存压缩方法，显著提升长上下文推理效率。  
+建议普通读者优先精读这两篇论文，并对比其压缩策略与性能优化细节。
+- 详情：[/202607/08/README](/202607/08/README)
 
 ### 精读区论文标签
-1. [KVpop -- Key-Value Cache Compression with Predictive Online Pruning](/202607/07/2607.05061v1-kvpop----key-value-cache-compression-with-predictive-online-pruning)  
+1. [FreqDepthKV: Frequency-Guided Depth Sharing for Robust KV Cache Compression in Long-Context LLM Inference](/202607/08/2607.06519v1-freqdepthkv-frequency-guided-depth-sharing-for-robust-kv-cache-compression-in-long-context-llm-inference)  
    标签：评分：10.0/10、query:sparse-attn
-   evidence：学习式KV缓存逐出策略用于压缩
-2. [Gemma 4 Technical Report](/202607/07/2607.02770v1-gemma-4-technical-report)  
+   evidence：通过频率引导的深度共享进行KV缓存压缩
+2. [DepthWeave-KV: Token-Adaptive Cross-Layer Residual Factorization for Long-Context KV Cache Compression](/202607/08/2607.06523v1-depthweave-kv-token-adaptive-cross-layer-residual-factorization-for-long-context-kv-cache-compression)  
+   标签：评分：10.0/10、query:sparse-attn
+   evidence：基于token自适应跨层残差分解的KV缓存压缩
+3. [Propose and Attend: Training-free MLLM Grounding Confidence via Multi-Token Localized Attention](/202607/08/2607.05978v1-propose-and-attend-training-free-mllm-grounding-confidence-via-multi-token-localized-attention)  
    标签：评分：9.0/10、query:multimodal
-   evidence：原生多模态语言模型，统一无编码器架构和思考模式
-3. [Training Hybrid Block Diffusion Language Models with Partial Bidirectionality](/202607/07/2607.02805v1-training-hybrid-block-diffusion-language-models-with-partial-bidirectionality)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：使用混合块扩散和高效注意力解决长文本生成中的KV缓存带宽瓶颈
-4. [Learning Taxonomic Trees with Hierarchical Representation Regularization for Large Multimodal Models](/202607/07/2607.02909v1-learning-taxonomic-trees-with-hierarchical-representation-regularization-for-large-multimodal-models)  
+   evidence：通过多令牌局部注意力实现无需训练的多模态大模型接地幻觉检测
+4. [Bridging Physical Reasoning and Task Generalization via Visual Action Outcome Reasoning Alignment](/202607/08/2607.06522v1-bridging-physical-reasoning-and-task-generalization-via-visual-action-outcome-reasoning-alignment)  
    标签：评分：9.0/10、query:multimodal
-   evidence：大多模态模型架构中的层次表示正则化
-5. [Hierarchical Sparse Attention Done Right: Toward Infinite Context Modeling](/202607/07/2607.02980v1-hierarchical-sparse-attention-done-right-toward-infinite-context-modeling)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：用于无限上下文的分层地标稀疏注意力
-6. [HyperVAttention: Efficient Sparse Attention with Spatio-Temporal Clustering for Video Diffusion](/202607/07/2607.03012v1-hypervattention-efficient-sparse-attention-with-spatio-temporal-clustering-for-video-diffusion)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：用于视频扩散模型的稀疏注意力机制
-7. [ELiTeFormer: An Efficient Transformer for FPGAs](/202607/07/2607.03652v1-eliteformer-an-efficient-transformer-for-fpgas)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：统一混合线性注意力和三元精度，实现12.8倍KV缓存压缩
-8. [SeeMe: Mitigating Hallucinations in Large Vision-Language Models through Effective Visual Token Engineering](/202607/07/2607.04163v1-seeme-mitigating-hallucinations-in-large-vision-language-models-through-effective-visual-token-engineering)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：通过视觉标记工程缓解大视觉语言模型幻觉
+   evidence：解决视觉语言模型中的幻觉链式推理
+5. [Latent Visual Cache for Video Reasoning](/202607/08/2607.02607v1-latent-visual-cache-for-video-reasoning)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：用于视频推理的潜在视觉缓存保持视觉记忆
+6. [WorldBagel: Uncovering the Power of Unified Multimodal Models for Vision-Language-Action-World Modeling](/202607/08/2607.03461v1-worldbagel-uncovering-the-power-of-unified-multimodal-models-for-vision-language-action-world-modeling)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：统一多模态视觉-语言-动作-世界模型
+7. [TacReasoner: A Dynamic Tactile-Language Framework for Interactive Reasoning in Real-World Scenarios](/202607/08/2607.05131v1-tacreasoner-a-dynamic-tactile-language-framework-for-interactive-reasoning-in-real-world-scenarios)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：通过显式推理机制解决触觉基础模型中的幻觉问题
 
 ### 速读区论文标签
-1. [MemLeak: Diagnosing Information Leaks in Multimodal Agent Memory](/202607/07/2606.29788v1-memleak-diagnosing-information-leaks-in-multimodal-agent-memory)  
+1. [Responsibility Distribution Estimation in Ego-View Accident Videos with Multimodal Large Language Models](/202607/08/2607.03591v1-responsibility-distribution-estimation-in-ego-view-accident-videos-with-multimodal-large-language-models)  
    标签：评分：8.0/10、query:multimodal
-   evidence：通过内存泄漏检测多模态幻觉
-2. [DART: Difficulty-Adaptive Routing for Zero-Shot Video Temporal Grounding](/202607/07/2607.00672v1-dart-difficulty-adaptive-routing-for-zero-shot-video-temporal-grounding)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：视频时间定位推理中的难度自适应路由
-3. [Diversity-aware View Partitioning for Scalable VGGT](/202607/07/2607.01885v2-diversity-aware-view-partitioning-for-scalable-vggt)  
+   evidence：使用多模态大模型理解前视事故视频
+2. [SAF3R: Dynamic Sparse Attention for Feed-Forward 3D Reconstruction Transformers](/202607/08/2607.03612v1-saf3r-dynamic-sparse-attention-for-feed-forward-3d-reconstruction-transformers)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：通过多样性感知视角划分降低VGGT的二次注意力成本
-4. [Latent Visual Cache for Video Reasoning](/202607/07/2607.02607v1-latent-visual-cache-for-video-reasoning)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：用于长上下文视频推理的潜在视觉缓存
-5. [ProLaViT: Learning Progressive Latent Visual Thoughts in Structured Latent Space](/202607/07/2607.02907v1-prolavit-learning-progressive-latent-visual-thoughts-in-structured-latent-space)  
+   evidence：用于前馈3D重建Transformer的动态稀疏注意力
+3. [RL Forgets! Towards Continual Policy Optimization](/202607/08/2607.04364v1-rl-forgets-towards-continual-policy-optimization)  
    标签：评分：8.0/10、query:multimodal
-   evidence：渐进式潜在视觉思维用于多步视觉推理
-6. [SAB-LVLM: Significance-Aware Binarization for Large Vision-Language Models](/202607/07/2607.01876v1-sab-lvlm-significance-aware-binarization-for-large-vision-language-models)  
+   evidence：多模态推理和持续学习
+4. [Transferability Between Understanding and Generation in Unified Multimodal Models](/202607/08/2607.04423v1-transferability-between-understanding-and-generation-in-unified-multimodal-models)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：研究统一多模态架构中跨任务迁移性
+5. [VideoSearcher: Empowering Video Deep Research with Multi-Tool Agentic Reasoning via Reinforcement Learning](/202607/08/2607.02927v1-videosearcher-empowering-video-deep-research-with-multi-tool-agentic-reasoning-via-reinforcement-learning)  
+   标签：评分：7.0/10、query:mm-cot
+   evidence：多工具代理推理实现视频深度研究，包含时间定位和多模态搜索
+6. [BVS: Bayesian Visual Search with Multimodal Large Language Model for Fine-grained Perception](/202607/08/2607.03184v1-bvs-bayesian-visual-search-with-multimodal-large-language-model-for-fine-grained-perception)  
    标签：评分：7.0/10、query:multimodal
-   evidence：面向大型视觉语言模型的显著性感知二值化
-7. [Show Me Examples: Inferring Visual Concepts from Image Sets](/202607/07/2607.02402v2-show-me-examples-inferring-visual-concepts-from-image-sets)  
+   evidence：贝叶斯视觉搜索实现超高分辨率图像细粒度感知
+7. [Token-Based Affordance Grounding with Large Vision-Language Models](/202607/08/2607.03595v1-token-based-affordance-grounding-with-large-vision-language-models)  
    标签：评分：7.0/10、query:multimodal
-   evidence：使用VLM从图像集推断视觉概念
-8. [S-EMBER: A Large-Scale Benchmark for Streaming Egocentric Memory Retrieval](/202607/07/2607.02689v1-s-ember-a-large-scale-benchmark-for-streaming-egocentric-memory-retrieval)  
+   evidence：利用大视觉语言模型进行可操作区域定位
+8. [RADIO1D: Elastic Representations for Condensed Vision Modeling](/202607/08/2607.03624v1-radio1d-elastic-representations-for-condensed-vision-modeling)  
    标签：评分：7.0/10、query:multimodal
-   evidence：面向多模态AI的流式自我中心记忆检索基准
-9. [WorldBagel: Uncovering the Power of Unified Multimodal Models for Vision-Language-Action-World Modeling](/202607/07/2607.03461v1-worldbagel-uncovering-the-power-of-unified-multimodal-models-for-vision-language-action-world-modeling)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：用于视觉-语言-动作-世界建模的统一多模态模型
-10. [Thinking Before Retrieving: Robust Zero-Shot Composed Image Retrieval via Strategic Planning and Self-Criticism](/202607/07/2606.31222v1-thinking-before-retrieving-robust-zero-shot-composed-image-retrieval-via-strategic-planning-and-self-criticism)  
+   evidence：将视觉特征压缩为一维token序列以提升VLM效率
+9. [QSVideo: Query-Conditioned Semantic Temporal Retrieval for Video Understanding](/202607/08/2607.04559v1-qsvideo-query-conditioned-semantic-temporal-retrieval-for-video-understanding)  
    标签：评分：6.0/10、query:multimodal
-   evidence：具有规划与自我批评的零样本组合图像检索
-11. [Approximate Attention Weighting for Sustainable FPGA-Based Vision Transformer Inference](/202607/07/2607.01798v2-approximate-attention-weighting-for-sustainable-fpga-based-vision-transformer-inference)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：同v1
-12. [From Geometric Labels to Semantic Understanding of Indoor Building Components Using Multimodal Large Language Models](/202607/07/2607.03661v1-from-geometric-labels-to-semantic-understanding-of-indoor-building-components-using-multimodal-large-language-models)  
+   evidence：查询条件的时间视频检索用于多模态理解
+10. [TORINO: Token Reduction via Interpretable Concept Overlap in Vision-Language Models](/202607/08/2607.04593v1-torino-token-reduction-via-interpretable-concept-overlap-in-vision-language-models)  
    标签：评分：6.0/10、query:multimodal
-   evidence：点云多模态理解
+   evidence：视觉语言模型中的视觉令牌减少
+11. [Enhancing Large Multimodal Models in Key Information Extraction via Scene-Aware Document Synthesis](/202607/08/2607.04636v1-enhancing-large-multimodal-models-in-key-information-extraction-via-scene-aware-document-synthesis)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：场景感知文档合成增强多模态关键信息抽取
+12. [Modality Relevance is not Modality Utility: Post-hoc Selective Modality Escalation for Cost-Aware Multimodal RAG](/202607/08/2607.05438v1-modality-relevance-is-not-modality-utility-post-hoc-selective-modality-escalation-for-cost-aware-multimodal-rag)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：基于成本意识的多模态RAG模态选择
 
 
 <div class="dpr-home-promo-card">
