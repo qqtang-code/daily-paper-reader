@@ -6,76 +6,72 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-11
-- 运行时间：2026-07-11 21:26:47 UTC
+- 最新运行日期：2026-07-12
+- 运行时间：2026-07-12 21:12:55 UTC
 - 运行状态：成功
-- 本次总论文数：18
-- 精读区：6
+- 本次总论文数：16
+- 精读区：4
 - 速读区：12
 
 ### 今日简报（AI）
-今日共处理18篇论文，精读6篇、速读12篇，重点聚焦大模型缓存压缩与视频推理分割。  
-最值得精读《KVpop -- Key-Value Cache Compression》与《Key to Going Linear》两篇，分别提出预测性在线剪枝和线性化分析方法，均获9.0高分。  
-建议读者优先关注token压缩、KV缓存优化方向，可快速跟进当前大模型效率提升的前沿思路。
-- 详情：[/202607/11/README](/202607/11/README)
+今日精选16篇，重点聚焦语音LLM的KV缓存压缩与智能体多模态检索两项突破。
+
+最值得关注：Compress the Cache, Not the Speech Embedding提出不压缩语音嵌入而压缩KV缓存的创新思路；MMAgent-R^2通过学习排序与拒绝机制显著提升Agentic多模态RAG效果。
+
+建议深入对比KV压缩对语音实时推理的资源与延迟影响，并探索排序-拒绝策略在其他多模态场景的迁移潜力。
+- 详情：[/202607/12/README](/202607/12/README)
 
 ### 精读区论文标签
-1. [KVpop -- Key-Value Cache Compression with Predictive Online Pruning](/202607/11/2607.05061v2-kvpop----key-value-cache-compression-with-predictive-online-pruning)  
+1. [Compress the Cache, Not the Speech Embedding: KV Compression for Efficient Speech LLMs](/202607/12/2607.06827v1-compress-the-cache-not-the-speech-embedding-kv-compression-for-efficient-speech-llms)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：基于未来注意力训练目标的KV缓存驱逐策略
-2. [The Key to Going Linear: Analysis-Driven Transformer Linearization](/202607/11/2607.07706v1-the-key-to-going-linear-analysis-driven-transformer-linearization)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：Transformer线性化与缓存路由及短卷积
-3. [Uncertainty-gated selection for block-sparse attention](/202607/11/2607.07724v1-uncertainty-gated-selection-for-block-sparse-attention)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：带不确定性门控的块稀疏注意力
-4. [Transferability Between Understanding and Generation in Unified Multimodal Models](/202607/11/2607.04423v1-transferability-between-understanding-and-generation-in-unified-multimodal-models)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：统一多模态模型架构，在理解与生成之间迁移
-5. [Sparse Delta Memory: Scaling the State of Linear RNNs through Sparsity](/202607/11/2607.07386v1-sparse-delta-memory-scaling-the-state-of-linear-rnns-through-sparsity)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：线性RNN状态稀疏寻址方案
-6. [DeltaV: Thinking with Visual State Updates in Unified Large Multimodal Models](/202607/11/2607.08434v1-deltav-thinking-with-visual-state-updates-in-unified-large-multimodal-models)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：统一大多模态模型，生成视觉更新令牌而非全图
+   evidence：语音大语言模型的KV缓存压缩，LLM内部学习池化
+2. [MMAgent-R$^2$: Learning to Rerank and Reject for Agentic mRAG](/202607/12/2607.07383v1-mmagent-r2-learning-to-rerank-and-reject-for-agentic-mrag)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：多模态检索增强生成，知识库视觉问答，重排序与拒绝处理干扰项
+3. [Cognitive-structured Multimodal Agent for Multimodal Understanding, Generation, and Editing](/202607/12/2607.08497v1-cognitive-structured-multimodal-agent-for-multimodal-understanding-generation-and-editing)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：用于理解、生成和编辑的具有情景记忆的多模态智能体
+4. [BUS: Brain-Inspired Unsupervised Self-Reflection for Advanced Multimodal Reasoning](/202607/12/2607.07361v1-bus-brain-inspired-unsupervised-self-reflection-for-advanced-multimodal-reasoning)  
+   标签：评分：8.0/10、query:mm-cot
+   evidence：脑启发的自反思多模态推理
 
 ### 速读区论文标签
-1. [STAC: Selective Spatiotemporal Aggregation and Compression for Video Reasoning Segmentation](/202607/11/2607.02922v1-stac-selective-spatiotemporal-aggregation-and-compression-for-video-reasoning-segmentation)  
+1. [Bridging Interleaved Multi-Modal Reasoning as a Unified Decision Process](/202607/12/2607.03748v1-bridging-interleaved-multi-modal-reasoning-as-a-unified-decision-process)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：交点多模态推理的统一决策过程
+2. [Comparative Study of Domain-adapted VLMs for General Document Visual Question Answering](/202607/12/2607.07179v1-comparative-study-of-domain-adapted-vlms-for-general-document-visual-question-answering)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：文档视觉问答中VLM的对比研究
+3. [FourierQK: Spectral Preprocessing of Query-Key Projections Improves Transformer Attention](/202607/12/2607.07478v1-fourierqk-spectral-preprocessing-of-query-key-projections-improves-transformer-attention)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：视频任务中高效自注意力的令牌压缩
-2. [$C^3$ASD: Multi-Level Consistency-Driven Representation Learning](/202607/11/2607.03018v1-c3asd-multi-level-consistency-driven-representation-learning)  
+   evidence：频谱预处理提升注意力效率
+4. [Dual Latent Memory in Vision-Language-Action Models for Robotic Manipulation](/202607/12/2607.07608v1-dual-latent-memory-in-vision-language-action-models-for-robotic-manipulation)  
    标签：评分：7.0/10、query:multimodal
-   evidence：多级一致性驱动的鲁棒视听表示学习框架
-3. [OmniFocus: Query-Guided Modality-Balanced Token Compression for Omni-Modal Large Language Models](/202607/11/2607.03050v1-omnifocus-query-guided-modality-balanced-token-compression-for-omni-modal-large-language-models)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：查询引导的模态平衡令牌压缩用于全模态大语言模型
-4. [HyperParallel-Mpipe: A Composable Algebra System for Optimizing MLLM Training over Supernode Clusters](/202607/11/2607.03229v1-hyperparallel-mpipe-a-composable-algebra-system-for-optimizing-mllm-training-over-supernode-clusters)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：多模态大模型训练优化与异构并行调度
-5. [Pathways of Visual Information Flow in Vision-Language Models](/202607/11/2607.03358v1-pathways-of-visual-information-flow-in-vision-language-models)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：研究VLM中视觉信息路由以促进多模态理解
-6. [Light-Omni: Reflex over Reasoning in Agentic Video Understanding with Long-Term Memory](/202607/11/2607.05511v1-light-omni-reflex-over-reasoning-in-agentic-video-understanding-with-long-term-memory)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：多模态视频推理与长期记忆
-7. [Full-Stack FP4: Stable LLM Pretraining with Quantized Projections, Optimizers, and Attention](/202607/11/2607.04422v1-full-stack-fp4-stable-llm-pretraining-with-quantized-projections-optimizers-and-attention)  
+   evidence：VLA模型中的潜在记忆机制用于多模态推理
+5. [Aura: Consistent Multi-Subject Video Generation via VLM-Grounded Semantic Alignment](/202607/12/2607.04311v1-aura-consistent-multi-subject-video-generation-via-vlm-grounded-semantic-alignment)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：基于VLM的多主题视频生成语义对齐
+6. [Hierarchical Evidence-Driven Reasoning for Long Document Understanding](/202607/12/2607.04625v1-hierarchical-evidence-driven-reasoning-for-long-document-understanding)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：层级证据驱动的多模态RAG用于长文档理解
+7. [ResonatorLM: Causal Resonant Field Mixing for Efficient Long-Context Language Modelin](/202607/12/2607.05583v1-resonatorlm-causal-resonant-field-mixing-for-efficient-long-context-language-modelin)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：使用量化注意力进行稳定的LLM预训练
-8. [Entropy-Guided Tensor Compression for Multimodal Federated Learning on Edge Devices](/202607/11/2607.06651v1-entropy-guided-tensor-compression-for-multimodal-federated-learning-on-edge-devices)  
+   evidence：物理启发的注意力替代机制用于高效长上下文建模
+8. [MonoIR-RS: Infrared Remote Sensing Vision-Language Learning with CLIP and VLM Adaptation](/202607/12/2607.06552v1-monoir-rs-infrared-remote-sensing-vision-language-learning-with-clip-and-vlm-adaptation)  
    标签：评分：6.0/10、query:multimodal
-   evidence：多模态联邦学习的张量压缩
-9. [NativeMEM: Native Memory Compression for Long-Horizon Robotic Manipulation](/202607/11/2607.06678v1-nativemem-native-memory-compression-for-long-horizon-robotic-manipulation)  
+   evidence：红外遥感视觉语言学习
+9. [NativeMEM: Native Memory Compression for Long-Horizon Robotic Manipulation](/202607/12/2607.06678v1-nativemem-native-memory-compression-for-long-horizon-robotic-manipulation)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：原生内存压缩用于长时视觉历史
+10. [Making Implicit Preservation Intent Explicit in Conversational Image Editing](/202607/12/2607.07051v1-making-implicit-preservation-intent-explicit-in-conversational-image-editing)  
    标签：评分：6.0/10、query:multimodal
-   evidence：多模态VLA模型的原生记忆压缩
-10. [General Incomplete Multimodal Learning via Dynamic Quality Perception](/202607/11/2607.06943v1-general-incomplete-multimodal-learning-via-dynamic-quality-perception)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：对缺失模态和模态内退化鲁棒的多模态学习
-11. [Comparative Study of Domain-adapted VLMs for General Document Visual Question Answering](/202607/11/2607.07179v1-comparative-study-of-domain-adapted-vlms-for-general-document-visual-question-answering)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：视觉语言模型在文档视觉问答上的比较研究
-12. [LEEVLA: Seeing What Matters in Latent Environment Evolution for Vision-Language-Action](/202607/11/2607.08182v1-leevla-seeing-what-matters-in-latent-environment-evolution-for-vision-language-action)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：视觉-语言-动作架构与动态优先化
+   evidence：对话图像编辑中的幻觉缓解
+11. [TF-Engram: A Train-Free Engram with SSD-Backed Memory for Large Language Models](/202607/12/2607.07388v1-tf-engram-a-train-free-engram-with-ssd-backed-memory-for-large-language-models)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：大语言模型的内存压缩与SSD层次存储
+12. [Prompt Compression via Activation Aggregation](/202607/12/2607.08399v1-prompt-compression-via-activation-aggregation)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：通过激活聚合的提示压缩，类似于KV缓存压缩，减少内存和计算
 
 
 <div class="dpr-home-promo-card">

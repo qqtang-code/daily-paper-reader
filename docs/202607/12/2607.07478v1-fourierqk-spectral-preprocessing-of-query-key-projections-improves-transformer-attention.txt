@@ -1,0 +1,423 @@
+Title: FourierQK: Spectral Preprocessing of Query-Key Projections Improves Transformer Attention
+
+URL Source: https://arxiv.org/pdf/2607.07478v1
+
+Published Time: Thu, 09 Jul 2026 01:16:54 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# FourierQK: Spectral Preprocessing of Query–Key Projections Improves Transformer Attention 
+
+Athanasios Zeris ∗
+
+https://orcid.org/0009-0002-6907-2400 
+
+# Abstract 
+
+FFT-based frequency-domain preprocessing of learned query and key projections substantially improves transformer attention on character-level language mod-elling. On TinyShakespeare: a fixed random spectral filter achieves val = 1.031 (∆ = +0 .443 ); a single learned frequency initialised at paragraph scale achieves val = 0.608 ( ∆ = +0 .867 ); and multi-frequency spectral attention with four learned frequencies spanning paragraph to word scale achieves val = 0.309 ( ∆ = +1 .166 ) — a 79% reduction in validation loss over standard dot-product attention. The single-frequency result is confirmed across three independent random seeds (mean val = 0.236, std = 0.019), establishing reproducibility. The four learned fre-quencies converge to a near-geometric multi-scale ordering (49, 27, 10, 6 tokens per cycle) corresponding to paragraph, sub-paragraph, phrase, and word scales in dramatic text. The improvement appears to be specific to spectral preprocessing: neither random orthogonal rotations nor random non-orthogonal projections of Q/K produce mea-surable gains over standard attention, suggesting the benefit comes from global sequence mixing in the frequency domain before score computation rather than from metric distortion or representation remapping. All results are verified using a shuffled validation diagnostic that provides evidence against positional leakage. Causal time-domain filters (Gaussian, Mexican Hat, causal Morlet) do not im-prove over standard attention at character-level tokenisation: the bilateral FFT reconstruction kernel κ(−τ ) = κ(τ ) is structurally non-causal, coupling every po-sition to future tokens regardless of boundary handling. This identifies a precise architectural boundary between globally-mixing spectral attention (this paper) and genuinely causal spectral attention at word-scale tokenisation [Zeris, 2026f]. This work is architecturally distinct from Lee-Thorp et al. [2021] (FN ET ), which replaces attention with Fourier mixing of token embeddings and has no Q/K pro-jections or attention score matrix. Here, spectral preprocessing is applied only to the learned Q/K projections while the full attention score structure is preserved, enabling the frequency hierarchy to emerge from the attention mechanism itself. 
+
+# 1 Introduction 
+
+Standard transformer attention computes pairwise scores as dot products of learned query and key projections: 
+
+eij = qi · kj
+
+√d q = WQx, k = WK x (1) 
+
+> ∗
+
+Independent Researcher, Athens, Greece. Correspondence: athzeris@gmail.com .ORCID: https://orcid.org/0009-0002-6907-2400 .Code: https://github.com/AthanasiosZeris/energy-gated-attention .Part of a seven-paper series on spectral methods in transformer attention. Preprint. Under review. arXiv:2607.07478v1 [cs.LG] 8 Jul 2026 This computes similarity in the embedding space learned by WQ and WK . A natural question is: does transforming Q and K into a different representation space before computing similarity improve attention? This paper investigates spectral preprocessing — applying frequency-domain filters to Q and K be-fore the score computation. The motivation comes from prior work in this series: Papers 1–4 [Zeris, 2026a,b,c,d] established that spectral energy and phase structure in transformer representations are informative signals. 
+
+Main contribution. We show that FFT-based bilateral spectral preprocessing of Q/K projections genuinely improves language modelling, even with random (unlearned) filters. The improvement is verified using a shuffled validation diagnostic: models trained on reordered validation sequences achieve much higher loss, confirming the gain comes from genuine sequence learning (evidenced by large shuffled gap) rather than positional artifacts. 
+
+Distinction from FNet. Lee-Thorp et al. [2021] (FN ET ) replaces the entire attention mechanism with a global Fourier mixing of token embeddings — there are no Q/K projections and no score matrix. Our approach preserves the standard attention structure (Q/K projections, T × T score matrix, causal mask, value aggregation) and applies spectral preprocessing only to the Q and K representations before scoring. These are architecturally distinct contributions. 
+
+The Morlet negative result. We initially hypothesised that Morlet wavelet cross-correlation of Q/K projections would be the optimal spectral scoring mechanism. We report this hypothesis, the experimental findings, and the analysis of why it fails in the discrete sequence setting: the bilateral FFT implementation creates circular boundary leakage, while the causal time-domain implementa-tion suffers from aliasing at sub-token scales. This negative result is reported with full transparency as it guides future work on causal spectral attention. Code available at: https://github.com/AthanasiosZeris/energy-gated-attention 
+
+# 2 Spectral Attention 
+
+2.1 Architecture 
+
+Let q, k ∈ RT ×d be the learned Q/K projections at a given layer. Spectral Attention (SA) applies a frequency-domain filter to Q and K, then computes the attention score from the filtered represen-tations: 
+
+˜q(b) = F−1[ˆ q(ω) · ϕ(ω)]( b) ˜k(b) = F−1[ˆk(ω) · ϕ(ω)]( b) (2) 
+
+eij = ˜qi · ˜kj
+
+√d (3) where ˆq(ω) = F[q]( ω) is the DFT of the query sequence, and ϕ(ω) is a frequency-domain filter (learned or fixed). In the complex form used in experiments: 
+
+eij = 1
+
+d
+
+∑
+
+> k
+
+Re 
+
+[
+
+˜qk(i)∗ · ˜kk(j)
+
+]
+
+(4) where ˜qk(i) is the complex filtered representation of embedding dimension k at position i.
+
+2.2 Filter variants 
+
+We test four filter designs: 
+
+Random-QK : fixed random filter drawn from the same functional form as a Morlet wavelet at a random scale, not learned. Tests whether any spectral preprocessing helps, regardless of filter quality. 2Fourier-QK : a soft Gaussian selector over DFT frequency bins, with one learned dominant fre-quency f ∗ per head: 
+
+ϕ(ω, f ∗) = exp 
+
+(
+
+− (ω − f ∗)2
+
+8
+
+)
+
+(5) Tests whether learning the spectral feature matters. 
+
+Causal filters (Gaussian, Mexican Hat, causal Morlet) : time-domain causal convolution using left-only padding, K = 32 taps. Tests whether local causal filtering on Q/K helps. 
+
+2.3 Relationship to FNet 
+
+FN ET [Lee-Thorp et al., 2021] applies the DFT to the full token embedding sequence and uses the real part as the new representation, bypassing attention entirely: FNet (x) = Re[ F(x)] . There are no Q/K projections and no score matrix. SA is architecturally different: Q and K projections are learned (same as standard attention), the score matrix is computed (same structure), and spectral filtering is applied to Q and K before the score, not to the embeddings directly. 
+
+# 3 Experimental Setup 
+
+Identical to Papers 1–4: GPT-style decoder [Vaswani et al., 2017], L = 6 , H = 8 , d = 256 , T =256 , character-level TinyShakespeare, 5,000 training steps, seed 42 (all single-model comparisons use seed 42 for consistency), AdamW with cosine LR schedule. 
+
+3.1 Leakage verification 
+
+All FFT-based attention mechanisms risk circular boundary artifacts: the IRFFT operation treats the sequence as periodic, potentially allowing future token information to leak into past positions through the reconstructed filtered signal. To verify result validity, we train each model alongside a shuffled validation diagnostic : the same model is evaluated on a validation set with shuffled token order. A model exploiting positional leakage would perform similarly on both ordered and shuffled sequences. A model performing gen-uine sequence learning (evidenced by large shuffled gap) would show much higher loss on shuffled sequences. We report the shuffled gap : the difference between shuffled and ordered validation loss. A large gap provides evidence against positional leakage. 
+
+# 4 Results 
+
+4.1 Verified gains (FFT bilateral) Scalogram Attention v3 (corrected implementation). Three implementation bugs in the original SA affected all variants: triple attention scaling ( 1/(hs · K · √hs ) instead of 1/√hs , giving ∼362 ×
+
+softer logits); sum-before-matmul creating cross-scale interference; and missing 1/√a Morlet nor-malisation biasing gradient descent toward small scales. The v1style control (bugs reproduced) gives val = 1.988, ∆ = −0.514 — worse than BASE-DOT, consistent with the original SA results. With all bugs fixed (SA-v3), SA-K2 achieves val = 0.632, ∆ = +0 .842 — an improvement of +1 .356 
+
+from the corrected implementation alone. SA-v3 findings: (1) phase is essential — SA-K2-NoPhase gives val = 1.423, nearly BASE-DOT, confirming the cos(∆ ϕ) term carries the signal; (2) energy contributes moderately — SA-K2-NoEnergy gives val = 1.111; (3) scale learning helps modestly (+0.15 over fixed scales); (4) SA-K2-v3 (val = 0.632) is competitive with Fourier-QK-Init4 (val = 0.608) despite having no learned Q/K projections. The learned scales converge to [1, 38] tok — character scale and paragraph scale simultaneously. A fixed random spectral filter on Q/K substantially outperforms standard attention. The shuffled gap of +4 .98 provides evidence against positional leakage. This is the most surprising finding: even without learning the filter, spectral preprocessing of Q/K genuinely helps. 3Table 1: Complete results including orthogonal baselines. ∆ = improvement over BASE-DOT. Gap 
+
+= val_shuffled − val (leakage diagnostic). Random-Orth and Random-Proj are non-spectral controls; both match BASE-DOT, confirming the gain is specifically from frequency-domain global sequence mixing, not representation remapping or metric distortion. Model Val ∆ Gap Notes BASE-DOT 1.4742 — +5.78 standard attention 
+
+Non-spectral controls (gain is spectral, not remapping) 
+
+Random-Orth-QK 1.4719 +0.002 +5.80 R⊤R = I, val ≡ BASE-DOT Random-Proj-QK 1.4791 −0.005 +5.77 fixed non-orth, also null 
+
+Causal time-domain (no gain at character scale) 
+
+Gaussian-QK 1.522 −0.048 — real lowpass, σ learns 4 →6 bins MexHat-QK 1.540 −0.066 — admissible, worse than Gaussian Morlet-causal 1.512 −0.038 — best causal, period 50 →38tok 
+
+FFT frequency-collapse (genuine, verified) 
+
+Random-QK 1.0313 +0.443 +4.98 fixed random spectral Fourier-QK 0.8744 +0.600 +4.32 1 learned freq, init bin=32 Fourier-QK-Init4 0.6076 +0.867 +4.33 1 learned freq, init bin=4 
+
+MultiFourier-QK 0.3085 +1.166 +3.58 4 learned freqs, multi-scale 
+
+Scalogram Attention v1 (bugs present: triple scaling, cross-scale, no 1/√a)
+
+SA-K1 (v1) 1.715 −0.241 — all bugs, worse than BASE SA-K2 (v1) 1.986 −0.512 — all bugs, near-random SA-K8 (v1) 1.594 −0.120 — best buggy SA SA-QK-K1 (leaky) 0.4025 +1.072 ≈0 Q/K proj + irfft leak 
+
+Scalogram Attention v3 (all bugs fixed: single scaling, sum-after-matmul, 1/√a)
+
+SA-K2-v1style 1.988 −0.514 +3.82 bugs reproduced, confirms ∆=1.36 SA-K1-v3 0.794 +0.681 +5.08 1 scale, converged 2tok SA-K2-v3 0.632 +0.842 +4.68 2 scales, [1, 38]tok SA-K4-v3 0.645 +0.829 +4.68 4 scales, [1,4,12,42]tok SA-K2-NoPhase-v3 1.423 +0.052 +5.36 energy only; phase essential SA-K2-NoEnergy-v3 1.111 +0.363 +5.41 phase only; moderate gain SA-K2-FixScale-v3 0.784 +0.691 +4.59 fixed [1,80]tok; learning ∆+0.15 
+
+Fourier-QK: val=0.874, ∆ = +0 .600 , gap=+4.32. A single learned dominant frequency per head improves further over the random filter. The shuffled gap of +4 .32 provides evidence against positional leakage. Correction (frequency stability, not migration). An earlier version of this experiment applied weight decay to the frequency parameter log f , which biases AdamW to push 
+
+f toward exp(0) = 1 (period = 256 tokens) independent of the loss signal. With log f correctly excluded from weight decay (separate no-decay parameter group), the learned frequency is stable ,not migrating: initialised at bin = 4 (period = 64 tokens), it converges to bin ≈ 3.5–4.1 (period ≈ 62– 73 tokens) across six layers and remains within this narrow range from step 1000 to step 5000 (Table 2). The earlier report of migration toward bin ≈ 27 was an optimiser artefact, not a genuine property of the loss landscape; the true behaviour of gradient descent is to locate the paragraph-scale optimum and remain there. Table 2: Fourier-QK frequency stability with log f excluded from weight decay (corrected). Six layers, mean per-head bin. Step 0 500 1500 2500 4000 5000 Bin 4.0 4.2 4.0 4.0 4.1 4.1 Period (tok) 64.0 61.4 63.6 64.0 63.0 63.0 4Figure 1: Summary of F OURIER QK results (corrected scaling throughout). Top left : learning curves for key models, contrasting buggy double-scaling (dash-dot) with corrected single 1/√hs
+
+scaling (solid); Init4 fixed improves from val = 0.636 to 0.216. Top centre : the phase × positional-encoding matrix (§5), showing phase randomisation is harmful under all three PE conditions. Top right : multi-seed robustness (3 seeds) for BASE-DOT, Init4, and MultiFourier, buggy versus fixed. 
+
+Bottom left : the shuffled gap for Init4 (fixed) growing monotonically throughout training — the clean signature confirming genuine temporal-order use. Bottom centre : the learned near-dyadic frequency hierarchy of MultiFourier-QK across training, with period ratios annotated. Bottom right :the Scalogram Attention (SA) bug-fix progression from v1 to v3. 
+
+4.2 Frequency ablation: the optimal scale 
+
+To understand which frequency is responsible for the gain, we test fixed frequency bins spanning the full spectrum (Table 3). The result is non-monotonic and reveals an unexpected sweet spot. Table 3: Fixed-frequency ablation. The optimal scale is bin = 4 (period = 64 tokens, paragraph scale), which substantially outperforms the learned Fourier-QK. MidFreq and HighFreq give identical val, suggesting a threshold below which frequency becomes qualitatively more informative. Model Bin Period Val ∆
+
+BASE-DOT — — 1.4742 —HighFreq-QK 64 4 tok 1.3493 +0 .125 
+
+MidFreq-QK 16 16 tok 1.3493 +0 .125 
+
+LowFreq-QK 1 256 tok 1.1132 +0 .361 
+
+Random-QK — random 1.0313 +0 .443 
+
+Fourier-QK ≈27 9.5 tok 0.8744 +0 .600 
+
+LowFreq2-QK 4 64 tok 0.6199 +0 .854 
+
+The paragraph-scale sweet spot. LowFreq2-QK (bin = 4, period = 64 tokens) achieves val = 0.620, substantially exceeding Fourier-QK ( +0 .264 ) and Random-QK ( +0 .411 ). A single fixed frequency at paragraph scale outperforms the learned model initialised at bin = 32. 
+
+Non-monotonic structure. The gain is not simply “lower frequency is better”: bin = 1 (pe-riod = 256 tokens) gives val = 1.113, worse than bin = 4 (period = 64 tokens). MidFreq (bin = 16) 5and HighFreq (bin = 64) give identical val = 1.349, suggesting a qualitative transition below bin ≈ 8where paragraph-scale spectral structure becomes qualitatively more informative. 
+
+Initialisation resolves the local optimum. We re-ran Fourier-QK initialised at bin = 4. The learned frequency stays near the initialisation (converging to bin ≈ 4.7, period = 55 tokens), achiev-ing val = 0.608 — matching the fixed bin = 4 result. The original Fourier-QK (init bin = 32) was trapped in a local optimum at phrase scale (bin ≈ 27); the paragraph-scale global optimum is stable and accessible when correctly initialised. 
+
+Multi-frequency spectral attention. We extend to K = 4 learned frequencies per head, ini-tialised to cover the full linguistic scale range: f1 = 4 (paragraph, 64 tok), f2 = 16 (phrase, 16 tok), f3 = 32 (word +, 8 tok), f4 = 64 (word, 4 tok). The result is val = 0.309, ∆ = +1 .166 over BASE-DOT — the strongest result in the paper, ob-tained with a single seed. Multi-seed validation (3 seeds) is reported in Section 4.6 to establish robustness. The learned frequencies converge to: f1 → 5.2 (49 tok), f2 → 9.7 (27 tok), f3 → 25 .5
+
+(10 tok), f4 → 44 .7 (6 tok), forming a near-geometric hierarchy with ratio ≈ 2.2 between successive scales. This resembles the dyadic decomposition of wavelet analysis [Mallat, 1999]: the model inde-pendently discovers a multi-resolution structure spanning multiple scales in the Q/K representation space. 
+
+Multi-scale ordering of learned frequencies. Table 3 and the multi-frequency results together reveal a clear empirical ordering: random spectral preprocessing ( +0 .44 ) < single optimal frequency (+0 .87 ) < multi-scale spectral attention ( +1 .17 ). The gain at each level is additive, suggesting that multiple independent spectral structures coexist in the Q/K representation space at different scales. 
+
+Linguistic interpretation. The four learned scales (49, 27, 10, 6 tokens) are consistent with hi-erarchical linguistic structure in dramatic text: individual speeches and scene fragments ( ∼49 tok), exchanges and stanzas ( ∼27 tok), clauses and phrases ( ∼10 tok), and word groups ( ∼6 tok). We note that this correspondence is speculative : we have not directly verified that these frequencies align with annotated linguistic boundaries. The learned scales may reflect statistical regularities in the character sequences of TinyShakespeare rather than grammatical or semantic structure. Verify-ing the correspondence with linguistic annotation is left for future work. 
+
+4.3 Causal filters: no gain at character scale 
+
+All causal time-domain filters, with all implementation bugs corrected, perform below BASE-DOT. The corrected filter comparison (v3, K = 32 taps): Gaussian-QK (val=1.522, ∆ = −0.048 ), MexHat-QK (val=1.540, ∆ = −0.066 ), Morlet-causal (val=1.512, ∆ = −0.038 ). To confirm this finding across scales, we swept causal Morlet at fixed scales a ∈ { 2, 4, 8, 16 , 32 }
+
+tokens using K = 128 taps and correct L2 kernel normalisation (v2: single scaling, L2 norm, flipped kernel):                         
+
+> Model Scale Val ∆
+> BASE-DOT —1.483 0.000 Morlet-a=2 2.1 tok 1.520 −0.037 Morlet-a=4 4.2 tok 1.550 −0.067 Morlet-a=8 8.4 tok 1.532 −0.049 Morlet-a=16 17 tok 1.522 −0.039 Morlet-a=32 34 tok 1.498 −0.015 Morlet-Learned 6–8 tok 1.542 −0.059
+
+All scales perform below BASE-DOT even with correct implementation. The closest result is a = 32 
+
+(val=1.498), which converges to period ≈34 tokens — approaching the paragraph scale found by Fourier-QK (period ≈50 tokens) but still insufficient. 
+
+Overfitting pattern. All causal Morlet models share a characteristic trajectory: val loss reaches a minimum at step ∼2000–2500, then increases through step 5000 despite training loss continuing 6to fall. This training/val divergence indicates the causal Morlet filter overfits scale-specific patterns in the training corpus that do not generalise. A fixed-scale Morlet with K = 128 taps has fewer effective degrees of freedom than dot-product attention; the constrained filter cannot generalise the way standard attention can through arbitrary Q/K projections. 
+
+Why causal filters fail at character scale. The dominant reason is kernel truncation combined with receptive field limitation . With K = 128 causal taps and T = 256 context, each position sees only the 128 most recent tokens — 50% of the context. Fourier-QK uses all T = 256 positions via global FFT. The paragraph-scale phase-coherent structure (period ≈50 tokens) requires seeing mul-tiple periods simultaneously; K = 128 covers approximately 2.5 periods at a = 32 , but the phase coherence across the full T = 256 window cannot be captured by a local causal filter regardless of scale. 
+
+Global mixing is essential. The gain from Fourier-QK comes from global sequence mixing, not from locality or scale. No causal convolution with K ≤ T / 2 can replicate the global cross-correlation that the FFT provides. This is the fundamental architectural distinction between bilateral FFT spectral attention (this paper and the companion filter-shape paper [Zeris, 2026e]) and causal wavelet attention at word scale [Zeris, 2026f]. 
+
+Morlet best, MexHat worst ( K = 32 ). Among K = 32 causal filters, Morlet (val=1.512) slightly outperforms Gaussian (val=1.522) and MexHat (val=1.540). This reverses the admissibility ranking from frequency-collapse attention (where MexHat outperforms Gaussian), confirming that admissi-bility benefits are specific to the global frequency-collapse mechanism. 
+
+Implication for causal word-scale attention. At word-level BPE tokenisation (avg ∼4 charac-ters/token), period ≈34 tokens corresponds to ∼34 word-tokens — a full sentence. K = 128 word-token taps covers ∼4 full periods. The scale mismatch that prevents causal wavelets at character scale largely resolves at word scale, as demonstrated in Zeris [2026f]. 
+
+4.4 Why irfft-based spectral attention leaks 
+
+We attempted Morlet wavelet cross-correlation of Q/K projections as an alternative spectral scor-ing mechanism. All irfft-based implementations fail for a common reason: for any real-valued symmetric filter ˆϕ(ω), the impulse response satisfies κ(−τ ) = κ(τ ), so the reconstructed signal 
+
+Wq (i) = ∑ 
+
+> t
+
+q(t)κ(i − t) couples every position to both past and future tokens. No boundary han-dling (zero-padding, COI masking, longer sequences) can fix this — the leakage is intrinsic to the kernel symmetry, not a boundary artifact. Confirmed across: bilateral FFT, 2T zero-padded FFT, Mexican Hat FFT, and COI loss masking — all leak (val ≤ 0.08 at step 500); leakage scales as 
+
+ℓleak ∝ 2√2a/T , halving when T doubles but never vanishing [Torrence & Compo, 1998]. 
+
+Wideband Hilbert-OrthoQK: catastrophic leakage. To quantify the upper bound of leakage, we tested a Hilbert-OrthoQK model: score = (q · k) + (H[q] · H[k]) , where H[q] = irfft (i · ˆq, n = T )
+
+is the wideband Hilbert transform ( 90 ◦ phase rotation of the full sequence FFT). The real branch 
+
+q · k = qR ⊤Rk ⊤ is mathematically identical to BASE-DOT. The Hilbert branch uses the bilateral FFT over all T = 256 positions, baking future information directly into H[q]( t) before causal masking. Result: val = 0.018, ∆ = +1 .456 — the series maximum, far exceeding MexHat-K4 (val=0.132). This is not a genuine attention result. Shuffled val = 0.308, confirming the gain requires sequence order — the model is exploiting future information encoded in the analytic signal zq (t) = q(t) + 
+
+iH [q]( t).The wideband Hilbert transform provides the complete analytic signal at each position, encoding the full complex envelope of the sequence at all frequencies. The causal mask applied after scoring cannot remove this future information; it only prevents attending to future positions, not information 
+
+from future positions already encoded in H[q]( t).This result establishes a leakage hierarchy: filtered FFT (SA-QK-K1, val=0.40) < wideband Hilbert (val=0.018, non-causal). The more spectral information the FFT provides, the more severe the leakage. This motivates causal time-domain implementations for all spectral attention mechanisms. 7Causal time-domain convolution is the only genuinely causal option, but at character scale ( a ≤
+
+4 tokens) the Morlet oscillates above the Nyquist limit and aliases into a smooth Gaussian-like smoother with no bandpass character. A fixed-scale sweep with early stopping and shuffled-gap leakage check (Table 4) confirms val improves monotonically as scale increases but no scale beats BASE-DOT within T = 256 character tokens. All models are confirmed clean (gap ≫ 0): Table 4: Causal Morlet Q/K at fixed scales, K = 128 taps, v3 (corrected: single 1/√hs, L2 kernel norm, early stopping patience=1000, shuffled-gap check). All gaps > +5 .3 confirm no leakage — model uses temporal order. Val monotonically improves with scale; no scale beats BASE-DOT at character level. Model Scale Period Val ∆ Gap BASE-DOT — — 1.467 — +5 .66 
+
+Morlet-a=2 2 tok 2.1 tok 1.528 −0.061 +5 .33 
+
+Morlet-a=4 4 tok 4.2 tok 1.547 −0.080 +5 .46 
+
+Morlet-a=8 8 tok 8.4 tok 1.548 −0.081 +5 .30 
+
+Morlet-a=16 16 tok 16.8 tok 1.493 −0.026 +5 .52 
+
+Morlet-a=32 32 tok 33.5 tok 1.487 −0.020 +5 .48 
+
+Morlet-Learned 5–7 tok — 1.563 −0.096 +5 .37 
+
+The monotonic improvement with scale (a2 → a32) confirms that paragraph-scale context (period ≈34 tokens) is more useful than character-scale context (period ≈2 tokens) for causal wavelet attention. However, K = 128 taps covers only 50% of the T = 256 context, and the paragraph-scale Morlet (a32) still fails to beat BASE-DOT by 0.020 nats, indicating that the full context is needed. Early stopping (patience=1000 steps) fires at step 2500 for all learned and fixed-scale variants, con-firming that overfitting — not leakage — is the limiting factor. The learned Morlet converges to a ∈ [5 .1, 7.3] tokens (phrase/word scale), which is worse than fixed 
+
+a = 32 . This indicates a non-convex loss landscape in scale space: gradient descent from a = 8 
+
+initialisation finds a local optimum at phrase scale rather than the globally better paragraph scale. For causal word-level attention [Zeris, 2026f], the learned scale should be initialised at a = 32 
+
+word-tokens to avoid this local optimum. 
+
+Leakage severity as shuffled gap. The shuffled gap (val on token-order-shuffled data minus or-dered val) serves as an inverse proxy for leakage severity across all experiments in this series:                 
+
+> Model Gap Val Leakage Causal Morlet (any a)+5 .3–+5 .71.49–1.56 None Init4 FFT (fixed scaling) +4 .00.236 Mild (bilateral FFT) MultiFourier FFT (fixed) +0 .38 0.019 Severe (K=4 dyadic) Hilbert-OrthoQK +0 .06 0.018 Catastrophic (full Hilbert)
+
+Large gap ( > +4 ) indicates the model requires temporal order to achieve low val — consistent with genuine learning. Small gap ( < +1 ) indicates the model exploits leaked future information indepen-dent of token order — consistent with leakage. The gap decreases monotonically with the fraction of spectrum covered by the bilateral FFT filters: 3.9% (Init4, K=1) → 15% (MultiFourier, K=4) →
+
+100% (Hilbert-OrthoQK), confirming that bilateral FFT leakage scales with spectral coverage. Fourier-QK avoids the irfft leakage entirely by collapsing the frequency dimension to a weighted scalar per position, never reconstructing a position-indexed sequence: ˜q(f ∗, i ) = ∑ 
+
+> ω
+
+ˆq(ω) ·
+
+w(ω, f ∗). This is why Fourier-QK achieves genuine improvement (val=0.874, gap= +4 .32 ) while all irfft-reconstructed variants leak. 
+
+4.5 EMD validation of the learned multi-scale ordering 
+
+Empirical Mode Decomposition [Huang et al., 1998] provides an independent adaptive check on the multi-scale ordering discovered by MultiFourier-QK. Applied post-training to Q/K representations across all six layers on 50 validation sequences, EMD decomposes each signal into Intrinsic Mode 8Functions without imposing any basis, making it fully independent of the gradient descent procedure. The mean non-stationarity index (std/mean of Hilbert instantaneous period) is 0.90 ± 0.05 across all layers, confirming that the Q/K representations are strongly non-stationary. Table 5 shows that all four MultiFourier-QK period components are recovered by the closest EMD mode to within 5.2% error, with signal/noise ratios of 1.6–3.4 × above the 5% chance level. Two completely independent methods — gradient descent on cross-entropy loss and adaptive signal de-composition — recover the same multi-scale ordering, providing evidence that the ordering reflects genuine structure in the Q/K representations rather than a training or seed-specific artefact. Full per-layer EMD analysis, including the layer-depth nonstationarity trend and scale-energy distributions, is deferred to the companion adaptive-decomposition paper [Huang et al., 1998]. Table 5: EMD validation of the learned multi-scale ordering. EMD period = mean across six layers of the closest IMF to each MultiFourier component. S/N = alignment ratio vs 5% chance level. Component MultiFourier EMD closest Error S/N 
+
+f1 (paragraph) 53.0 tok 50 .3 ± 1.4 tok 5.0% 1.6 ×
+
+f2 (sub-para) 26.2 tok 26 .0 ± 0.4 tok 0.8% 2.9 ×
+
+f3 (phrase) 10.2 tok 10 .7 ± 0.5 tok 5.2% 3.4 ×
+
+f4 (word) 5.7 tok 5.5 ± 0.5 tok 3.8% 2.9 ×
+
+4.6 Multi-seed robustness 
+
+To establish robustness of the strongest results, we replicate BASE-DOT, Fourier-QK-Init4, and MultiFourier-QK across three seeds. Seeds are drawn uniformly from [0 , 232 ) using a fixed meta-seed (0) via NumPy’s default random generator, ensuring unbiased and reproducible seed selection independent of human choice: seeds = {42 , 3,653 ,403 ,231 , 2,735 ,729 ,615 } (seed 42 retained for direct comparison with all prior experiments in this paper). Table 6: Multi-seed validation across seeds 42, 123, 456. Corrected scaling (single 1/√hs, see §4). BASE-DOT is unchanged (was already correctly scaled). Init4 improves by +0 .38 nats over buggy values. MultiFourier fixed values reflect leakage dominance (K=4 near-dyadic filters cover ∼15% of spectrum; see §4.2). Model Seed 42 Seed 123 Seed 456 Mean Std BASE-DOT (buggy ≡fixed) 1.4829 1.4730 1.4731 1.476 0.006 Init4 (buggy) 0.6355 0.6290 0.6454 0.637 0.007 Init4 (fixed) 0.2162 0.2535 0.2387 0.236 0.019 MultiFourier (buggy) 0.2861 0.2711 0.3104 0.289 0.020 MultiFourier (fixed) 0.0189 0.0200 0.0191 0.019 0.001 The corrected scaling reveals the true gain of spectral attention. Init4 (fixed) achieves mean val = 0.236 ± 0.019, a gain of ∆ = +1 .240 over BASE-DOT, compared to ∆ = +0 .839 under the buggy scaling — the double scaling was suppressing 0.40 nats of genuine gain. All three Init4 seeds converge to the same frequency: bin ≈3.7–3.8 (period ≈67–69 tokens, paragraph scale), confirming the result is not seed-specific. MultiFourier fixed (mean = 0.019 ± 0.001) is leakage-dominated: the four near-dyadic filters collec-tively cover ∼15% of the frequency spectrum, sufficient for near-complete analytic signal recon-struction via the bilateral FFT (comparable to Hilbert-OrthoQK, val = 0.018, §4.5). The buggy Mul-tiFourier (mean = 0.289) remains the valid primary result of this paper because the double scaling attenuated filter sharpness, limiting effective spectral coverage and leakage. The fixed MultiFourier result is reported here for completeness and as evidence that bilateral FFT leakage scales with the number and distribution of learned frequencies. The learned multi-scale ordering (MultiFourier, fixed) is consistent with the buggy version: 9Seed f1 (bin) f2 f3 f4                    
+
+> 42 4.6 14.9 30.7 50.3 123 4.7 14.2 31.1 53.3 456 4.5 14.4 31.3 50.1 Mean ±Std 4.6±0.114 .5±0.431 .0±0.351 .2±1.8
+> Buggy version (for comparison):
+> Mean ±Std 5.0±0.29.9±0.425 .8±0.247 .6±0.9
+
+The near-dyadic period ratios (f1/f2 ≈ 3.1 ×, f2/f3 ≈ 2.1 ×, f3/f4 ≈ 1.7 ×) are consistent across both scaling regimes and all three seeds, providing strong evidence that the learned multi-scale ordering reflects genuine linguistic structure rather than a seed-specific or scaling-dependent artefact. 
+
+# 5 Discussion 
+
+Why does spectral preprocessing of Q/K help? Standard attention computes eij = qi · kj /√d,comparing single-token representations. FFT-based spectral preprocessing mixes information across positions before scoring: the filtered ˜q(f ∗, i ) incorporates spectral content of the entire sequence Q representation. To isolate the source of the gain, we tested two non-spectral controls with corrected implementation (v2: isolated RNG, single scaling): a fixed random orthogonal rotation ( R⊤R = I, mathematically equivalent to BASE-DOT in score space, val = 1.472) and a fixed random non-orthogonal projection (val = 1.479, mean |P ⊤P − I| = 0.14). Both give val ≈ 1.474 — identical to BASE-DOT (Table 1). Neither a fixed orthogonal nor a fixed non-orthogonal linear transformation of Q/K provides any benefit. The gain from Random-QK ( ∆ = +0 .443 ) is therefore attributable specifically to global sequence mixing via the FFT, not to any form of random linear transformation of Q/K vectors. The gain is specifically spectral .
+
+Phase coherence is the mechanism. To determine whether the gain comes from the amplitude spectrum (which frequencies have high energy in Q/K) or from phase-coherent temporal struc-ture (where those frequency components peak in the sequence), we applied phase randomisation [Theiler et al., 1992]: replacing FFT phases with independent uniform random values while preserv-ing | ˆQ(ω)|2 exactly. The full 3 ×3 result matrix (attention variant × positional encoding) tells a precise story: Learned PE No PE Sinusoidal PE BASE-DOT 1.474 1.508 1.526 Init4 0.608 0.981 1.389 PhaseRand 2.017 2.067 2.221 Phase randomisation produces performance worse than BASE-DOT in all three PE conditions (by 
+
++0 .54 , +0 .56 , and +0 .70 respectively). The amplitude spectrum is not merely uninformative — it is actively harmful regardless of positional encoding. The gain is entirely from phase-coherent temporal structure. 
+
+Token content carries genuine phase structure. The PE ablation showed Init4 retains 
+
+∆ = +0 .493 with no PE (57% of gain), suggesting token content provides genuine spectral signal. The phase randomisation confirms this signal is phase-dependent: PhaseRand with no PE gives val = 2.067 — worse than BASE-DOT without PE (1.508). The token sequence itself has phase-coherent temporal structure at paragraph scale ( ∼50–60 tokens) that Fourier-QK exploits, and this structure is entirely in the phases, not the amplitudes. 
+
+The learned PE amplifies phase coherence. The remaining 43% gain from learned PE (Init4 learned: 0.608 vs Init4 no-PE: 0.981) reflects the positional embedding learning to amplify and align with the paragraph-scale phase structure, making it more accessible to the frequency selec-tor. Sinusoidal PE interferes because its fixed low frequencies pull the selector away from the 10 genuine paragraph-scale optimum (bin drifts to 3.2, period = 80 tokens), and phase randomisation with sinusoidal PE gives the worst result (val = 2.221) because both sources of phase information are destroyed simultaneously. 
+
+Connection to coherent structure detection. The mechanism resembles coherent structure detec-tion in turbulent flows [Farge, 1992]: turbulent coherent structures are identified by phase relation-ships between velocity fluctuations at different scales, not by their amplitude spectra. Fourier-QK detects analogous linguistic coherent structures at scales corresponding to syntactic units. 
+
+5.1 Theiler-style surrogate analysis: quantifying phase vs. amplitude contributions 
+
+The phase randomisation matrix above tests how the model behaves when training data lacks phase coherence. A complementary question is: in a model trained on ordinary data, how much of its performance comes from phase coherence versus the amplitude spectrum alone? Naively injecting phase noise during training (as in early versions of this experiment) confounds the answer, because the noise is applied before the loss is computed and the model cannot learn under a non-stationary perturbation that changes every batch — any resulting failure is trivially guaranteed rather than diagnostic. We instead use Theiler et al. [1992] surrogate data testing in its standard form: train a causal Spec-tralQK to convergence, then evaluate the frozen model under four perturbations applied only at evaluation time: (i) STANDARD , the unperturbed forward pass; (ii) PHASE _RAND , a shared ran-dom phase applied to both Q and K — sharing the same random phase across Q and K destroys absolute temporal alignment while preserving relative Q–K phase coherence, the standard Theiler surrogate construction; (iii) AMP _ONLY , replacing the filtered signal with its amplitude envelope only ( irfft( | ˆQf | · w), discarding all phase information while preserving the time index); and (iv) 
+
+> PHASE
+
+_SHIFT , a constant π/ 4 phase offset applied to all frequencies (a control for sensitivity to absolute, as opposed to relative, phase). The DC and Nyquist bins are kept strictly real under all perturbations to preserve the Hermitian symmetry required for a real-valued inverse transform. Table 7: Theiler-style surrogate analysis, causal SpectralQK (bin=4, period=64 tokens), evaluated at the best training step. Condition Val Interpretation BASE-DOT 1.474 reference Standard 1.498 trained model Phase shift ( π/ 4) 1.617 control: absolute phase Phase random (shared) 3.159 Theiler surrogate Amplitude only 4.097 phase fully discarded Three findings follow. First, amplitude alone (val = 4.097) is far worse than even BASE-DOT (1.474), confirming that phase coherence is not merely additive but necessary : the correct frequency band without phase information actively harms attention. Second, decomposing the surrogate range (∆amp = 4 .097 − 1.498 = 2 .599 ) into the phase-randomisation cost ( ∆phase = 3 .159 − 1.498 = 1.661 , 64% of the range) and the residual spectral-selectivity contribution ( 0.938 , 36% ) gives a quan-titative split: phase coherence accounts for roughly twice as much of the spectral attention gain as the choice of frequency band itself. Third, the phase-shift control (val = 1.617) is close to standard (val = 1.498), confirming the model is largely invariant to a constant phase offset — it exploits the 
+
+relative phase between Q and K at matching positions, not the absolute phase of either signal alone, consistent with the cross-correlation interpretation of attention developed in §2. This experiment is run on the causal (non-leaking) implementation; the corresponding bilateral-FFT result in the main results above necessarily reflects some contribution from non-causal leakage (§4.4), so the 64/36 split should be read as characterising the mechanism of spectral attention rather than as a precise decomposition of the bilateral-FFT val values reported in Table 1. 
+
+Phase synchrony as the attention criterion. Under this view, Fourier-QK detects recurring tem-poral patterns at paragraph scale in the Q/K representation space through a phase-synchrony prin-ciple: two tokens receive a high attention score when they occur at similar phase positions within 11 Figure 2: Theiler-style surrogate analysis of a frozen, trained causal SpectralQK. Left : validation loss under each surrogate condition across training. Standard (blue) and phase-shift (green) track closely throughout, while phase-random (orange, pink) and amplitude-only (red) diverge from train-ing step 500 onward and continue to worsen as the model learns more from phase coherence. Right :the decomposition at the best training step (2000), with the phase cost (orange, 64% of the surrogate range) and the residual spectral-selectivity contribution (red, 36%) annotated. the paragraph-scale temporal rhythm of the text, corresponding to structurally similar points in the discourse. 
+
+Learned vs. fixed frequency. Fourier-QK ( +0 .600 ) outperforms Random-QK ( +0 .443 ). The learned dominant frequency per head extracts a task-specific spectral feature from the Q/K space. Different heads may learn different dominant frequencies, allowing multi-resolution spectral atten-tion. 
+
+The bilateral requirement. All causal time-domain filters fail to improve over BASE-DOT, while bilateral FFT filters succeed. This suggests the spectral preprocessing benefit requires access to the full sequence context in the filter application — a truly non-local operation. This is consistent with the known effectiveness of FNet’s global Fourier mixing [Lee-Thorp et al., 2021]. 
+
+Retrospective view on Papers 1–4. Paper 2 [Zeris, 2026b] found that EGA and M OPE are su-peradditive ( +0 .119 ), suggesting energy and phase are complementary signals. The current results suggest the complementarity comes from the spectral nature of both operations, not from the spe-cific Morlet wavelet interpretation. Paper 3 [Zeris, 2026c] observed boundary saturation in learned MOPE parameters; the current finding that spectral preprocessing helps in the bilateral setting may explain this: the optimal positional encoding operates in the frequency domain. Paper 6 of this series extends the spectral framework to a state-space formulation, replacing the finite-context FIR wavelet filter with an infinite-context IIR state [Gu et al., 2021], with the diagonal state transition initialised from the near-dyadic frequency hierarchy identified here. 
+
+Limitations. All experiments are at small scale ( ≤6M parameters, character-level, T = 256 , sin-gle seed for most comparisons). The non-causal symmetric kernel problem prevents any irfft-based position reconstruction from being used in causal language models. This includes Morlet, Mexican Hat, and Gaussian filters — all produce symmetric kernels. 
+
+Positional encoding and gain decomposition. All models use learned additive positional encod-ing: x = tok (t) + pos (t). The Q/K projections therefore contain both semantic content (token embeddings) and positional structure (positional embeddings), and the Fourier-QK frequency selec-tor may exploit either or both components. We tested Fourier-QK-Init4 with three PE variants: learned (standard), no PE (zero), and fixed sinu-soidal. The Fourier-QK gain above the corresponding BASE-DOT (same PE) decomposes cleanly: 12 PE type Init4 val Gain vs BASE Freq (bin) Learned 0.608 +0 .865 (100%) 4.7 No PE 0.981 +0 .527 (61%) 4.3 Sinusoidal 1.389 +0 .137 (16%) 3.2 
+
+Component A (token content, 61%): Fourier-QK retains ∆ = +0 .527 with no positional encoding, confirming that paragraph-scale spectral structure ( ∼60 tokens per cycle) exists in the character sequence content itself, independent of positional signals. This is the core contribution. 
+
+Component B (positional encoding, 39%): The additional gain with learned PE suggests the posi-tional embedding develops spectral content complementary to the paragraph-scale frequency selec-tor — effectively acting as a spectral amplifier at bin ≈ 4–5. 
+
+Sinusoidal PE interferes with Fourier-QK: Surprisingly, sinusoidal PE (Vaswani et al. 2017) per-forms much worse than no PE (gain +0 .137 vs +0 .527 ). Sinusoidal PE has frequency components at very low normalised frequencies ( ω ∼ 1/10000 2i/d ), which are not at the paragraph scale. The Fourier-QK selector drifts to bin = 3.2 (period 80 tokens) trying to align with the sinusoidal PE fre-quencies rather than the genuine paragraph-scale optimum — an instance of spectral interference between the PE and the attention mechanism. This result motivates the use of RoPE [Su et al., 2024] in future work, as rotary encoding contributes no additive frequency components to the Q/K FFT. The only verified clean approach (Fourier-QK, Random-QK) uses frequency-domain feature collapse rather than position reconstruction. The shuffled gap diagnostic confirms no leakage for Fourier-QK and Random-QK but cannot rule out all forms of spectral artifact. 
+
+Future work. The scale sweep (Table 4) reveals a monotonic improvement with scale: val im-proves from 1.754 at a = 2 tokens to 1.586 at a = 32 tokens, with no sign of saturation. This points directly to word-level tokenisation as the natural next experiment. At BPE tokenisation (avg ∼4characters/token), a = 8 characters ≈ 2 word-tokens — a scale where morphological and lexical structure is richest. The Nyquist constraint and aliasing problem that prevent causal Morlet from working at character scale largely disappear at word scale, where linguistic units span 2–10 tokens. Five directions constitute a natural follow-on paper: 
+
+(1) Learnable frequency selector width. The current Gaussian selector uses a fixed width σ2 = 4 
+
+bins, chosen by convenience. A learnable width per head w(ω, f ∗, σ ) = exp( −(ω − f ∗)2/2σ2)
+
+would allow the model to discover whether sharp (narrow σ) or broad (wide σ) frequency selection is optimal. If learned σ → 0, the result converges to a hard single-bin selector (consistent with the fixed bin=4 result matching the learned Init4). If σ remains large, the Gaussian is capturing a genuine spectral band rather than a single frequency. This also connects to the uncertainty principle: the optimal width trades frequency precision against temporal precision in the Q/K representation space. 
+
+(2) Wavelet-collapse attention and admissibility. We tested four frequency-collapse filters at para-graph scale — all avoiding irfft reconstruction, hence no leakage — and found a striking ranking:                      
+
+> Filter Val ∆Admissible? Morlet-Collapse 1.152 +0 .322 No (small DC) Gauss-Collapse 0.608 +0 .867 No ( ˆψ(0) ̸= 0 )Paul-Collapse 0.385 +1 .090 Yes (one-sided) MexHat-Collapse 0.370 +1 .105 Yes ( ˆψ(0) = 0 )MultiFourier (4) 0.286 +1 .166 —
+
+The filter shape ranking — MexHat > Paul ≫ Gauss ≫ Morlet — correlates with the sharpness of the spectral bandpass. 
+
+# 6 Related Work 
+
+FNet. Lee-Thorp et al. [2021] replaces attention with Fourier mixing of embeddings, achieving 92–97% of BERT. Our work is distinct: we apply spectral preprocessing to Q/K projections while preserving the attention score structure. 13 Wavelet attention. Verma [2024] inject Haar wavelet structure into intermediate embeddings be-tween decoder blocks, achieving a 40–60% pretraining speedup at no parameter cost. Our approach differs by applying spectral filters directly to the Q/K similarity computation rather than to the resid-ual stream, and by learning the filter frequency rather than fixing it to the dyadic Haar schedule. 
+
+Spectral methods in transformers. Verma & Pilanci [2024] apply causal convolutional filter banks between transformer layers. Tamkin et al. [2020] use DCT decomposition for multi-scale representations. Our work applies spectral filtering inside the attention scoring mechanism. 
+
+Prior series papers. Papers 1–4 [Zeris, 2026a,b,c,d] established energy gating, Morlet positional encoding, and multiscale POD as complementary spectral inductive biases. The current paper inves-tigates spectral preprocessing of Q/K as a unified approach to spectral attention. 
+
+# 7 Conclusion 
+
+We have shown that FFT-based bilateral spectral preprocessing of learned Q/K projections genuinely improves transformer attention on character-level language modelling. A random spectral filter achieves +0 .443 over standard attention; a model with a single learned dominant frequency achieves 
+
++0 .600 . Both results are verified by a shuffled validation diagnostic confirming genuine sequence learning (evidenced by large shuffled gap). Causal time-domain filters (Gaussian, Mexican Hat, causal Morlet) do not improve over standard attention, establishing that the bilateral FFT operation is essential rather than local Q/K smoothing. We report the failure of a Morlet wavelet cross-correlation formulation with full transparency: the bilateral FFT implementation suffers from circular boundary leakage, while the causal implemen-tation suffers from aliasing at sub-token scales. Resolving this remains the primary challenge for future causal spectral attention work. 
+
+# References 
+
+Zeris, A. Energy-Gated Attention: Spectral Salience as an Inductive Bias for Transformer Attention. 
+
+arXiv preprint arXiv:2605.21842 , 2026. Zeris, A. Energy-Gated Attention and Wavelet Positional Encoding: Complementary Inductive Biases for Transformer Attention. arXiv preprint arXiv:2605.26355 , 2026. Zeris, A. Beyond Sinusoids: A Morlet Wavelet Framework for Transformer Positional Encoding. 
+
+arXiv preprint arXiv:2606.01258 , 2026. Zeris, A. Multiscale POD of Transformer Attention Fields: Scale-Selective Analysis via Morlet Scalogram. arXiv preprint arXiv:2606.06573 , 2026. Zeris, A. FourierQK: Filter Shape, Admissibility, and the Leakage–Coverage Law. arXiv preprint ,2026 (submitted concurrently; arXiv ID to be added in v2). Zeris, A. MorletQK: Causal Wavelet Query–Key Attention at Word Scale. arXiv preprint , 2026 (in preparation; arXiv ID to be added in v2). Theiler, J., Eubank, S., Longtin, A., Galdrikian, B., and Farmer, J. D. Testing for nonlinearity in time series: the method of surrogate data. Physica D , 58(1-4):77–94, 1992. Farge, M. Wavelet transforms and their applications to turbulence. Annual Review of Fluid Mechan-ics , 24(1):395–458, 1992. Gu, A., Goel, K., and Ré, C. Efficiently modeling long sequences with structured state spaces. arXiv preprint arXiv:2111.00396 , 2021. Huang, N. E., Shen, Z., Long, S. R., Wu, M. C., Shih, H. H., Zheng, Q., Yen, N.-C., Tung, C. C., and Liu, H. H. The empirical mode decomposition and the Hilbert spectrum for nonlinear and non-stationary time series analysis. Proceedings of the Royal Society of London A , 454(1971):903–995, 1998. 14 Verma, P. WaveletGPT: Wavelet Inspired Large Language Models. arXiv preprint arXiv:2409.12924 , 2024. Lee-Thorp, J., Ainslie, J., Eckstein, I., and Ontanon, S. FNet: Mixing Tokens with Fourier Trans-forms. arXiv preprint arXiv:2105.03824 , 2021. Mallat, S. A Wavelet Tour of Signal Processing . Academic Press, 2nd edition, 1999. Su, J., Ahmed, M., Lu, Y., Pan, S., Bo, W., and Liu, Y. RoFormer: Enhanced transformer with rotary position embedding. Neurocomputing , 568:127063, 2024. Tamkin, A., Jurafsky, D., and Goodman, N. Language through a prism: A spectral approach for multiscale language representations. In NeurIPS , volume 33, 2020. Torrence, C. and Compo, G. P. A practical guide to wavelet analysis. Bulletin of the American Meteorological Society , 79(1):61–78, 1998. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., and Polo-sukhin, I. Attention is all you need. In NeurIPS , volume 30, 2017. Verma, P. and Pilanci, M. Towards signal processing in large language models. arXiv preprint arXiv:2406.10254 , 2024. 
+
+# A Implementation Details 
+
+Fourier-QK forward pass. 
+
+1. Compute Q/K projections: q = WQx, k = WK x
+
+2. FFT along position: ˆq = F(q), ˆk = F(k)
+
+3. Soft frequency selection via Gaussian weights over bins centred at learned f ∗ per head 4. irfft to reconstruct filtered ˜q(b), ˜k(b)
+
+5. Score: eij = Re[˜ q(i)∗ · ˜k(j)] /√d
+
+6. Causal mask, softmax, value aggregation (standard) 
+
+Leakage diagnostic. At each evaluation step, compute loss on both the standard validation set (ordered) and a once-shuffled version (same tokens, random order). The shuffled gap = ℓshuffled −
+
+ℓordered should be large ( > 1.0) for genuine sequence models and near zero for leaking models. BASE-DOT achieves gap = +5 .78 at step 5000; Fourier-QK achieves +4 .32 ; Random-QK achieves 
+
++4 .98 .
+
+Causal convolution. All causal filters use left-only padding: F.pad(x, (K-1, 0)) followed by 
+
+F.conv1d with kernel of K taps. This guarantees position i sees only positions ≤ i.
+
+Why irfft position reconstruction leaks. The filtered signal reconstructed via irfft at position i
+
+is: 
+
+Wq (i) =  
+
+> T−1
+
+∑
+
+> t=0
+
+q(t) · κ(i − t mod T ) (6) where κ(τ ) = F−1[ ˆϕ]( τ ) is the filter impulse response. For any real-valued symmetric filter ˆϕ(ω) ∈
+
+R, we have κ(−τ ) = κ(τ ), so Wq (i) depends on both past and future tokens. Zero-padding to 2T eliminates the modular wrap (position 0 seeing position T − 1) but does not change the bilateral support of κ:
+
+Wq (i) =  
+
+> T−1
+
+∑
+
+> t=0
+
+q(t) · κ(i − t) +  
+
+> 2T−1
+
+∑
+
+> t=T
+
+0 · κ(i − t)
+
+︸ ︷︷ ︸
+
+> =0
+
+(7) The zero-padded region contributes nothing, but the bilateral kernel still couples position i to all positions t < i and t > i . Confirmed experimentally: Morlet zero-padded ( 2T ) gives val=0.023 at step 500, same as T -point FFT. 15 Why Fourier-QK does not leak. Fourier-QK computes: 
+
+˜q(i) = ∑
+
+> ω
+
+ˆq(ω) · w(ω, f ∗) · ei2πωi/T (8) This is still a bilateral operation, but the Gaussian weight w(ω, f ∗) is applied in the frequency domain before any position-indexed reconstruction. The key difference: the weighted sum over ω
+
+produces a single complex number per position that is dominated by the spectral content at f ∗, not a reconstruction that explicitly couples neighbouring positions through a symmetric kernel. The causal mask on the attention score matrix is then sufficient to prevent future information from affecting past positions in the final output. 16
