@@ -6,72 +6,53 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-12
-- 运行时间：2026-07-12 21:12:55 UTC
+- 最新运行日期：2026-07-13
+- 运行时间：2026-07-13 21:31:16 UTC
 - 运行状态：成功
-- 本次总论文数：16
-- 精读区：4
-- 速读区：12
+- 本次总论文数：11
+- 精读区：6
+- 速读区：5
 
 ### 今日简报（AI）
-今日精选16篇，重点聚焦语音LLM的KV缓存压缩与智能体多模态检索两项突破。
-
-最值得关注：Compress the Cache, Not the Speech Embedding提出不压缩语音嵌入而压缩KV缓存的创新思路；MMAgent-R^2通过学习排序与拒绝机制显著提升Agentic多模态RAG效果。
-
-建议深入对比KV压缩对语音实时推理的资源与延迟影响，并探索排序-拒绝策略在其他多模态场景的迁移潜力。
-- 详情：[/202607/12/README](/202607/12/README)
+今日聚焦多模态LLM推理置信度与语音LLM缓存压缩，精读两篇9分论文。最值得关注的方向是：无需微调即可评估MLLM定位能力的“Propose and Attend”，以及针对语音模型的高效KV缓存压缩方法。建议深入阅读这两篇精读文章，并尝试将量化与缓存调度技术（如Qwen3.5-4B的量化与MOSAIC层间组合）应用于实际推理优化。
+- 详情：[/202607/13/README](/202607/13/README)
 
 ### 精读区论文标签
-1. [Compress the Cache, Not the Speech Embedding: KV Compression for Efficient Speech LLMs](/202607/12/2607.06827v1-compress-the-cache-not-the-speech-embedding-kv-compression-for-efficient-speech-llms)  
+1. [Propose and Attend: Training-free MLLM Grounding Confidence via Multi-Token Localized Attention](/202607/13/2607.05978v1-propose-and-attend-training-free-mllm-grounding-confidence-via-multi-token-localized-attention)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：无训练的多模态大模型定位置信度，用于幻觉检测
+2. [Compress the Cache, Not the Speech Embedding: KV Compression for Efficient Speech LLMs](/202607/13/2607.06827v1-compress-the-cache-not-the-speech-embedding-kv-compression-for-efficient-speech-llms)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：语音大语言模型的KV缓存压缩，LLM内部学习池化
-2. [MMAgent-R$^2$: Learning to Rerank and Reject for Agentic mRAG](/202607/12/2607.07383v1-mmagent-r2-learning-to-rerank-and-reject-for-agentic-mrag)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：多模态检索增强生成，知识库视觉问答，重排序与拒绝处理干扰项
-3. [Cognitive-structured Multimodal Agent for Multimodal Understanding, Generation, and Editing](/202607/12/2607.08497v1-cognitive-structured-multimodal-agent-for-multimodal-understanding-generation-and-editing)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：用于理解、生成和编辑的具有情景记忆的多模态智能体
-4. [BUS: Brain-Inspired Unsupervised Self-Reflection for Advanced Multimodal Reasoning](/202607/12/2607.07361v1-bus-brain-inspired-unsupervised-self-reflection-for-advanced-multimodal-reasoning)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：脑启发的自反思多模态推理
+   evidence：语音大语言模型KV缓存压缩
+3. [COBS: Cumulant Order Block Sparse Attention](/202607/13/2607.09052v1-cobs-cumulant-order-block-sparse-attention)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：块稀疏注意力缓解KV缓存读取瓶颈
+4. [A Survey on the Green Development of Large Models: From Resource-Efficient Architectures to Hardware-Software Co-Design](/202607/13/2607.09084v1-a-survey-on-the-green-development-of-large-models-from-resource-efficient-architectures-to-hardware-software-co-design)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：综述涵盖注意力算子优化、模型稀疏化及高效架构
+5. [STEEL: Sparsity-Aware Fused Attention for Energy-Efficient Long-Sequence Inference on AMD's XDNA NPU](/202607/13/2607.09385v1-steel-sparsity-aware-fused-attention-for-energy-efficient-long-sequence-inference-on-amds-xdna-npu)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：面向NPU的稀疏感知融合注意力
+6. [Do All Visual Tokens Matter Equally? Object-Evidence Preserving Token Merging for Vision-Language Retrieval](/202607/13/2607.04605v1-do-all-visual-tokens-matter-equally-object-evidence-preserving-token-merging-for-vision-language-retrieval)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：对象感知的令牌合并用于视觉语言检索
 
 ### 速读区论文标签
-1. [Bridging Interleaved Multi-Modal Reasoning as a Unified Decision Process](/202607/12/2607.03748v1-bridging-interleaved-multi-modal-reasoning-as-a-unified-decision-process)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：交点多模态推理的统一决策过程
-2. [Comparative Study of Domain-adapted VLMs for General Document Visual Question Answering](/202607/12/2607.07179v1-comparative-study-of-domain-adapted-vlms-for-general-document-visual-question-answering)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：文档视觉问答中VLM的对比研究
-3. [FourierQK: Spectral Preprocessing of Query-Key Projections Improves Transformer Attention](/202607/12/2607.07478v1-fourierqk-spectral-preprocessing-of-query-key-projections-improves-transformer-attention)  
+1. [Quantize the Target, Quantize the Drafter: Efficient Inference with Qwen3.5-4B](/202607/13/2607.04244v2-quantize-the-target-quantize-the-drafter-efficient-inference-with-qwen35-4b)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：使用滑动窗口注意力，一种稀疏注意力模式
+2. [MOSAIC: Adaptive Inter-layer Composition for Efficient Heterogeneous Vision-Language Models](/202607/13/2607.09029v1-mosaic-adaptive-inter-layer-composition-for-efficient-heterogeneous-vision-language-models)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：频谱预处理提升注意力效率
-4. [Dual Latent Memory in Vision-Language-Action Models for Robotic Manipulation](/202607/12/2607.07608v1-dual-latent-memory-in-vision-language-action-models-for-robotic-manipulation)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：VLA模型中的潜在记忆机制用于多模态推理
-5. [Aura: Consistent Multi-Subject Video Generation via VLM-Grounded Semantic Alignment](/202607/12/2607.04311v1-aura-consistent-multi-subject-video-generation-via-vlm-grounded-semantic-alignment)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：基于VLM的多主题视频生成语义对齐
-6. [Hierarchical Evidence-Driven Reasoning for Long Document Understanding](/202607/12/2607.04625v1-hierarchical-evidence-driven-reasoning-for-long-document-understanding)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：层级证据驱动的多模态RAG用于长文档理解
-7. [ResonatorLM: Causal Resonant Field Mixing for Efficient Long-Context Language Modelin](/202607/12/2607.05583v1-resonatorlm-causal-resonant-field-mixing-for-efficient-long-context-language-modelin)  
+   evidence：集成稀疏和线性注意力机制以构建高效视觉-语言模型
+3. [General Non-Clairvoyant KV-Cache Scheduling via Regime-Aware Routing](/202607/13/2607.09248v1-general-non-clairvoyant-kv-cache-scheduling-via-regime-aware-routing)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：面向LLM推理的非预知KV缓存调度算法
+4. [Foveation-Guided Dynamic Token Selection for Robust and Efficient Vision Transformers](/202607/13/2607.09480v1-foveation-guided-dynamic-token-selection-for-robust-and-efficient-vision-transformers)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：注视引导的动态令牌选择，实现高效视觉Transformer
+5. [Quantize the Target, Quantize the Drafter: Efficient Inference with Qwen3.5-4B](/202607/13/2607.04244v1-quantize-the-target-quantize-the-drafter-efficient-inference-with-qwen35-4b)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：物理启发的注意力替代机制用于高效长上下文建模
-8. [MonoIR-RS: Infrared Remote Sensing Vision-Language Learning with CLIP and VLM Adaptation](/202607/12/2607.06552v1-monoir-rs-infrared-remote-sensing-vision-language-learning-with-clip-and-vlm-adaptation)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：红外遥感视觉语言学习
-9. [NativeMEM: Native Memory Compression for Long-Horizon Robotic Manipulation](/202607/12/2607.06678v1-nativemem-native-memory-compression-for-long-horizon-robotic-manipulation)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：原生内存压缩用于长时视觉历史
-10. [Making Implicit Preservation Intent Explicit in Conversational Image Editing](/202607/12/2607.07051v1-making-implicit-preservation-intent-explicit-in-conversational-image-editing)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：对话图像编辑中的幻觉缓解
-11. [TF-Engram: A Train-Free Engram with SSD-Backed Memory for Large Language Models](/202607/12/2607.07388v1-tf-engram-a-train-free-engram-with-ssd-backed-memory-for-large-language-models)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：大语言模型的内存压缩与SSD层次存储
-12. [Prompt Compression via Activation Aggregation](/202607/12/2607.08399v1-prompt-compression-via-activation-aggregation)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：通过激活聚合的提示压缩，类似于KV缓存压缩，减少内存和计算
+   evidence：结合量化和滑动窗口注意力的高效推理
 
 
 <div class="dpr-home-promo-card">
