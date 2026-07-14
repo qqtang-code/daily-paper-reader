@@ -6,53 +6,61 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-13
-- 运行时间：2026-07-13 21:31:16 UTC
+- 最新运行日期：2026-07-14
+- 运行时间：2026-07-14 20:27:45 UTC
 - 运行状态：成功
-- 本次总论文数：11
+- 本次总论文数：13
 - 精读区：6
-- 速读区：5
+- 速读区：7
 
 ### 今日简报（AI）
-今日聚焦多模态LLM推理置信度与语音LLM缓存压缩，精读两篇9分论文。最值得关注的方向是：无需微调即可评估MLLM定位能力的“Propose and Attend”，以及针对语音模型的高效KV缓存压缩方法。建议深入阅读这两篇精读文章，并尝试将量化与缓存调度技术（如Qwen3.5-4B的量化与MOSAIC层间组合）应用于实际推理优化。
-- 详情：[/202607/13/README](/202607/13/README)
+今日日报推荐13篇论文，精读6篇、速读7篇，聚焦多模态理解与注意力机制优化。  
+最值得关注的两个方向：1）免训练的多模态定位置信度方法（《Propose and Attend》, 9.0/10），2）稀疏注意力在CLIP开放词汇预测中的应用（《Sparse Attention for Dense Open-Vocabulary Prediction in CLIP》, 9.0/10）。  
+建议普通读者优先精读这两篇9分论文，它们分别提供了提升视觉语言模型定位能力和泛化性的高效思路。
+- 详情：[/202607/14/README](/202607/14/README)
 
 ### 精读区论文标签
-1. [Propose and Attend: Training-free MLLM Grounding Confidence via Multi-Token Localized Attention](/202607/13/2607.05978v1-propose-and-attend-training-free-mllm-grounding-confidence-via-multi-token-localized-attention)  
+1. [Propose and Attend: Training-free MLLM Grounding Confidence via Multi-Token Localized Attention](/202607/14/2607.05978v1-propose-and-attend-training-free-mllm-grounding-confidence-via-multi-token-localized-attention)  
    标签：评分：9.0/10、query:multimodal
-   evidence：无训练的多模态大模型定位置信度，用于幻觉检测
-2. [Compress the Cache, Not the Speech Embedding: KV Compression for Efficient Speech LLMs](/202607/13/2607.06827v1-compress-the-cache-not-the-speech-embedding-kv-compression-for-efficient-speech-llms)  
+   evidence：通过局部化注意力实现无训练的多模态大模型接地置信度
+2. [Sparse Attention for Dense Open-Vocabulary Prediction in CLIP](/202607/14/2607.07135v2-sparse-attention-for-dense-open-vocabulary-prediction-in-clip)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：语音大语言模型KV缓存压缩
-3. [COBS: Cumulant Order Block Sparse Attention](/202607/13/2607.09052v1-cobs-cumulant-order-block-sparse-attention)  
+   evidence：提出使用alpha-entmax实现稀疏注意力
+3. [General Non-Clairvoyant KV-Cache Scheduling via Regime-Aware Routing](/202607/14/2607.09248v1-general-non-clairvoyant-kv-cache-scheduling-via-regime-aware-routing)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：块稀疏注意力缓解KV缓存读取瓶颈
-4. [A Survey on the Green Development of Large Models: From Resource-Efficient Architectures to Hardware-Software Co-Design](/202607/13/2607.09084v1-a-survey-on-the-green-development-of-large-models-from-resource-efficient-architectures-to-hardware-software-co-design)  
+   evidence：非先知KV缓存调度算法
+4. [Remembering Distinct Items, Not Tokens: A Learnable Dirichlet-Process Cache Between State-Space Models and Attention](/202607/14/2607.09889v1-remembering-distinct-items-not-tokens-a-learnable-dirichlet-process-cache-between-state-space-models-and-attention)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：综述涵盖注意力算子优化、模型稀疏化及高效架构
-5. [STEEL: Sparsity-Aware Fused Attention for Energy-Efficient Long-Sequence Inference on AMD's XDNA NPU](/202607/13/2607.09385v1-steel-sparsity-aware-fused-attention-for-energy-efficient-long-sequence-inference-on-amds-xdna-npu)  
+   evidence：基于新颖性分配的稀疏缓存
+5. [MemDecay: Region-Aware KV Cache Eviction for Efficient LLM Agent Inference](/202607/14/2607.10582v1-memdecay-region-aware-kv-cache-eviction-for-efficient-llm-agent-inference)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：面向NPU的稀疏感知融合注意力
-6. [Do All Visual Tokens Matter Equally? Object-Evidence Preserving Token Merging for Vision-Language Retrieval](/202607/13/2607.04605v1-do-all-visual-tokens-matter-equally-object-evidence-preserving-token-merging-for-vision-language-retrieval)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：对象感知的令牌合并用于视觉语言检索
+   evidence：面向高效LLM智能体推理的KV缓存驱逐
+6. [MOSAIC: Adaptive Inter-layer Composition for Efficient Heterogeneous Vision-Language Models](/202607/14/2607.09029v1-mosaic-adaptive-inter-layer-composition-for-efficient-heterogeneous-vision-language-models)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：高效注意力机制包括稀疏方法
 
 ### 速读区论文标签
-1. [Quantize the Target, Quantize the Drafter: Efficient Inference with Qwen3.5-4B](/202607/13/2607.04244v2-quantize-the-target-quantize-the-drafter-efficient-inference-with-qwen35-4b)  
+1. [Context by Distinct Information: An Auditable Dirichlet-Process Working Memory for Long, Redundant Context Streams](/202607/14/2607.10441v1-context-by-distinct-information-an-auditable-dirichlet-process-working-memory-for-long-redundant-context-streams)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：使用滑动窗口注意力，一种稀疏注意力模式
-2. [MOSAIC: Adaptive Inter-layer Composition for Efficient Heterogeneous Vision-Language Models](/202607/13/2607.09029v1-mosaic-adaptive-inter-layer-composition-for-efficient-heterogeneous-vision-language-models)  
+   evidence：用于长上下文的稀疏工作记忆
+2. [Do All Visual Tokens Matter Equally? Object-Evidence Preserving Token Merging for Vision-Language Retrieval](/202607/14/2607.04605v1-do-all-visual-tokens-matter-equally-object-evidence-preserving-token-merging-for-vision-language-retrieval)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：面向视觉语言检索的对象感知标记合并，压缩标记同时保留对象证据
+3. [Do All Visual Tokens Matter Equally? Object-Evidence Preserving Token Merging for Vision-Language Retrieval](/202607/14/2607.04605v2-do-all-visual-tokens-matter-equally-object-evidence-preserving-token-merging-for-vision-language-retrieval)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：集成稀疏和线性注意力机制以构建高效视觉-语言模型
-3. [General Non-Clairvoyant KV-Cache Scheduling via Regime-Aware Routing](/202607/13/2607.09248v1-general-non-clairvoyant-kv-cache-scheduling-via-regime-aware-routing)  
+   evidence：视觉token合并压缩以节省存储和计算
+4. [MemDefrag: Latent Memory Defragmentation for Large Language Models](/202607/14/2607.05969v1-memdefrag-latent-memory-defragmentation-for-large-language-models)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：面向LLM推理的非预知KV缓存调度算法
-4. [Foveation-Guided Dynamic Token Selection for Robust and Efficient Vision Transformers](/202607/13/2607.09480v1-foveation-guided-dynamic-token-selection-for-robust-and-efficient-vision-transformers)  
+   evidence：提出大语言模型潜在内存碎片整理方法，提升内存更新性能
+5. [AnchorPrune: Relevance-Anchored Contextual Expansion for Visual Token Pruning](/202607/14/2607.07033v2-anchorprune-relevance-anchored-contextual-expansion-for-visual-token-pruning)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：注视引导的动态令牌选择，实现高效视觉Transformer
-5. [Quantize the Target, Quantize the Drafter: Efficient Inference with Qwen3.5-4B](/202607/13/2607.04244v1-quantize-the-target-quantize-the-drafter-efficient-inference-with-qwen35-4b)  
+   evidence：无需训练的视觉token剪枝以提高推理效率
+6. [Adaptive Model Compression (AMC): Saliency-Driven Resource Allocation for Ultra-Low-Power Transformer Inference](/202607/14/2607.10109v1-adaptive-model-compression-amc-saliency-driven-resource-allocation-for-ultra-low-power-transformer-inference)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：结合量化和滑动窗口注意力的高效推理
+   evidence：基于显著性的动态资源分配用于Transformer推理，降低能耗
+7. [CUST: Clustered Unit-level Similarity Transformer for Lightweight Image Super-Resolution](/202607/14/2607.11088v1-cust-clustered-unit-level-similarity-transformer-for-lightweight-image-super-resolution)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：聚类单元级相似性实现高效全局-局部注意力
 
 
 <div class="dpr-home-promo-card">
