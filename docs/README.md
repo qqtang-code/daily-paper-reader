@@ -6,44 +6,53 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-15
-- 运行时间：2026-07-15 21:24:13 UTC
+- 最新运行日期：2026-07-16
+- 运行时间：2026-07-16 21:00:51 UTC
 - 运行状态：成功
-- 本次总论文数：8
+- 本次总论文数：11
 - 精读区：5
-- 速读区：3
+- 速读区：6
 
 ### 今日简报（AI）
-今日精选5篇精读与3篇速读，聚焦长上下文稀疏注意力优化和KV缓存近无损压缩两大突破。最值得关注的是两个9.0分工作：LiteTopK利用维度灾难融合索引与TopK内核，JoLT通过联合Tucker与JL残差分配实现近无损缓存压缩。建议优先研读这两篇，把握提升LLM推理效率的关键技术方向。
-- 详情：[/202607/15/README](/202607/15/README)
+今日聚焦长上下文稀疏注意力与混合SWA推理优化，精读两篇高分论文《LiteTopK》与《MiMo-V2.5》。最值得关注的是利用维度诅咒加速TopK的融合索引器核，以及全流水线极限优化提升混合SWA效率。下一步可结合关联记忆与可遗忘注意力，探索高效扩展LLM上下文的新范式。
+- 详情：[/202607/16/README](/202607/16/README)
 
 ### 精读区论文标签
-1. [LiteTopK: Exploiting the Curse of Dimensionality for a Fused Indexer-TopK Kernel in Long-Context Sparse Attention](/202607/15/2607.11976v1-litetopk-exploiting-the-curse-of-dimensionality-for-a-fused-indexer-topk-kernel-in-long-context-sparse-attention)  
+1. [LiteTopK: Exploiting the Curse of Dimensionality for a Fused Indexer-TopK Kernel in Long-Context Sparse Attention](/202607/16/2607.11976v2-litetopk-exploiting-the-curse-of-dimensionality-for-a-fused-indexer-topk-kernel-in-long-context-sparse-attention)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：长上下文稀疏注意力内核优化
-2. [A JoLT for the KV Cache: Near-Lossless KV Cache Compression via Joint Tucker and JL-Residual Allocation for LLMs](/202607/15/2607.12550v1-a-jolt-for-the-kv-cache-near-lossless-kv-cache-compression-via-joint-tucker-and-jl-residual-allocation-for-llms)  
+   evidence：用于长上下文稀疏注意力的融合索引器-TopK内核
+2. [Full-Pipeline Inference Optimization for MiMo-V2.5 Series: Pushing Hybrid SWA Efficiency to the Limit](/202607/16/2607.13095v1-full-pipeline-inference-optimization-for-mimo-v25-series-pushing-hybrid-swa-efficiency-to-the-limit)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：通过联合Tucker和JL残差分配进行KV缓存压缩
-3. [How Query Visibility Changes KV-Cache Compression Rankings: A Matched-Budget Audit](/202607/15/2607.11942v1-how-query-visibility-changes-kv-cache-compression-rankings-a-matched-budget-audit)  
+   evidence：面向混合滑动窗口注意力的KVCache优化
+3. [Adaptive Filtering of the KV Cache: Diagnosing and Correcting Structural-Role Bias in LLM Inference](/202607/16/2607.13205v1-adaptive-filtering-of-the-kv-cache-diagnosing-and-correcting-structural-role-bias-in-llm-inference)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：通过自适应过滤结构角色偏差进行KV缓存压缩
+4. [Realizable N:M Sparse Transformer Inference via Search-Kernel Co-Design](/202607/16/2607.12505v2-realizable-nm-sparse-transformer-inference-via-search-kernel-co-design)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：KV缓存压缩方法的匹配预算审计和查询可见性分析
-4. [Realizable N:M Sparse Transformer Inference via Search-Kernel Co-Design](/202607/15/2607.12505v1-realizable-nm-sparse-transformer-inference-via-search-kernel-co-design)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：通过协同设计的稀疏内核和稀疏模式实现N:M稀疏Transformer推理
-5. [AVQ-Attention: Adaptive Vector-Quantized Attention](/202607/15/2607.12789v1-avq-attention-adaptive-vector-quantized-attention)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：自适应向量量化注意力降低计算复杂度
+   evidence：设计N:M稀疏CUDA内核加速ViT推理
+5. [VisCo: Leveraging Large Language Models as Intrinsic Encoders for Visual Token Compression](/202607/16/2607.12756v1-visco-leveraging-large-language-models-as-intrinsic-encoders-for-visual-token-compression)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：利用LLM内在编码进行视觉令牌压缩
 
 ### 速读区论文标签
-1. [When Structured Sparse Autoencoders Learn Consistent Concepts Across Modalities](/202607/15/2607.08605v1-when-structured-sparse-autoencoders-learn-consistent-concepts-across-modalities)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：结构化稀疏自编码器用于视觉-语言模型中跨模态一致概念学习
-2. [BlockServe: Block-Grained Continuous Batching for High-Throughput Diffusion LLM Serving](/202607/15/2607.08930v1-blockserve-block-grained-continuous-batching-for-high-throughput-diffusion-llm-serving)  
+1. [When Structured Sparse Autoencoders Learn Consistent Concepts Across Modalities](/202607/16/2607.08605v1-when-structured-sparse-autoencoders-learn-consistent-concepts-across-modalities)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：用于视觉语言模型的概念一致性的结构化稀疏自编码器
+2. [Extending LLM Context via Associative Recurrent Memory](/202607/16/2607.11614v1-extending-llm-context-via-associative-recurrent-memory)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：通过关联循环记忆以恒定内存扩展LLM上下文
+3. [Forgetful Attention: A Trainable Support-Vector Memory with Certified Selection and Exact Unlearning](/202607/16/2607.12204v1-forgetful-attention-a-trainable-support-vector-memory-with-certified-selection-and-exact-unlearning)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：具有可验证令牌驱逐的高效注意力机制
+4. [Inhibited Self-Attention: Sharpening Focus in Vision Transformers](/202607/16/2607.12881v1-inhibited-self-attention-sharpening-focus-in-vision-transformers)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：提出抑制性自注意力，增强特征选择性
+5. [Attention-Free and Lightweight Token Reduction for Efficient Vision-Language Models](/202607/16/2607.13500v1-attention-free-and-lightweight-token-reduction-for-efficient-vision-language-models)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：面向高效视觉语言模型的无注意力令牌减少
+6. [Kaleido: Algorithm-Hardware Co-Design for Video Diffusion Transformers by Exploiting Latent Space Correlations](/202607/16/2607.13770v1-kaleido-algorithm-hardware-co-design-for-video-diffusion-transformers-by-exploiting-latent-space-correlations)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：基于块粒度调度和双缓存的扩散LLM服务优化
-3. [Do You Remember? Toward Memory-Centric Multimodal AI](/202607/15/2607.11919v1-do-you-remember-toward-memory-centric-multimodal-ai)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：多模态LLM的记忆重建架构
+   evidence：将LLM中的稀疏注意力技术应用于视频扩散Transformer
 
 
 <div class="dpr-home-promo-card">
