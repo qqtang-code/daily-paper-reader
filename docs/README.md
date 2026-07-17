@@ -6,53 +6,47 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-16
-- 运行时间：2026-07-16 21:00:51 UTC
+- 最新运行日期：2026-07-17
+- 运行时间：2026-07-17 21:04:34 UTC
 - 运行状态：成功
-- 本次总论文数：11
+- 本次总论文数：9
 - 精读区：5
-- 速读区：6
+- 速读区：4
 
 ### 今日简报（AI）
-今日聚焦长上下文稀疏注意力与混合SWA推理优化，精读两篇高分论文《LiteTopK》与《MiMo-V2.5》。最值得关注的是利用维度诅咒加速TopK的融合索引器核，以及全流水线极限优化提升混合SWA效率。下一步可结合关联记忆与可遗忘注意力，探索高效扩展LLM上下文的新范式。
-- 详情：[/202607/16/README](/202607/16/README)
+今天共推荐9篇论文，重点聚焦于上下文压缩和实时视觉语言控制优化。最值得关注的两篇精读论文是《PReM》（学习何时保留与刷新上下文）和《Reflex》（实时流式推理VLA控制）。下一步可跟进视觉token压缩与跨模态稀疏自编码器的一致概念学习。
+- 详情：[/202607/17/README](/202607/17/README)
 
 ### 精读区论文标签
-1. [LiteTopK: Exploiting the Curse of Dimensionality for a Fused Indexer-TopK Kernel in Long-Context Sparse Attention](/202607/16/2607.11976v2-litetopk-exploiting-the-curse-of-dimensionality-for-a-fused-indexer-topk-kernel-in-long-context-sparse-attention)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：用于长上下文稀疏注意力的融合索引器-TopK内核
-2. [Full-Pipeline Inference Optimization for MiMo-V2.5 Series: Pushing Hybrid SWA Efficiency to the Limit](/202607/16/2607.13095v1-full-pipeline-inference-optimization-for-mimo-v25-series-pushing-hybrid-swa-efficiency-to-the-limit)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：面向混合滑动窗口注意力的KVCache优化
-3. [Adaptive Filtering of the KV Cache: Diagnosing and Correcting Structural-Role Bias in LLM Inference](/202607/16/2607.13205v1-adaptive-filtering-of-the-kv-cache-diagnosing-and-correcting-structural-role-bias-in-llm-inference)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：通过自适应过滤结构角色偏差进行KV缓存压缩
-4. [Realizable N:M Sparse Transformer Inference via Search-Kernel Co-Design](/202607/16/2607.12505v2-realizable-nm-sparse-transformer-inference-via-search-kernel-co-design)  
+1. [PReM: Learning What to Preserve and When to Refresh for Context Compression](/202607/17/2607.14327v1-prem-learning-what-to-preserve-and-when-to-refresh-for-context-compression)  
+   标签：评分：10.0/10、query:sparse-attn
+   evidence：基于学习的KV缓存压缩，学习保留和刷新
+2. [Reflex: Real-Time VLA Control through Streaming Inference](/202607/17/2607.14695v1-reflex-real-time-vla-control-through-streaming-inference)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：设计N:M稀疏CUDA内核加速ViT推理
-5. [VisCo: Leveraging Large Language Models as Intrinsic Encoders for Visual Token Compression](/202607/16/2607.12756v1-visco-leveraging-large-language-models-as-intrinsic-encoders-for-visual-token-compression)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：利用LLM内在编码进行视觉令牌压缩
+   evidence：针对实时VLA推理的KV缓存优化，实现O(1)增量缓存更新
+3. [VideoSEMA: a scalable and efficient Mamba-like attention for video understanding](/202607/17/2607.14711v1-videosema-a-scalable-and-efficient-mamba-like-attention-for-video-understanding)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：高效的类Mamba注意力用于视频理解
+4. [FlashDecoder: Real-Time Latent-to-Pixel Streaming Decoder with Transformers](/202607/17/2607.14898v1-flashdecoder-real-time-latent-to-pixel-streaming-decoder-with-transformers)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：滚动KV缓存实现恒定延迟流式解码
+5. [Long-Context Fine-Tuning with Limited VRAM](/202607/17/2607.15105v1-long-context-fine-tuning-with-limited-vram)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：层次化全局注意力支持长上下文微调
 
 ### 速读区论文标签
-1. [When Structured Sparse Autoencoders Learn Consistent Concepts Across Modalities](/202607/16/2607.08605v1-when-structured-sparse-autoencoders-learn-consistent-concepts-across-modalities)  
+1. [VisCo: Leveraging Large Language Models as Intrinsic Encoders for Visual Token Compression](/202607/17/2607.12756v1-visco-leveraging-large-language-models-as-intrinsic-encoders-for-visual-token-compression)  
    标签：评分：7.0/10、query:multimodal
-   evidence：用于视觉语言模型的概念一致性的结构化稀疏自编码器
-2. [Extending LLM Context via Associative Recurrent Memory](/202607/16/2607.11614v1-extending-llm-context-via-associative-recurrent-memory)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：通过关联循环记忆以恒定内存扩展LLM上下文
-3. [Forgetful Attention: A Trainable Support-Vector Memory with Certified Selection and Exact Unlearning](/202607/16/2607.12204v1-forgetful-attention-a-trainable-support-vector-memory-with-certified-selection-and-exact-unlearning)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：具有可验证令牌驱逐的高效注意力机制
-4. [Inhibited Self-Attention: Sharpening Focus in Vision Transformers](/202607/16/2607.12881v1-inhibited-self-attention-sharpening-focus-in-vision-transformers)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：提出抑制性自注意力，增强特征选择性
-5. [Attention-Free and Lightweight Token Reduction for Efficient Vision-Language Models](/202607/16/2607.13500v1-attention-free-and-lightweight-token-reduction-for-efficient-vision-language-models)  
+   evidence：视觉标记压缩提升多模态理解效率
+2. [Attention-Free and Lightweight Token Reduction for Efficient Vision-Language Models](/202607/17/2607.13500v1-attention-free-and-lightweight-token-reduction-for-efficient-vision-language-models)  
    标签：评分：7.0/10、query:multimodal
-   evidence：面向高效视觉语言模型的无注意力令牌减少
-6. [Kaleido: Algorithm-Hardware Co-Design for Video Diffusion Transformers by Exploiting Latent Space Correlations](/202607/16/2607.13770v1-kaleido-algorithm-hardware-co-design-for-video-diffusion-transformers-by-exploiting-latent-space-correlations)  
+   evidence：无需注意力的标记缩减用于高效视觉语言模型
+3. [When Structured Sparse Autoencoders Learn Consistent Concepts Across Modalities](/202607/17/2607.08605v1-when-structured-sparse-autoencoders-learn-consistent-concepts-across-modalities)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：用于视觉-语言模型可解释性和概念一致性的结构化稀疏自编码器
+4. [T^2MLR: Transformer with Temporal Middle-Layer Recurrence](/202607/17/2607.15178v1-t2mlr-transformer-with-temporal-middle-layer-recurrence)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：将LLM中的稀疏注意力技术应用于视频扩散Transformer
+   evidence：通过中间层循环增强Transformer推理能力
 
 
 <div class="dpr-home-promo-card">
