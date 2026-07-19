@@ -6,29 +6,32 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-18
-- 运行时间：2026-07-18 20:15:58 UTC
+- 最新运行日期：2026-07-19
+- 运行时间：2026-07-19 20:39:51 UTC
 - 运行状态：成功
-- 本次总论文数：3
-- 精读区：1
+- 本次总论文数：4
+- 精读区：2
 - 速读区：2
 
 ### 今日简报（AI）
-今日精读聚焦轻量无注意力令牌压缩技术，速览几何感知高斯先验与轴向注意力在细胞图像分类中的应用。值得关注《Attention-Free and Lightweight Token Reduction》的高效视觉-语言模型优化方向，以及《VisCo》利用大语言模型作为内在编码器压缩视觉令牌的新思路。建议普通读者优先精读前两篇以掌握令牌效率与先验融合的核心方法。
-- 详情：[/202607/18/README](/202607/18/README)
+今日精选4篇多模态与视觉语言模型研究，聚焦调度策略与效率优化。最值得关注的两大方向：视觉中继窗口调度提升VLM推理能力，以及无注意力轻量Token缩减加速模型运行。建议优先精读这两篇，把握多模态聚焦与效率提升的关键技术。
+- 详情：[/202607/19/README](/202607/19/README)
 
 ### 精读区论文标签
-1. [Attention-Free and Lightweight Token Reduction for Efficient Vision-Language Models](/202607/18/2607.13500v1-attention-free-and-lightweight-token-reduction-for-efficient-vision-language-models)  
+1. [The Ebb and Flow of Multimodal Focus: Scheduling Visual Relay Windows for Grounded VLM Reasoning](/202607/19/2607.11436v1-the-ebb-and-flow-of-multimodal-focus-scheduling-visual-relay-windows-for-grounded-vlm-reasoning)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：机械论分析多模态注意力动态并提出视觉中继窗口用于VLM基础推理
+2. [Attention-Free and Lightweight Token Reduction for Efficient Vision-Language Models](/202607/19/2607.13500v1-attention-free-and-lightweight-token-reduction-for-efficient-vision-language-models)  
    标签：评分：8.0/10、query:multimodal
-   evidence：面向高效视觉语言模型的token缩减
+   evidence：高效视觉语言模型的令牌缩减
 
 ### 速读区论文标签
-1. [Geometry-aware Gaussian Prior and Axial Attention for Cervical Cytology Image Classification](/202607/18/2607.10278v1-geometry-aware-gaussian-prior-and-axial-attention-for-cervical-cytology-image-classification)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：轴向注意力用于宫颈细胞学分类中的长程依赖建模
-2. [VisCo: Leveraging Large Language Models as Intrinsic Encoders for Visual Token Compression](/202607/18/2607.12756v1-visco-leveraging-large-language-models-as-intrinsic-encoders-for-visual-token-compression)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：利用LLM内在编码能力进行视觉令牌压缩提升效率
+1. [Screening Is Effective for Visual Recognition](/202607/19/2607.13983v1-screening-is-effective-for-visual-recognition)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：ViT中的筛选机制显式排除低相关补丁，类似于稀疏注意力
+2. [Seeing the End at Step Zero: Accelerating Diffusion MLLMs via MLP Sparsity-Aware Truncation](/202607/19/2607.14557v1-seeing-the-end-at-step-zero-accelerating-diffusion-mllms-via-mlp-sparsity-aware-truncation)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：通过MLP稀疏性加速扩散多模态大模型
 
 
 <div class="dpr-home-promo-card">
