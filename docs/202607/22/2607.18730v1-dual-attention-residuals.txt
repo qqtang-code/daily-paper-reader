@@ -1,0 +1,955 @@
+Title: Dual Attention Residuals
+
+URL Source: https://arxiv.org/pdf/2607.18730v1
+
+Published Time: Wed, 22 Jul 2026 00:38:39 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Dual Attention Residuals 
+
+## Xingda Yu ∗, Yining Li ∗, Xinzhang Liu, Zhihao Yang, Haowei He, Chao Wang, Yongxiang Li †, Shuangyong Song †
+
+TeleAI 
+
+§ Teleai/Dual-Attention-Residuals 
+
+Abstract 
+
+Recent work extends Transformer residual pathways along two complementary axes: historical retrieval selects information from earlier depths, whereas multi-stream methods maintain multiple residual trajectories. These capabilities have largely been studied in isolation, and assigning an independent re-triever to each stream still prevents one trajectory from influ-encing depth selection in another. We propose Dual Attention Residuals (DAR), which brings multi-stream interaction into historical retrieval through reciprocal cross-stream address-ing. For each target stream, DAR computes depth weights from normalized states in the opposite stream and applies them to values from the target stream’s own history. The re-trieved states are combined for an unchanged Transformer branch and updated through constrained gated writes; a block-form variant operates on block-level histories to control over-head. Across dense models from 0.1B to 1B parameters and a 7B sparse-MoE model, DAR consistently improves valida-tion loss over standard residual Transformers and Attention Residuals. Routing ablations show that the gain cannot be explained by an additional stream or value projection alone. Representation and intervention analyses further show that re-ciprocal cross-stream selection preserves depth-wise diversity and avoids the redundancy or functional imbalance observed in alternative two-stream designs. 
+
+## Introduction 
+
+Residual connections form the main pathway for transport-ing representations across Transformer depth (He et al. 2016; Vaswani et al. 2017). In a standard Transformer, successive computational branches are accumulated into a single resid-ual stream and propagated sequentially through the network. Recent work extends this pathway along two complementary directions. Historical retrieval methods expand access across depth: Transparent Attention and DenseFormer expose ear-lier representations to later computation (Bapna et al. 2018; Pagliardini et al. 2024), while Attention Residuals makes this access selective through learned depth-wise retrieval (Kimi Team et al. 2026). Multi-stream residual methods instead expand the pathway into multiple learned trajectories, be-ginning with Hyper-Connections (Zhu et al. 2025a) and ex-tending to Frac-Connections, MUDDFormer, and mHC (Zhu 
+
+> ∗
+
+Equal Contribution. 
+
+> †
+
+Corresponding authors. 
+
+et al. 2025b; Xiao et al. 2025; Xie et al. 2026). Histori-cal retrieval introduces freedom over which depths to ac-cess, whereas multi-stream residuals introduce freedom over which residual trajectories to maintain and combine. These two degrees of freedom have been studied largely in isolation, leaving open whether they can interact productively within historical retrieval. A straightforward combination is to equip each residual stream with an independent historical retriever. This, how-ever, produces only parallel instances of single-stream re-trieval: each trajectory determines which depths to access and supplies the content returned from those depths, without allowing the other trajectory to influence its selection. We call this within-trajectory binding of the depth-scoring rep-resentation and returned content address-content coupling .To bring multi-stream flexibility into depth-wise retrieval, the trajectories must instead interact during selection. This makes trajectory diversity part of the retrieval rule: historical content in one stream can receive a high depth weight because the other stream supplies a matching address, even when the content representation would not itself strongly match the target query. The trajectories therefore contribute not only different stored content but also complementary signals for selecting it. To make multi-stream interaction part of depth-wise re-trieval, we introduce Dual Attention Residuals (DAR) with reciprocal cross-stream addressing. For each target stream, DAR computes depth weights from normalized states in the opposite stream and applies them to values from the tar-get stream’s history. The resulting stream-specific states are mixed as input to an unchanged Transformer branch. DAR then updates both residual trajectories through gated branch writes, with constrained mixing transporting the existing par-tial state within each block. For efficient scaling, Block DAR retrieves from completed block histories at a coarser depth granularity. Our contributions are summarized as follows: 
+
+• We show that independently evolving residual trajecto-ries can serve not only as parallel information pathways, but also as complementary signals for selecting historical depths. 
+
+• We propose DAR, which realizes this interaction through reciprocal cross-stream keys and self-stream values while leaving the Transformer branches unchanged. arXiv:2607.18730v1 [cs.CL] 21 Jul 2026 • We validate DAR through scaling experiments on dense models from 0.1B to 1B parameters and a 7B sparse-MoE model, routing ablations, and representation anal-yses, demonstrating consistent improvements over stan-dard residual connections and Attention Residuals. 
+
+## Related Work 
+
+Residual Transport and Multi-Stream Topologies 
+
+Standard residual connections transport a single represen-tation through network depth (He et al. 2016; Vaswani et al. 2017). Transformer normalization improves optimiza-tion while preserving this single residual trajectory (Ba, Kiros, and Hinton 2016; Xiong et al. 2020; Zhang and Sen-nrich 2019). Hyper-Connections instead expand the residual pathway into multiple streams and learn how Transformer branches read from and write to them (Zhu et al. 2025a). Frac-Connections and MUDDFormer further enrich cross-layer connectivity, while mHC constrains multi-stream mix-ing to preserve stable transport at scale (Zhu et al. 2025b; Xiao et al. 2025; Xie et al. 2026). These methods show how multiple residual streams can transport and mix information within a layer. DAR extends this idea across depth by retain-ing both trajectories in the historical state bank and applying depth-wise retrieval over them. 
+
+Depth-Wise Historical Retrieval 
+
+Another line of work makes representations from earlier depths directly accessible to later computation. Transpar-ent attention and DenseFormer aggregate intermediate layer states, while Attention Residuals (AttnRes) uses learned pseudo-queries to perform softmax retrieval over previ-ous residual states (Bapna et al. 2018; Pagliardini et al. 2024; Kimi Team et al. 2026). DeepCrossAttention also learns input-dependent combinations of earlier layer out-puts through depth-wise cross-attention (Heddes et al. 2025). Delta Attention Residuals replaces cumulative hidden-state candidates with individual branch outputs (Luo, Cai, and Hu 2026). These methods vary the candidate states and aggrega-tion rules. In single-stream historical retrieval, however, the representations that determine depth weights and the values aggregated under them still come from the same residual trajectory. DAR instead uses the opposite trajectory to deter-mine each value’s depth weight while keeping that value in its original stream. 
+
+## Methods 
+
+DAR changes only the residual pathway around each Trans-former branch. As shown in Figure 1, DAR retrieves two states from depth, combines them for an unchanged attention or feed-forward branch, and updates a two-stream partial block through gated writes and constrained mixing. 
+
+Overview and Notation 
+
+We consider a Pre-Norm decoder-only Transformer and treat self-attention and feed-forward modules as separate residual branches. We index these branches from ℓ = 1 , with h1 de-noting the token embedding. Let hℓ ∈ RT ×d be the input to branch ℓ, and let fℓ denote the complete branch transforma-tion, including its input normalization. A standard residual branch computes 
+
+hℓ+1 = hℓ + fℓ(hℓ), (1) where T and d are the sequence length and hidden size. Depth retrieval is token-wise, so we suppress the token index. AttnRes (Kimi Team et al. 2026) replaces cumulative ad-dition with softmax retrieval over the token embedding and preceding branch outputs. Following its original formulation, we use the positive kernel 
+
+ϕ(q, k ) = exp  q⊤Norm h(k) (2) and write the depth-attention weights as 
+
+πr→ℓ = ϕ(qℓ, k r )
+
+Pℓ−1 
+
+> u=0
+
+ϕ(qℓ, k u) . (3) For every residual branch ℓ, the query, keys, and values are 
+
+qℓ = wℓ, kr = vr =
+
+h1, r = 0 ,fr (hr ), 1 ≤ r ≤ ℓ − 1, (4) where wℓ ∈ Rd is a branch-specific learnable vector and 
+
+Norm h denotes RMSNorm along the hidden dimension. Thus v0 = h1 is the embedding candidate, while vr =
+
+fr (hr ) for r ≥ 1 is the output of an earlier residual branch. The input to branch ℓ is then 
+
+hℓ =
+
+> ℓ−1
+
+X
+
+> r=0
+
+πr→ℓvr . (5) The same source vr therefore determines its depth weight and supplies its value, which we call address-content coupling .DAR generalizes each source to a two-stream history entry 
+
+Hr = [ H0 
+
+> r
+
+, H 1 
+
+> r
+
+], Hjr ∈ RT ×d, j ∈ { 0, 1}, (6) where r indexes entries in the ordered history bank H. The history index is independent of the network-depth index: the initial entry duplicates the token embedding, H0 = [ h1, h 1].For a two-vector β and state x, we write 
+
+β ⊗ x = [ β0x, β 1x]. (7) Block DAR partitions the residual branches into consecu-tive blocks. Let b ≥ 1 index blocks and let the block size K
+
+denote the number of Transformer layers per block. Because each layer contains an attention branch and a feed-forward branch, a block contains S = 2 K residual branches; we use 
+
+i ∈ { 1, . . . , S } to index their positions within the block. Setting K = 1 (S = 2 ) makes each Transformer layer an in-dependent block; we refer to this layer-wise form as Full DAR and motivate this choice in Full DAR at Layer Granularity .
+
+Block Dual-Stream Retrieval 
+
+Before block b, the completed block representations form the history 
+
+Hb = ( H0, H 1, . . . , H b−1). (8) Let P ib = [ P i, 0 
+
+> b
+
+, P i, 1 
+
+> b
+
+] denote the partial block representation after the first i residual branches in block b. It is formed after History 
+
+⋮                                    
+
+> stream 0 stream 1
+> 𝐻 00𝑣 00𝑘 00
+> 𝐻 0
+> 1𝑣 0
+> 1𝑘 0
+> 1
+> 𝐻 1
+> 0𝑣 1
+> 0𝑘 1
+> 0
+> 𝐻 11𝑣 11𝑘 11
+> 𝐻 𝑏 −
+> 1
+> 0𝑣 𝑏 −
+> 1
+> 0𝑘 𝑏 −
+> 1
+> 0
+> 𝐻 𝑏 −
+> 11𝑣 𝑏 −
+> 11𝑘 𝑏 −
+> 11
+
+Norm  
+
+> 𝑞 𝑙
+> 0
+
++
+
+𝛼 ⁰
+
+𝛼 ¹
+
+branch 
+
+𝛽 ⁰
+
+𝛽 ¹  
+
+> 𝜌 1− 𝜌
+> 1− 𝜌 𝜌
+> append if i==S
+
++                          
+
+> 𝑞 𝑙
+> 1
+> 𝑣 𝑝
+> 1𝑘 𝑝
+> 1
+> 𝑃 𝑏
+> 𝑖 −
+> 1,0𝑣 𝑝
+> 0𝑘 𝑝
+> 0
+> 𝑃 𝑏
+> 𝑖 −
+> 1,0
+> 𝑃 𝑏
+> 𝑖 −
+> 1,1𝑃 𝑏
+> 𝑖 −
+> 1,1
+> ℎ𝑙
+> 0
+> ℎ𝑙
+> 1
+> 𝑓 𝑙 (ℎ𝑙 )
+> 𝑃 𝑏
+> 𝑖 ,0
+> 𝑃 𝑏
+> 𝑖 ,1
+
+Figure 1: Block DAR, shown for branch i > 1 in block b. Opposite-stream keys retrieve self-stream values, which are mixed for an unchanged Transformer branch; its gated output combines with constrained transport of P i−1 
+
+> b
+
+to form P ib . The partial path is omitted for i = 1 , and P Sb is appended as Hb at the block boundary. the first residual branch in block b and remains local to that block; after its S-th branch, the final partial representation 
+
+P Sb becomes the completed block representation Hb. The gated update that constructs P ib is defined in the next subsec-tion. If global branch ℓ is branch i inside block b, its ordered retrieval candidates are 
+
+Cℓ =
+
+Hb, i = 1 ,
+
+(Hb, P i−1 
+
+> b
+
+), i > 1. (9) Thus the first residual branch in block b retrieves only from completed history, whereas later branches in the same block may also retrieve the computation accumulated within that block. Before the block boundary, the partial state is only a temporary retrieval candidate. Let Cr = [ C0 
+
+> r
+
+, C 1 
+
+> r
+
+] be candidate r in Cℓ. For output stream 
+
+j, the opposite stream provides the normalized key and the target stream provides the unprojected value: 
+
+kjr = Norm h(C1−jr ), vjr = Cjr , j ∈ { 0, 1}. (10) Every residual branch and stream has an independent query 
+
+qjℓ ∈ Rd. The resulting depth weights and retrieved stream states are 
+
+πjr→ℓ =exp 
+
+
+
+(qjℓ )⊤kjr
+
+P 
+
+> Cu∈C ℓ
+
+exp 
+
+
+
+(qjℓ )⊤kju
+
+ , (11) 
+
+hjℓ = X 
+
+> Cr∈C ℓ
+
+πjr→ℓvjr . (12) The opposite stream therefore controls where stream j re-trieves from, while the aggregated content remains in stream 
+
+j’s own residual space. 
+
+Block-Local Mixing and Gated Writes 
+
+DAR mixes the two retrieved states to form the branch input and uses the branch output to update both partial streams. For each token, it predicts 
+
+¯hℓ = Norm([ h0 
+
+> ℓ
+
+; h1 
+
+> ℓ
+
+]) , (13) 
+
+αℓ = σ(¯hℓWα,ℓ + bα,ℓ ), βℓ = 2 σ(¯hℓWβ,ℓ + bβ,ℓ ), (14) where αℓ ∈ (0 , 1) 2 and βℓ ∈ (0 , 2) 2. The unchanged Trans-former branch receives 
+
+hℓ = α0 
+
+> ℓ
+
+h0 
+
+> ℓ
+
++ α1 
+
+> ℓ
+
+h1 
+
+> ℓ
+
+(15) and produces fℓ(hℓ).Following mHC (Xie et al. 2026), later branches in a block transport the existing partial state with 
+
+¯pb,i = Norm([ P i−1,0 
+
+> b
+
+; P i−1,1 
+
+> b
+
+]) ,ρb,i = σ(¯ pb,i Wρ,ℓ + bρ,ℓ ),M (ρb,i ) = 
+
+ ρb,i 1 − ρb,i 
+
+1 − ρb,i ρb,i 
+
+
+
+.
+
+(16) The complete partial-state update is 
+
+P ib =
+
+(βℓ ⊗ fℓ(hℓ), i = 1 ,M (ρb,i )P i−1 
+
+> b
+
++ βℓ ⊗ fℓ(hℓ), i > 1. (17) Thus the first branch initializes the partial state, while subse-quent branches mix its two streams before adding their gated writes. After branch S, the completed state is appended as 
+
+Hb = P Sb . (18) After the final branch, learned output queries apply the same cross-key/self-value retrieval to the completed history. The sum h0out + h1out is passed to the original final normaliza-tion and vocabulary projection. See Appendix Figure A.1 for framework-level pseudocode of the complete Block DAR forward pass. 
+
+Full DAR at Layer Granularity 
+
+The finest meaningful DAR block is one Transformer layer, 
+
+K = 1 , which contains an attention branch and a feed-forward branch ( S = 2 ). We call this layer-wise construction Full DAR because every Transformer layer contributes a sep-arate completed entry to the retrievable history. A branch-wise construction with S = 1 is not used. Let 
+
+uℓ = fℓ(hℓ) be its sole branch output. Its completed history entry would reduce to 
+
+Hℓ = βℓ ⊗ uℓ = [ β0 
+
+> ℓ
+
+uℓ, β 1 
+
+> ℓ
+
+uℓ]. (19) Consequently, at every token position p,
+
+H1 
+
+> ℓ,p
+
+= β1
+
+> ℓ,p
+
+β0
+
+> ℓ,p
+
+H0
+
+> ℓ,p
+
+. (20) The two stored streams are therefore collinear and differ only by a positive scalar. They cannot encode distinct sum-maries of the branch computation: the cross-stream key and self-stream value both originate from the same underlying content direction. Independent stream queries may still pro-duce different readouts over depth, but they do not remove the degeneracy of each stored history entry. Moreover, with no preceding partial state, the constrained transport M (ρ) is never applied. 
+
+Design Comparisons 
+
+AttnRes + SepV. This single-stream control assigns each historical source an independent value projection. 
+
+˜vr = Wv,r vr . (21) SepV therefore adds one d × d map to each branch’s value path, totaling O(Rd 2) parameters for R sources. Like-wise, q⊤ 
+
+> ℓ
+
+Wk,r kr = ( W ⊤ 
+
+> k,r
+
+qℓ)⊤kr ; a source-specific key map merely replaces qℓ with an effective query qℓ,r = W ⊤ 
+
+> k,r
+
+qℓ for each source and incurs the same parameter order. 
+
+Dual-stream routing variants. For candidate Cr =[C0 
+
+> r
+
+, C 1 
+
+> r
+
+] and output stream j, we compare four rules that differ only in their key-value routing: DAR-SelfKV: (kjr , v jr ) = (Norm h(Cjr ), C jr ),
+
+DAR-CrossV: (kjr , v jr ) = (Norm h(Cjr ), C 1−jr ),
+
+DAR-FixedKV: (kjr , v jr ) = (Norm h(C0 
+
+> r
+
+), C 1 
+
+> r
+
+),
+
+DAR: (kjr , v jr ) = (Norm h(C1−jr ), C jr ).
+
+(22) All variants retain independent branch- and stream-specific queries; only their key-value routing differs. DAR-SelfKV performs two within-stream reads, so the other trajectory does not directly affect its depth weights. DAR-CrossV uses self-stream keys to aggregate opposite-stream values, whereas DAR-FixedKV assigns stream 0 as the key source and stream 1 as the value source for both outputs. DAR in-stead uses reciprocal cross-stream keys while aggregating each stream’s own historical states. Because an opposite-stream key is produced by a separately transported trajec-tory, it provides an additional signal for selecting depths in the value stream. 
+
+## Experiments 
+
+We evaluate DAR under matched training budgets across dense models from 0.1B to 1B parameters and a 7B sparse-MoE model, comparing against standard residual connec-tions, Attention Residuals, and mHC. Beyond validation loss, Method 1B dense 7B MoE Residual 2.716 2.814 AttnRes-Block 2.704 2.785 DAR-Block 2.684 2.739 
+
+Table 1: Validation loss for the main dense and sparse-MoE settings. The 1B model is trained on 50B tokens; the 7B sparse-MoE model is trained for 60K steps, or 31.46B tokens. we report training efficiency under matched fused implemen-tations, conduct parameter-matched ablations of key-value routing and value transformations, and analyze the learned streams through historical retrieval patterns, cross-depth rep-resentation similarity, and intervention-based output recov-ery. 
+
+Experimental Setup 
+
+Models and data. We evaluate three smaller dense mod-els with 0.1B, 0.3B, and 0.5B non-vocabulary parameters, a main 1B dense model, and a sparse-MoE model. The smaller models are trained on FineWeb-Edu-10B (Penedo et al. 2024) with a token budget equal to 20 × their parameter count and evaluated on 10M held-out tokens. The 1B model is trained on 50B FineWeb-Edu-100B tokens. The sparse model has 7.22B total parameters and activates 1.40B per token, including vocabulary parameters; it is trained for 60K steps, corresponding to 31.46B FineWeb-Edu-100B tokens. All runs use a context length of 4096, with global batch sizes of 256 for dense models and 128 for sparse MoE. 
+
+Training and implementation. All methods within each setting share the same data, backbone, and training con-figuration. The main mHC baseline uses four streams; to facilitate analysis, we additionally train a two-stream mHC under the same 0.5B configuration, denoted mHC-2. Mod-els are trained on a single node with eight H800 GPUs us-ing AdamW (Loshchilov and Hutter 2019). Dense experi-ments use PyTorch with DeepSpeed (Rasley et al. 2020) and 
+
+torch.compile (Ansel et al. 2024), whereas sparse-MoE experiments use Megatron-Core (Shoeybi et al. 2019) and fused AttnRes/DAR operators. For the parameter-matched 0.5B ablation, we set the FFN width of AttnRes + SepV to 4992. We use Block DAR in the main dense and sparse-MoE experiments and evaluate both Block and Full DAR in the smaller models. Complete configurations and parameter counts are provided in Appendix Tables A.1–A.6. 
+
+Main Results 
+
+1B-parameter setting. Table 1 compares block-form DAR with a standard residual Transformer and block-form Atten-tion Residuals. In the 1B setting, DAR achieved the lowest validation loss in Table 1, below both the residual baseline and block-form Attention Residuals. Figure 2 shows that DAR also maintains lower smoothed training loss for most of training. 
+
+Other model sizes. Table 2 compares the residual baseline, mHC, and the block and full forms of DAR and Attention 5k 15k 25k 35k 45k 
+
+> Training step
+> 2.7
+> 2.8
+> 2.9
+> 3.0
+> 3.1
+> Training Loss
+> Baseline
+> AttnRes
+> DAR
+
+Figure 2: Training loss for the 1B dense models over 50B FineWeb-Edu-100B tokens, shown as a 300-step moving av-erage. Method 0.1B 0.3B 0.5B Residual 3.577 2.866 2.796 DAR-Block 3.504 2.803 2.674 DAR-Full 3.515 2.804 2.653 
+
+AttnRes-Block 3.572 2.823 2.754 AttnRes-Full 3.541 2.827 2.708 mHC 3.531 2.844 2.764 Table 2: Validation loss in the small-scale dense suite. Model size excludes vocabulary parameters; each model uses a 20 ×
+
+token budget. Residuals. At 0.1B, 0.3B, and 0.5B, the lower-loss DAR variant re-duced validation loss relative to the residual baseline by 2.03%, 2.22%, and 5.12%, respectively, and also achieved lower loss than mHC. Block-form DAR had lower loss at 0.1B and 0.3B, whereas full-form DAR had lower loss at 0.5B. 
+
+Sparse-MoE setting. In the sparse-MoE setting, DAR also achieved the lowest validation loss in Table 1. Its training curve remained below both baselines for most of training (Figure 4). Appendix Figure A.2 shows similar router balance across the three runs. Figure 3 compares the historical retrieval distributions learned by the two sparse-MoE DAR streams. Across many target layers, the two streams place their largest weights on different historical blocks and distribute the remaining mass differently over the available history. This complementary routing indicates a division of labor across depth: the streams expose different historical contexts to the same Transformer branch rather than redundantly reproducing a single retrieval pattern. The corresponding pre-MLP map exhibits the same separation (Appendix Figure A.3), showing that this special-ization is present in both branch types. Method Avg. tok/s (K) Peak GiB Residual 114 59.8 AttnRes 104 67.4 DAR 94 70.5 Table 3: Training efficiency for the 7B sparse-MoE models on one node with eight H800 GPUs. Throughput excludes the first 300 steps to reduce sensitivity to early MoE-routing transients; peak memory is reported per GPU. Method Routing Val. loss AttnRes kt → vt 2.708 AttnRes + SepV kt → Wv,t vt 2.757 DAR-FixedKV k0 
+
+> t
+
+→ v1 
+
+> t
+
+2.690 DAR-SelfKV kjt → vjt 2.678 DAR-CrossV kjt → v1−jt 2.664 DAR k1−jt → vjt 2.653 Table 4: Key-value routing ablations in the 0.5B model under matched parameter and training settings. An arrow lists the representation supplying the scoring keys followed by the representation supplying the values being aggregated. 
+
+Training Efficiency 
+
+For the 7B sparse-MoE efficiency comparison, Attention Residuals and DAR use a matched Triton prefix-kernel fam-ily (Tillet, Kung, and Cox 2019) following Attention Resid-uals (Kimi Team et al. 2026). The kernels pack normalized keys and unprojected values, then compute the completed-history state and its log-partition. Following the two-phase computation of Attention Residuals, the current partial state is incorporated through an exact online-softmax merge. DAR evaluates both streams jointly and uses fused residual-read stages to predict αℓ and βℓ, together with ρb,i for i > 1,and to form the branch input and optional transported partial state. The Transformer branch remains unchanged; a post-attention epilogue fuses branch-output handling with the gated stream write. Appendix A.1 details the forward and backward boundaries. Relative to the residual baseline, Attention Residuals and DAR reduce throughput by 9.16% and 17.54%, while in-creasing per-GPU peak memory by 7.7 and 10.7 GiB, re-spectively. Under the matched fused implementations, DAR adds approximately 0.363M total and active parameters over Attention Residuals, reduces throughput by 9.23%, and uses 3.1 GiB (4.57%) more peak memory per GPU. Most of the memory increase already appears with single-stream histor-ical retrieval; DAR’s cross-stream routing adds a smaller but measurable cost. 
+
+Ablation Study 
+
+Table 4 evaluates the parameter-matched methods defined in the Design Comparisons subsection under the same training settings. As Table 4 shows, adding source-specific value projec-0 1 2 3 4 5 6 7 8        
+
+> 1
+> 5
+> 10
+> 15
+> 20
+> 24
+> Stream 0
+> 012345678
+> Stream 1
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Mean attention
+> Historical block
+> Target layer
+
+Figure 3: Pre-attention historical retrieval weights for sparse-MoE DAR, averaged over eight sequences of length 4096. Rows are target layers and columns are historical blocks; blank cells are unavailable. 5k 15k 25k 35k 45k 55k 
+
+> Training step
+> 2.8
+> 3.0
+> 3.2
+> 3.4
+> 3.6
+> Training Loss
+> Baseline
+> AttnRes
+> DAR
+
+Figure 4: Training loss for the 7B sparse-MoE models on FineWeb-Edu-100B from 5K to 60K steps, shown as a 300-step moving average. tions to AttnRes degrades performance, so independently transformed values do not explain DAR’s gain. SelfKV im-proves over single-stream AttnRes, and both cross-stream variants improve further; the fixed one-sided assignment is weaker. DAR achieves the lowest loss while aggregating val-ues within their original streams, favoring cross-stream keys with self-stream values among the tested routing rules. 
+
+Analysis 
+
+Cross-stream representation geometry. We first assess whether the two streams learn distinct representations across depth. Using four FineWeb-Edu-10B validation sequences of length 4096, we collect post-MLP stream states over the fi-nal 128 tokens and compute cross-stream, cross-depth linear CKA (Kornblith et al. 2019). A high CKA value indicates that two depths organize the sampled tokens similarly, with-out requiring their hidden coordinates to align directly. DAR maintains low cross-stream similarity across most unmatched depths, with alignment confined to a narrow region near corresponding late layers. Unlike the broad high-CKA regions observed in DAR-SelfKV and mHC-2, this localized pattern indicates that DAR preserves distinct depth-wise trajectories without widespread cross-depth re-dundancy. For DAR-SelfKV, the early alignment expands into a broad block across the middle layers. DAR-FixedKV produces repeated vertical bands: rather than aligning at cor-responding depths, a few stream-1 states align with stream-0 states across a wide range of layers. This many-to-one pat-tern suggests that fixed key–value roles make multiple depths reuse similar representations, reducing the depth-wise diver-sity available for historical retrieval. For mHC-2, many un-matched late-layer pairs have high CKA, forming a broad cross-depth region. This pattern is consistent with a lower effective depth, as representations from distinct late layers become less distinguishable. These CKA patterns charac-terize representation geometry but do not establish whether particular depths are frequently retrieved or whether either stream contributes to the model’s prediction. 
+
+Functional utility of individual streams. We next mea-sure whether each stream contributes useful predictive in-formation through layer-wise interventions following Peng et al. (2026), using the same samples and token positions. Let (u0 
+
+> ℓ
+
+, u 1 
+
+> ℓ
+
+) denote the two stream states immediately after the MLP update at layer ℓ. From the same clean prefix, we construct three interventions: keep only stream 0, (u0 
+
+> ℓ
+
+, 0) ;keep only stream 1, (0 , u 1 
+
+> ℓ
+
+); or remove both streams, (0 , 0) .We then run the remaining layers without further modifica-tion, obtaining the output distributions pkeep -0, pkeep -1, and 
+
+pzero -both , while the unmodified run produces pclean . For stream j, we define the rescue gain as 
+
+Rℓ,j = 1 − KL( pclean ∥pkeep -j )max(KL( pclean ∥pzero -both ), 10 −12 ) .
+
+The fraction compares the KL shift after retaining stream j
+
+with that after zeroing both streams; Rℓ,j = 1 , Rℓ,j = 0 ,and Rℓ,j < 0 respectively denote complete recovery, no reduction, and increased distortion. Figure 6 shows that, for DAR, retaining either stream re-covers more of the clean output than retaining neither over most layers. In contrast, despite high cross-stream CKA, DAR-SelfKV’s KL rescue consistently favors stream 1. This strong asymmetry indicates that independent self-retrieval does not let the two trajectories cooperate effectively: with-out DAR’s reciprocal cross-stream selection, one stream be-0 5 10 15 19             
+
+> 0
+> 5
+> 10
+> 15
+> 19
+> DAR
+> 0510 15 19
+> DAR-SelfKV
+> 0510 15 19
+> DAR-FixedKV
+> 0510 15 19
+> mHC-2
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Linear CKA
+> Stream-1 source layer
+> Stream-0 target layer
+
+Figure 5: Cross-stream linear CKA for post-MLP residual-stream states in the 0.5B models. Rows are stream-0 layers and columns are stream-1 layers; mHC-2 denotes the two-stream mHC configuration included in this analysis. s0 s1    
+
+> 0
+> 5
+> 10
+> 15
+> 19
+> DAR
+> s0 s1
+> DAR-SelfKV
+> s0 s1
+> DAR-FixedKV
+> s0 s1
+> mHC-2
+> −1.0
+> −0.5
+> 0.0
+> 0.5
+> 1.0
+> Rescue gain
+> Retained stream
+> Layer
+
+Figure 6: Post-MLP residual-stream rescue gain by layer in the 0.5B models. Columns indicate the retained stream; values are normalized against zeroing both streams. comes functionally dominant while the other remains un-derused. In DAR-FixedKV, retaining the designated value stream 1 recovers the output, whereas retaining the key stream 0 alone often yields near-zero or negative rescue. This asymmetry is consistent with its routing rule: stream 1 carries the historical values available to subsequent retrieval, while stream 0 supplies only the keys that determine their weights. Retaining the value stream therefore preserves retrievable content; retaining the key stream alone preserves a selection signal whose corresponding values have been removed. This one-sided recoverability shows that DAR-FixedKV under-uses the two-stream capacity: one trajectory is confined to addressing and the other to retrievable content, rather than allowing both to contribute reciprocally as in DAR. Its higher validation loss than DAR indicates that this fixed division of roles is less effective than reciprocal routing. For mHC-2, both streams have positive rescue gains at late layers. Taken alone, this shows that each carries useful predictive infor-mation; combined with the broad high-CKA region across unmatched late depths, however, it indicates that much of this information is duplicated rather than specialized. Unlike DAR’s localized alignment and reciprocal use of both tra-jectories, mHC-2 spends its additional trajectory repeating similar late-depth computation, consistent with a lower ef-fective depth. Moreover, stream 1 has negative rescue gain at several middle layers, showing that this redundancy does not produce consistently useful cooperation across depth. 
+
+Explaining SelfKV imbalance. DAR-SelfKV’s high di-agonal CKA suggests similar representation geometry at matched depths, yet its rescue gains are strongly asymmet-ric. To explain this discrepancy, we test whether gated branch writes favor the stream that later dominates rescue (Appendix Figure A.4). For each layer, we define 
+
+gℓ = Ex,t [β1 
+
+> ℓ
+
+− β0 
+
+> ℓ
+
+], dℓ = Rℓ, 1 − Rℓ, 0,
+
+where βjℓ gates the branch write to stream j, and the ex-pectation averages over validation sequences and token posi-tions. DAR-SelfKV has a substantially larger mean absolute write gap than DAR ( 0.49 versus 0.18 ), and its write and rescue gaps are much more strongly correlated across lay-ers ( r = 0 .82 versus 0.23 ). Thus, SelfKV’s representational similarity masks imbalanced information flow: one stream is written more strongly and becomes functionally dominant, whereas DAR uses both trajectories more evenly. 
+
+## Conclusion 
+
+Dual Attention Residuals formulates historical residual re-trieval as a joint choice over depth and stream roles. It uses cross-stream keys to compute historical depth weights and applies them to self-stream values, without changing the Transformer branches. Across dense and sparse models, DAR improves validation loss. Ablations and analyses rule out an additional stream or value projection as the source of the gain and show that both trajectories remain useful without the redundancy or imbalance of alternative designs. A Additional Material 
+
+A.1 Fused Residual-History Operators 
+
+The 7B sparse-MoE experiments use fused opera-tors, whereas dense runs use direct PyTorch with 
+
+torch.compile ; both implement the same equations and objective. We retain the notation from the main text and make only token position p explicit; r indexes completed-history entries in Hb, while “part” denotes the optional current par-tial candidate. The same equations reduce to Full DAR at 
+
+K = 1 , yielding a layer-wise history. 
+
+Block-form pseudocode. Figure A.1 gives framework-level pseudocode for Block DAR. It retains the model logic while omitting fused-kernel and caching optimizations. 
+
+Packed completed history. Completed candidates 
+
+H0, . . . , H b−1 are stored separately from the optional current partial state P i−1 
+
+> b
+
+. At each append, a packing kernel stores the unprojected values vjr = Hjr and normalized cross-stream keys kjr = Norm h(H1−jr ) defined in the main text; these are only cached views of Hb. For token p, its depth score is 
+
+ajr→ℓ,p = ( qjℓ )⊤kjr,p . (A.1) 
+
+Completed-history prefix. For every (ℓ, p, j ), the prefix kernel computes 
+
+mjℓ,p = max  
+
+> 0≤r<b
+
+ajr→ℓ,p , (A.2) 
+
+Zjℓ,p =
+
+> b−1
+
+X
+
+> r=0
+
+exp( ajr→ℓ,p − mjℓ,p ), (A.3) 
+
+U jℓ,p =
+
+> b−1
+
+X
+
+> r=0
+
+exp( ajr→ℓ,p − mjℓ,p )vjr,p . (A.4) Here mjℓ,p , Zjℓ,p , and U jℓ,p are the maximum logit, shifted denominator, and shifted value numerator. The kernel mate-rializes the logits and max-shifted scores for backward, but not a second tensor of normalized weights; it directly returns 
+
+ζjℓ,p = mjℓ,p + log Zjℓ,p , ehj, hist  
+
+> ℓ,p
+
+= U jℓ,p /Z jℓ,p . (A.5) Here ζjℓ,p and ehj, hist  
+
+> ℓ,p
+
+are the completed-history log-partition and retrieved state. The matched kernel family pairs the at-tention and feed-forward queries; DAR additionally evaluates both streams together. 
+
+Exact online-softmax merge. For branch i > 1 in block 
+
+b, the additional candidate is P i−1 
+
+> b
+
+. Its cross-stream key, self-stream value, and score are 
+
+kj 
+
+> part ,ℓ,p
+
+= [Norm h(P i−1,1−jb )] p, (A.6) 
+
+vj 
+
+> part ,ℓ,p
+
+= ( P i−1,j b )p, (A.7) 
+
+aj 
+
+> part →ℓ,p
+
+= ( qjℓ )⊤kj
+
+> part ,ℓ,p
+
+. (A.8) The scalar 
+
+λjℓ,p = σ(ζjℓ,p − aj
+
+> part →ℓ,p
+
+) (A.9) is the total softmax mass assigned to the completed-history candidates. Consequently, the residual-read kernel obtains exactly the retrieval defined in the main text over Cℓ =(Hb, P i−1 
+
+> b
+
+):
+
+hjℓ,p = λjℓ,p ehj, hist  
+
+> ℓ,p
+
++ (1 − λjℓ,p )vj
+
+> part ,ℓ,p
+
+. (A.10) For i = 1 , no partial candidate exists and hjℓ,p = ehj, hist  
+
+> ℓ,p
+
+.This is the two-phase online-softmax merge of Attention Residuals (Kimi Team et al. 2026); it is algebraically identical to normalizing all candidates together. 
+
+Fusion and backward boundaries. The fused residual read performs the exact history–partial merge in Equa-tion A.10 and predicts αℓ and βℓ. For i > 1, it also predicts 
+
+ρb,i and returns the transported state M (ρb,i )P i−1 
+
+> b
+
+together with the branch input hℓ. The unchanged branch fℓ executes separately; for attention, a post-branch epilogue fuses branch-output handling with the gated write, while the feed-forward path applies the same update directly. Backward retains the logits, shifted scores, and reduction outputs, but reconstructs packed vjr and normalized kjr from the raw Hr states and re-computes current-partial keys as needed. Its custom kernels differentiate the residual-history path only; the Transformer branches remain outside it and are not recomputed. After the final block is appended, the learned output queries reuse the same completed-history read without a partial candidate. 1 def dual_block_attn_res(blocks, partial_block, q0, q1, norm):  
+
+> 2
+
+# blocks already include the duplicated token embedding  
+
+> 3
+
+states = blocks if partial_block is None else blocks + [partial_block]  
+
+> 4
+
+V0 = torch.stack([state[0] for state in states])  
+
+> 5
+
+V1 = torch.stack([state[1] for state in states])  
+
+> 6
+
+K0, K1 = norm(V1), norm(V0) # cross-stream keys  
+
+> 7
+
+pi0 = softmax(einsum(q0, K0), dim=0)  
+
+> 8
+
+pi1 = softmax(einsum(q1, K1), dim=0)  
+
+> 9
+
+h0 = einsum(pi0, V0) # self-stream values  
+
+> 10
+
+h1 = einsum(pi1, V1)  
+
+> 11
+
+return alpha_beta_mix(h0, h1) # branch input h and write gate beta  
+
+> 12 13
+
+def mhc_update(partial_block, branch_out, beta, rho_gate):  
+
+> 14
+
+write = gated_write(beta, branch_out)  
+
+> 15
+
+if partial_block is None: # first branch in a block  
+
+> 16
+
+return write  
+
+> 17
+
+rho = rho_gate(partial_block)  
+
+> 18
+
+return M(rho) @ partial_block + write # constrained mHC transport  
+
+> 19 20
+
+def forward(self, blocks, hidden_states):  
+
+> 21
+
+partial_block = hidden_states  
+
+> 22
+
+# apply Block DAR before attention  
+
+> 23
+
+h, beta = dual_block_attn_res(  
+
+> 24
+
+blocks, partial_block, self.attn_q0, self.attn_q1, self.attn_res_norm)  
+
+> 25 26
+
+# if reaching a block boundary, start a new block  
+
+> 27
+
+# block_size counts Transformer layers  
+
+> 28
+
+if self.layer_number % self.block_size == 0:  
+
+> 29
+
+blocks.append(partial_block)  
+
+> 30
+
+partial_block = None  
+
+> 31 32
+
+attn_out = self.attn(self.attn_norm(h))  
+
+> 33
+
+partial_block = mhc_update(  
+
+> 34
+
+partial_block, attn_out, beta, self.attn_rho_gate)  
+
+> 35 36
+
+# apply Block DAR before MLP  
+
+> 37
+
+h, beta = dual_block_attn_res(  
+
+> 38
+
+blocks, partial_block, self.mlp_q0, self.mlp_q1, self.mlp_res_norm)  
+
+> 39
+
+mlp_out = self.mlp(self.mlp_norm(h))  
+
+> 40
+
+partial_block = mhc_update(  
+
+> 41
+
+partial_block, mlp_out, beta, self.mlp_rho_gate)  
+
+> 42
+
+return blocks, partial_block 
+
+Figure A.1: Block DAR pseudocode in the same control flow as Block AttnRes, with cross-stream retrieval and mHC partial-state updates. 
+
+A.2 Experimental Configurations 
+
+Tables A.1–A.6 report the complete architecture, optimiza-tion, distributed-training, and parameter-count configura-tions for the dense and sparse-MoE experiments. The sparse backbone uses grouped-query atten-tion (Ainslie et al. 2023), RoPE (Su et al. 2024), RM-SNorm (Zhang and Sennrich 2019), SwiGLU (Shazeer 2020), and sparsely gated mixture-of-experts rout-ing (Shazeer et al. 2017). Setting Value Setting Value Backbone Dense decoder-only Transformer Hidden size 2048 Dataset FineWeb-Edu-100B Embedding size 1024 Training tokens 50B Layers 20 Hardware 8× H800 GPUs Attention / KV heads 16 / 8 GPU nodes 1 Feed-forward width 6656 Training framework DeepSpeed Block size K 2 layers Compilation torch.compile max-autotune Optimizer AdamW Sequence length 4096 Peak learning rate 3.0 × 10 −4
+
+Micro / global batch 2 / 256 Minimum learning rate 3.0 × 10 −5
+
+Grad. accumulation 16 Warmup steps 2000 ZeRO stage 1 Weight decay 0.1 Activation recompute Disabled AdamW β1, β 2 0.9, 0.95 Param./grad. sharding Disabled AdamW ϵ 1.0 × 10 −8
+
+Random seed 42 Gradient clipping 1.0 
+
+Table A.1: Training and architecture details for the 1B language-modeling experiment. The same optimization recipe is used for all methods in the 1B comparison. 
+
+Size Tokens Seq. Batch Layers H/KV dmodel demb dff K mHC 0.1B 2B 4096 256 16 10/5 640 640 2560 2 40.3B 6B 4096 256 20 16/4 1024 1024 4096 2 40.5B 10B 4096 256 20 20/10 1280 1024 5120 2 4
+
+Table A.2: Architecture and training settings for the other dense model sizes. All runs use FineWeb-Edu-10B, DeepSpeed, 
+
+torch.compile in max-autotune mode, and random seed 42. They run on a single node with eight H800 GPUs using micro/global batch sizes 2/256, 16 gradient-accumulation steps, ZeRO Stage 1, no activation recomputation or parameter/gradient sharding, and 300 warmup steps. Within each size, the residual mechanism changes across methods while the data order, dense decoder backbone, optimization recipe, batch size, and token budget are held fixed. The column K reports the block size, i.e., the number of Transformer layers per block, for block-form Attention Residuals and block-form DAR; Full Attention Residuals and Full DAR use K = 1 .
+
+Nominal scale Method Excl. vocabulary (M) Incl. vocabulary (M) 0.1B Residual 98.325 182.211 0.1B AttnRes-Block 98.336 182.222 0.1B AttnRes-Full 98.346 182.232 0.1B DAR-Block 98.449 182.335 0.1B DAR-Full 98.571 182.457 0.1B mHC 100.292 184.178 0.3B Residual 304.129 438.347 0.3B AttnRes-Block 304.151 438.368 0.3B AttnRes-Full 304.170 438.388 0.3B DAR-Block 304.377 438.595 0.3B DAR-Full 304.621 438.839 0.3B mHC 308.062 442.280 0.5B Residual 491.572 659.345 0.5B AttnRes-Block 491.599 659.372 0.5B AttnRes-Full 491.624 659.396 0.5B DAR-Block 491.882 659.655 0.5B DAR-Full 492.187 659.959 0.5B mHC 496.489 664.261 1B Residual 1,069.631 1,338.067 1B AttnRes-Block 1,069.674 1,338.110 1B DAR-Block 1,070.127 1,338.563 
+
+Table A.3: Exact dense-model parameter counts. “Excl.” and “incl.” indicate whether vocabulary parameters are excluded or included. The scale labels in the main text refer to the nominal non-vocabulary model size. Architecture setting Value Architecture setting Value Transformer layers 24 Context length 4096 Hidden size 2048 Expert FFN width 704 Attention heads / KV groups 16 / 8 Vocabulary size 131,072 Position encoding RoPE RoPE base 10 6
+
+Normalization / activation RMSNorm / SwiGLU Linear biases Disabled Attention backend Fused Input–output embeddings Tied Block size K 3 layers Experts 64 Experts selected per token 8 Router balancing Auxiliary loss Auxiliary-loss coefficient 0.01 Expert computation Grouped GEMM Token dispatcher All-to-all 
+
+Table A.4: Architecture of the sparse-MoE backbone. The residual baseline, Attention Residuals, and DAR share this backbone, the pretokenized FineWeb-Edu-100B data, optimization schedule, and distributed-training configuration. Attention Residuals and DAR use block size K = 3 ; the residual mechanism and its matched fused implementation are the only method-specific components. The expert FFN width is the intermediate width of each routed expert. 
+
+Method Total excl. vocab. (B) Total incl. vocab. (B) Active excl. vocab. (B) Active incl. vocab. (B) Residual 6.949 7.217 1.136 1.404 AttnRes 6.949 7.217 1.136 1.404 DAR 6.949 7.218 1.136 1.405 
+
+Table A.5: Exact sparse-MoE parameter counts. Active parameters are those used per token under top-8 expert routing; vocabulary parameters are reported separately because they contribute equally to all methods. 
+
+Training setting Value Training setting Value Dataset FineWeb-Edu-100B (pretok-enized) Precision BF16 Training framework Megatron-Core Activation recomputation Selective Training iterations 60,000 Training tokens 31.46B Micro / global batch size 2 / 128 Hardware 1 node / 8 H800 GPUs Optimizer AdamW Weight decay 0.1 AdamW β1, β 2 0.9, 0.95 AdamW ϵ 10 −8
+
+Peak / minimum learning rate 3 × 10 −4 / 3 × 10 −5 Gradient clipping 1.0 Warmup 2,000 iterations Decay schedule Cosine over 60,000 iterations Distributed optimizer Enabled Sequence parallelism Enabled TP / PP / EP / CP 2 / 1 / 4 / 1 Grad. accumulation 16 Data-loader mode Cyclic Random seed 42 Validation interval 10,000 iterations Validation iterations 20 Checkpoint interval 10,000 iterations Shuffle buffer 10,000 sequences 
+
+Table A.6: Training and distributed-system configuration for the sparse-MoE comparison. TP, PP, EP, and CP denote tensor, pipeline, expert, and context parallelism. On eight GPUs, TP = 2 gives data-parallel size 4; micro-batch size 2 with 16 accumulation steps yields global batch 128. At context length 4096, 60,000 iterations correspond to 31.46B training tokens; each 20-iteration validation pass evaluates approximately 10.49M tokens. A.3 Additional Analyses 
+
+We report the router-balance and pre-MLP retrieval diagnos-tics referenced in the main text. 
+
+Gate asymmetry protocol. For Figure A.4, we instrument the trained 0.5B DAR and DAR-SelfKV models on four FineWeb-Edu-10B validation sequences of length 4096 and average their MLP write gates over the final 128 token posi-tions; each point uses the write-gate and rescue gaps defined in the main-text analysis. We omit the residual keep gate ρ
+
+because it enters the symmetric two-stream mixing matrix and does not by itself favor either stream. 5k 15k 25k 35k 45k 55k 
+
+> Training step
+> 1.000
+> 1.004
+> 1.008
+> 1.012
+> 1.016
+> 1.020
+> Auxiliary loss
+> Load-Balancing Loss
+> Baseline
+> AttnRes
+> DAR
+
+Figure A.2: Router auxiliary loss for the sparse-MoE models from 5K to 60K steps, shown as a 300-step moving average. All methods approach the uniform-utilization reference at 1.0 with closely matched curves, indicating that the residual mechanism does not materially alter aggregate router bal-ance. 1        
+
+> 5
+> 10
+> 15
+> 20
+> 24
+> Stream 0
+> 012345678
+> 1
+> 5
+> 10
+> 15
+> 20
+> 24
+> Stream 1
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Mean attention
+> Historical block
+> Target layer
+
+Figure A.3: Pre-MLP retrieval weights for 7B sparse-MoE DAR, averaged over eight 4096-token sequences. Rows are target layers, columns are historical blocks, and blank cells are unavailable. The streams emphasize different blocks, con-sistent with the pre-attention map in Figure 3. −1.5 −1.0 −0.5 0.0 0.5             
+
+> −1.0
+> −0.5
+> 0.0
+> 0.5
+> 1.0 r= 0.23
+> |Δ β| = 0.18
+> (a) DAR
+> −1.5 −1.0 −0.5 0.0 0.5
+> r= 0.82
+> |Δ β| = 0.49
+> (b) DAR-SelfKV
+> 0
+> 5
+> 10
+> 15
+> 19
+> Layer
+> Write-gate asymmetry, Δβ=β1−β0
+> Rescue asymmetry,  ΔR = R1 − R0
+
+Figure A.4: DAR-SelfKV exhibits stronger write-gate asym-metry and a stronger gate–rescue association than DAR. Each point is one MLP layer, colored by depth; lines are least-squares fits and both panels use identical axes. 
+
+## References 
+
+Ainslie, J.; Lee-Thorp, J.; de Jong, M.; Zemlyanskiy, Y.; Le-bron, F.; and Sanghai, S. 2023. GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Check-points. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 4895–4901. As-sociation for Computational Linguistics. Ansel, J.; Yang, E. Z.; He, H.; et al. 2024. PyTorch 2: Faster Machine Learning Through Dynamic Python Byte-code Transformation and Graph Compilation. In Proceed-ings of the 29th ACM International Conference on Architec-tural Support for Programming Languages and Operating Systems, Volume 2 , 929–947. ACM. Ba, J. L.; Kiros, J. R.; and Hinton, G. E. 2016. Layer Nor-malization. arXiv preprint arXiv:1607.06450 .Bapna, A.; Chen, M. X.; Firat, O.; Cao, Y.; and Wu, Y. 2018. Training Deeper Neural Machine Translation Models with Transparent Attention. In Proceedings of the 2018 Confer-ence on Empirical Methods in Natural Language Processing ,3028–3033. Association for Computational Linguistics. He, K.; Zhang, X.; Ren, S.; and Sun, J. 2016. Deep Residual Learning for Image Recognition. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition ,770–778. Heddes, M.; Javanmard, A.; Axiotis, K.; Fu, G.; Bateni, M.; and Mirrokni, V. 2025. DeepCrossAttention: Supercharg-ing Transformer Residual Connections. In Proceedings of the 42nd International Conference on Machine Learning ,volume 267 of Proceedings of Machine Learning Research ,22881–22903. PMLR. Kimi Team; Chen, G.; Zhang, Y.; Su, J.; Xu, W.; Pan, S.; Wang, Y.; Wang, Y.; Chen, G.; Yin, B.; Chen, Y.; Yan, J.; Wei, M.; Zhang, Y.; Meng, F.; Hong, C.; Xie, X.; Liu, S.; Lu, E.; Tai, Y.; Chen, Y.; Men, X.; Guo, H.; Charles, Y.; Lu, H.; Sui, L.; Zhu, J.; Zhou, Z.; He, W.; Huang, W.; Xu, X.; Wang, Y.; Lai, G.; Du, Y.; Wu, Y.; Yang, Z.; and Zhou, X. 2026. Attention Residuals. arXiv preprint arXiv:2603.15031 .Kornblith, S.; Norouzi, M.; Lee, H.; and Hinton, G. 2019. Similarity of Neural Network Representations Revisited. In Proceedings of the 36th International Conference on Machine Learning , volume 97 of Proceedings of Machine Learning Research , 3519–3529. PMLR. Loshchilov, I.; and Hutter, F. 2019. Decoupled Weight Decay Regularization. In International Conference on Learning Representations .Luo, C.; Cai, Z.; and Hu, J. 2026. Delta Attention Residuals. 
+
+arXiv preprint arXiv:2605.18855 .Pagliardini, M.; Mohtashami, A.; Fleuret, F.; and Jaggi, M. 2024. DenseFormer: Enhancing Information Flow in Trans-formers via Depth Weighted Averaging. In Advances in Neu-ral Information Processing Systems 37 , 136479–136508. Penedo, G.; Kydlíček, H.; Allal, L. B.; Lozhkov, A.; Mitchell, M.; Raffel, C.; von Werra, L.; and Wolf, T. 2024. The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale. In Advances in Neural Information Process-ing Systems 37 , 30811–30849. Peng, W.; Rai, J.; Tseng, K.; Wang, S.; and Wu, S. 2026. Ablate and Rescue: A Causal Analysis of Residual Stream Hyper-Connections. In ICLR 2026 Workshop on Scientific Methods for Understanding Deep Learning .Rasley, J.; Rajbhandari, S.; Ruwase, O.; and He, Y. 2020. DeepSpeed: System Optimizations Enable Training Deep Learning Models with Over 100 Billion Parameters. In Pro-ceedings of the 26th ACM SIGKDD International Confer-ence on Knowledge Discovery and Data Mining , 3505–3506. ACM. Shazeer, N. 2020. GLU Variants Improve Transformer. arXiv preprint arXiv:2002.05202 .Shazeer, N.; Mirhoseini, A.; Maziarz, K.; Davis, A.; Le, Q. V.; Hinton, G.; and Dean, J. 2017. Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer. In International Conference on Learning Represen-tations .Shoeybi, M.; Patwary, M.; Puri, R.; LeGresley, P.; Casper, J.; and Catanzaro, B. 2019. Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Paral-lelism. arXiv preprint arXiv:1909.08053 .Su, J.; Ahmed, M.; Lu, Y.; Pan, S.; Bo, W.; and Liu, Y. 2024. RoFormer: Enhanced Transformer with Rotary Position Em-bedding. Neurocomputing , 568: 127063. Tillet, P.; Kung, H. T.; and Cox, D. 2019. Triton: An Inter-mediate Language and Compiler for Tiled Neural Network Computations. In Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Program-ming Languages , 10–19. ACM. Vaswani, A.; Shazeer, N.; Parmar, N.; Uszkoreit, J.; Jones, L.; Gomez, A. N.; Kaiser, L.; and Polosukhin, I. 2017. At-tention Is All You Need. In Advances in Neural Information Processing Systems 30 , 5998–6008. Xiao, D.; Meng, Q.; Li, S.; and Yuan, X. 2025. MUD-DFormer: Breaking Residual Bottlenecks in Transformers via Multiway Dynamic Dense Connections. In Proceedings of the 42nd International Conference on Machine Learning ,volume 267 of Proceedings of Machine Learning Research ,68440–68458. PMLR. Xie, Z.; Wei, Y.; Cao, H.; Zhao, C.; Deng, C.; Li, J.; Dai, D.; Gao, H.; Xu, M.; Yu, K.; Zhao, L.; Zhou, S.; Xu, Z.; Zhang, Z.; Zeng, W.; Hu, S.; Wang, Y.; Yuan, J.; Wang, L.; and Liang, W. 2026. mHC: Manifold-Constrained Hyper-Connections. In International Conference on Machine Learning .Xiong, R.; Yang, Y.; He, D.; Zheng, K.; Zheng, S.; Xing, C.; Zhang, H.; Lan, Y.; Wang, L.; and Liu, T.-Y. 2020. On Layer Normalization in the Transformer Architecture. In Pro-ceedings of the 37th International Conference on Machine Learning , volume 119 of Proceedings of Machine Learning Research , 10524–10533. PMLR. Zhang, B.; and Sennrich, R. 2019. Root Mean Square Layer Normalization. In Advances in Neural Information Process-ing Systems 32 , 12381–12392. Zhu, D.; Huang, H.; Huang, Z.; Zeng, Y.; Mao, Y.; Wu, B.; Min, Q.; and Zhou, X. 2025a. Hyper-Connections. In 
+
+International Conference on Learning Representations .Zhu, D.; Huang, H.; Zhou, J.; Huang, Z.; Zeng, Y.; Wu, B.; Min, Q.; and Zhou, X. 2025b. Frac-Connections: Frac-tional Extension of Hyper-Connections. arXiv preprint arXiv:2503.14125 .
