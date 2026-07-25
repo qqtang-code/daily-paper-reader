@@ -6,41 +6,38 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-24
-- 运行时间：2026-07-24 21:05:45 UTC
+- 最新运行日期：2026-07-25
+- 运行时间：2026-07-25 20:19:05 UTC
 - 运行状态：成功
-- 本次总论文数：7
+- 本次总论文数：6
 - 精读区：2
-- 速读区：5
+- 速读区：4
 
 ### 今日简报（AI）
-今日阅读7篇论文，精读2篇，聚焦长时序视觉推理与LLM资源分配。最值得关注的是ChronoStitch的无训练视觉记忆合成方法和Adaptive Depth Sparse Framework的相似性驱动稀疏化。建议优先了解这两篇的无训练和自适应思路，对提升模型效率具有实用价值。
-- 详情：[/202607/24/README](/202607/24/README)
+今日聚焦长视频时序推理与多模态边缘智能优化，精读两篇8分论文。最值得看的方向：无需训练的视觉记忆组合实现长程时序推理，以及压缩、MoE路由与量化在边缘智能中的协同交互。建议优先关注ChronoStitch，探索其在实际视频理解任务中的应用。
+- 详情：[/202607/25/README](/202607/25/README)
 
 ### 精读区论文标签
-1. [ChronoStitch: Training-Free Composition of Visual KV Memories for Long-Horizon Temporal Reasoning](/202607/24/2607.19547v1-chronostitch-training-free-composition-of-visual-kv-memories-for-long-horizon-temporal-reasoning)  
-   标签：评分：8.0/10、query:mm-cot
-   evidence：提出训练无关的KV记忆组合方法用于视频问答中的长时推理
-2. [Adaptive Depth Sparse Framework: Similarity-Driven Resource Allocation for Pre-Trained LLMs](/202607/24/2607.21291v1-adaptive-depth-sparse-framework-similarity-driven-resource-allocation-for-pre-trained-llms)  
+1. [ChronoStitch: Training-Free Composition of Visual KV Memories for Long-Horizon Temporal Reasoning](/202607/25/2607.19547v1-chronostitch-training-free-composition-of-visual-kv-memories-for-long-horizon-temporal-reasoning)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：自适应深度稀疏框架实现高效LLM推理
+   evidence：训练自由视觉KV记忆组合用于长视界时序推理
+2. [Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence](/202607/25/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：涵盖多模态大模型、KV缓存优化、视觉token压缩
 
 ### 速读区论文标签
-1. [Seeing the End at Step Zero: Accelerating Diffusion MLLMs via MLP Sparsity-Aware Truncation](/202607/24/2607.14557v1-seeing-the-end-at-step-zero-accelerating-diffusion-mllms-via-mlp-sparsity-aware-truncation)  
+1. [Efficient Frame Selection for Long Videos at Test Time with Attention-Based MLLM Selectors](/202607/25/2607.15689v1-efficient-frame-selection-for-long-videos-at-test-time-with-attention-based-mllm-selectors)  
    标签：评分：7.0/10、query:multimodal
-   evidence：通过稀疏感知截断加速扩散多模态大模型
-2. [Efficient Audio-Visual Event Recognition via Knowledge Distillation and Dynamic INT8 Quantization of a Hybrid Cross-Attention Network](/202607/24/2607.16980v1-efficient-audio-visual-event-recognition-via-knowledge-distillation-and-dynamic-int8-quantization-of-a-hybrid-cross-attention-network)  
+   evidence：基于注意力的长视频帧选择方法，使用多模态大模型
+2. [Scaling Interpretable Transformers with Parity Bottleneck Layers](/202607/25/2607.20652v1-scaling-interpretable-transformers-with-parity-bottleneck-layers)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：通过量化和蒸馏实现高效交叉注意力压缩
-3. [Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence](/202607/24/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：综述多模态边缘智能中的KV缓存优化与令牌压缩
-4. [Progressive Cramming: Reliable Token Compression and What It Reveals](/202607/24/2607.21231v1-progressive-cramming-reliable-token-compression-and-what-it-reveals)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：令牌压缩用于内存效率
-5. [SANA-Video 2.0: Hybrid Linear Attention with Attention Residuals for Efficient Video Generation](/202607/24/2607.21553v1-sana-video-20-hybrid-linear-attention-with-attention-residuals-for-efficient-video-generation)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：混合线性注意力用于高效视频生成，与高效注意力机制相关
+   evidence：提出带有奇偶瓶颈层的稀疏Transformer架构
+3. [Attention-Guided Saliency Maps for Interpreting Visualization Literacy in VLMs](/202607/25/2607.16105v1-attention-guided-saliency-maps-for-interpreting-visualization-literacy-in-vlms)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：提出注意力引导的显著性图用于解释视觉语言模型
+4. [TF-MossFormer: Integrating Convolution Gated Local-Global Attentions for Enhanced Time-Frequency Domain Monaural Speech Separation](/202607/25/2607.21128v1-tf-mossformer-integrating-convolution-gated-local-global-attentions-for-enhanced-time-frequency-domain-monaural-speech-separation)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：内容感知滑动窗口注意力用于高效语音分离
 
 
 <div class="dpr-home-promo-card">
