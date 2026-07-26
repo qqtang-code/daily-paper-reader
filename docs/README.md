@@ -6,38 +6,35 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-25
-- 运行时间：2026-07-25 20:19:05 UTC
+- 最新运行日期：2026-07-26
+- 运行时间：2026-07-26 21:08:15 UTC
 - 运行状态：成功
-- 本次总论文数：6
-- 精读区：2
-- 速读区：4
+- 本次总论文数：4
+- 精读区：4
+- 速读区：0
 
 ### 今日简报（AI）
-今日聚焦长视频时序推理与多模态边缘智能优化，精读两篇8分论文。最值得看的方向：无需训练的视觉记忆组合实现长程时序推理，以及压缩、MoE路由与量化在边缘智能中的协同交互。建议优先关注ChronoStitch，探索其在实际视频理解任务中的应用。
-- 详情：[/202607/25/README](/202607/25/README)
+今天精选了两篇9分论文，分别聚焦LVLM幻觉缓解与LLM多轮推理缓存优化。  
+最值得关注：感知对齐机制可有效减少视觉语言模型幻觉；基于CXL混合内存的KV缓存框架可提升多轮对话效率。  
+下一步可深入阅读原文，并关注CXL技术在LLM推理部署中的应用实践。
+- 详情：[/202607/26/README](/202607/26/README)
 
 ### 精读区论文标签
-1. [ChronoStitch: Training-Free Composition of Visual KV Memories for Long-Horizon Temporal Reasoning](/202607/25/2607.19547v1-chronostitch-training-free-composition-of-visual-kv-memories-for-long-horizon-temporal-reasoning)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：训练自由视觉KV记忆组合用于长视界时序推理
-2. [Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence](/202607/25/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence)  
+1. [Look Clearly Before Answering: Mitigating Hallucinations in LVLMs via Saliency-Driven Perceptual Realignment](/202607/26/2607.16841v1-look-clearly-before-answering-mitigating-hallucinations-in-lvlms-via-saliency-driven-perceptual-realignment)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：提出基于显著性驱动的感知重新对齐（SDPR），缓解大视觉语言模型中的视觉退化幻觉
+2. [HyMCache: A KV Cache Framework for Multi-Turn LLM Serving with CXL-Hybrid Memory](/202607/26/2607.18141v1-hymcache-a-kv-cache-framework-for-multi-turn-llm-serving-with-cxl-hybrid-memory)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：使用CXL混合内存的多轮大语言模型KV缓存框架
+3. [Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence](/202607/26/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence)  
+   标签：评分：9.0/10、query:multimodal
+   evidence：综述多模态边缘智能中的KV缓存优化、视觉标记压缩和量化等技术交互
+4. [Learning to Detect Cross-Modal Negation: An Analysis of Latent Representations and an Attention-Based Solution](/202607/26/2607.17712v1-learning-to-detect-cross-modal-negation-an-analysis-of-latent-representations-and-an-attention-based-solution)  
    标签：评分：8.0/10、query:multimodal
-   evidence：涵盖多模态大模型、KV缓存优化、视觉token压缩
+   evidence：用于多模态系统中否定检测的跨模态注意力机制
 
 ### 速读区论文标签
-1. [Efficient Frame Selection for Long Videos at Test Time with Attention-Based MLLM Selectors](/202607/25/2607.15689v1-efficient-frame-selection-for-long-videos-at-test-time-with-attention-based-mllm-selectors)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：基于注意力的长视频帧选择方法，使用多模态大模型
-2. [Scaling Interpretable Transformers with Parity Bottleneck Layers](/202607/25/2607.20652v1-scaling-interpretable-transformers-with-parity-bottleneck-layers)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：提出带有奇偶瓶颈层的稀疏Transformer架构
-3. [Attention-Guided Saliency Maps for Interpreting Visualization Literacy in VLMs](/202607/25/2607.16105v1-attention-guided-saliency-maps-for-interpreting-visualization-literacy-in-vlms)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：提出注意力引导的显著性图用于解释视觉语言模型
-4. [TF-MossFormer: Integrating Convolution Gated Local-Global Attentions for Enhanced Time-Frequency Domain Monaural Speech Separation](/202607/25/2607.21128v1-tf-mossformer-integrating-convolution-gated-local-global-attentions-for-enhanced-time-frequency-domain-monaural-speech-separation)  
-   标签：评分：6.0/10、query:sparse-attn
-   evidence：内容感知滑动窗口注意力用于高效语音分离
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">
