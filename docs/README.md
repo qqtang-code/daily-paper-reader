@@ -6,35 +6,46 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-26
-- 运行时间：2026-07-26 21:08:15 UTC
+- 最新运行日期：2026-07-27
+- 运行时间：2026-07-27 21:34:52 UTC
 - 运行状态：成功
-- 本次总论文数：4
+- 本次总论文数：8
 - 精读区：4
-- 速读区：0
+- 速读区：4
 
 ### 今日简报（AI）
-今天精选了两篇9分论文，分别聚焦LVLM幻觉缓解与LLM多轮推理缓存优化。  
-最值得关注：感知对齐机制可有效减少视觉语言模型幻觉；基于CXL混合内存的KV缓存框架可提升多轮对话效率。  
-下一步可深入阅读原文，并关注CXL技术在LLM推理部署中的应用实践。
-- 详情：[/202607/26/README](/202607/26/README)
+今日8篇论文精读聚焦稀疏注意力路由与自适应压缩机制，速读涵盖跨模态否定检测与多模态边缘智能优化。  
+最值得关注方向：稀疏注意力中“因果证据集”监督路由方法与无参数自适应内容选择策略（双10分）。  
+下一步建议：深入理解稀疏注意力的路由学习与压缩协同，对提升模型效率与可解释性有实质帮助。
+- 详情：[/202607/27/README](/202607/27/README)
 
 ### 精读区论文标签
-1. [Look Clearly Before Answering: Mitigating Hallucinations in LVLMs via Saliency-Driven Perceptual Realignment](/202607/26/2607.16841v1-look-clearly-before-answering-mitigating-hallucinations-in-lvlms-via-saliency-driven-perceptual-realignment)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：提出基于显著性驱动的感知重新对齐（SDPR），缓解大视觉语言模型中的视觉退化幻觉
-2. [HyMCache: A KV Cache Framework for Multi-Turn LLM Serving with CXL-Hybrid Memory](/202607/26/2607.18141v1-hymcache-a-kv-cache-framework-for-multi-turn-llm-serving-with-cxl-hybrid-memory)  
+1. [Learning What Matters: Supervising Sparse Attention Routing with Causal Evidence Sets](/202607/27/2607.21692v1-learning-what-matters-supervising-sparse-attention-routing-with-causal-evidence-sets)  
+   标签：评分：10.0/10、query:sparse-attn
+   evidence：直接研究基于因果证据集的稀疏注意力路由
+2. [Parameter-free Adaptive Sparse Attention via Compression-Based Content Selection](/202607/27/2607.21752v1-parameter-free-adaptive-sparse-attention-via-compression-based-content-selection)  
+   标签：评分：10.0/10、query:sparse-attn
+   evidence：提出基于gzip压缩的无参数自适应稀疏注意力
+3. [RIS-Kernel: A Model-Agnostic Architecture for Long-Context LLM Inference via Sparse Attention](/202607/27/2607.21927v1-ris-kernel-a-model-agnostic-architecture-for-long-context-llm-inference-via-sparse-attention)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：使用CXL混合内存的多轮大语言模型KV缓存框架
-3. [Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence](/202607/26/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：综述多模态边缘智能中的KV缓存优化、视觉标记压缩和量化等技术交互
-4. [Learning to Detect Cross-Modal Negation: An Analysis of Latent Representations and an Attention-Based Solution](/202607/26/2607.17712v1-learning-to-detect-cross-modal-negation-an-analysis-of-latent-representations-and-an-attention-based-solution)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：用于多模态系统中否定检测的跨模态注意力机制
+   evidence：基于稀疏随机几何的注意力实现O(N log N)复杂度
+4. [HiKV: Hierarchical Importance-Aware KV Cache with Hardware Acceleration for LLM Decoding](/202607/27/2607.22389v1-hikv-hierarchical-importance-aware-kv-cache-with-hardware-acceleration-for-llm-decoding)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：面向LLM的KV缓存压缩技术
 
 ### 速读区论文标签
-- 本次无速读推荐。
+1. [Learning to Detect Cross-Modal Negation: An Analysis of Latent Representations and an Attention-Based Solution](/202607/27/2607.17712v1-learning-to-detect-cross-modal-negation-an-analysis-of-latent-representations-and-an-attention-based-solution)  
+   标签：评分：7.0/10、query:multimodal
+   evidence：解决多模态系统中的跨模态否定检测问题
+2. [Beyond Independent Optimization: Compression, MoE Routing, and Quantization Interactions in Multimodal Edge Intelligence](/202607/27/2607.20981v1-beyond-independent-optimization-compression-moe-routing-and-quantization-interactions-in-multimodal-edge-intelligence)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：综述了多模态边缘智能中的KV缓存优化、视觉令牌压缩、MoE路由等技术
+3. [CoCurve: Cross-Module Co-Pruning Curvature for Training-Free Structured LLM Pruning](/202607/27/2607.17568v1-cocurve-cross-module-co-pruning-curvature-for-training-free-structured-llm-pruning)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：提出跨模块协同剪枝注意力头和前馈网络以压缩大语言模型
+4. [Unified Static-Dynamic Pruning for Efficient LLM Inference](/202607/27/2607.21985v1-unified-static-dynamic-pruning-for-efficient-llm-inference)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：提出静态-动态联合剪枝框架，实现稀疏推理，减少内存和计算
 
 
 <div class="dpr-home-promo-card">
