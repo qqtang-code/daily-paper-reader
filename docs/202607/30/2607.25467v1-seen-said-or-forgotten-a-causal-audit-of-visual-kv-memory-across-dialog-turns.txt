@@ -1,0 +1,535 @@
+Title: Seen, Said, or Forgotten? A Causal Audit of Visual KV Memory Across Dialog Turns
+
+URL Source: https://arxiv.org/pdf/2607.25467v1
+
+Published Time: Wed, 29 Jul 2026 00:42:52 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# Seen, Said, or Forgotten? A Causal Audit of Visual KV Memory Across Dialog Turns 
+
+Hong Chen 1∗, Kang Chen 2∗, Yuxuan Fan 1, Bo Wang 1, Yubo Gao 1, Yuanlin Chu 1, Xuming Hu 1†
+
+> 1
+
+The Hong Kong University of Science and Technology (Guangzhou) 
+
+> 2
+
+Wenzhou-Kean University {hchen763, yfan546, bwang423, ygao704, ychu763}@connect.hkust-gz.edu.cn, chenkang@kean.edu, xuminghu@hkust-gz.edu.cn 
+
+Abstract 
+
+Stateful multimodal assistants encode an image once but may answer questions about it many turns later. Attention-guided visual-KV eviction assumes that evidence irrelevant now will remain dispensable, although future questions are unknown. We ask when a visual fact is actually safe to forget and intro-duce the Causal Visual Memory Audit (CVMA ), a paired single-prefill framework that tests what later answers lose when a visual region, the whole image, or prior assistant text becomes unavailable. On VisDial, current attention can rank future-useful regions worse than random even though a di-agnostic marginal-utility control shows substantial selection headroom. Across VisDial and ConvBench, aggregate scores hide accessibility loss when later turns do not need vision; controlled and stock-generated histories reveal a second es-cape route, in which assistant-text KV replaces image KV for facts already stated but not reliably for unstated facts. In the tested stacks, low current attention provides no safe-forgetting certificate; independently low future dependence and fact-specific verbalization are two conditions under which deletion can appear safe. 
+
+1 Introduction 
+
+Multimodal assistants increasingly operate statefully : an im-age is encoded once, then discussed over many turns while its KV cache remains resident. A large body of work reduces that cache by scoring visual entries with current attention and irreversibly evicting low-scoring ones (Wan et al. 2024; Tu et al. 2025; Wang et al. 2026a). The choice is efficient, but it makes a consequential identification: what matters now is assumed to be what will matter later. Consider an image containing a red mug and a clock. The first question asks what is on the table, so the model attends to the mug and evicts the low-scoring clock. Two turns later, the user asks for the time. The clock was seen , but it was neither retained nor said ; its visual evidence is now forgotten . Was it ever safe to forget merely because it was irrelevant to the first question? Prior multi-turn work recognizes that future questions can change which visual content matters (Khaki et al. 2025; Wang 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author. 
+
+et al. 2026b; Liu et al. 2026), but aggregate outcomes can-not resolve this example. A small average loss may mean that a selector preserved useful evidence, that later turns never needed vision, or that a needed visual fact had already been verbalized into assistant text. These explanations im-ply different memory mechanisms, yet ordinary evaluation conflates them. Prior visual-to-text work likewise studies mi-gration within a forward pass (Lin et al. 2025) or constructs explicit verbalized memory (Chatterjee et al. 2025), rather than testing when naturally occurring assistant-output KV replaces persistent image KV across dialog turns. We turn safe forgetting into a causal question with the 
+
+Causal Visual Memory Audit (CVMA ; Figure 1). CVMA 
+
+preserves one stateful trajectory—the image is prefetched ex-actly once—and applies paired interventions within the same dialog. Its components answer three linked questions: does current attention identify future causal utility; when does a wrong eviction decision become harmful; and when can assistant-text KV rescue the missing visual fact? Regional drops, all-image drops, random and marginal-utility reten-tion controls, and image–text factorial interventions make the competing explanations separately testable. 
+
+In plain terms, attention measures what helps the answer now, whereas CVMA measures what will be missed later, so a low attention score is not a certificate for forgetting. Each result motivates the next. Attention is negatively as-sociated with future regional utility and joint retention is worse than random, though a marginal-utility control shows selection still has headroom. This proxy failure should be catastrophic, yet aggregate degradation is often modest be-cause damage concentrates on visually dependent dialogs and later turns while low-dependence cases even benefit from denoising. The remaining route is fact-level: assistant-output KV can replace image KV for facts placed on the answer surface, whereas hidden traces of unstated facts are model-dependent and not reliably answer-discriminative. Our contributions are methodological and mechanistic, not a new compression policy. (1) CVMA is a reusable analysis framework with causal estimands, state invari-ants, random/marginal-utility controls, and dependence-conditioned reporting. (2) It identifies attention-guided ir-reversible retention as a mis-specified proxy for future util-ity and maps when that error matters across budgets, di-arXiv:2607.25467v1 [cs.CV] 28 Jul 2026 1 2 3SEEN  SAID  FORGOTTEN                     
+
+> Image is
+> encoded once
+> Persistent visual KV
+> Mug + clock both enter visual memory
+> Q: What is on the Table?
+> A: A red mug is on the table.
+> SAID
+> Image KV eviction
+> Assistant -text KV
+> UNSAID
+> Clock fact not
+> verbalized
+> Q: What time does the clock show?
+> Image KV
+> Text KV
+> Clock region
+> evicted
+> Only mug
+> was said
+> FORGOTTEN
+> Thus, pure attention -driven drop
+> makes token eviction unsafe.
+> CAUSAL VISUAL MEMORY AUDIT (CVMA)
+> 1PROXY TEST
+> Does current attention predict future utility?
+> Compare retention policies
+> Future utility ≠Current attention
+> 2DEPENDENCE TEST
+> When does eviction actually hurt ?
+> Low Medium High
+> Damage rises when later turns
+> truly need vision
+> 3SOURCE TEST
+> Can text memory replace image memory?
+> Text KV
+> Text KV
+> Image KV Image KV
+> ON
+> ON
+> ON
+> OFF
+> ON
+> OFF
+> OFF
+> OFF
+> Substitution is reliable only for
+> an explicitly stated fact
+
+Figure 1: When is visual memory safe to forget? The top trajectory exposes the hidden commitment behind current-attention eviction: the clock is seen once, ignored by the current question, left unsaid, and unavailable when a future question needs it. The bottom shows CVMA ’s three linked tests of the proposed chain—proxy validity, visual dependence, and fact-specific image–text substitution. alogs, and turns. (3) Controlled, natural-history, and non-Qwen tests locate the fact-specific verbalization boundary between visual and text memory. The practical consequence is concrete: evaluators should expose all-image-drop depen-dence and unstated-fact failures, while compressor designers should not treat low current attention as sufficient evidence for irreversible deletion. The methodological novelty is the separating intervention system; the empirical novelty is the resulting mechanism chain. 
+
+2 Auditing Safe Forgetting with CVMA 
+
+A stateful paired protocol 
+
+CVMA treats a dialog as one persistent memory trajectory: turn 1 contains the image and every later utterance extends the same cache. Main-text policy results use Qwen2.5-VL-7B-Instruct (Bai et al. 2025) in BF16, the causal audit also tests Idefics3-8B-Llama3, and a Qwen 3B scale check is in the appendix. Teacher forcing makes answer NLL exactly paired; runtime assertions enforce token-exact extension, immutable visual indices, and complete-source masking (appendix). VisDial v1.0 validation (Das et al. 2017) provides 2,064 ten-turn dialogs; ConvBench (Liu et al. 2024a) provides 547 three-turn long-form dialogs, 546 usable after excluding one documented 9,302-token degenerate reference. Full policy comparisons use all 2,064/546 dialogs. For the regional audit, we remove 72 earlier pilot/confirmation IDs, shuffle the rest once (Python seed 42), and freeze the first 200 before causal outcomes. The 22-image fact-relay pilot is never pooled with its untouched 80-image confirmation, and the natural-history follow-up is labeled external validity, not a second confirma-tion. This evidence spans two model families and two contrast-ing dialog regimes. We treat agreement across them as repli-cation within the tested stacks, not as a universal claim over VLM architectures, benchmarks, or compression policies. The outcome Ld,t (Z) is mean cross-entropy over the ref-erence answer’s content tokens under intervention Z. Re-gional utility and all-image dependence use the future hori-zon H = {2, . . . , T d} after the turn-1 anchor—matching the audited decision to compress once before any follow-up is known—while full-policy results average over all turns. “Drop” makes the selected cache positions unreadable, leav-ing cache length, positions, and RoPE indices unchanged. Current attention is also fixed operationally. For first-turn question positions Q, visual positions V , layer ℓ, and head 
+
+h, we compute 
+
+ai = 1
+
+Nℓ
+
+X
+
+> ℓ
+> 1
+> Nh|Q|
+
+P 
+
+> h,q ∈Q
+
+Aℓhqi 
+
+P 
+
+> j∈V1
+> Nh|Q|
+
+P 
+
+> h,q ∈Q
+
+Aℓhqj 
+
+, i ∈ V, 
+
+(1) where Nℓ and Nh are the layer and head counts. We then aver-age ai over the visual tokens assigned to a spatial region. Thus the proxy test uses the same first-turn question, head averag-ing, per-layer visual-mass normalization, and layer averaging in both model stacks; no future token enters the ranking. Four interventions that separate the explanations 
+
+Let ¯Ld(Z) = P 
+
+> t∈H
+
+wtLd,t (Z),wt = |H|−1, H = {2, . . . , T d}. (2) 
+
+Is region r useful later? Regional future utility answers by removing it: 
+
+Ud,r = ¯Ld(−r) − ¯Ld(full) . (3) This is the causal target that current attention is supposed to predict. Would the future dialog need image KV at all? 
+
+Visual dependence instead removes the whole image span: 
+
+Dd = ¯Ld(−image) − ¯Ld(full) . (4) We report Dd continuously and by quantile; ratios with Dd
+
+are prohibited because near-zero denominators are unstable. 
+
+Is attention the problem, or is selection intrinsically hope-less? At retention budget q, proxy regret compares paired rankings, 
+
+Rp−cd,q = ¯Ld(retain( p, q )) − ¯Ld(retain( c, q )) . (5) Seeded random tests practical misranking; a same-dialog 
+
+marginal-utility control ranks regions by single-drop Ud,r .It witnesses selectable signal but is neither deployable nor a joint optimum when regions interact (figures abbreviate it as “oracle”). Finally, has a needed visual fact moved into text? At bound-ary b, let V be image KV and A≤b completed assistant-output KV. For the immediate next answer, their factorial interaction is 
+
+Id,b = Ld,b +1 (−V, −A≤b) − Ld,b +1 (−V )
+
+− Ld,b +1 (−A≤b) + Ld,b +1 (full) . (6) Positive I indicates redundancy or substitution on the NLL scale; it does not by itself identify what moved. The con-trolled fact experiment below therefore asks whether the tar-get fact itself reached assistant text. 
+
+Identification assumptions and invariants 
+
+The estimands are causal for the frozen, teacher-forced tra-jectory under four conditions—intervention consistency, no interference between separately replayed branches, identi-cal pre-intervention state within a pair, and no intervention-induced change to future history tokens (enforced by teacher forcing). This bounds claims to the declared trajectory rather than to free generation. The appendix states the full con-ditions, the exact cache-read procedure, and the executable audit manifest. 
+
+Compression controls 
+
+We compare five selectors under one Qwen2.5-VL state-ful runtime at exact visual budgets—static first-turn top-k,LOOK-M pivotal merging (Wan et al. 2024), PrefixKV layer-adaptive retention (Wang et al. 2026a), SnapKV observation-window pooling (Li et al. 2024), and NACL proxy-plus-random retention (Chen et al. 2024)—against a non-deletion coverage control that applies groupwise affine fake quanti-zation with per-channel keys as in KIVI (Liu et al. 2024b) and an optional Walsh–Hadamard rotation (accounted bits include scale/zero-point metadata: INT2 at group 32 costs 3 bits/element). Because low-bit coverage is prior art (Liu et al. 2024b; Yang et al. 2024; Han et al. 2025), no method or serving-latency claim is attached to it. Released VisionZip (Yang et al. 2025) removes visual embeddings before LM prefill, so we compare it only with a paired in-stack full ceil-ing. The appendix lists each transplant’s unavoidable differ-ences; every policy-level comparison uses all five selectors at common budgets. 
+
+3 Attention Is Not Future Utility 
+
+We first ask whether attention under the current ques-tion identifies regions whose removal causes future loss; Figure 2a,b tests this marginally then jointly, and c,d di-agnose the spatial contamination behind the failure. On 200 frozen Qwen-7B dialogs, 4×4 regional attention– future-utility Spearman is −0.103 ([−0.147 , −0.048] ; Fig-ure 2a). It remains negative but smaller at 8×8 (−0.034 ,
+
+[−0.058 , −0.009] ); the coarsest 2×2 grid is directionally consistent but inconclusive. Because regional effects may interact, we also retain re-gions jointly at 25/50/75%. At the frozen primary 4×4
+
+grain, attention is worse than seeded random by +0 .053 / +0.062 / + 0 .027 NLL (Figure 2b); at 8×8, the gaps are 
+
++0 .092 / + 0 .055 / + 0 .016 , again with all CIs excluding zero. Nor is the future intrinsically unselectable here: the 
+
+4×4 same-dialog marginal-utility control beats random by 
+
+−0.197 / − 0.166 / − 0.110 —a headroom witness rather than an upper bound, since it ranks single-region effects instead of solving the combinatorial problem. Evidence is thus bounded to the medium and fine grains, strongest at the primary 4×4,not the inconclusive 2×2, which Idefics probes below. Within the supported cells the problem is proxy misalignment de-spite available headroom, not selection in principle. Nor is the result an artifact of the layer aggregation in Equation 1: last-four, last-layer, and mass-weighted variants all keep the correlation negative ( −0.084 to −0.111 ) and joint regret worse than random (Figure 4a,b; Appendix Ta-ble A4), ruling out three immediate aggregation rescues. The distinction survives a different model family across all three grains: with bit-exact cross-grid controls, Idefics attention–utility correlations are −0.576 / − 0.263 / − 0.113 
+
+at 2×2/4×4/8×8 (all CIs exclude zero), attention loses to random while the marginal-utility control wins at every grain and budget, and a caption-removal diagnostic rules out Vis-Dial’s supplied caption (Figure 4c; appendix gives the per-grain values). Dropping the whole image nevertheless im-proves Idefics mean NLL, so we replicate the proxy-failure topology, not the sign of aggregate dependence, and treat the latter as a model–task interference boundary. Finally, the failure is spatially diagnostic (Figure 2c,d): top attention concentrates at fixed cache endpoints—the first region for Qwen (152/200) and a sequence endpoint for Idefics (190/200)—yet dropping those hotspots improves fu-ture NLL, and image-flip controls show the top-1 hotspot follows cache position rather than content. Attention is thus not content-free, but its top-ranked visual position is position-contaminated (appendix). −0.6 −0.5 −0.4 −0.3 −0.2 −0.1 0.0                                                              
+
+> Attention–future-utility Spearman
+> Qwen 2×2
+> Qwen 4×4
+> Qwen 8×8
+> Idefics 2×2
+> Idefics 4×4
+> Idefics 8×8
+> -0.100
+> -0.103
+> -0.034
+> -0.576
+> -0.263
+> -0.113
+> 25 50 75
+> Visual regions retained (%)
+> −1.0
+> −0.5
+> 0.0
+> 0.5
+> Paired  ΔNLL vs seeded random
+> ↑ worse
+> ↓ better
+> Qwen attn.
+> Qwen oracle
+> Idefics attn.
+> Idefics oracle
+> 76 3·2
+> ·42·
+> ·42·
+> 12··
+> -23 +2 +1 -12
+> 0+8 +7 +3
+> +12 +4 +11 +6
+> +6 +4 +4 +3
+> 42 2··
+> ····
+> ·1··
+> ···53
+> -474 +42 -6 +8
+> -20 -27 +14 +7
+> -2 +1 -15 -3
+> -2 -6 -1 -213
+> 025 50 75
+> Top-1 persistence after content flip (%)
+> Qwen-7B · H-flip
+> Qwen-7B · V-flip
+> Idefics-8B · H-flip
+> Idefics-8B · V-flip
+> fixed position moved content
+> Qwen-7B Idefics-8B
+> Top-attention
+> frequency (%)
+> Future drop effect
+> (10 −3 ΔNLL)
+
+(a) (b) 
+
+(c) (d) Figure 2: Proxy-validity tests for current attention. (a) Mean per-dialog attention–utility Spearman (200 dialogs). (b) Joint-retention ∆NLL at a matched 4×4 grid for attention, seeded random, and the marginal-utility control (“Oracle”). (c) Top-attention frequency and future-drop effect by cache position, endpoints outlined (percentages and 10 −3 NLL). (d) Top-1 persistence after content flips, at the fixed position versus the moved content. Intervals are 95% hierarchical (a) or dialog-bootstrap (b,d). 
+
+4 Eviction Fails Where and When Vision Matters 
+
+Proxy invalidity permits information loss, but not every-where: a wrong eviction matters only when a later turn needs the discarded evidence. This can explain why attention-guided deletion looks safer in aggregate than its proxy valid-ity suggests. 
+
+Wrong eviction matters only when vision matters 
+
+CVMA measures this effect modifier independently by dropping all image KV before evaluating the future hori-zon. Across all 2,064 VisDial dialogs, mean dependence is +0 .322 nats, yet 25.3% have negative Dd. All ten selector–budget cells have positive damage–dependence association (Spearman 0.399 –0.682 ). At the exact four-accounted-bit comparison, coverage has no detectable cou-pling ( 0.012 [ −0.032 , 0.055] ); at two bits, its representation itself collapses and dependence coupling reappears ( 0.382 [0 .343 , 0.419] ). Figure 3 keeps both regimes rather than silently dropping the failed endpoint. Quartiles expose what the mean mixes together. In Q1 (Dd = −0.222 ), LOOK-M/PrefixKV improve NLL by re-moving distractors; in Q4 ( Dd = +0 .971 ), static 25/12.5% retention costs +0 .417 / + 0 .676 while exact-four-bit cover-age costs +0 .004 (CI crosses zero), and exact-two-bit cov-erage costs +7 .903 even in a non-deletion cache. Aggregate evaluation thus offsets irreversible loss on image-dependent dialogs with denoising on dialogs that never needed image KV. Crucially, Dd is a paired within-session intervention tied to the same future outcome, not a benchmark-level necessity label. Full ConvBench reproduces the topology (association 
+
+0.541 –0.793 ; each cell improves Q1 and degrades Q4, while exact-four-bit coverage stays flat at ρ = −0.009 ), so the floor is not specific to VisDial’s short answers. The effect modification also crosses model families: on the 200 shared dialogs, damage–dependence Spearman is 0.443 
+
+for Qwen and 0.344 for Idefics, whose damage rises from 
+
++0 .060 in Q1 to +0 .425 in Q4 despite a negative mean Dd.The cross-family invariant is thus ordering—more image-dependent dialogs are more vulnerable—not a universal zero point (Appendix Table A2). 
+
+The floor is semantic, not a cache-size artifact 
+
+The association is semantic, not a cache-size artifact: de-pendence has Spearman −0.033 / − 0.126 with visual-token count on VisDial/ConvBench, yet tracks question type (high-est for count/color, lowest for yes/no and reasoning; ap-pendix). Answer length correlates negatively, but length alone cannot tell whether a fact moved into text; the fac-torial tests below can. −0.25 0.00 0.25 0.50 0.75 1.00 1.25 
+
+All-drop dependence (decile mean, nats)  
+
+> −0.1
+> 0.0
+> 0.2
+> 0.4
+> Damage vs full cache (nats)
+> Dd< 0:
+> all-drop denoising
+
+(a) Matched 4 b/e: dependence          
+
+> Static
+> LOOK-M
+> PrefixKV
+> SnapKV
+> NACL
+> Coverage
+> 12345678910
+
+Dialog turn                                                       
+
+> Static
+> LOOK-M
+> PrefixKV
+> SnapKV
+> NACL
+> Coverage
+> Policy
+> +0.00 +0.09 +0.15 +0.16 +0.17 +0.18 +0.20 +0.20 +0.23 +0.20
+> +0.01 +0.01 +0.00 +0.01 +0.01 +0.02 +0.02 +0.03 +0.05 +0.04
+> +0.01 -0.00 -0.02 -0.00 +0.00 +0.00 +0.01 +0.01 +0.03 +0.03
+> +0.01 +0.06 +0.08 +0.09 +0.08 +0.09 +0.09 +0.09 +0.11 +0.11
+> +0.00 +0.02 +0.04 +0.04 +0.05 +0.05 +0.05 +0.05 +0.08 +0.06
+> -0.00 -0.00 -0.00 +0.01 +0.01 +0.00 +0.00 -0.00 +0.00 +0.00
+
+(b) Matched 4 b/e: turns       
+
+> −0.25 0.00 0.25 0.50 0.75 1.00 1.25
+
+All-drop dependence (decile mean, nats) 
+
+> −0.1
+> 0
+> 0.1
+> 1
+> 8
+> Damage vs full cache (nats)  coverage crosses
+> representation floor
+
+(c) Matched 2 b/e: dependence          
+
+> 12345678910
+
+Dialog turn                                                       
+
+> Static
+> LOOK-M
+> PrefixKV
+> SnapKV
+> NACL
+> Coverage
+> Policy
+> +0.01 +0.17 +0.27 +0.28 +0.31 +0.30 +0.31 +0.31 +0.31 +0.29
+> +0.03 +0.08 +0.07 +0.08 +0.06 +0.07 +0.09 +0.10 +0.12 +0.10
+> +0.02 +0.03 +0.02 +0.04 +0.02 +0.03 +0.05 +0.05 +0.09 +0.07
+> +0.02 +0.14 +0.17 +0.19 +0.19 +0.19 +0.19 +0.20 +0.19 +0.19
+> +0.00 +0.09 +0.11 +0.11 +0.14 +0.13 +0.16 +0.16 +0.17 +0.13
+> +0.97 +7.0 +6.9 +7.0 +6.8 +6.8 +6.9 +6.7 +6.7 +6.6
+
+(d) Matched 2 b/e: turns 
+
+> −0.2
+> −0.1
+> 0.0
+> 0.1
+> 0.2
+> Damage (nats)
+> −10 0
+> −10 −1
+> −10 −2
+> 0
+> 10 −2
+> 10 −1
+> 10 0
+> Damage (nats)
+
+Figure 3: Dependence- and turn-conditioned damage at exact common budgets. Full VisDial is binned into ten equal-frequency deciles by an independent all-image drop. (a,b) Damage versus dependence decile and dialog turn at four accounted bits (five 25% selectors and matched coverage); (c,d) the same at two bits (12.5% selectors and the one-bit coverage endpoint). The lower row uses symmetric-log scaling with 95% bootstrap bands. 
+
+Turn-wise failure survives stronger selection 
+
+If the failure comes from an irreversible early decision con-fronted by changing future queries, it should also emerge over turns. On full VisDial, static 12.5% damage grows from 
+
++0 .008 at turn 1 to +0 .289 at turn 10. LOOK-M, PrefixKV, SnapKV, and NACL reduce the level to different degrees but all show larger later-turn than anchor-turn damage at both exact budgets (Figure 3b,d). Viable four-bit coverage stays near zero; failed two-bit coverage is already +0 .97 at turn 1 and exceeds +6 .6 thereafter, a qualitatively different representation-error signature. ConvBench is front-loaded at its perception turn, so the selector profile follows task struc-ture rather than a universal monotone law. Table 1 gives the fixed-7B policy ladder on both benchmarks, adding source-derived SnapKV and NACL at both budgets. NACL edges SnapKV on aggregate VisDial (+0 .043 versus +0 .082 at 25%), but this does not iso-late NACL’s randomized component, and neither closes the gap to full cache (PrefixKV +0 .008 ; exact-four-bit cover-age about zero). More importantly, both added selectors reproduce the failure topology: at 12.5%, SnapKV/NACL move from −0.061 / − 0.062 in VisDial dependence Q1 to 
+
++0 .501 / + 0 .388 in Q4, and ConvBench reverses likewise. Non-deletion coverage stays closest to full cache only above its precision floor, and even that is not scale-invariant—at 3B, PrefixKV-25% costs +0 .001 versus +0 .007 for cover-age. Our claim concerns accessibility topology, not a uni-versal aggregate winner (Appendix Table A1 gives the full 3B/7B ladder). The aligned sweep also exposes a representation boundary the selector comparison cannot show. Coverage stays within 
+
++0 .008 NLL of full cache from nine down to three accounted bits, but collapses by +6 .229 at two bits (one-bit codes plus affine metadata, after WHT) and by +4 .974 on full Con-vBench, versus about zero at four bits (Table 1). Persistent addressability is thus not sufficient at arbitrary precision: coverage is a valid control only while its representation stays decodable. Figure 5 reports the failed VisDial endpoint rather than truncating the curve. 
+
+From hidden NLL drift to visible failure 
+
+Teacher-forced NLL is primary because it keeps every paired future trajectory fixed; a sealed audit of the 15 highest-dependence dialogs (14 usable after a chat-template guard) bridges it to observable errors. The dominant failure is late-turn hallucinated absence after peripheral evidence is deleted, while full cache, INT2+WHT, and the reference agree and no cell reverses that relation (Appendix Table A6 gives counts and verbatim cases). We then freeze the complete high-dependence quartile— −0.1 0.0 
+
+> Attention–future-utility Spearman
+> All-layer mean
+> Last-4 mean
+> Last layer
+> Mass-weighted
+
+(a) Aggregation robustness           
+
+> 25% 50% 75%
+> Retained visual regions
+> All-layer
+> Last-4
+> Last layer
+> Mass-weighted
+> +0.053 +0.062 +0.027
+> +0.037 +0.042 +0.033
+> +0.064 +0.051 +0.034
+> +0.039 +0.044 +0.022
+
+(b) Regret vs. seeded random 
+
+> Caption kept
+> Caption removed
+> −4
+> −2
+> 0
+> All-drop dependence ΔNLL
+> paired shift -0.134
+> [-0.194, -0.071]
+
+(c) Caption-removal diagnosis   
+
+> −0.4 −0.2 0.0
+> Association with all-drop dependence
+> Visual-token count
+> Answer length
+> Question length
+
+(d) Dependence is not cache size 
+
+> VisDial
+> ConvBench
+> Full
+> Static
+> LOOK-M
+> PrefixKV
+> SnapKV
+> NACL
+> Coverage
+> 0.0
+> 0.2
+> 0.4
+> Strict exact match, turns 2–10
+
+(e) Free-running exact match                                                 
+
+> 2345678910
+> Dialog turn
+> Static
+> LOOK-M
+> PrefixKV
+> SnapKV
+> NACL
+> 612 14 17 18 18 18 20 17
+> 57611 13 9910 10
+> 444675555
+> 511 13 14 16 12 16 15 13
+> 5811 11 12 10 14 11 9
+
+(f) Strict adverse-event rate 
+
+> −0.05
+> 0.00
+> 0.05
+> ΔNLL
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+
+Figure 4: Robustness checks and free-running answer quality. (a) Attention–utility correlation under four aggregation rules. (b) Joint-retention ∆NLL versus seeded random; positive is worse. (c) Idefics all-image-drop dependence with VisDial’s caption kept versus removed. (d) All-drop dependence versus visual-token count, answer length, and question length. (e) Strict exact match on turns 2–10 of all 516 dependence-Q4 dialogs at 25%/four-bit. (f) Among cells where full and coverage match the reference, the percentage each selector does not, by turn. Error bars 95% dialog-bootstrap; details in Appendix Tables A4, A5. 
+
+Policy visual b/e VisDial ConvBench 
+
+Reference 
+
+Full cache (BF16) 16 0.000 0.000 
+
+Attention-guided selection / merging 
+
+Static top-k 25% 4 +0.159 +0.030 Static top-k 12.5% 2 +0.257 +0.056 LOOK-M merge 25% 4 +0.021 +0.018 LOOK-M merge 12.5% 2 +0.080 +0.036 PrefixKV 25% 4 +0.008 +0.011 PrefixKV 12.5% 2 +0.040 +0.025 SnapKV 25% 4 +0.082 +0.029 SnapKV 12.5% 2 +0.165 +0.051 
+
+Attention + randomized retention 
+
+NACL 25% 4 +0.043 +0.018 NACL 12.5% 2 +0.123 +0.038 
+
+Non-deletion coverage 
+
+Coverage INT8 9 0.000 0.000 Coverage INT4 5 +0.001 0.000 Coverage INT3 4 +0.002 0.000 Coverage INT2+WHT 3 +0.008 +0.002 Coverage INT1+WHT 2 +6.229 +4.974 
+
+Table 1: Full-dataset Qwen-7B stateful controls (teacher-forced ∆NLL vs. full cache, uniformly averaged over all benchmark turns; lower is better) on VisDial (2,064 dialogs) and ConvBench (546). Visual b/e is 16 × the BF16 reten-tion fraction for logical selectors (index/kernel overhead ex-cluded) and includes scale/zero-point metadata for coverage; it is not a serving-memory claim. Paired 95% CIs appear in Appendix Table A3. 2 4 8
+
+Accounted bits/element  
+
+> −10 −3
+> 0
+> 10 −3
+> 10 −2
+> 10 −1
+> 10 0
+> 10 1
+> Damage vs full (nats)
+> floor +6.23 Static top-k
+> LOOK-M
+> PrefixKV
+> SnapKV
+> NACL
+> Coverage
+
+Figure 5: Matched-storage damage across the accounted-bit ladder. The aligned full-VisDial sweep gives every se-lector 50/25/12.5% retention and covers coverage’s full mea-sured precision range; the shaded slice marks four-bit ac-counting. The symmetric-log axis has a linear zone of ±10 −3
+
+NLL and retains the failed two-bit endpoint. 516 dialogs and 4,644 later-turn cells—and generate all ten turns under Full, all five 25% selectors, and matched four-bit coverage. Conservative strict exact match on turns 2– 10 is 53.1% for full cache and 53.3% for coverage, versus 46.0–51.4% for the selectors (Figure 4e). Every paired se-lector gap is negative with its 95% CI below zero, rang-ing from −7.08 points [−7.97 , −6.22] for static to −1.68 [−2.33 , −1.01] for PrefixKV. Under the stricter directional anchor—full and coverage both correct—each selector pro-duces more adverse than strict reverse cells: 126–377 versus 47–54, affecting 20.7–52.5% of dialogs (Figure 4f; Appendix Table A5). Thus the visible effect is neither confined to 14 hand-inspected cases nor to one weak selector, while the original sealed audit supplies their semantic interpretation. On all 2,064 VisDial dialogs, official-formula dense NDCG is 0.557 full, 0.534 /0.515 at 25/12.5% static re-tention, and 0.557 /0.554 for INT4/INT2+WHT. Coverage beats matched retention by +0 .0233 [0 .0184 , 0.0282] and 
+
++0 .0390 [0 .0327 , 0.0455] . This is a stateful likelihood re-sult, not a leaderboard submission. ConvBench’s benchmark-native check (all seven policies, one deployment, 546 dialogs) agrees: only the two most ag-gressive selectors, static and SnapKV, lose first-turn pref-erence to full ( +2 .2 [0 .0, 4.6] and +2 .9 [0 .9, 5.1] on both frozen A/B sides), while LOOK-M, PrefixKV, NACL, and coverage include zero (Appendix Table A8). Under A/B im-balance this is a floor diagnostic, not a ranking; VisionZip’s paired in-stack ceiling agrees ( 0.556 vs. 0.558 NDCG). 
+
+5 Verbalization Defines the Image–Text Memory Boundary 
+
+Low visual dependence is one route to apparent safety: the future does not need the image. A second is distinctly multimodal—the future may need a visual fact that no longer requires image KV because an earlier assistant answer wrote it into persistent text KV. CVMA next asks when this substi-tution occurs. 
+
+A second route to apparent safety 
+
+A 2×2 image/assistant-output intervention finds cross-source redundancy that does not simply strengthen with every answer (immediate-next-turn interactions +0 .164 / + 0 .049 
+
+then −0.115 ; appendix). VisDial’s always-visible caption prevents a clean no-relay control. 
+
+Verbalization, not mere exposure, defines transfer 
+
+Aggregate redundancy does not reveal what moved. The con-trolled question is simple: an image contains facts A and B;the assistant says A but not B; once image KV is unavailable, can a later turn recover A, B, or both? We build equal-length histories that state one fact and leave the other unstated, then probe them separately; facts pass independent Qwen-32B/InternVL-9B judgment and outcome-blind review be-fore assignment, and 160 pseudowords give matched nonvi-sual controls. An S×W ×R design varies whether the target is stated, whether the answering pass can read the image, and whether the later probe can; every branch is recomputed under its source intervention. The untouched 80-image confirmation completes 1,920/1,920 exact-audited cells (Appendix Figure A1). The target facts genuinely need vision (removing probe image access costs +1 .778 in the nonce-adjusted correct–foil mar-gin); once a fact is stated, text alone raises that margin by 
+
++3 .874 without image access and reduces the later value of image KV by +2 .215 ([1 .853 , 2.579] ), positive for 79/80 im-age means. Put plainly, saying A makes A recoverable from text once the image is gone. The stronger hidden-carrier explanation fails: seeing B
+
+while saying A leaves no reliable answer-discriminative trace of B (interaction −0.177 , [−0.321 , −0.035] ; pseudoword-controlled), and this replicates on Idefics (Appendix Ta-ble A8). The reliable boundary is exposure of the particular fact in language, not mere exposure to the image. 
+
+The boundary survives stock-generated history 
+
+A prospective test stock-generates one 7B description per frozen image, then seals tokens and mention labels before scoring. In 960/960 factorial cells, explicit facts acquire no-image text memory ( +3 .336 ) and substitution ( +2 .898 ,
+
+[2 .248 , 3.582] ) with near-zero nonce interaction; mention is model-selected, so the explicit–absent contrast is descriptive while each within-fact source intervention stays causal. The separation replicates on Idefics (explicit substitution +3 .801 
+
+versus absent +0 .258 ), so it is not Qwen-specific, though only Qwen shows a stable direct probability uplift (Appendix Table A8). 
+
+6 Related Work 
+
+Prior work approaches unknown future relevance from three sides. Text-cache methods infer importance from attention or observation windows, learn future-aware retention, and compress long-context or multi-turn caches (Li et al. 2024; Chen et al. 2024; Xiao et al. 2024; Tang et al. 2026; Bui et al. 2026; Chen et al. 2026a,b; Liu et al. 2025); multi-modal caches add modality-, layer-, head-, and image-order structure or keep a broad retrievable pool for changing rel-evance (Wan et al. 2024; Tu et al. 2025; Wang et al. 2026a; Huang et al. 2025; Zeng et al. 2026; Zhuang et al. 2026; Khaki et al. 2025; Wang et al. 2026b; Liu et al. 2026; Chen et al. 2026c); and quantization keeps every address at low precision instead of deleting (Liu et al. 2024b; Yang et al. 2024; Han et al. 2025; Yang et al. 2026); coverage is thus our matched-storage control, not a contribution. Visual-to-text migration and verbalized memory are also known (Lin et al. 2025; Chatterjee et al. 2025). Our object is instead the sepa-rating intervention that tests these systems: on one trajectory, paired region drops, random and marginal-utility controls, an all-image drop, and a fact-level source test jointly decide whether a score identifies causal utility, whether selectable signal exists, and whether low dependence hides a wrong deletion (appendix). 
+
+7 Conclusion 
+
+Evidence is bounded (one non-Qwen model, a Qwen-only policy ladder, and teacher-forced NLL as the primary met-ric; the appendix gives the full scope). Within these bounds, 
+
+CVMA yields a unified causal account of safe forgetting: cur-rent attention misestimates future utility, the eviction failure surfaces only when later turns need discarded evidence, and assistant text substitutes chiefly for facts it explicitly says. Evaluation should therefore condition on visual dependence and unstated facts, and never treat low current attention as sufficient for irreversible deletion. References 
+
+Bai, S.; Chen, K.; Liu, X.; Wang, J.; Ge, W.; Song, S.; Dang, K.; Wang, P.; Wang, S.; Tang, J.; Zhong, H.; Zhu, Y.; Yang, M.; Li, Z.; Wan, J.; Wang, P.; Ding, W.; Fu, Z.; Xu, Y.; Ye, J.; Zhang, X.; Xie, T.; Cheng, Z.; Zhang, H.; Yang, Z.; Xu, H.; and Lin, J. 2025. Qwen2.5-VL Technical Report. arXiv:2502.13923. Bui, N.; Nguyen, H. T.; Cohan, A.; and Ying, R. 2026. Make Each Token Count: Towards Improving Long-Context Performance with KV Cache Eviction. arXiv preprint arXiv:2605.09649 .Chatterjee, D.; Remelli, E.; Song, Y.; Tekin, B.; Mittal, A.; Bhatnagar, B.; CamgÃk , z, N. C.; Hampali, S.; Sauser, E.; Ma, S.; et al. 2025. Memory-efficient streaming videollms for real-time procedural video understanding. arXiv preprint arXiv:2504.13915 .Chen, H.; Liu, X.; Gao, Y.; Fan, Y.; Wang, B.; Chu, Y.; Lin, Y.; and Hu, X. 2026a. NestedKV: Nested Memory Routing for Long-Context KV Cache Compression. arXiv preprint arXiv:2605.26678 .Chen, H.; Liu, X.; Wang, B.; Fan, Y.; Chu, Y.; Li, Z.; Chu, X.; and Hu, X. 2026b. SONIC: Segmented Optimized Nexus for Information Compression in Key-Value Caching. arXiv preprint arXiv:2601.21927 .Chen, T.; Wu, Y.; Yao, K.; Xu, X.; Hu, X.; and Lee, D. 2026c. Last But Not Least: Boundary Attention Calibra-tiON for Multimodal KV Cache Compression. arXiv preprint arXiv:2606.14782 .Chen, Y.; Wang, G.; Shang, J.; Cui, S.; Zhang, Z.; Liu, T.; Wang, S.; Sun, Y.; Yu, D.; and Wu, H. 2024. Nacl: A general and effective kv cache eviction framework for llm at inference time. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 7913–7926. Das, A.; Kottur, S.; Gupta, K.; Singh, A.; Yadav, D.; Moura, J. M.; Parikh, D.; and Batra, D. 2017. Visual dialog. In 
+
+Proceedings of the IEEE conference on computer vision and pattern recognition , 326–335. Han, I.; Zhang, Z.; Wang, Z.; Zhu, Y.; Liang, S.; Liu, J.; Lin, H.; Zhao, M.; Xu, C.; Wan, K.; et al. 2025. CalibQuant: 1-Bit KV Cache Quantization for Multimodal LLMs. arXiv preprint arXiv:2502.14882 .Huang, K.; Zou, H.; Wang, B.; Xi, Y.; Xie, Z.; and Wang, H. 2025. AirCache: Activating Inter-modal Relevancy KV Cache Compression for Efficient Large Vision-Language Model Inference. In Proceedings of the IEEE/CVF Inter-national Conference on Computer Vision , 23958–23967. Khaki, S.; Guo, J.; Tang, J.; Yang, S.; Chen, Y.; Plataniotis, K. N.; Lu, Y.; Han, S.; and Liu, Z. 2025. SparseVILA: Decoupling Visual Sparsity for Efficient VLM Inference. In 
+
+Proceedings of the IEEE/CVF International Conference on Computer Vision , 23784–23794. Li, Y.; Huang, Y.; Yang, B.; Venkitesh, B.; Locatelli, A.; Ye, H.; Cai, T.; Lewis, P.; and Chen, D. 2024. Snapkv: Llm knows what you are looking for before generation. Advances in Neural Information Processing Systems , 37: 22947–22970. Lin, Z.; Lin, M.; Lin, L.; and Ji, R. 2025. Boosting multi-modal large language models with visual tokens withdrawal for rapid inference. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, 5334–5342. Liu, S.; Xiong, Y.; Jiang, Z.; Wang, Z.; Lv, C.; and Zhang, S. 2026. RetentiveKV: State-Space Memory for Uncertainty-Aware Multimodal KV Cache Eviction. In Findings of the As-sociation for Computational Linguistics: ACL 2026 , 18717– 18727. Liu, S.; Ying, K.; Zhang, H.; Yang, Y.; Lin, Y.; Zhang, T.; Li, C.; Qiao, Y.; Luo, P.; Shao, W.; et al. 2024a. Convbench: A multi-turn conversation evaluation benchmark with hier-archical ablation capability for large vision-language mod-els. Advances in Neural Information Processing Systems , 37: 100734–100782. Liu, X.; Chen, H.; Hu, X.; and Chu, X. 2025. FlowKV: Enhancing multi-turn conversational coherence in LLMs via isolated key-value cache management. arXiv preprint arXiv:2505.15347 .Liu, Z.; Yuan, J.; Jin, H.; Zhong, S.; Xu, Z.; Braverman, V.; Chen, B.; and Hu, X. 2024b. Kivi: A tuning-free asymmetric 2bit quantization for kv cache. arXiv preprint arXiv:2402.02750 .Tang, Z.; Jiao, P.; Chen, X.; Liu, W.; Li, S.; and Chen, J. 2026. Predicting Future Utility: Global Combinatorial Optimiza-tion for Task-Agnostic KV Cache Eviction. arXiv preprint arXiv:2602.08585 .Tu, D.; Vashchilenko, D.; Lu, Y.; and Xu, P. 2025. VL-cache: Sparsity and modality-aware KV cache compression for vision-language model inference acceleration. In Inter-national Conference on Learning Representations , volume 2025, 219–239. Wan, Z.; Wu, Z.; Liu, C.; Huang, J.; Zhu, Z.; Jin, P.; Wang, L.; and Yuan, L. 2024. Look-m: Look-once optimization in kv cache for efficient multimodal long-context inference. In 
+
+Findings of the Association for Computational Linguistics: EMNLP 2024 , 4065–4078. Wang, A.; Chen, H.; Tan, J.; Zhang, K.; Cai, X.; Lin, Z.; Han, J.; et al. 2026a. Prefixkv: Adaptive prefix kv cache is what vision instruction-following models need for efficient gener-ation. Advances in Neural Information Processing Systems ,38: 94456–94482. Wang, Y.; Zhang, H.; Huang, Q.; Cao, A.; Fang, G.; Wang, W.; Jin, X.; Song, J.; Song, M.; and Wang, X. 2026b. Rethink-ing Token Reduction for Large Vision-Language Models. In 
+
+Proceedings of the IEEE/CVF Conference on Computer Vi-sion and Pattern Recognition , 24727–24737. Xiao, G.; Tian, Y.; Chen, B.; Han, S.; and Lewis, M. 2024. Efficient streaming language models with attention sinks. In International Conference on Learning Representations ,volume 2024, 21875–21895. Yang, J. Y.; Kim, B.; Bae, J.; Kwon, B.; Park, G.; Yang, E.; Kwon, S. J.; and Lee, D. 2024. No token left behind: Reliable kv cache compression via importance-aware mixed precision quantization. arXiv preprint arXiv:2402.18096 .Yang, S.; Chen, Y.; Tian, Z.; Wang, C.; Li, J.; Yu, B.; and Jia, J. 2025. Visionzip: Longer is better but not necessary in vision language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,19792–19802. Yang, Y.; Ye, P.; Tan, X.; Tu, C.; Zhao, M.; Hao, J.; and Chen, T. 2026. Revisiting Multimodal KV Cache Compression: A Frequency-Domain-Guided Outlier-KV-Aware Approach. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 39550–39560. Zeng, B.; Ren, F.; Zhang, J.; Gu, X.; Chen, K.; Shou, L.; and Li, H. 2026. Hybridkv: Hybrid kv cache compression for efficient multimodal large language model inference. In Pro-ceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 13018– 13034. Zhuang, J.; Lu, L.; Dai, M.; Chen, J.; Liu, Q.; and Hu, H. 2026. Myopia Rectification: KV Cache Pruning for MLLMs Via Dynamic Attention Subsidy and Token Reclamation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 9023–9033.
