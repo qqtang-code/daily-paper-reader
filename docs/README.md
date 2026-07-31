@@ -6,68 +6,56 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-30
-- 运行时间：2026-07-30 21:08:29 UTC
+- 最新运行日期：2026-07-31
+- 运行时间：2026-07-31 21:40:51 UTC
 - 运行状态：成功
-- 本次总论文数：16
+- 本次总论文数：12
 - 精读区：6
-- 速读区：10
+- 速读区：6
 
 ### 今日简报（AI）
-今日聚焦注意力机制优化与稀疏记忆管理，精读两篇9分论文。最值得关注的是注意力流形中语义与结构偏差的解耦方法，以及全局计算结合局部物化的稀疏事件KV存储策略。建议普通读者优先阅读速读中的令牌剪枝与大模型记忆管理方案。
-- 详情：[/202607/30/README](/202607/30/README)
+今日12篇论文聚焦大模型推理优化，精读主打KV缓存与推测解码改造。最值得看：MLA草稿模型的“功能重建”替代KV重建，以及“反因果意外”驱动的缓存管理策略。建议优先关注这两项KV缓存方向，并延伸浏览多模态剪枝/压缩方法（SepPrune、ReToken、OmniScope）。
+- 详情：[/202607/31/README](/202607/31/README)
 
 ### 精读区论文标签
-1. [Compute Globally, Materialize Locally: The Memory Contract of Sparse Event-KV](/202607/30/2607.23693v1-compute-globally-materialize-locally-the-memory-contract-of-sparse-event-kv)  
+1. [Beyond KV Reconstruction: Functional Reconstruction for MLA Draft Models in Speculative Decoding](/202607/31/2607.27269v1-beyond-kv-reconstruction-functional-reconstruction-for-mla-draft-models-in-speculative-decoding)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：长时程智能体中的KV缓存使用，稀疏事件KV记忆契约
-2. [Disentangling Semantic Attention from Structural Bias in the Attention Manifold](/202607/30/2607.24017v1-disentangling-semantic-attention-from-structural-bias-in-the-attention-manifold)  
-   标签：评分：9.0/10、query:multimodal
-   evidence：多模态注意力偏差与视觉注意力汇点分析
-3. [DualDecoder: Accelerate Long Context LLM Inference by Predictive Prefetch](/202607/30/2607.26475v1-dualdecoder-accelerate-long-context-llm-inference-by-predictive-prefetch)  
+   evidence：MLA潜在状态压缩KV缓存；面向草稿模型的功能重建
+2. [Back from the Future: Key-Value Cache Management by Counter-Causal Surprise](/202607/31/2607.27600v1-back-from-the-future-key-value-cache-management-by-counter-causal-surprise)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：KV缓存压缩、稀疏KV缓存、长上下文LLM推理
-4. [InferScale: GPU-Native KV Injection for Personalized LLM Serving](/202607/30/2607.27090v1-inferscale-gpu-native-kv-injection-for-personalized-llm-serving)  
+   evidence：通过反因果惊喜进行键值缓存压缩与驱逐
+3. [Recall Before You Rank: Similarity-Guided Top-$K$ Reuse for Efficient Long-Context Attention](/202607/31/2607.27692v1-recall-before-you-rank-similarity-guided-top-k-reuse-for-efficient-long-context-attention)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：面向LLM服务的GPU原生KV注入
-5. [A Photonic-CXL Memory Appliance for Scalable KV Cache Management in LLM Inference](/202607/30/2607.27187v1-a-photonic-cxl-memory-appliance-for-scalable-kv-cache-management-in-llm-inference)  
+   evidence：通过复用历史检索决策加速基于KV缓存的Top-K稀疏注意力
+4. [A Sparse Glimpse of the Whole: Train-Free Self-Speculative Decoding](/202607/31/2607.27735v1-a-sparse-glimpse-of-the-whole-train-free-self-speculative-decoding)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：直接针对大语言模型推理中的KV缓存管理问题，提出光子-CXL混合架构，实现可扩展的大容量共享内存
-6. [OmniScope: Modality-Decoupled Token Compression for Omnimodal Large Language Models](/202607/30/2607.23193v2-omniscope-modality-decoupled-token-compression-for-omnimodal-large-language-models)  
+   evidence：提出免训练自推测解码框架SparseSpec-L，利用动态稀疏化且可回收的KV缓存加速长上下文推理。
+5. [SemPIC: Learning Semantic Position-Independent KV Caches](/202607/31/2607.28069v1-sempic-learning-semantic-position-independent-kv-caches)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：学习语义位置无关的 KV 缓存，使文档在上下文变化时仍可复用
+6. [Structured Redundancy Modeling for Efficient Visual Token Pruning in High-Resolution MLLMs](/202607/31/2607.23046v1-structured-redundancy-modeling-for-efficient-visual-token-pruning-in-high-resolution-mllms)  
    标签：评分：8.0/10、query:multimodal
-   evidence：面向全模态大语言模型的模态解耦令牌压缩
+   evidence：针对高分辨率MLLMs的视觉Token爆炸问题，提出单前向剪枝器SFPruner进行冗余控制。
 
 ### 速读区论文标签
-1. [Omni-Prune: Query-Aware Unified Token Pruning for Efficient Omnimodal Large Language Models](/202607/30/2607.23445v1-omni-prune-query-aware-unified-token-pruning-for-efficient-omnimodal-large-language-models)  
+1. [SepPrune:A Separator-based Pruning Framework for Efficient Multimodal Large Language Models](/202607/31/2607.25818v1-sepprunea-separator-based-pruning-framework-for-efficient-multimodal-large-language-models)  
    标签：评分：8.0/10、query:multimodal
-   evidence：面向全模态LLM的查询感知令牌剪枝，减少多模态理解中的内存
-2. [Variational-Ising-Attention (VIA):TailoredAttentionMattersfor Science](/202607/30/2607.23634v1-variational-ising-attention-viatailoredattentionmattersfor-science)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：提出基于伊辛模型的变分注意力机制，旨在实现稀疏和高效注意力，与稀疏注意力机制直接相关
-3. [Memory for Large Language Models](/202607/30/2607.25380v1-memory-for-large-language-models)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：综述了大语言模型中的记忆机制，包括瞬态注意力和KV缓存等，与KV缓存优化相关
-4. [Seen, Said, or Forgotten? A Causal Audit of Visual KV Memory Across Dialog Turns](/202607/30/2607.25467v1-seen-said-or-forgotten-a-causal-audit-of-visual-kv-memory-across-dialog-turns)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：跨对话轮次视觉KV内存驱逐的因果审计
-5. [Structured Redundancy Modeling for Efficient Visual Token Pruning in High-Resolution MLLMs](/202607/30/2607.23046v1-structured-redundancy-modeling-for-efficient-visual-token-pruning-in-high-resolution-mllms)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：面向高分辨率多模态大语言模型的结构化冗余建模视觉令牌剪枝
-6. [OmniScope: Modality-Decoupled Token Compression for Omnimodal Large Language Models](/202607/30/2607.23193v1-omniscope-modality-decoupled-token-compression-for-omnimodal-large-language-models)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：面向全模态大语言模型的模态解耦令牌压缩，以查询为锚点
-7. [Kalypso: Relational LLM Serving](/202607/30/2607.23815v1-kalypso-relational-llm-serving)  
+   evidence：提出SepPrune，利用分隔符Token作为统一查询对视觉Token进行排序选择，实现高效剪枝。
+2. [ReToken: One Token to Improve Vision-Language Models for Visual Retrieval](/202607/31/2607.28627v1-retoken-one-token-to-improve-vision-language-models-for-visual-retrieval)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：从视觉KV缓存中稀疏选择相关视觉令牌以改进视觉语言模型的检索
+3. [OmniScope: Modality-Decoupled Token Compression for Omnimodal Large Language Models](/202607/31/2607.23193v2-omniscope-modality-decoupled-token-compression-for-omnimodal-large-language-models)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：关系型LLM服务中通过流水线执行复用KV缓存
-8. [OmniCache: Multidimensional Hierarchical Feature Caching For Diffusion Models](/202607/30/2607.23844v1-omnicache-multidimensional-hierarchical-feature-caching-for-diffusion-models)  
+   evidence：全模态大模型中的模态解耦token压缩，降低内存开销
+4. [Understanding Is Done Early: A Depth Division of Labor in Large Language Models and Its Use for Unbounded-Context Memory](/202607/31/2607.28263v1-understanding-is-done-early-a-depth-division-of-labor-in-large-language-models-and-its-use-for-unbounded-context-memory)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：扩散模型的多维特征缓存
-9. [Phase Structure in Rotary Attention: A Spectral Framework for Semantic Continuity and Execution-Boundary Governance](/202607/30/2607.25507v1-phase-structure-in-rotary-attention-a-spectral-framework-for-semantic-continuity-and-execution-boundary-governance)  
+   evidence：缓存中间层残差状态并重计算上层，使长上下文内存与计算不再随存储长度增长
+5. [OmniScope: Modality-Decoupled Token Compression for Omnimodal Large Language Models](/202607/31/2607.23193v1-omniscope-modality-decoupled-token-compression-for-omnimodal-large-language-models)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：对Transformer注意力中旋转位置编码相位结构的频谱分析
-10. [SepPrune:A Separator-based Pruning Framework for Efficient Multimodal Large Language Models](/202607/30/2607.25818v1-sepprunea-separator-based-pruning-framework-for-efficient-multimodal-large-language-models)  
+   evidence：面向全模态大模型的免训练token压缩，按模态独立估计相关性并修剪视觉token
+6. [Disentangling Semantic Attention from Structural Bias in the Attention Manifold](/202607/31/2607.24017v1-disentangling-semantic-attention-from-structural-bias-in-the-attention-manifold)  
    标签：评分：6.0/10、query:multimodal
-   evidence：提出针对多模态大语言模型的视觉token剪枝方法，提升效率，属于多模态理解模型方向
+   evidence：研究多模态大模型中视觉注意力汇/结构偏差，与视觉token注意力分配相关
 
 
 <div class="dpr-home-promo-card">
