@@ -1,0 +1,1542 @@
+Title: When Should Graph Attention Be Sparse? Learning a Per-Edge Tsallis Index
+
+URL Source: https://arxiv.org/pdf/2608.02938v1
+
+Published Time: Wed, 05 Aug 2026 00:17:53 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# When Should Graph Attention Be Sparse? Learning a Per-Edge Tsallis Index 
+
+Kleyton da Costa ∗
+
+University College London & Holistic AI London, UK 
+
+kleyton.vsc@gmail.com 
+
+Bernardo Modenesi 
+
+University of Utah Salt Lake City, UT, USA 
+
+bernardo.modenesi@utah.edu 
+
+Abstract 
+
+Graph attention normalizes neighborhood scores with softmax, the maximum-entropy choice under Shannon statistics. But homophilic and heterophilic graphs want different attention shapes, and one fixed normalization cannot serve both. We propose LTGA (Learnable Tsallis Graph Attention), a graph attention layer whose Tsallis entropic index q is learned jointly with the weights, interpolating continuously between heavy-tailed ( q < 1), softmax ( q = 1 ) and compact-support (q > 1) attention at four granularities from a global scalar to a per-edge index, under a bounded reparameterization that starts every model at the GAT baseline. Across eight benchmarks at ten seeds, LTGA-Edge takes the best average rank (2.75 ), but the omnibus test does not reject ( p = 0 .199 ) and learning q does not beat searching it: a validation-tuned frozen grid reaches 61 .4% , tuned α-entmax 62 .2% and a capacity-matched q ≡ 1 control 62 .0% , against 61 .7% for LTGA-Edge. What the learned index buys is one run instead of a grid, and an interpretable mechanism: where q leaves 1, it prunes 42% of attention coefficients to exactly zero, and those edges are selectively the wrong ones, restoring them costs 7.1 points, while random pruning at the same rate costs 13 .0 more. Project page: https://kleyt0n.github.io/ltga 
+
+1 Introduction 
+
+Graph attention networks (GAT) [Veliˇ ckovi´ c et al., 2018] normalise pairwise relevance scores into a probability distribution over each node’s neighbourhood with a softmax. Softmax is the unique solution to the constrained Shannon maximum-entropy problem [Jaynes, 1957], so this design implicitly assumes that attention weights are most usefully spread according to extensive (Boltzmann–Gibbs) statistics. Real-world graphs, however, routinely violate the assumptions that justify extensivity. Citation networks are dominated by a few highly relevant neighbours, and the long tail of weakly related ones is best ignored entirely; heterophilic web graphs benefit from the opposite behaviour, where many dissimilar neighbours each contribute a small amount of evidence [Pei et al., 2020, Zhu et al., 2020, Platonov et al., 2023]. In both regimes, dense softmax attention is sub-optimal because it cannot represent exact zeros and forces a fixed tail behaviour. Two extremes have already been explored. Sparsemax [Martins and Astudillo, 2016] replaces softmax with a Euclidean projection onto the simplex, producing exact zeros at the cost of a fixed sparsity level. α-entmax [Peters et al., 2019, Correia et al., 2019] interpolates between softmax and sparsemax with a tunable α, and Correia et al. [2019] additionally learn a per-head α inside a Transformer. Both live in the same Tsallis maximum-entropy family [Tsallis, 1988, 2009] that we adopt, in which the entropic index q controls a smooth transition from heavy-tailed ( q < 1) through Shannon ( q = 1 ) to compact-support ( q > 1) behaviour. They are not, however, frozen points of our map: α-entmax fixes its threshold by the simplex constraint whereas the q-softmax shifts by the neighbourhood maximum and normalises afterwards, so the two coincide only up to a per-neighbourhood rescaling of the 
+
+> ∗
+
+Corresponding author. Preprint. Preliminary work. arXiv:2608.02938v1 [cs.LG] 3 Aug 2026 Learning a Per-Edge Tsallis Index 
+
+logits (Appendix C). Our claim is therefore about the graph setting, the two-sided family, and the Shannon-limit gradients — not about being the first to learn a sparsity index. In this work we make the entropic index a learnable scalar of the network. Replacing softmax with a q-softmax inside GAT yields what we call LTGA : a graph attention layer whose normalisation continuously adapts between dense and sparse regimes during training, with no per-task grid search. Three technical contributions make end-to-end learning stable: (i) a tanh -bounded reparameterisation 
+
+q = 1 + δ tanh( α) that pins initialisation to the Shannon baseline and prevents divergent dynamics; (ii) a decoupled optimiser with warm-up scheduling that lets the network weights converge to a strong feature regime before the attention geometry starts changing; and (iii) a quadratic Shannon-prior regulariser that acts as an Occam’s razor by penalising departures from q = 1 that do not pay for themselves in task loss. At q = 1 the layer reduces to GATv2 exactly, an equality we verify numerically against the reference implementation rather than only asserting (Appendix F). Our main contributions are: • We introduce LTGA, which brings a learnable entropic index to graph neighbourhood attention. Unlike the fixed-α and per-head-α entmax variants, the family is two-sided (q < 1 heavy-tailed as well as q > 1 compact), and the index can be conditioned per edge; • We give a numerically stable formulation of q-softmax with a Taylor branch around q = 1 
+
+that keeps both value and gradient continuous across the Shannon limit, and we contribute reparameterisation, decoupled optimisation, and Shannon-prior regularisation as a set of training-time stabilisers; • Across eight node-classification benchmarks spanning the homophily spectrum h ∈ [0 .05 , 0.81] ,we compare LTGA against softmax attention, a frozen-q grid tuned per dataset, tuned α-entmax and sparsemax attention, capacity-matched edge-gated controls, and four heterophily-specific architectures. LTGA-Edge takes the best average rank; we report the Friedman p-value together with per-dataset paired tests (Holm-corrected) and Cohen’s d, and we state plainly where the omnibus test fails to reject and where GATv2 remains ahead; • We show that, when q leaves the Shannon baseline, it does so interpretably : an analytic decomposition links q > 1 to data-dependent neighbourhood pruning (compact support) and 
+
+q < 1 to heavy-tailed diffusion. We test the pruning interpretation directly: pruned edges are compared against a rate-matched random control, and restoring them at inference quantifies what pruning buys. We also probe what the per-edge gate conditions on — degree, feature similarity, and score gap — rather than leaving it a black box. 
+
+2 Background and Related Work 
+
+Attention-based GNNs. GAT [Veliˇ ckovi´ c et al., 2018] replaces fixed aggregation with a learnable softmax over each node’s neighbourhood; GATv2 [Brody et al., 2022] fixes a static-attention failure by relocating the LeakyReLU, an orthogonal improvement that LTGA inherits. Graph transformers [Ying et al., 2021, Rampášek et al., 2022] extend attention beyond the 1-hop neighbourhood but retain softmax normalisation. Our contribution is orthogonal to the scoring function and applies to any of these models. 
+
+Sparse and learnable attention. Sparsemax [Martins and Astudillo, 2016] and the α-entmax family [Peters et al., 2019, Correia et al., 2019] replace softmax with sparsity-inducing alternatives, with α-entmax recovering softmax at α = 1 and sparsemax at α = 2 . Fenchel–Young losses [Blondel et al., 2020] unify these via convex duality. Adjacent ideas appear in classification losses with fixed Tsallis temperatures [de Lima et al., 2019, Zhang and Sabuncu, 2018, Amid et al., 2019] and in adaptive shape parameters for robust regression [Barron, 2019]. Most of these expose the regulariser as a frozen hyperparameter, though Correia et al. [2019] do learn a per-head α in sequence attention; the closest prior work is therefore adaptively-sparse Transformer attention, and we compare against a graph-adapted version of it directly (Section L.1). Two differences remain: α-entmax is defined only for α ≥ 1, so it cannot express the heavy-tailed regime, and its threshold rule differs from the q-softmax’s max-shift (Appendix C), which changes both the induced support and the gradients. Tsallis statistics also appear in non-attention settings (Tsallis-INF [Abernethy et al., 2014], Tsallis-OT [Muzellec et al., 2017]), with full mathematical background [Tsallis, 1988, Naudts, 2002, Furuichi, 2004] reviewed in Appendix E. 
+
+> 2Learning a Per-Edge Tsallis Index
+
+Heterophilic GNNs and calibration. Heterophilic graphs [Pei et al., 2020] have driven a wave of architectural responses — H 2GCN [Zhu et al., 2020], GPR-GNN [Chien et al., 2021], FAGCN [Bo et al., 2021], LINKX [Lim et al., 2021], GloGNN [Li et al., 2022], Polynormer [Deng et al., 2024] — and a careful benchmark re-evaluation [Platonov et al., 2023] that we adopt. LTGA operates at a different level: it modifies only the attention normalisation , so it composes with any 
+
+attention scoring function, but not with these architectures, none of which normalises attention at all (Section 6). We compare against them directly rather than claiming complementarity. We further connect to the calibration literature [Guo et al., 2017, Mukhoti et al., 2020]: by learning q,LTGA implicitly regularises output confidence and improves calibration without post-hoc temperature scaling (Appendix H). 
+
+3 Methodology 
+
+This section develops LTGA. We begin with the q-softmax algebra (Section 3.1); fold it into a graph attention layer (Section 3.2); make the entropic index learnable via a tanh -bounded reparameterisation (Section 3.3); and describe the decoupled optimiser and Shannon-prior regulariser that make end-to-end training reliable (Section 3.4). The maximum-entropy derivation of q-softmax (Appendix B) and the analytic homophily prediction that motivates the empirical part of the paper (Appendix D) are deferred for space. 
+
+3.1 Tsallis preliminaries: q-exp, q-log, and q-softmax 
+
+The Tsallis entropy [Tsallis, 1988, 2009] of p ∈ ∆C−1 is Sq (p) = ( q−1) −1 1 − P 
+
+> i
+
+pqi
+
+ for q̸ = 1 ,recovering Shannon entropy at q → 1. We adopt the (q−1) parameterisation that aligns with the 
+
+α-entmax [Peters et al., 2019] and sparsemax [Martins and Astudillo, 2016] literature, defining the 
+
+q-exponential as 
+
+exp q (x) = 1 + ( q − 1) x1/(q−1) + , [ · ]+ = max( ·, 0) , (1) which recovers exp( x) as q → 1 via L’Hôpital’s rule and gives compact-support behaviour for q > 1
+
+(zeros where x ≤ − 1/(q−1) ) and heavy tails for q < 1. and define the q-softmax by substitution: 
+
+softmax q (z)i = exp q (zi − c)
+
+P 
+
+> j
+
+exp q (zj − c) , c = max  
+
+> j
+
+zj . (2) The shift by c is required because softmax q is not shift-invariant for q̸ = 1 . Two structural facts (proved in Appendix A) underpin everything that follows: 
+
+Proposition 1 (Regime dichotomy) . (i) lim q→1 softmax q (z) = softmax( z), recovering GAT exactly. (ii) For q > 1, softmax q (z)i = 0 exactly when zi ≤ c − 1/(q − 1) .
+
+The two parts give the regime dichotomy that motivates the rest of the paper: q > 1 produces sparse attention with hard zeros; q = 1 produces dense softmax attention; q < 1 produces heavy-tailed attention that retains weight on low-scoring neighbours. 
+
+3.2 The LTGA layer 
+
+Let G = ( V, E) be a graph with node features H ∈ R|V|× F and optional edge attributes eij ∈ RFe .Following the parameterisation of Brody et al. [2022]’s GATv2, an LTGA layer projects each endpoint with two separate weight matrices z(src)  
+
+> i
+
+= Wlhi and z(dst)  
+
+> j
+
+= Wr hj , optionally adds a projected edge feature z(edge)  
+
+> ij
+
+= Weeij , and computes the pairwise attention logit as 
+
+eij = a⊤ LeakyReLU  z(src)  
+
+> i
+
++ z(dst)  
+
+> j
+
++ z(edge) 
+
+> ij
+
+. (3) This is the GATv2 scoring function (the original GAT v1 of Veliˇ ckovi´ c et al. [2018] relocates the LeakyReLU after the dot product and is recovered by setting Wl = Wr ). LTGA replaces the softmax normalisation with the q-softmax of Eq. (2): 
+
+α(q) 
+
+> ij
+
+= exp q (eij − ci)
+
+X 
+
+> k∈N (i)
+
+exp q (eik − ci) , ci = max   
+
+> k∈N (i)
+
+eik , (4) 
+
+> 3
+
+Learning a Per-Edge Tsallis Index                                    
+
+> (X,A)(Z,A)(α(q),A)(H′,A)
+> input graph linear embedding q-softmax attention aggregated representation
+> Wq-softmax
+> Eq. (4)
+> aggregate
+> learnable entropic index
+> q(ℓ,m )= 1 + δtanh  α(ℓ,m )
+> α= 0 ⇒q= 1 (GAT init.)
+> (a)
+> ℓ= 1
+> ℓ= 2
+> Global-q
+> 1 scalar shared across heads
+> ℓ= 1
+> ℓ= 2
+> Layer-q
+> one per layer (Lparams)
+> ℓ= 1
+> ℓ= 2
+> Head-q
+> one per (layer, head) (L×Mparams)
+> i
+> Edge-q
+> per-edge MLP
+> qij =gϕ(zi,zj)
+> coarse fine
+> entropic-index granularity (cells of equal shade share one q)
+> (b)
+
+Figure 1: LTGA architecture. (a) Forward pass: input (X, A), linear embedding, q-softmax attention (Eq. 4), aggregation. The entropic index q = 1 + δ tanh( α) is learnable, with α = 0 
+
+pinning the GAT softmax baseline at initialisation. (b) The four granularities at which q can be tied (Section 3.3); cells of equal shade share one scalar. and aggregates with an optional residual: 
+
+h′ 
+
+> i
+
+= σ X 
+
+> j∈N (i)
+
+α(q) 
+
+> ij
+
+z(dst) 
+
+> j
+
+!
+
++ Wres hi, (5) with Wres = 0 when residuals are disabled. Self-loops are added to N (i) before message passing, mirroring the default of PyG’s GATConv and GATv2Conv . The scoring function in Eq. (3) is unchanged from GATv2, so any improvement to GAT scoring carries over to LTGA verbatim. A scalar-q LTGA layer adds at most M extra parameters (one per head); the per-edge variant (Section 3.3) adds a small 
+
+∼ 10 2-parameter MLP. 
+
+3.3 Learnable entropic index via reparameterisation 
+
+Direct optimisation of q is awkward for two reasons. First, the q-softmax has a removable singularity at q = 1 that is fragile in single precision. Second, an unconstrained q may drift to degenerate regimes (q → −∞ uniform; q → +∞ argmax). We address both by introducing an unconstrained scalar 
+
+α ∈ R and writing 
+
+q(α) = 1 + δ tanh( α), δ > 0. (6) The map α 7 → q is smooth, monotone, and bounded to (1 − δ, 1 + δ). We use δ = 1 throughout, giving q ∈ (0 , 2) which spans the empirically interesting range identified in prior studies of fixed-q
+
+Tsallis [de Lima et al., 2019]. The choice α = 0 pins the initialisation to the Shannon baseline (q = 1 , plain softmax), so LTGA begins indistinguishable from GAT and only departs as training data motivates. 
+
+Granularity. The entropic index can be tied at four granularities, trading expressiveness against parameter count: • Global-q: a single scalar q shared across all layers and all heads (1 parameter); • Layer-q: one q(ℓ) per layer ( L parameters); • Head-q: one q(ℓ,m ) per attention head ( L×M parameters); • Edge-q (LTGA-Edge) : a per-edge entropic index q(ℓ,m ) 
+
+> ij
+
+produced by a small two-layer MLP gϕ
+
+that maps the concatenated endpoint embeddings to a scalar gate αij = gϕ(z(src)  
+
+> i
+
+, z(dst)  
+
+> j
+
+), then 
+
+qij = 1 + δ tanh( αij ). The MLP’s output projection is zero-initialised, so at the start of training every edge has qij = 1 exactly (Shannon limit, GAT recovery still holds by Proposition 1, part i). 
+
+4Learning a Per-Edge Tsallis Index 
+
+Up to the Head granularity the overhead is negligible: an L = 2 , M = 8 network adds 16 scalars. The Edge granularity adds a (2 Fh) → Hg → M MLP per layer ( Hg = 8 in our experiments), for 
+
+∼ 10 2 parameters per layer. The resulting per-edge per-head q(ℓ,m ) 
+
+> ij
+
+∈ R|E|× M is broadcast inside the 
+
+q-softmax (Eq. (4) ) so different edges in the same neighbourhood can independently choose between heavy-tailed and compact-support attention. 
+
+Numerical stability near q = 1 . The standard branch of exp q overflows in single precision for 
+
+|1 − q| ≲ 10 −5 when logits exceed |x| ∼ 10 , so we swap to a value- and gradient-matched first-order Taylor branch in the singular zone. The expansion and the (unique) sign that keeps gradients consistent at the boundary are derived in Appendix A; the open-source implementation ships regression tests that fail if the gradient signs disagree. 
+
+Compatibility with downstream sparsity. The [ · ]+ in exp q produces hard zeros for q > 1
+
+(Proposition 1, part ii); the gradient through such pruned entries is exactly zero, analogous to the dead-region behaviour of ReLU. Sparse attention therefore costs the same forward-and-backward as dense attention — pruning happens at message construction, not at edge enumeration. 
+
+3.4 Decoupled training and Shannon-prior regularisation 
+
+Jointly optimising q with the weights θ has two practical hazards — the index moves before the attention scores mean anything, and it can drift on the strength of a noisy early gradient — so we take three precautions. A separate Adam instance drives the α parameters, at rate ηα with no weight decay, giving the ratio κ = ηθ /η α as an explicit knob on how fast the index may travel. A warm-up freezes 
+
+α = 0 for the first Tw epochs, so LTGA trains as a standard GAT until the scores are informative. And a Shannon prior penalises departure from softmax, 
+
+L = Ltask + λattn · 1
+
+|Q| 
+
+X
+
+> q∈Q
+
+(q − 1) 2, (7) over the set Q of entropic-index scalars, so that any departure from q = 1 has to be paid for in task loss. Appendix F gives the full schedule; Appendix B shows q-softmax is the unique maximiser of Sq
+
+under a fixed expected energy, recovering softmax at q = 1 , and Appendix D derives the homophily prediction this motivates — together with the empirical inversion we actually observe, in which the heterophilic benchmarks converge to q > 1 (pruning) rather than the q < 1 (pooling) a naive reading predicts. 
+
+4 Experimental setup 
+
+Datasets. Eight node-classification benchmarks spanning the homophily spectrum: the citation networks Cora, CiteSeer and PubMed ( h ∈ { 0.81 , 0.74 , 0.80 }) with Planetoid splits [Sen et al., 2008, Yang et al., 2016]; WebKB Texas, Wisconsin and Cornell ( h ∈ { 0.11 , 0.21 , 0.30 }) [Pei et al., 2020]; and Roman-Empire ( h = 0 .05 ) and Amazon-Ratings ( h = 0 .38 ) from the curated suite of Platonov et al. [2023], which addresses known pathologies of WebKB. 
+
+Models. Against GCN [Kipf and Welling, 2017], GAT [Veliˇ ckovi´ c et al., 2018] and GATv2 [Brody et al., 2022] we add four groups that separate learning q from the family and from the added capacity: a frozen-q grid (q ∈ { 0.5, 0.8, 1.0, 1.2, 1.5, 2.0}, plus a variant tuned per dataset on validation, with q = 1 a bit-exact GATv2 control); true α-entmax attention at α ∈ { 1.2, 1.5, 2.0} and tuned, by bisection on the simplex threshold with the closed-form Jacobian — the graph analogue of adaptively-sparse attention [Correia et al., 2019]; capacity-matched controls that spend LTGA-Edge’s per-edge MLP on a logit bias, a logit scale, or a per-head temperature, all at q ≡ 1 and exactly matched parameter counts; and heterophily-specific architectures (H 2GCN [Zhu et al., 2020], GPR-GNN [Chien et al., 2021], FAGCN [Bo et al., 2021], LINKX [Lim et al., 2021]), which change propagation rather than normalisation and so are context rather than direct competitors. An earlier version obtained the fixed-sparsity baselines indirectly, by reading them off LTGA-Head’s learned q;since q-softmax does not reduce to sparsemax pointwise (Appendix C) that substitution was invalid, and all of these baselines are now run explicitly. LTGA is evaluated at four granularities — one shared scalar, one per layer, one per head, and one per edge via a small MLP. All attention models share a 2-layer, 8-head, 64-hidden-per-head backbone; architectural details are in Appendix F. 
+
+> 5Learning a Per-Edge Tsallis Index
+
+Protocol. Weights use Adam [Kingma and Ba, 2015] ( η = 10 −2, weight decay 5 × 10 −4); the entropic-index parameters use a separate Adam at the same rate with no weight decay. The headline protocol is λattn = 0 , δ = 1 , Tw = 20 , dropout 0.4, at most 200 epochs with patience 20 . Reported numbers are over 10 seeds; on the datasets with canonical split collections (WebKB and the Platonov suite) seed s is paired with split (s−1) mod 10 , so the spread covers split as well as initialisation variance — the earlier 3-seed protocol reused split 0, which is why the WebKB standard deviations reached 18 points. The hyperparameter sweeps, the depth sweep and the synthetic study use five seeds, which we state with each result. We lead with per-dataset paired tests (paired t or Wilcoxon, Shapiro– Wilk gated) under Holm–Bonferroni at α = 0 .05 with Cohen’s d, and treat the Friedman/Nemenyi omnibus as a secondary summary, because the Nemenyi critical difference widens quickly with the number of methods. Sweeps, metric definitions and effect sizes are in Appendix F; the λattn ×Tw ×κ
+
+grid is run on Roman-Empire and repeated on Cora, Amazon-Ratings and Wisconsin, since those knobs are precisely what decides whether q moves and sweeping only where it does would be circular. 
+
+5 Results 
+
+5.1 Headline accuracy across the homophily spectrum 
+
+Table 1 reports test accuracy (mean ± s.d. over seeds) for every method on every dataset, ordered by overall average rank. Bold marks the per-column winner; daggers ( †) mark methods whose average rank is statistically indistinguishable from the best under the Nemenyi critical difference. The critical-difference diagram, which visualises the same ranking rather than adding information, has moved to Appendix G (Figure 2). 
+
+LTGA-Edge attains the lowest mean rank (2.75 at 10 seeds), ahead of GAT ( 3.19 ) and GATv2 (4.06 ). The omnibus Friedman test χ2 = 8 .58 , p = 0 .199 over seven methods does not reject the null at α = 0 .05 ; we state this in the abstract as well as here, since a rank ordering the omnibus test cannot separate is weak evidence on its own. The per-dataset tests are sharper and locate the effect precisely. Over ten seeds, Holm-corrected, LTGA-Edge beats both attention baselines on Amazon-Ratings ( +0 .8 vs GAT and +1 .1 vs GATv2, both p = 0 .002 ) and on Roman-Empire ( +16 .3
+
+vs GAT, p < 0.001 ; +1 .4 vs GATv2, p = 0 .006 ), while the other six datasets are indistinguishable (p ≥ 0.12 ; Table 2). Treating each dataset as one observation instead (Table 3), the comparisons the claim depends on do not reach significance: vs GATv2 p = 0 .090 , vs the tuned frozen-q grid 
+
+p = 0 .124 , vs tuned α-entmax p = 0 .621 with the sign against us. The case for LTGA therefore rests on the two heterophilic benchmarks and on the mechanism of Sections L.2 and 5.2, not on an aggregate win. The largest single-dataset gain is on Roman-Empire, where LTGA-Head reaches 
+
+72 .5% versus 56 .1% for GAT. 
+
+Where LTGA does not win. GATv2 retains the higher average accuracy across the eight bench-marks and wins the three small WebKB graphs. Two factors account for this, and neither is a point in LTGA’s favour. First, an implementation gap: PyG’s GATv2Conv gives its endpoint projections bias terms, which our layer omitted, so LTGA was a strictly smaller model than the baseline it was compared against and could not reproduce GATv2 even at q = 1 . The layer now matches, and Appendix F reports the numerical equivalence test that pins it. Second, split variance: the WebKB cells were computed on a single Geom-GCN split, giving standard deviations up to 18 points; over the ten canonical splits the WebKB spread falls to 4.6–15 .0 points, which makes the comparison interpretable without making it tight — these three graphs remain too small and too variable to separate methods. On these graphs q stays at 1, so LTGA is GATv2 up to the gate, and we expect — and report — no advantage. The granularity ranking (LTGA-Edge ≻ LTGA-Head ≈ LTGA-Global ≈ LTGA-Layer) is consistent with the user-flexibility hypothesis that motivates the architecture: per-edge q is the most expressive choice and it is the variant that takes the lead overall. On the citation networks the scalar granularities collapse to identical numbers because q converges to within 10 −3 of 1; LTGA-Edge still beats GAT on Cora ( 81 .2 vs 80 .4) and Amazon-Ratings ( 42 .8 vs 42 .0) through per-edge capacity alone, while GAT retains CiteSeer ( 69 .3 vs 69 .1). 
+
+Three attention regimes. The dichotomy of Proposition 1 carves the q axis into three qualitatively distinct attention regimes that LTGA can traverse during training: heavy-tailed (q < 1), where exp q
+
+has unbounded support so even low-scoring neighbours retain non-zero weight and aggregation 
+
+> 6
+
+Learning a Per-Edge Tsallis Index 
+
+Table 1: Node classification accuracy (%) over eight datasets. Bold: per-column best; “ †”: within the Nemenyi critical difference of the best. “Avg. rank” is the mean Friedman rank (lower is better). Method Amz-Rat CiteS. Cora Cornell PubMed Rom-Emp Texas Wisc. Avg. acc Avg. rank GCN 41 .6±0.4                                                                     
+
+> †68 .3±1.1
+> †80 .5±1.0
+> †40 .0±9.3
+> †78 .8±1.042 .9±0.6
+> †45 .9±15 .0
+> †47 .5±4.6
+> †55 .75.50
+> GAT 42 .0±0.4
+> †69 .3±1.080 .4±0.8
+> †42 .2±7.377 .7±0.5
+> †56 .1±0.7
+> †59 .2±6.250 .6±7.3
+> †59 .73.19
+> GATv2 41 .7±0.7
+> †69 .2±0.7
+> †80 .7±0.7
+> †36 .8±8.8
+> †77 .6±0.7
+> †71 .0±0.8
+> †59 .2±5.5
+> †48 .0±6.6
+> †60 .54.06
+> LTGA-Global 42 .4±0.7
+> †69 .0±0.6
+> †81 .0±0.7
+> †35 .1±12 .9
+> †77 .7±0.6
+> †72 .3±0.6
+> †58 .1±5.9
+> †47 .6±7.5
+> †60 .44.50
+> LTGA-Layer 42 .6±0.6
+> †69 .0±0.6
+> †81 .0±0.7
+> †35 .1±12 .9
+> †77 .7±0.6
+> †72 .4±0.5
+> †58 .1±5.9
+> †47 .6±7.5
+> †60 .44.00
+> LTGA-Head 42 .5±0.7
+> †69 .0±0.6
+> †81 .0±0.7
+> †35 .1±12 .9
+> †77 .7±0.6
+> †72 .5±0.658 .1±5.9
+> †47 .6±7.5
+> †60 .44.00
+> LTGA-Edge 42 .8±0.869 .1±0.9
+> †81 .2±1.039 .2±11 .1
+> †77 .5±0.6
+> †72 .4±0.9
+> †58 .6±6.5
+> †52 .7±6.561 .72.75
+
+pools weak evidence from many neighbours — often preferred on heterophilic graphs; Shannon softmax (q = 1 ), the GAT baseline; and compact-support / sparsemax-like (q > 1), where exp q
+
+has hard zeros at zij ≤ ci −1/(q−1) so attention is exactly sparse and uninformative neighbours are pruned — often preferred on graphs where most candidate neighbours are noise (Roman-Empire is our canonical example, see Section L.2). Figure 1(a) summarises one LTGA layer end to end; Figure 1(b) shows the four granularities at which the entropic index can be tied. 
+
+Attention geometry. Two complementary diagnostics in the appendix confirm that LTGA reshapes the geometry of attention rather than merely re-tempering softmax: Lorenz curves of layer-1 attention across all six methods (Appendix I, Figure 4) show LTGA-Edge as the flattest distribution on Cornell (G = 0 .34 vs 0.50 for GATv2), and the per-edge qij histograms on the two benchmarks where the gate moves (Appendix J, Figure 5) show a tight peak at q ≈ 2 on Roman-Empire and a bimodal distribution on Amazon-Ratings, evidence that the gate genuinely picks different regimes for different edges. 
+
+5.2 Are the pruned edges actually noise? 
+
+Reporting that 42% of attention coefficients are exactly zero says nothing on its own: a rate is not a selection. We therefore test the pruning interpretation three ways on Roman-Empire, with the trained model untouched (Table 5). 
+
+Selectivity. Over ten seeds, edges that every head prunes have a label agreement of 9.3% in layer 1 and 1.0% in layer 2, against 43 .5–43 .6% for the edges that survive and a base rate of 43 .3% over all edges (train-split labels only, so no test label enters the analysis). Pruned edges also have markedly lower endpoint feature similarity ( cos = 0 .17 –0.23 vs 0.41 ) and sit at higher-degree destinations (5.6–5.7 vs 4.2). The network is discarding different-class, dissimilar neighbours, which is the claim the sparsity number was standing in for. Two caveats belong with this result rather than after it. Only 
+
+0.1–0.3% of edges are pruned by every head even though 39 –46% of individual coefficients are zero: heads specialise, and an edge dropped by one head is usually retained by another, so per-head sparsity overstates how much of the graph is discarded. And because that unanimously-pruned set is small, the label-agreement figure rests on only 27 (layer 1) and 78 (layer 2) labelled edges per seed, which is why its across-seed spread is wide ( ±9.0 on the pooled mean). The direction is consistent across all ten seeds; the precise percentage is not tightly determined. 
+
+Counterfactual A (restore). Forcing q = 1 at inference restores every pruned edge without changing a weight, and costs 72 .4 → 65 .4% accuracy: pruning is worth 7.1 points to the trained model. 
+
+Counterfactual B (random control). Pruning a random 45 .7% of each neighbourhood — the learned rate — gives 59 .4% , i.e. 13 .0 points below learned pruning and 6.0 points below no pruning at all. Sparsity at this rate is actively harmful unless it is selective, which is the control that makes the interpretation falsifiable. 
+
+Counterfactual C (heavy-tail clamp). Clamping q ≥ 1 leaves accuracy unchanged at 72 .4% , because LTGA-Head converges to q > 1 on every head here. On this benchmark the heavy-tailed arm of the family contributes nothing — see Section 6 for what we do and do not claim for q < 1.
+
+5.3 What the per-edge gate conditions on 
+
+Figure 7 regresses the learned qij of LTGA-Edge against the covariates a practitioner would guess it uses, over ten seeds. The gate is partly interpretable on one benchmark and close to opaque on 
+
+7Learning a Per-Edge Tsallis Index 
+
+the other. On Amazon-Ratings a linear probe on endpoint degrees and raw-feature and embedding cosine similarity explains R2 = 0 .41 of the variance in the second layer’s qij , almost entirely through embedding similarity ( ρ = −0.62 , permutation importance 0.81 ). On Roman-Empire the same probe reaches only R2 = 0 .16 in the first layer and R2 = 0 .06 in the second, where the strongest single covariate is the source degree at ρ = −0.16 . We therefore do not claim the per-edge index is generally interpretable, and we drop an earlier single-seed reading in which qij rose with destination degree on Roman-Empire ( ρ = +0 .27 ): at ten seeds that correlation reverses sign and is weak, so it does not support the compact-support-for-high-degree-nodes mechanism of Appendix D. Two covariates we had intended to include — logit magnitude and the within-neighbourhood score gap, which is the quantity that actually decides pruning — were not recorded in this run. 
+
+5.4 Ablations 
+
+Figure 8 summarises the four scalar ablations on the heterophilic Roman-Empire benchmark, the dataset where q moves meaningfully off the Shannon baseline within our fast budget (Section L.2). Our earlier justification for sweeping only there — that Cora pulls q to 1 regardless of the hyperpa-rameters — was circular, since those hyperparameters are exactly what governs whether q moves. Table 13 therefore repeats the λattn ×Tw ×κ grid on Cora, Amazon-Ratings and Wisconsin. The outcome supports the original choice, for a reason we had not demonstrated: on Cora the converged 
+
+¯q is 1.000 in every one of the thirteen configurations except Tw = 0 (1.014 ), and accuracy is flat at 
+
+81 .1% throughout; Wisconsin is likewise flat at 47 .1% with ¯q = 1 .000 . On the two heterophilic graphs the same knobs move q substantially — Amazon-Ratings from 1.005 to 1.461 and Roman-Empire from 1.041 to 1.828 as λattn , Tw and κ are relaxed — so the grid is informative exactly where q is free to move. These sweeps use five seeds rather than ten. The four-panel plot shows accuracy (left axis) and learned q (right axis) as λattn , Tw, κ, and δ are swept; the scalar sweeps use LTGA-Head as the reference granularity. Full numerical breakdowns including final mean q and ECE, plus the four-way granularity contrast (Global / Layer / Head / Edge), are tabulated in Appendix M (Tables 14–18). 
+
+What the sweeps show. On Roman-Empire all four sweeps tell one story: any hyperparameter that lets q travel further from 1 improves accuracy, up to a plateau near q ≈ 1.8 — the Shannon prior λattn ,the learning-rate ratio κ and the warm-up Tw are the three knobs gating that movement, and loosening all three takes q past the sparsemax onset ( 73 .6% at Tw = 0 , against 71 .5% at Tw = 200 where q
+
+stays pinned at 1.000 ). The four granularities lie within 0.4 pts of one another with overlapping seed variance, so that choice is statistically moot here; we adopt LTGA-Edge as the default on its average rank. Appendix K gives the full walk-through. 
+
+6 Discussion and Limitations 
+
+Where the gains come from. LTGA wins on the two large heterophilic benchmarks where q leaves the Shannon baseline (Roman-Empire +16 .4 pts over GAT, Amazon-Ratings +0 .8 pts), and edges out GAT by a fraction of a point on Cora through the per-edge gating mechanism alone (the scalar 
+
+q stays at 1); on CiteSeer GAT is marginally ahead. On the small webKB graphs (Cornell, Texas, Wisconsin) the seed-to-seed variance still dominates the between-method differences at n = 10 over the canonical splits (standard deviations of 4.6–15 .0 points), so no advantage there is separable from noise, and a larger seed count is no longer the fix — these graphs are simply too small to carry a comparison. 
+
+On the q < 1 regime. The family is two-sided, but we have no evidence that the heavy-tailed side helps on these benchmarks. Three probes agree: no dataset prefers a frozen q < 1 on validation accuracy, and frozen q = 0 .5 is the worst point of the entire grid at 59 .7% average (Table 9); clamping qij ≥ 1 at inference leaves Roman-Empire accuracy unchanged at 72 .4% ; and on a synthetic contextual-SBM sweep built to favour pooling over pruning (degree ∈ { 5, 20 }, feature SNR ∈ [0 .1, 2] 
+
+at h = 0 .5, five seeds), the largest advantage any q < 1 setting holds over q = 1 is +1 .7 points against across-seed standard deviations of 1.2–5.9, i.e. indistinguishable from noise. We therefore present 
+
+q < 1 as a property of the family that makes the parameterisation symmetric and the Shannon limit interior — not as a source of the reported gains. Claiming otherwise would over-read our results. 
+
+Position relative to heterophily-specific models. An earlier version called LTGA “complementary” to architectures designed for heterophily. That was an assertion, not a result, and we withdraw it: 
+
+> 8Learning a Per-Edge Tsallis Index
+
+none of them normalises attention at all (degree-normalised means in H 2GCN, fixed propagation in GPR-GNN, MLPs on the adjacency in LINKX, signed unnormalised coefficients in FAGCN), so there is no normalisation step for q-softmax to replace. What can be tested is composition with a different attention scoring function (Section L.1). Nor is LTGA competitive with these models on their own ground: H 2GCN averages 70 .4% against 61 .7% for LTGA-Edge and wins four of eight datasets including both Platonov graphs (Table 12), and published Polynormer [Deng et al., 2024] and GloGNN [Li et al., 2022] numbers on Roman-Empire are far above any 2-layer attention model here. Whether learnable q-normalisation transfers into such architectures is open. 
+
+Cost and limitations. Each LTGA layer adds at most M scalars (or a ∼ 10 2-parameter MLP for LTGA-Edge) and a constant per-edge cost; wall-clock overhead over GAT stays below 15% on our largest benchmark. The α-entmax baselines are slower, needing a bisection per neighbourhood. We study transductive node classification only; Appendix N extends to L ∈ { 2, 4, 8} with over-smoothing diagnostics and finds no benefit, and inductive, link-prediction and graph-classification settings are untested. Two limits in the evidence itself: the hyperparameter ablations cover four datasets at five seeds rather than all eight at ten, and the per-edge gate is only partly interpretable — a linear probe explains R2 = 0 .41 of qij on Amazon-Ratings but 0.06 on Roman-Empire. 
+
+7 Conclusion 
+
+We introduced LTGA, a graph attention layer whose entropic index is learned end to end, placing softmax and the functional form of sparsemax and α-entmax inside one Tsallis family. LTGA-Edge takes the best average Friedman rank (2.75 vs GAT 3.19 , GATv2 4.06 ), though the omnibus test does not reject ( p = 0 .199 ) and per-dataset paired tests are the primary evidence. Against a tuned frozen-q grid ( 61 .4% ), tuned α-entmax ( 62 .2% ) and a capacity-matched control ( 62 .0% ), learning q
+
+does not buy accuracy over 61 .7% : what it buys is one run instead of a grid, and a mechanism the frozen alternatives share but cannot adapt. Where q leaves the Shannon baseline it prunes selectively rather than merely sparsely, as Proposition 1 predicts. 
+
+Future work. Inductive, link-prediction and graph-classification settings; a per-layer schedule at 
+
+L > 2; and a bounded reparameterisation to prevent the upper-bound saturation seen on Roman-Empire. 
+
+References 
+
+Jacob Abernethy, Chansoo Lee, and Ambuj Tewari. Online learning via the Tsallis-INF algorithm. In 
+
+Conference on Learning Theory (COLT) , 2014. 2, 15 Ehsan Amid, Manfred K. Warmuth, Rohan Anil, and Tomer Koren. Robust bi-tempered logistic loss based on Bregman divergences. In Advances in Neural Information Processing Systems (NeurIPS) ,volume 32, 2019. 2, 15 Jonathan T. Barron. A general and adaptive robust loss function. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 4331–4339, 2019. 2, 15 Mathieu Blondel, André F. T. Martins, and Vlad Niculae. Learning with Fenchel–Young losses. 
+
+Journal of Machine Learning Research , 21(35):1–69, 2020. 2, 15 Deyu Bo, Xiao Wang, Chuan Shi, and Huawei Shen. Beyond low-frequency information in graph convolutional networks. In Proceedings of the AAAI Conference on Artificial Intelligence , 2021. 3, 5, 14 Shaked Brody, Uri Alon, and Eran Yahav. How attentive are Graph Attention Networks? In 
+
+International Conference on Learning Representations (ICLR) , 2022. 2, 3, 5 Eli Chien, Jianhao Peng, Pan Li, and Olgica Milenkovic. Adaptive universal generalized PageRank graph neural network. In International Conference on Learning Representations (ICLR) , 2021. 3, 5, 14 Jacob Cohen. Statistical Power Analysis for the Behavioral Sciences . Lawrence Erlbaum Associates, 2nd edition, 1988. 16 
+
+> 9Learning a Per-Edge Tsallis Index
+
+Gonçalo M. Correia, Vlad Niculae, and André F. T. Martins. Adaptively sparse transformers. In 
+
+Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing (EMNLP) , pages 2174–2184, 2019. 1, 2, 5, 13 Geovani Nunes de Lima, Robson de Albuquerque, Adriano de Moura, and Rogério Oliveira. Extensive study of Tsallis statistics in classification tasks. Entropy , 21(4):374, 2019. doi: 10.3390/e21040374. 2, 4, 15 Janez Demšar. Statistical comparisons of classifiers over multiple data sets. Journal of Machine Learning Research , 7:1–30, 2006. 16 Chenhui Deng, Zichao Yue, and Zhiru Zhang. Polynormer: Polynomial-expressive graph transformer in linear time. In International Conference on Learning Representations (ICLR) , 2024. 3, 9 Milton Friedman. The use of ranks to avoid the assumption of normality implicit in the analysis of variance. Journal of the American Statistical Association , 32(200):675–701, 1937. doi: 10.1080/01621459.1937.10503522. 16 Shigeru Furuichi. Fundamental properties of Tsallis relative entropy. Journal of Mathematical Physics , 45(12):4868–4877, 2004. doi: 10.1063/1.1805729. 2, 13 Aritra Ghosh, Himanshu Kumar, and P. S. Sastry. Robust loss functions under label noise for deep neural networks. In Proceedings of the AAAI Conference on Artificial Intelligence , pages 1919–1925, 2017. 15 Justin Gilmer, Samuel S. Schoenholz, Patrick F. Riley, Oriol Vinyals, and George E. Dahl. Neural message passing for quantum chemistry. In Proceedings of the 34th International Conference on Machine Learning (ICML) , pages 1263–1272, 2017. 14 Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Weinberger. On calibration of modern neural networks. In Proceedings of the 34th International Conference on Machine Learning (ICML) ,pages 1321–1330, 2017. 3, 15, 16 Will Hamilton, Zhitao Ying, and Jure Leskovec. Inductive representation learning on large graphs. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , volume 30, 2017. 15 Sture Holm. A simple sequentially rejective multiple test procedure. Scandinavian Journal of Statistics , 6(2):65–70, 1979. 16 Masha Itkina, Ransalu Senanayake, and Mykel J. Kochenderfer. Evidential sparsification of multi-modal latent spaces in conditional variational autoencoders. In Advances in Neural Information Processing Systems (NeurIPS) , 2020. 15 Edwin T. Jaynes. Information theory and statistical mechanics. Physical Review , 106(4):620–630, 1957. doi: 10.1103/PhysRev.106.620. 1, 13 Diederik P. Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In International Conference on Learning Representations (ICLR) , 2015. 6, 16 Thomas N. Kipf and Max Welling. Semi-supervised classification with graph convolutional networks. In International Conference on Learning Representations (ICLR) , 2017. 5, 14 Anirban Laha, Saneem A. Chemmengath, Priyanka Agrawal, Mitesh M. Khapra, Karthik Sankara-narayanan, and Harish G. Ramaswamy. On controllable sparse alternatives to softmax. In Advances in Neural Information Processing Systems (NeurIPS) , volume 31, 2018. 15 Xiang Li, Renyu Zhu, Yao Cheng, Caihua Shan, Siqiang Luo, Dongsheng Li, and Weining Qian. Finding global homophily in graph neural networks when meeting heterophily. In Proceedings of the 39th International Conference on Machine Learning (ICML) , 2022. 3, 9 Derek Lim, Felix Hohne, Xiuyu Li, Sijia Linda Huang, Vaishnavi Gupta, Omkar Bhalerao, and Ser Nam Lim. Large scale learning on non-homophilous graphs: New benchmarks and strong simple methods. In Advances in Neural Information Processing Systems (NeurIPS) , volume 34, 2021. 3, 5 Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He, and Piotr Dollár. Focal loss for dense object detection. In Proceedings of the IEEE International Conference on Computer Vision (ICCV) , pages 2980–2988, 2017. 15 André F. T. Martins and Ramón F. Astudillo. From softmax to sparsemax: A sparse model of attention and multi-label classification. In Proceedings of the 33rd International Conference on Machine Learning (ICML) , pages 1614–1623, 2016. 1, 2, 3, 13 
+
+> 10 Learning a Per-Edge Tsallis Index
+
+Christopher Morris, Martin Ritzert, Matthias Fey, William L. Hamilton, Jan Eric Lenssen, Gaurav Rattan, and Martin Grohe. Weisfeiler and Leman go neural: Higher-order graph neural networks. In Proceedings of the AAAI Conference on Artificial Intelligence , pages 4602–4609, 2019. 15 Jishnu Mukhoti, Viveka Kulharia, Amartya Sanyal, Stuart Golodetz, Philip H. S. Torr, and Puneet K. Dokania. Calibrating deep neural networks using focal loss. In Advances in Neural Information Processing Systems (NeurIPS) , volume 33, 2020. 3, 15 Rafael Müller, Simon Kornblith, and Geoffrey Hinton. When does label smoothing help? In Advances in Neural Information Processing Systems (NeurIPS) , volume 32, 2019. 15 Boris Muzellec, Richard Nock, Giorgio Patrini, and Frank Nielsen. Tsallis regularized optimal transport and ecological inference. In Proceedings of the AAAI Conference on Artificial Intelligence ,2017. 2, 15 Jan Naudts. Deformed exponentials and logarithms in generalized thermostatistics. Physica A: Statistical Mechanics and its Applications , 316(1–4):323–334, 2002. doi: 10.1016/S0378-4371(02) 01018-X. 2, 12 Vlad Niculae, André F. T. Martins, Mathieu Blondel, and Claire Cardie. SparseMAP: Differentiable sparse structured inference. Proceedings of the 35th International Conference on Machine Learning (ICML) , 2018. 15 Hongbin Pei, Bingzhe Wei, Baoyuan Chang, Yu Lei, and Bo Yang. Geom-GCN: Geometric graph convolutional networks. In International Conference on Learning Representations (ICLR) , 2020. 1, 3, 5, 14 Ben Peters, Vlad Niculae, and André F. T. Martins. Sparse sequence-to-sequence models. In 
+
+Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics (ACL) ,pages 1504–1519, 2019. 1, 2, 3, 13 Oleg Platonov, Denis Kuznedelev, Michael Diskin, Artem Babenko, and Liudmila Prokhorenkova. A critical look at the evaluation of GNNs under heterophily: Are we really making progress? In 
+
+International Conference on Learning Representations (ICLR) , 2023. 1, 3, 5, 14 Ladislav Rampášek, Mikhail Galkin, Vijay Prakash Dwivedi, Anh Tuan Luu, Guy Wolf, and Do-minique Beaini. Recipe for a general, powerful, scalable graph transformer. In Advances in Neural Information Processing Systems (NeurIPS) , volume 35, 2022. 2 Alfréd Rényi. On measures of entropy and information. Proceedings of the Fourth Berkeley Symposium on Mathematical Statistics and Probability , 1:547–561, 1961. 12 Prithviraj Sen, Galileo Namata, Mustafa Bilgic, Lise Getoor, Brian Galligher, and Tina Eliassi-Rad. Collective classification in network data. AI Magazine , 29(3):93–106, 2008. doi: 10.1609/aimag. v29i3.2157. 5 Hiroki Suyari. Generalization of Shannon–Khinchin axioms to nonextensive systems and the uniqueness theorem for the nonextensive entropy. IEEE Transactions on Information Theory , 50 (8):1783–1787, 2004. doi: 10.1109/TIT.2004.831749. 12 Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jon Shlens, and Zbigniew Wojna. Rethinking the Inception architecture for computer vision. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , pages 2818–2826, 2016. 15 Sunil Thulasidasan, Gopinath Chennupati, Jeff Bilmes, Tanmoy Bhattacharya, and Sarah Michalak. On mixup training: Improved calibration and predictive uncertainty for deep neural networks. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , volume 32, 2019. 15 Constantino Tsallis. Possible generalization of Boltzmann–Gibbs statistics. Journal of Statistical Physics , 52(1–2):479–487, 1988. doi: 10.1007/BF01016429. 1, 2, 3 Constantino Tsallis. Introduction to Nonextensive Statistical Mechanics: Approaching a Complex World . Springer, 2009. doi: 10.1007/978-0-387-85359-8. 1, 3, 12 Petar Veliˇ ckovi´ c, Guillem Cucurull, Arantxa Casanova, Adriana Romero, Pietro Liò, and Yoshua Bengio. Graph attention networks. In International Conference on Learning Representations (ICLR) , 2018. 1, 2, 3, 5, 13 Zonghan Wu, Shirui Pan, Fengwen Chen, Guodong Long, Chengqi Zhang, and Philip S. Yu. A comprehensive survey on graph neural networks. IEEE Transactions on Neural Networks and Learning Systems , 32(1):4–24, 2021. doi: 10.1109/TNNLS.2020.2978386. 14 
+
+> 11 Learning a Per-Edge Tsallis Index
+
+Keyulu Xu, Weihua Hu, Jure Leskovec, and Stefanie Jegelka. How powerful are graph neural networks? In International Conference on Learning Representations (ICLR) , 2019. 15 Zhilin Yang, William W. Cohen, and Ruslan Salakhutdinov. Revisiting semi-supervised learning with graph embeddings. In Proceedings of the 33rd International Conference on Machine Learning (ICML) , pages 40–48, 2016. 5 Chengxuan Ying, Tianle Cai, Shengjie Luo, Shuxin Zheng, Guolin Ke, Di He, Yanming Shen, and Tie-Yan Liu. Do transformers really perform bad for graph representation? In Advances in Neural Information Processing Systems (NeurIPS) , volume 34, 2021. 2 Zhilu Zhang and Mert R. Sabuncu. Generalized cross entropy loss for training deep neural networks with noisy labels. In Advances in Neural Information Processing Systems (NeurIPS) , volume 31, 2018. 2, 15 Jiong Zhu, Yujun Yan, Lingxiao Zhao, Mark Heimann, Leman Akoglu, and Danai Koutra. Beyond homophily in graph neural networks: Current limitations and effective designs. In Advances in Neural Information Processing Systems (NeurIPS) , volume 33, 2020. 1, 3, 5, 14 
+
+A Tsallis algebra and proofs of Proposition 1 
+
+Tsallis entropy. For p ∈ ∆C−1,
+
+Sq (p) = 1
+
+q − 1
+
+
+
+1 −
+
+> C
+
+X
+
+> i=1
+
+p qi
+
+
+
+, q ∈ R, q ̸ = 1 , (8) recovers the Shannon entropy H(p) = − P 
+
+> i
+
+pi ln pi as q → 1 via L’Hôpital’s rule [Tsallis, 2009]. Suyari [2004] characterises Tsallis as the unique non-extensive entropy satisfying a generalised Shannon–Khinchin axiom system, and Naudts [2002] develops the algebra of q-deformed exponentials and logarithms used throughout the main text. Companion to the q-exponential of Eq. (1) is the 
+
+q-logarithm 
+
+ln q (x) = xq−1 − 1
+
+q − 1 , x > 0, q ̸ = 1 , (9) which reduces to ln at q = 1 . Rényi entropy [Rényi, 1961] offers an alternative one-parameter generalisation but lacks the algebraic q-exponential structure that yields the closed-form q-softmax. 
+
+Proof of Proposition 1, part (i) (recovery of softmax). lim q→1 exp q (x) = exp( x) by L’Hôpital’s rule, applied to the exponent ln(1 + ( q − 1) x)/(q − 1) . Substituting into Eq. (2) , the per-node max-shift c is shift-invariant in this limit, so softmax q → softmax pointwise. 
+
+Proof of Proposition 1, part (ii) (compact support). [1+( q−1)( zi −c)] + = 0 iff (q−1)( zi −c) ≤−1, i.e. zi − c ≤ − 1/(q − 1) since q − 1 > 0 for q > 1. Whenever this holds, exp q (zi − c) = 0 ,hence softmax q (z)i = 0 .
+
+Numerical handling near q = 1 . The standard branch contains base 1/(q−1) , which overflows in single precision for |q − 1| ≲ 10 −5 when logits exceed |x| ∼ 10 . We swap to a first-order Taylor branch when |q − 1| < ϵ (we use ϵ = 10 −4): 
+
+exp q (x) ≈ exp( x)
+
+
+
+1 + 12 (1 − q) x2
+
++ O (q − 1) 2. (10) The first-order coefficient + 12 (1 − q)x2 is the unique choice consistent with ∂ exp q /∂q at q =1 [Naudts, 2002]; an obvious sign flip is silent in value but reverses the gradient w.r.t. q at q = 1 and pins the network to softmax regardless of training data. Our open-source implementation includes regression tests that fail if the value or gradient disagree across the boundary. 
+
+B Maximum-entropy interpretation 
+
+The q-softmax of Eq. (4) is not an ad-hoc construction. It is the unique solution of a constrained maximum-entropy programme under Tsallis statistics, exactly as the standard softmax of GAT is the unique solution under Shannon statistics. 
+
+> 12 Learning a Per-Edge Tsallis Index
+
+Remark 1 (MaxEnt origin of softmax) . Standard softmax attention solves max H(αi) subject to P 
+
+> j
+
+αij eij = Ui and P 
+
+> j
+
+αij = 1 , where H is the Shannon entropy [Jaynes, 1957]. This is the canonical Boltzmann–Gibbs derivation. 
+
+Proposition 2 (Tsallis MaxEnt attention) . For each node i, the constrained programme 
+
+max  
+
+> αi∈∆|N (i)|
+
+Sq (αi) subject to X 
+
+> j∈N (i)
+
+αij eij = Ui (11) 
+
+admits a unique solution of the q-exponential family 
+
+α∗ 
+
+> ij
+
+∝ exp q
+
+ β e ij 
+
+, (12) 
+
+where β > 0 is the Lagrange multiplier dual to the energy constraint. Sketch. The Lagrangian is L = Sq (αi) − β(P 
+
+> j
+
+αij eij − Ui) − μ(P 
+
+> j
+
+αij − 1) . Stationarity in αij 
+
+gives ∂S q /∂α ij = βe ij +μ; using ∂S q /∂p = −q p q−1/(q−1) and inverting yields αij ∝ exp q (βe ij )
+
+as claimed. Strict concavity of Sq on the simplex (for q > 0) gives uniqueness; see Furuichi [2004] for the full algebra. This is exactly Eq. (4) up to the treatment of the per-node shift, which is where the family’s members differ: • q = 1 : Boltzmann–Gibbs / softmax attention [Veliˇ ckovi´ c et al., 2018], recovered exactly 
+
+(Proposition 1(i)); • q > 1: the same functional form as α-entmax [Peters et al., 2019, Correia et al., 2019] and sparsemax [Martins and Astudillo, 2016] at α = q, but with the threshold set by the neighbourhood maximum rather than by the simplex constraint. The two maps agree up to a per-neighbourhood rescaling of the logits, and are not pointwise equal; Appendix C gives the counterexample and the exact relationship. • q < 1: heavy-tailed attention, which has no α-entmax counterpart, since that family requires 
+
+α ≥ 1.An earlier version of this paper claimed that q = 2 recovers sparsemax. That is false as stated, and we thank the reviewers for pressing on it; the corrected statement above is what our experiments test. 
+
+C Relation to α-entmax 
+
+This appendix states precisely how the q-softmax relates to α-entmax [Peters et al., 2019, Correia et al., 2019], replacing the claim in an earlier version of this paper that q = 2 “recovers” sparsemax. The two maps share the exp q functional form but differ in how the threshold is chosen, and they are not pointwise equal. 
+
+The two maps. α-entmax solves a Euclidean-type projection whose solution is 
+
+pent  
+
+> i
+
+= (α − 1) zi − τ 1/(α−1) + , τ chosen so that P 
+
+> i
+
+pent  
+
+> i
+
+= 1 , (13) whereas Eq. (2) shifts by the neighbourhood maximum and normalises afterwards: 
+
+p(q) 
+
+> i
+
+= [1 + ( q − 1)( zi − c)] 1/(q−1) +
+
+S , c = max  
+
+> j
+
+zj , S = X
+
+> j
+
+[1+( q−1)( zj −c)] 1/(q−1) + . (14) 
+
+Proposition 3 (Not pointwise equal) . There exist logits on which softmax q and α-entmax differ at 
+
+q = α. For z = (1 , 0.5) and q = α = 2 , softmax 2(z) = ( 23 , 13 ) while sparsemax( z) = (0 .75 , 0.25) .Proof. At q = 2 the numerators of Eq. (14) are [1 + zi − c]+ = (1 , 0.5) with S = 1 .5, giving 
+
+(2 /3, 1/3) . Sparsemax solves [zi − τ ]+ with P 
+
+> i
+
+pi = 1 ; both coordinates are in the support, so 
+
+τ = ( P 
+
+> i
+
+zi − 1) /2 = 0 .25 and p = (0 .75 , 0.25) .
+
+Proposition 4 (Equal up to a per-neighbourhood rescaling) . Fix a support set S. On S, both maps are affine in z with slopes 1/S and 1 respectively, so for each individual neighbourhood there exists 
+
+β > 0 with softmax q (βz) = α-entmax (z) at q = α. In the counterexample above, β = 4 /3.
+
+> 13 Learning a Per-Edge Tsallis Index
+
+Because the scoring vector a in Eq. (3) carries a learnable scale, the two families have the same reach 
+
+at the level of the model : any entmax attention pattern is realisable by a q-softmax layer whose logits are scaled appropriately. They are not interchangeable per neighbourhood , however, since a single global scale cannot satisfy every row’s requirement simultaneously. Two consequences matter for the experiments. (i) Applied to fixed logits the induced supports differ, since the thresholds are set by different rules — but that difference does not survive training. Trained end to end on Roman-Empire over ten seeds, entmax at α = 2 zeroes 42 .7% ±0.9 of coefficients against 43 .1% ±0.9 for q-softmax at q = 2 , and the pairs stay within a point of one another at α = 1 .2 (12 .0 vs 13 .1) and α = 1 .5 (32 .8
+
+vs 33 .6). Each model absorbs the per-neighbourhood rescaling of Proposition 4 into its learnable logit scale, which is precisely what that proposition says it can do. We record this as a negative result for any claim that the two families induce materially different sparsity in practice. (ii) The gradients differ — entmax’s Jacobian is diag( s) − ss ⊤/P 
+
+> i
+
+si with si = p2−αi , whereas the q-softmax differentiates through its post-hoc normaliser. This is why Section L.1 runs α-entmax as a separate baseline instead of reading it off our own frozen-q grid. Our implementation uses segment-wise bisection with that exact Jacobian and is checked against the reference entmax package to 10 −6.Finally, the families differ in domain: α-entmax requires α ≥ 1, so it has no counterpart to the heavy-tailed q < 1 regime. That asymmetry is genuine, but on our benchmarks it is also unexercised (Section 6). 
+
+D Graph-specific considerations and homophily prediction 
+
+Data-dependent neighbourhood pruning. For q > 1, Proposition 1 associates with each node i an effective neighbourhood 
+
+Nq (i) = j ∈ N (i) : 1 + ( q − 1)( eij − ci) > 0 ⊆ N (i). (15) The size of Nq (i) depends on both the score-gap distribution at node i and the global q, so LTGA performs data-dependent edge pruning without a fixed top-k threshold. High-degree nodes with many weakly-relevant neighbours are pruned more aggressively. 
+
+Two competing hypotheses for the optimal q. Let h(G) be the edge homophily ratio of Pei et al. [2020] — the fraction of edges connecting same-class nodes. Two informal arguments make opposite predictions about the relationship between h and the converged q.
+
+Diffuse-on-heterophilic (the heterophilic-GNN consensus, e.g. Zhu et al. 2020, Chien et al. 2021, Bo et al. 2021, Platonov et al. 2023): when most neighbours are different-class, the network should pool weak evidence from many of them, so heterophilic graphs should prefer 
+
+q ≤ 1 (heavy-tailed) and homophilic graphs q ≥ 1 (compact focus on the few same-class neighbours). 
+
+Prune-on-heterophilic : when most neighbours are noise, the network should drop them outright rather than pool them, so heterophilic graphs should prefer q ≥ 1 (compact support, hard pruning) while homophilic graphs are content with softmax. 
+
+Both readings are compatible with the regime dichotomy (Proposition 1) but make opposite empirical predictions. Section L.2 reports that, on the two benchmarks where the network actually moves q
+
+off the Shannon baseline, it converges to q > 1 (Roman-Empire q ≈ 1.82 , Amazon-Ratings q ≈ 1.38 )— the prune-on-heterophilic reading is the one borne out by data, with nearly half of all attention coefficients pruned to zero on Roman-Empire. 
+
+Continuous interpolation with GCN.. The Shannon limit of LTGA is GAT. In the opposite limit 
+
+q → −∞ , exp q approaches a constant on its support and the q-softmax approaches the uniform distribution over N (i), making LTGA structurally equivalent to a degree-normalised GCN [Kipf and Welling, 2017]. LTGA therefore sits on a continuous one-parameter path from GCN through GAT to sparsemax-GAT, traversed by the single learnable scalar q.
+
+E Extended related work 
+
+Message-passing GNNs. Modern GNNs follow the message-passing template [Gilmer et al., 2017, Wu et al., 2021]. Graph Convolutional Networks [Kipf and Welling, 2017] use a spectral-style 
+
+> 14 Learning a Per-Edge Tsallis Index
+
+symmetric degree-normalised aggregation; GraphSAGE [Hamilton et al., 2017] introduces inductive learning with sampled neighbours; the Graph Isomorphism Network [Xu et al., 2019, Morris et al., 2019] adopts sum aggregation matching the Weisfeiler–Leman ceiling. 
+
+The role of normalisation. The normalisation step — mapping raw attention logits to a probability distribution over neighbours — has received substantially less attention than the scoring step, even though it materially controls how information propagates. Softmax produces dense, strictly positive weights that decay polynomially with the score gap; this is appropriate when every neighbour carries some relevant signal but inappropriate when many neighbours are pure noise. LTGA focuses entirely on this step, leaving the scoring function unchanged. 
+
+Other softmax alternatives. Laha et al. [2018] survey differentiable sparsity-inducing transforms. Niculae et al. [2018] extend the idea to structured outputs via SparseMAP. Blondel et al. [2020] unify these and other regularised prediction methods through Fenchel–Young losses, providing a single duality framework for sparse attention. All these formulations expose a fixed regulariser parameter; LTGA is, to our knowledge, the first work to learn this parameter end-to-end inside a graph-attention layer with appropriate gradient handling near the Shannon limit. 
+
+Tsallis in classification losses. de Lima et al. [2019] conducted an empirical study of fixed-q Tsallis distributions in classification, showing that q̸ = 1 can improve performance. Zhang and Sabuncu [2018] proposed “generalised cross-entropy” as a truncated Tsallis cross-entropy with fixed q for noise-robust training. Amid et al. [2019] introduced the bi-tempered logistic loss, which uses two fixed Tsallis temperatures to achieve simultaneous robustness to label noise and outliers. Ghosh et al. [2017] characterised the noise-robustness conditions a loss must satisfy, and the Tsallis family with 
+
+q > 1 satisfies them. Each of these works fixes the entropic index, requiring per-task grid search. 
+
+Tsallis beyond classification. Abernethy et al. [2014] introduce Tsallis-INF, a Tsallis-regularised exploration scheme for online learning. Muzellec et al. [2017] use Tsallis regularisation in optimal transport, and Itkina et al. [2020] use it for evidential sparsification of latent spaces. All share the hyperparameter-tuning burden that we resolve through end-to-end learning. 
+
+Calibration and label-smoothing connections. Guo et al. [2017] demonstrated that modern deep networks are systematically miscalibrated. Mukhoti et al. [2020] showed that focal loss [Lin et al., 2017] improves calibration through confidence-dependent weighting. Label smoothing [Szegedy et al., 2016, Müller et al., 2019] provides another implicit-entropy mechanism, and mixup [Thulasidasan et al., 2019] a third. By learning an entropic index that controls the geometry of the attention distribution, LTGA implicitly regularises confidence and improves test-time calibration without post-hoc temperature scaling. 
+
+Learnable hyperparameters. Barron [2019] introduced a general adaptive robust loss for regres-sion that learns a continuous shape parameter interpolating between L2, L1, and Cauchy losses. LTGA brings the same philosophy — shape parameter as learnable scalar — to the attention nor-malisation rather than the prediction loss. The key technical hurdle is that softmax-attention is the singularity around which the whole Tsallis q-softmax family is defined, addressed in Section 3.3. 
+
+F Full experimental protocol 
+
+This appendix expands Section 4 with the per-run hyperparameters, metrics, and statistical-testing details elided in the main paper for space. 
+
+Reference-implementation equivalence. Proposition 1(i) says LTGA at q = 1 is GATv2. We now check that numerically rather than only asserting it: with weights transferred across, our layer and PyG’s GATv2Conv agree to 10 −5 on random graphs, for both the concatenating and averaging configurations and through the frozen-q code path used by the q = 1 .0 control. The check initially 
+
+failed : PyG forwards its bias flag to the endpoint projections as well as the output, and our layer built them bias-free, so LTGA had strictly fewer parameters than the baseline it was compared against. The projections now carry biases, and parameter counts line up exactly ( 1,526 ,959 for GATv2 and frozen q = 1 on Cora). We also stopped allocating the GAT-v1 attention vector adst in GATv2 mode, 
+
+> 15
+
+Learning a Per-Edge Tsallis Index 
+
+where it received no gradient and inflated parameter counts by L×M ×Fh. Both fixes affect the headline numbers, which is why every table is regenerated rather than patched. 
+
+Architecture. All attention models use a 2-layer, 8-head, 64-hidden-per-head architecture (matching GAT) with ELU activations. The first layer concatenates heads (output dimension 8×64 = 512 ), the second averages them. Two separate weight matrices Wl, Wr are used for src/dest endpoints (PyG’s share_weights=False default); self-loops are added before message passing; the residual connection of Eq. (5) is disabled by default. Edge attributes, when present (Roman-Empire, Amazon-Ratings), are projected by a learned We and injected before the LeakyReLU in Eq. (3). 
+
+Optimisation (headline “fast” protocol). Network weights are optimised with Adam [Kingma and Ba, 2015] at ηθ = 10 −2 and weight decay 5×10 −4. The unconstrained entropic-index parameters (or, for LTGA-Edge, the parameters of the gate MLP gϕ) are optimised with a separate Adam instance at 
+
+ηα = 10 −2 (κ = ηθ /η α = 1 ) and no weight decay. Training runs for at most 200 epochs with early stopping on validation loss (patience 20 ) at fixed dropout 0.4. During the first Tw = 20 epochs the α
+
+parameters are frozen at 0, so the model trains as standard GAT before q starts to deviate. We use 
+
+λattn = 0 and δ = 1 .0 throughout (Section 3); the ablation in Section 5.4 on Roman-Empire confirms these choices. Reported numbers are mean ± s.d. over ten random seeds, with seed s paired to canonical split (s−1) mod 10 on the datasets that ship split collections; raw run records (one JSON per seed ×model ×dataset, with deterministic config hash and runtime environment) are released to enable bit-stable reproduction. The submitted version used three seeds on split 0 under a compute constraint; we report the wider protocol here because the WebKB standard deviations at n = 3 were large enough ( ±18 points on Texas) to make rank orderings on those graphs unreliable. 
+
+Metrics. Each run records test-set accuracy, macro-F1, negative log-likelihood, multi-class Brier score, and 15-bin expected calibration error (ECE) [Guo et al., 2017], plus the predicted distribution on the test split (so calibration plots regenerate without retraining), the per-epoch q-trajectory, and four attention statistics (sparsity, mean Shannon entropy, mean top-1 weight, effective neighbourhood size 1/P 
+
+> j
+
+α2 
+
+> ij
+
+). 
+
+Statistical testing. Pairwise comparisons use the paired t-test if Shapiro–Wilk does not reject normality at α = 0 .05 , and the Wilcoxon signed-rank test otherwise. Multi-method comparison uses the Friedman test followed by the Nemenyi post-hoc and the resulting critical-difference (CD) diagram [Friedman, 1937, Demšar, 2006]. p-values are corrected with Holm–Bonferroni [Holm, 1979] at α = 0 .05 , and we report Cohen’s d [Cohen, 1988] for effect sizes. 
+
+G Critical-difference diagram 
+
+Table 1 and this diagram present the same ranking, so only the table appears in the main text. 1234567
+
+> CD = 3.19
+> LTGA-Edge (2.75)
+> GAT (3.19)
+> LTGA-Head (4.00)
+> LTGA-Layer (4.00)
+> GATv2 (4.06)
+> LTGA-Global (4.50)
+> GCN (5.50)
+
+Figure 2: Critical-difference diagram (Demšar 2006) summarising the main table. Methods connected by a horizontal bar are not statistically distinguishable at α = 0 .05 . With many methods the Nemenyi critical difference is wide; Table 3 is the more informative test. 
+
+H Calibration analysis 
+
+Figure 3 compares the reliability diagrams and the ECE / NLL / Brier scores of GAT and LTGA-Head averaged over seeds. LTGA improves expected calibration error and Brier score on the heterophilic 
+
+16 Learning a Per-Edge Tsallis Index 
+
+benchmarks where q moves: on Roman-Empire and Amazon-Ratings the network learns q > 1, and the resulting compact-support attention prunes uninformative neighbours rather than blending them in. This data-dependent pruning reduces over-confident predictions on noisy neighbourhoods — the same mechanism that drives the accuracy gap, viewed through the calibration lens. No post-hoc temperature scaling is applied; the calibration improvement comes entirely from the learned attention geometry. 0.0 0.2 0.4 0.6 0.8 1.0   
+
+> predicted confidence
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> empirical accuracy
+> a
+> GCN
+> GAT
+> GATv2
+> LTGA-Head
+> ECE NLL Brier
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> metric value (lower is better)
+> b
+> GCN
+> GAT
+> GATv2
+> LTGA-Head
+
+Figure 3: Calibration of GAT vs. LTGA-Head. (a) Reliability diagram on the test split (perfect calibration on the dashed diagonal). (b) Mean ECE / NLL / Brier across all datasets and seeds. 
+
+I Attention concentration analysis 
+
+To verify that the learned q reshapes the geometry of attention rather than merely its temperature, we capture the per-edge attention coefficients of GAT, GATv2 and all four LTGA granularities at convergence on three graphs spanning the homophily spectrum: Cora (h = 0 .81 ), Cornell (h = 0 .30 ), and Wisconsin (h = 0 .21 ). Figure 4 shows the Lorenz curves of the layer-1 attention weights, with the Gini coefficient G in each legend. Three patterns emerge. (i) On homophilic Cora , all six methods collapse to a tight band ( G ∈ [0 .34 , 0.40] ), confirming that softmax-like attention is already near-optimal — LTGA does not gain from departing from q = 1 . (ii) On intermediate Cornell the methods separate clearly: GATv2 is the most concentrated ( G = 0 .50 ), GAT next ( G = 0 .44 ), the scalar LTGA variants are flatter ( G ≈ 0.40 ), and LTGA-Edge is the flattest (G = 0 .34 ) — the per-edge gate spreads more mass to non-trivial neighbours, exactly the regime in which heterophilic information aggregation is supposed to help. (iii) On heterophilic Wisconsin , all four LTGA variants collapse to G = 0 .47 , slightly less concentrated than the GAT/GATv2 baselines ( G ≈ 0.52 –0.54 ), again consistent with the network choosing a more diffuse attention geometry on a graph with mixed-class neighbourhoods. 
+
+J Per-edge qij distribution under LTGA-Edge 
+
+Figure 5 shows the layer-2 distribution of the per-edge entropic indices qij produced by the LTGA-Edge gate gϕ at convergence on the two heterophilic benchmarks where the gate genuinely leaves the Shannon baseline. On Roman-Empire (h = 0 .05 ) the distribution is concentrated at the sparsemax limit q = 2 with a long lower tail down to q ≈ 0.5: most edges adopt compact-support attention (driving the 41 .5% exact-zero attention coefficients reported in Table 7), while a long tail of edges retains heavy-tailed pooling. On Amazon-Ratings (h = 0 .38 ) the distribution is bimodal — one mode near q ≈ 1.5 (compact but not sparsemax-like) and a second at q ≈ 2 — evidence that the gate is genuinely picking different regimes for different edges. Layer-1 means (dotted line) saturate near 
+
+q ≈ 2 on both benchmarks; the layer-2 distribution is the informative one. On the remaining six datasets every edge converges to qij = 1 .000 within 10 −3 at this budget, so the gate is pinned at the Shannon baseline; we omit those panels. 
+
+17 Learning a Per-Edge Tsallis Index 0.0 0.2 0.4 0.6 0.8 1.0                    
+
+> cumulative fraction of edges
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> cumulative fraction of attention mass
+> Cora (homophilic, =.)
+> GAT (G=0.40)
+> GATv2 (G=0.38)
+> LTGA-Global (G=0.34)
+> LTGA-Layer (G=0.34)
+> LTGA-Head (G=0.34)
+> LTGA-Edge (G=0.34)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> cumulative fraction of edges
+> Cornell (intermediate, =.)
+> GAT (G=0.48)
+> GATv2 (G=0.50)
+> LTGA-Global (G=0.35)
+> LTGA-Layer (G=0.35)
+> LTGA-Head (G=0.35)
+> LTGA-Edge (G=0.35)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> cumulative fraction of edges
+> Wisconsin (heterophilic, =.)
+> GAT (G=0.54)
+> GATv2 (G=0.56)
+> LTGA-Global (G=0.45)
+> LTGA-Layer (G=0.45)
+> LTGA-Head (G=0.45)
+> LTGA-Edge (G=0.44)
+
+Figure 4: Per-edge attention concentration, layer 1, all six methods. Lorenz curves over attention weights αij ; dashed diagonal is uniform attention ( G = 0 ); legend reports per-curve Gini G. GAT and GATv2 stay similarly bowed across graphs because their softmax normalisation is fixed; the four LTGA granularities (Global, Layer, Head, Edge, in increasing tonal depth and distinguished by marker) adapt to the graph, with LTGA-Edge the flattest on Cornell. 0.0 0.5 1.0 1.5 2.0 
+
+> 0
+> 100000
+> 200000
+> 300000
+> 400000
+> 500000
+> 600000
+> edges (count)
+
+Roman-Empire ( = . )          
+
+> layer 2 ( ̄=.)
+> layer 1 ( ̄=.)
+> 0.0 0.5 1.0 1.5 2.0
+> 0
+> 50000
+> 100000
+> 150000
+> 200000
+> 250000
+
+Amazon-Ratings ( = . )      
+
+> layer 2 ( ̄=.)
+> layer 1 ( ̄=.)
+
+Figure 5: Per-edge qij distribution from LTGA-Edge. Layer-2 histograms on the two heterophilic benchmarks where the gate leaves the Shannon baseline; dotted line marks layer-1 mean. Dashed line: Shannon baseline q = 1 . Shaded region: q ≥ 2 has hard zeros. Roman-Empire concentrates at 
+
+q ≈ 2 with a long lower tail; Amazon-Ratings is bimodal. 
+
+K Ablation sweeps in detail 
+
+What the sweeps show. On Roman-Empire all four scalar sweeps tell the same story: any hyperpa-rameter that lets q travel further from 1 improves accuracy, until a plateau near q ≈ 1.8. Decreasing the Shannon-prior strength λattn from 1.0 to 0.01 raises the converged q from 1.07 to 1.78 and lifts accuracy from 72 .1% to 73 .2% (the best λ). Eliminating the warm-up ( Tw = 0 ) gives q = 1 .84 and the single best cell in the table at 73 .6%, while Tw = 200 leaves q pinned at exactly 1.000 (no time to learn) and drops accuracy to 71 .5% . Reducing κ = ηθ /η α from 50 to 1 raises q from 1.04 to 1.82 
+
+and accuracy from 71 .6% to 73 .2% . Widening δ from 0.25 to 1.0–1.5 pushes q from 1.23 up to 
+
+1.82 –2.15 and accuracy from 72 .2% to 73 .3% (a non-monotone optimum: δ = 2 .0 overshoots and loses 0.8 pts). Together these say that the Shannon prior, the slow ηα, and the warm-up schedule 
+
+18 Learning a Per-Edge Tsallis Index 
+
+are the three knobs that gate q’s ability to move; when all three are loosened, q crosses well past the sparsemax-onset point and accuracy follows. 
+
+Granularity. On Roman-Empire the four granularities lie within 0.4 pts of one another (Global 72 .8,Edge 72 .8, Head 73 .1, Layer 73 .2 %) with overlapping seed variance, so the choice is statistically moot at this budget. We adopt LTGA-Edge as the headline default because it takes the lowest average rank in Table 1 despite the similar Roman-Empire score, and because its per-edge gate is the most expressive form (Section 3.3). Global-q is the parameter-free option and loses nothing measurable here. 
+
+L Tables and figures deferred from the main text 
+
+These are referenced from Sections 5 and 6; they are placed here only for space. 
+
+Table 2: Per-dataset paired tests over ten seeds , LTGA-Edge against the two attention baselines, Holm–Bonferroni corrected across every cell. The two heterophilic benchmarks are where the difference is real; the other six are indistinguishable. Dataset vs. GAT vs. GATv2 
+
+∆acc p ∆acc p
+
+Amz-Rat +0 .8 0.002 ∗∗ +1 .1 0.002 ∗∗ 
+
+CiteS. −0.1 0.748 −0.0 0.935 
+
+Cora +0 .8 0.146 +0 .5 0.124 
+
+Cornell −3.0 0.518 +2 .4 0.438 
+
+PubMed −0.2 0.367 −0.1 0.634 
+
+Rom-Emp +16 .3 0.000 ∗∗∗ +1 .4 0.006 
+
+Texas −0.5 0.780 −0.5 0.693 
+
+Wisc. +2 .2 0.432 +4 .7 0.122 
+
+L.1 Is it the family, the learning, or the capacity? Frozen versus learned q. Table 9 sweeps a frozen index across the family. The tuned row — best q
+
+per dataset on validation, i.e. what a grid search gives a practitioner — reaches 61 .4% , against 60 .4% 
+
+for a learned scalar q and 61 .7% for the per-edge gate. Learning q therefore trails tuning at scalar granularity and passes it only through LTGA-Edge, by 0.3 pts at p = 0 .124 , while costing one run instead of |Q|×| D|. We report this as a negative result for the central claim: here the case for learning 
+
+q is convenience, not accuracy. The test-selected oracle in that table is not a baseline; it only bounds what a perfect per-dataset choice could gain. 
+
+Why q stays at 1 on the homophilic graphs. Two different causes, which Figure 10 separates. On Cora, CiteSeer and PubMed accuracy decreases monotonically in q (81 .0 → 80 .2 on Cora) and validation agrees, so softmax is near-optimal and a learned q = 1 is correct. On Cornell and Wisconsin the frozen optimum is at q = 2 (39 .5 vs 35 .1; 51 .6 vs 47 .6) yet the learned index stays at 1.000 —here the schedule binds, not the objective. Figure 11 shows why: Roman-Empire trains the full 200 
+
+epochs, accumulating ∼ 180 post-warm-up steps on α, whereas early stopping ends the WebKB graphs after 23 –27 epochs, i.e. 3–7 steps past Tw = 20 . An index cannot move in that many steps, so this is an optimisation limitation of our schedule and we report it as one. 
+
+Against true α-entmax. Table 10 compares LTGA with segment-wise α-entmax, fixed and tuned. Two findings, neither in our favour. On accuracy, tuned α-entmax is the strongest model in the comparison at 62 .2% , ahead of LTGA-Edge ( 61 .7% ), with sparsemax at 61 .8% . On mechanism, although the maps are not pointwise equal (Appendix C), trained end to end they reach almost the same sparsity : on Roman-Empire over ten seeds α-entmax zeroes 42 .7% of coefficients against 
+
+43 .1% for q-softmax at q = 2 , and they track at α = 1 .2 (12 .0 vs 13 .1) and α = 1 .5 (32 .8 vs 33 .6). That is what Proposition 4 predicts — the learnable logit scale absorbs the per-neighbourhood rescaling separating the two maps — so the pointwise distinction is real but does not survive training as an empirical difference, and we no longer claim it as an advantage. 
+
+> 19
+
+Learning a Per-Edge Tsallis Index 
+
+Table 3: Per-dataset paired comparisons against LTGA-Edge over 10 seeds, Holm–Bonferroni corrected, with Cohen’s d. This is the test the paper’s claim rests on; the critical-difference diagram (Figure 2, Appendix) is the weaker omnibus summary. vs. LTGA-Edge ∆acc (pp) W/L/T test p (Holm) Cohen’s d
+
+LINKX +10 .5 5/3/0 paired t 0.255 0.44 
+
+GCN +6 .0 6/2/0 Wilcoxon 0.148 0.57 
+
+GAT +2 .0 4/4/0 Wilcoxon 0.547 0.34 
+
+LTGA-Global +1 .3 7/1/0 Wilcoxon 0.039 0.64 
+
+LTGA-Head +1 .3 6/2/0 Wilcoxon 0.055 0.62 
+
+LTGA-Layer +1 .3 6/2/0 Wilcoxon 0.055 0.61 
+
+GATv2 +1 .2 5/3/0 paired t 0.090 0.70 
+
+GATv2-Temp +1 .2 6/2/0 Wilcoxon 0.195 0.53 
+
+FAGCN +0 .5 4/4/0 paired t 0.694 0.14 
+
+GATv2-EdgeGate +0 .4 2/0/6 Wilcoxon 0.500 0.53 
+
+Fixed-q (tuned) +0 .3 6/2/0 paired t 0.124 0.62 
+
+GATv2-EdgeScale −0.3 0/2/6 Wilcoxon 0.500 −0.54 
+
+α-entmax (tuned) −0.5 5/3/0 paired t 0.621 −0.18 
+
+GPR-GNN −1.5 1/7/0 paired t 0.211 −0.49 
+
+H2GCN −8.7 3/5/0 paired t 0.082 −0.72 
+
+Table 4: Composition with a different scoring function. Rows within a scoring function differ only in the normalisation step, so the contrast isolates the entropic index from the scoring function it has so far been bundled with. Method Amz-Rat CiteS. Cora Cornell PubMed Rom-Emp Texas Wisc. Avg. Dot-product scoring + softmax 40 .8±0.3 68 .7±0.5 81 .4±0.6 42 .7±6.7 77 .7±0.6 62 .8±0.7 56 .8±5.4 51 .2±8.0 60 .3                                   
+
+> Dot-product scoring +learned q40 .8±0.468 .7±0.581 .4±0.642 .7±6.777 .7±0.665 .3±0.856 .8±5.451 .2±8.060 .6
+> GATv2 scoring +softmax 41 .7±0.769 .2±0.780 .7±0.736 .8±8.877 .6±0.771 .0±0.859 .2±5.548 .0±6.660 .5
+> GATv2 scoring +learned q42 .5±0.769 .0±0.681 .0±0.735 .1±12 .977 .7±0.672 .5±0.658 .1±5.947 .6±7.560 .4
+
+Does the index transfer to another scoring function? Every result so far pairs the index with GATv2 scoring, confounding the two. Table 4 separates them by moving the normalisation onto scaled dot-product attention, eij = ⟨WQzi, WK zj ⟩/√Fh, holding everything else fixed. (This is the only composition available here; the heterophily baselines have no normalisation step to replace, see Section 6.) The index transfers: six datasets are bit-identical because q stays at 1, and Roman-Empire improves 62 .8 → 65 .3 (+2 .5 pts), the same signature as under GATv2 scoring ( 71 .0 → 72 .5). Averaged over eight benchmarks the difference is +0 .3 pts ( p = 0 .50 , Wilcoxon), confined as always to the one benchmark where q moves. The mechanism therefore belongs to the normalisation rather than to GAT scoring — though dot-product scoring is the weaker backbone in absolute terms. 
+
+Capacity-matched controls. Table 11 spends LTGA-Edge’s per-edge MLP on the attention logit 
+
+instead of on q, at exactly matched parameter counts ( 1,528 ,255 for LTGA-Edge and all three edge controls; 1,526 ,975 for LTGA-Head and the temperature control). If an edge-gated GATv2 recovered LTGA-Edge’s accuracy, the per-edge result would be about capacity rather than entropic geometry, and we would say so. It does: a per-edge logit scale with q ≡ 1 reaches 62 .0% against 61 .7% , winning on both benchmarks where the gate is active (Amazon-Ratings 44 .0 vs 42 .8, Roman-Empire 73 .8
+
+vs 72 .4) and tying exactly on the six where it is not; a learned per-head temperature likewise edges out LTGA-Head ( 60 .6 vs 60 .4). We therefore withdraw the mechanistic reading of LTGA-Edge: its advantage over GATv2 is per-edge capacity, not entropic geometry. The temperature control is the sharpest of the three conceptually — it re-tempers softmax but cannot produce an exact zero, which is the one thing q > 1 adds. 
+
+20 Learning a Per-Edge Tsallis Index 0.2 0.4 0.6 0.8           
+
+> graph homophily
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> 1.8
+> learned mean
+> Roman-Empire
+> Texas
+> Wisconsin
+> Cornell
+> Amazon-Ratings
+> CiteSeer
+> PubMed
+> Cora
+> a
+> Roman-Empire
+> Amazon-Ratings
+> 0
+> 10
+> 20
+> 30
+> 40
+> exact-zero attention (%)
+> b6 further datasets at 0%
+> 0.00 0.25 0.50 0.75 1.00 1.25
+> distance travelled, |̄ −|
+> 70.5
+> 71.0
+> 71.5
+> 72.0
+> 72.5
+> accuracy (%)
+> c
+> 
+> 
+
+Figure 6: Learned entropic index, consolidated. (a) Mean learned q vs. graph homophily; dashed line is the Shannon baseline, and labels are stacked so the datasets pinned at q = 1 remain legible. (b) Exact-zero attention sparsity, restricted to the datasets where it is non-zero (the count of datasets at 0% is stated in the panel rather than drawn as empty bars). (c) All four hyperparameter sweeps collapsed onto one axis, in units of distance travelled from q = 1 .
+
+Table 5: Pruning validity on Roman-Empire (LTGA-Head). Label agreement uses training-split labels only. “Random” prunes the same fraction of each neighbourhood without regard to the scores. Dataset Model sparsity accuracy (%) label agreement learned all edges random pruned kept Amazon-Ratings LTGA-Edge 2.6% 42 .7±0.8 41 .7±0.6 42 .7±0.8 n/a 51 .0±0.3
+
+Amazon-Ratings LTGA-Head 1.0% 42 .5±0.6 41 .8±0.5 42 .5±0.6 n/a 51 .0±0.3
+
+Roman-Empire LTGA-Edge 41 .7% 72 .3±0.8 64 .4±0.5 59 .8±0.6 2.4±2.7 43 .7±0.2
+
+Roman-Empire LTGA-Head 42 .4% 72 .4±0.8 65 .4±0.7 59 .4±0.8 5.2±9.0 43 .6±0.1
+
+L.2 Learned q across the homophily spectrum 
+
+Figure 6(a) plots the mean learned q at convergence against the edge homophily h(G) for each dataset. (An earlier version reported this quantity by averaging all four granularities together, including LTGA-Edge, whose gate has no scalar q; that mixed a gate-weight magnitude into the mean and made this figure and Table 8 disagree with Table 7. Both now report a single granularity, and the aggregation is stated in each caption.) q leaves the Shannon baseline meaningfully on the two large heterophilic benchmarks: Roman-Empire (h = 0 .05 , q = 1 .804 ±0.009 , 42 .4% exactly-zero attention coefficients) and Amazon-Ratings (h = 0 .38 , q = 1 .436 ± 0.055 , 1.2% zero attention). On the remaining six datasets — including all three citation networks and all three webKB graphs — q stays within 10 −3
+
+of 1 at this budget, so the model is operating in its GAT-equivalent regime. We do not therefore claim a confirmed monotonic q–homophily relationship across all eight benchmarks; with longer post-warm-up training and per-dataset λattn tuning we expect q to be free to move on more datasets, and we leave that empirical question open. The companion attention-sparsity panel (Figure 6(b)) confirms that, where q moves, q > 1 co-occurs with a substantial fraction of exact-zero attention as predicted by Proposition 1 part (ii) — on Roman-Empire nearly half of all attention coefficients are pruned to zero, demonstrating that the network is genuinely exploiting the compact-support regime rather than merely re-tempering softmax. 
+
+M Per-dataset and ablation tables 
+
+This appendix reports the full per-dataset numerics summarised in Section 5. Tables 6–7 compare the four LTGA granularities head-to-head on every benchmark; Table 8 reports the full LTGA-Head trajectory; Tables 14–18 are the four ablation sweeps from Figure 8. Figure 9 shows the per-epoch 
+
+q-trajectories underlying the convergence values. 
+
+N Depth and over-smoothing 
+
+Sparse attention should, in principle, slow over-smoothing: pruned edges do not mix representations. Table 19 sweeps L ∈ { 2, 4, 8} for GCN, GAT, GATv2 and LTGA-Head on a homophilic (Cora) 
+
+21 Learning a Per-Edge Tsallis Index 4 6                                       
+
+> 1.675
+> 1.700
+> 1.725
+> 1.750
+> 1.775
+> 1.800
+> Roman-Empire
+> mean
+> = − .
+> ( )
+> 46
+> = − .
+> ( )
+> 01
+> = + .
+> (,)
+> −0.5 0.0
+> = − .
+> (,)
+> 0.000 0.025 0.050
+> ( )
+> (,)
+> (,)
+> ( )
+> probe =.
+> 20 40
+> ( )
+> 1.4
+> 1.5
+> 1.6
+> 1.7
+> Amazon-Ratings
+> mean
+> = − .
+> 20 40
+> ( )
+> = + .
+> 0.5 1.0
+> (,)
+> = − .
+> −0.5 0.0
+> (,)
+> = − .
+> 0.0 0.5
+> (permuted)
+> ( )
+> (,)
+> ( )
+> (,)
+> probe =.
+
+Figure 7: What the LTGA-Edge gate conditions on. One row per benchmark, sharing a y-axis; binned mean qij against endpoint degrees and raw-feature / embedding cosine similarity, with Spearman ρ inset. The right-hand column gives permutation importances from a linear probe on all four covariates, and the probe R2. The gate is informative on Amazon-Ratings ( R2 = 0 .41 , driven almost entirely by embedding similarity, ρ = −0.62 ) but close to unexplained on Roman-Empire (R2 = 0 .06 ), so we do not claim the per-edge index is generally interpretable. The remaining six benchmarks are omitted because every qij there equals 1.0.0 0.2 0.4 0.6 0.8 1.0                   
+
+> 
+> 71.0
+> 71.5
+> 72.0
+> 72.5
+> 73.0
+> accuracy (%)
+> a
+> 025 50 75 100 125 150 175 200
+> (warm-up epochs)
+> 70.5
+> 71.0
+> 71.5
+> 72.0
+> 72.5
+> 73.0
+> accuracy (%)
+> b
+> 10 010 1
+> =/
+> 71.0
+> 71.5
+> 72.0
+> 72.5
+> accuracy (%)
+> c
+> 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00
+> 
+> 71.5
+> 72.0
+> 72.5
+> 73.0
+> accuracy (%)
+> d
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> 1.8
+> learned
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> 1.8
+> learned
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> 1.8
+> learned
+> 1.0
+> 1.5
+> 2.0
+> learned
+
+Figure 8: Ablation sweeps on Roman-Empire (LTGA-Head, mean ± s.e.m. over seeds). Filled circles on a solid line (left axis): test accuracy; open squares on a dashed line (right axis): learned mean q. The horizontal dotted line marks q = 1 . Panels: (a) λattn , (b) Tw, (c) κ (log scale), (d) δ.and a heterophilic (Roman-Empire) graph, and reports two collapse diagnostics alongside accuracy: the graph Dirichlet energy of the last hidden layer (normalised so it tracks directional rather than magnitude collapse) and the mean average distance 1 − cos over node pairs. The claim worth testing is not that LTGA is more accurate when deep but that its representations collapse more slowly, which requires the diagnostics rather than accuracy alone. The outcome is negative: at L = 8 every model collapses, and the diagnostics fall with the accuracy rather than separating the methods — on Cora LTGA-Head reaches 22 .8% (Edir = 0 .007 , MAD 0.204 ) against 28 .5% for GAT ( 0.006 , 0.188 ), and on Roman-Empire all four models sit between 11% and 14% with Edir ≈ 0. Sparse attention does not mitigate over-smoothing here. LTGA-Head does retain a small advantage at L = 4 on Roman-Empire (68 .5±2.1 vs 67 .4±0.7 for GATv2), so the mechanism is not a two-layer artefact, but the intervals overlap and this sweep uses five seeds. 
+
+22 Learning a Per-Edge Tsallis Index 
+
+Table 6: Per-dataset accuracy (%) for the four LTGA granularities at n = 3 seeds. Bold marks the best LTGA variant per dataset. LTGA-Edge takes the most cells (5 of 8) and the highest average accuracy under the granularity sweep, but the four variants overlap within seed variance on six of the eight datasets. Variant Amz-Rat CiteS. Cora Cornell PubMed Rom-Emp Texas Wisc. Avg. acc LTGA-Global 42 .4±0.7 69 .0±0.6 81 .0±0.7 35 .1±12 .9 77 .7±0.6 72 .3±0.6 58 .1±5.9 47 .6±7.5 60 .4
+
+LTGA-Layer 42 .6±0.6 69 .0±0.6 81 .0±0.7 35 .1±12 .9 77 .7±0.6 72 .4±0.5 58 .1±5.9 47 .6±7.5 60 .4
+
+LTGA-Head 42 .5±0.7 69 .0±0.6 81 .0±0.7 35 .1±12 .9 77 .7±0.6 72 .5±0.6 58 .1±5.9 47 .6±7.5 60 .4
+
+LTGA-Edge 42 .8±0.8 69 .1±0.9 81 .2±1.0 39 .2±11 .1 77 .5±0.6 72 .4±0.9 58 .6±6.5 52 .7±6.5 61 .7
+
+Table 7: Per-dataset learned ¯q (mean across seeds) and exact-zero attention sparsity for each LTGA granularity. q leaves the Shannon baseline only on the two large heterophilic benchmarks (Amazon-Ratings, Roman-Empire); on Roman-Empire all four granularities converge to ¯q ≈ 1.85 
+
+with ∼ 44 –45% exactly-zero attention coefficients. “–” for LTGA-Edge: per-edge gates produce a distribution of qij rather than a single scalar, so we report sparsity only. Dataset LTGA-Global LTGA-Layer LTGA-Head LTGA-Edge 
+
+¯q spar. ¯q spar. ¯q spar. ¯q spar. Amz-Rat 1.78 1.4% 1.64 1.2% 1.44 1.2% – 2.7% CiteS. 1.00 0.0% 1.00 0.0% 1.00 0.0% – 0.0% Cora 1.00 0.0% 1.00 0.0% 1.00 0.0% – 0.0% Cornell 1.00 0.0% 1.00 0.0% 1.00 0.0% – 0.0% PubMed 1.00 0.0% 1.00 0.0% 1.00 0.0% – 0.0% Rom-Emp 1.88 43.6% 1.85 43.2% 1.80 42.4% – 41.5% Texas 1.00 0.0% 1.00 0.0% 1.00 0.0% – 0.0% Wisc. 1.00 0.0% 1.00 0.0% 1.00 0.0% – 0.0% 0 50 100 150 200                            
+
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> learned
+> aAmazon-Ratings
+> 010 20
+> bCiteSeer
+> 010 20
+> cCora
+> 010 20
+> dCornell
+> 010 20 30 40
+> epoch
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> learned
+> ePubMed
+> 050 100 150 200
+> epoch
+> fRoman-Empire
+> 010 20
+> epoch
+> gTexas
+> 010 20 30
+> epoch
+> hWisconsin
+
+Figure 9: Trajectory of the mean learned q over training epochs for each dataset. Light traces are individual seeds; bold traces are seed averages. The Shannon baseline ( q = 1 ) is shown as a dashed reference. 
+
+23 Learning a Per-Edge Tsallis Index 
+
+Table 8: Per-dataset learned q, attention sparsity, and effective neighbourhood size 1/P
+
+j α2
+
+ij for LTGA-Head. Dataset Homophily Mean q q std Sparsity Eff. nbrs. Amazon-Ratings 0.38 1.436 0.055 0.012 8.32 CiteSeer 0.74 1.000 0.000 0.000 3.69 Cora 0.81 1.000 0.000 0.000 4.72 Cornell 0.30 1.000 0.000 0.000 2.41 PubMed 0.80 1.000 0.000 0.000 5.43 Roman-Empire 0.05 1.804 0.009 0.424 1.89 Texas 0.11 1.000 0.000 0.000 2.57 Wisconsin 0.21 1.000 0.000 0.000 2.56 
+
+Table 9: Frozen versus learned entropic index. Accuracy (%) with q held fixed throughout training. 
+
+q = 1 .0 is a bit-exact GATv2 control; q = 2 .0 is the compact-support end-point. “Tuned” selects q per dataset on validation accuracy — the fair fixed-q baseline. The test-selected oracle is an upper bound only and is not a baseline any practitioner could use. Method Amz-Rat CiteS. Cora Cornell PubMed Rom-Emp Texas Wisc. Avg. 
+
+q = 0 .5 (frozen) 41 .1±0.3 69 .0±0.7 81 .0±0.6 34 .6±12 .2 77 .6±0.6 68 .0±0.5 58 .4±6.0 48 .0±7.0 59 .7
+
+q = 0 .8 (frozen) 41 .4±0.3 69 .0±0.7 81 .0±0.6 35 .9±13 .2 77 .7±0.6 69 .8±0.5 58 .1±5.9 47 .6±8.0 60 .1
+
+q = 1 .0 (frozen) 41 .9±0.6 69 .0±0.6 81 .0±0.7 35 .1±12 .9 77 .7±0.6 70 .7±0.6 58 .1±5.9 47 .6±7.5 60 .1
+
+q = 1 .2 (frozen) 42 .2±0.5 69 .0±0.7 80 .9±0.6 35 .7±12 .9 77 .6±0.7 71 .5±0.7 58 .1±5.9 47 .6±7.3 60 .3
+
+q = 1 .5 (frozen) 42 .5±0.5 68 .9±0.7 80 .7±0.7 36 .2±12 .5 77 .5±0.6 72 .0±0.5 57 .6±6.0 50 .0±10 .1 60 .7
+
+q = 2 .0 (frozen) 42 .8±0.7 68 .9±0.7 80 .2±0.7 39 .5±9.6 77 .4±0.6 71 .9±0.5 56 .2±8.8 51 .6±6.3 61 .0
+
+LTGA-Head (learned q) 42 .5±0.7 69 .0±0.6 81 .0±0.7 35 .1±12 .9 77 .7±0.6 72 .5±0.6 58 .1±5.9 47 .6±7.5 60 .4
+
+LTGA-Edge (learned qij ) 42 .8±0.8 69 .1±0.9 81 .2±1.0 39 .2±11 .1 77 .5±0.6 72 .4±0.9 58 .6±6.5 52 .7±6.5 61 .7
+
+Fixed-q (tuned on val.) 42 .8±0.7 69 .0±0.7 81 .0±0.6 39 .5±9.6 77 .7±0.6 72 .0±0.5 57 .6±6.0 51 .6±6.3 61 .4
+
+Fixed-q (test oracle; not a baseline) 42 .8±0.7 69 .0±0.7 81 .0±0.6 39 .5±9.6 77 .7±0.6 72 .0±0.5 58 .4±6.0 51 .6±6.3 61 .50.5 1.0 1.5 2.0 
+
+frozen 
+
+> 41.0
+> 41.5
+> 42.0
+> 42.5
+> 43.0
+> accuracy (%) ̄
+> =1.44
+
+Amazon-Ratings    
+
+> 0.5 1.0 1.5 2.0
+
+frozen 
+
+> 68.00
+> 68.25
+> 68.50
+> 68.75
+> 69.00
+> 69.25
+> accuracy (%) ̄
+> =1.00
+
+CiteSeer    
+
+> 0.5 1.0 1.5 2.0
+
+frozen 
+
+> 78
+> 79
+> 80
+> 81
+> accuracy (%) ̄
+> =1.00
+
+Cora    
+
+> 0.5 1.0 1.5 2.0
+
+frozen 
+
+> 32.5
+> 35.0
+> 37.5
+> 40.0
+> 42.5
+> accuracy (%) ̄
+> =1.00
+
+Cornell    
+
+> 0.5 1.0 1.5 2.0
+
+frozen 
+
+> 77.5
+> 78.0
+> 78.5
+> accuracy (%) ̄
+> =1.00
+
+PubMed    
+
+> 0.5 1.0 1.5 2.0
+
+frozen 
+
+> 68
+> 69
+> 70
+> 71
+> 72
+> accuracy (%) ̄
+> =1.80
+
+Roman-Empire    
+
+> 0.5 1.0 1.5 2.0
+
+frozen 
+
+> 54
+> 56
+> 58
+> 60
+> accuracy (%) ̄
+> =1.00
+
+Texas    
+
+> 0.5 1.0 1.5 2.0
+
+frozen 
+
+> 46
+> 48
+> 50
+> 52
+> accuracy (%) ̄
+> =1.00
+
+Wisconsin     
+
+> val. (frozen )LTGA-Head (learned) test (frozen )
+
+Figure 10: Accuracy against a frozen q, per dataset. Solid: test; dashed: validation; dotted horizontal line: learned-q LTGA-Head. A flat curve means softmax is genuinely near-optimal on that graph, so a learned q that stays at 1 is the right answer rather than an optimisation failure. 
+
+24 Learning a Per-Edge Tsallis Index 0 25 50 75 100 125 150 175 
+
+epochs after warm-up 
+
+10 −4 
+
+10 −3 
+
+10 −2 
+
+> ‖∂ /∂ ‖
+> Amazon-Ratings
+> CiteSeer
+> Cora
+> Cornell
+> PubMed
+> Roman-Empire
+> Texas
+> Wisconsin
+
+Figure 11: Gradient signal reaching the entropic index. Norm of ∂L/∂α per epoch after the warm-up, log scale. A vanishing norm on the homophilic graphs indicates there is nothing to gain from moving q; a large norm with q still pinned would instead indicate that the schedule is suppressing it. 
+
+Table 10: LTGA versus true α-entmax attention. Segment-wise α-entmax with the exact entmax Jacobian, at fixed and per-dataset-tuned α, against frozen and learned q-softmax. The q = α rows are the like-for-like comparison; they are close but not identical maps (Appendix C). Method Amz-Rat CiteS. Cora Cornell PubMed Rom-Emp Texas Wisc. Avg. 
+
+α-entmax, α = 1 .2 42 .7±0.6 68 .9±0.8 80 .8±0.7 35 .9±13 .4 77 .5±0.8 71 .4±0.8 58 .1±5.9 48 .6±6.2 60 .5
+
+α-entmax, α = 1 .5 43 .9±0.5 68 .6±0.9 80 .1±0.6 39 .5±11 .6 77 .3±0.7 72 .3±0.6 56 .2±9.3 48 .4±9.1 60 .8
+
+sparsemax ( α = 2 ) 44 .7±0.5 68 .2±0.9 78 .9±0.5 45 .4±5.9 77 .0±0.7 73 .1±0.5 57 .3±5.8 49 .6±7.7 61 .8
+
+q-softmax, q = 1 .5 (frozen) 42 .5±0.5 68 .9±0.7 80 .7±0.7 36 .2±12 .5 77 .5±0.6 72 .0±0.5 57 .6±6.0 50 .0±10 .1 60 .7
+
+q-softmax, q = 2 .0 (frozen) 42 .8±0.7 68 .9±0.7 80 .2±0.7 39 .5±9.6 77 .4±0.6 71 .9±0.5 56 .2±8.8 51 .6±6.3 61 .0
+
+LTGA-Head (learned q) 42 .5±0.7 69 .0±0.6 81 .0±0.7 35 .1±12 .9 77 .7±0.6 72 .5±0.6 58 .1±5.9 47 .6±7.5 60 .4
+
+LTGA-Edge (learned qij ) 42 .8±0.8 69 .1±0.9 81 .2±1.0 39 .2±11 .1 77 .5±0.6 72 .4±0.9 58 .6±6.5 52 .7±6.5 61 .7
+
+α-entmax (tuned on val.) 44 .7±0.5 68 .9±0.8 80 .8±0.7 45 .4±5.9 77 .0±0.7 73 .1±0.5 58 .1±5.9 49 .6±7.7 62 .2
+
+Table 11: Capacity-matched controls for LTGA-Edge. Each control reuses LTGA-Edge’s per-edge MLP but spends it on the attention logit (additive bias or multiplicative scale) or replaces it with a learned per-head temperature, keeping q ≡ 1. Trainable parameters match exactly: 1,528 ,255 
+
+for LTGA-Edge and both edge controls, 1,526 ,975 for LTGA-Head and the temperature control, 
+
+1,526 ,959 for GATv2 (Cora). Method Amz-Rat CiteS. Cora Cornell PubMed Rom-Emp Texas Wisc. Avg. + per-edge logit bias ( q = 1 ) 41 .6±0.7 69 .1±0.9 81 .2±1.0 39 .2±11 .1 77 .5±0.6 70 .8±0.8 58 .6±6.5 52 .7±6.5 61 .4
+
++ per-edge logit scale ( q = 1 ) 44 .0±0.6 69 .1±0.9 81 .2±1.0 39 .2±11 .1 77 .5±0.6 73 .8±0.8 58 .6±6.5 52 .7±6.5 62 .0
+
++ learned per-head temperature 42 .7±0.6 69 .0±0.6 81 .0±0.7 35 .1±12 .9 77 .7±0.6 73 .3±0.6 58 .1±5.9 47 .6±7.5 60 .6
+
+GATv2 (softmax) 41 .7±0.7 69 .2±0.7 80 .7±0.7 36 .8±8.8 77 .6±0.7 71 .0±0.8 59 .2±5.5 48 .0±6.6 60 .5
+
+LTGA-Head (learned q) 42 .5±0.7 69 .0±0.6 81 .0±0.7 35 .1±12 .9 77 .7±0.6 72 .5±0.6 58 .1±5.9 47 .6±7.5 60 .4
+
+LTGA-Edge (learned qij ) 42 .8±0.8 69 .1±0.9 81 .2±1.0 39 .2±11 .1 77 .5±0.6 72 .4±0.9 58 .6±6.5 52 .7±6.5 61 .7
+
+Table 12: Heterophily-specific architectures. These change propagation rather than normalisation and are reported as context; the gap to published graph-transformer results on Roman-Empire is discussed in Section 6 rather than elided. Method Amz-Rat CiteS. Cora Cornell PubMed Rom-Emp Texas Wisc. Avg. H2GCN 45 .3±0.7 66 .8±1.9 80 .4±0.9 65 .1±5.3 73 .8±1.0 78 .3±0.7 77 .0±7.5 76 .5±6.5 70 .4
+
+GPR-GNN 44 .0±0.7 70 .1±0.4 81 .8±0.7 42 .7±4.4 77 .9±0.8 72 .6±0.5 55 .9±6.2 60 .4±12 .6 63 .2
+
+FAGCN 42 .2±0.5 66 .2±1.8 80 .1±0.9 43 .2±8.1 77 .6±0.6 64 .8±1.5 60 .3±5.8 55 .1±5.0 61 .2
+
+LINKX 44 .7±2.1 40 .2±7.0 44 .3±7.2 51 .1±24 .8 39 .4±13 .6 54 .3±2.5 56 .2±27 .8 79 .8±4.1 51 .3
+
+GAT 42 .0±0.4 69 .3±1.0 80 .4±0.8 42 .2±7.3 77 .7±0.5 56 .1±0.7 59 .2±6.2 50 .6±7.3 59 .7
+
+GATv2 41 .7±0.7 69 .2±0.7 80 .7±0.7 36 .8±8.8 77 .6±0.7 71 .0±0.8 59 .2±5.5 48 .0±6.6 60 .5
+
+LTGA-Head 42 .5±0.7 69 .0±0.6 81 .0±0.7 35 .1±12 .9 77 .7±0.6 72 .5±0.6 58 .1±5.9 47 .6±7.5 60 .4
+
+LTGA-Edge 42 .8±0.8 69 .1±0.9 81 .2±1.0 39 .2±11 .1 77 .5±0.6 72 .4±0.9 58 .6±6.5 52 .7±6.5 61 .7
+
+25 Learning a Per-Edge Tsallis Index 
+
+Table 13: Cross-dataset hyperparameter ablation. The λattn ×Tw×κ grid repeated on a homophilic (Cora), a mid-homophily (Amazon-Ratings) and a low-homophily (Wisconsin) graph, addressing the circularity of sweeping only on Roman-Empire. 
+
+Dataset Parameter Value Accuracy (%) Converged ¯q
+
+Amazon-Ratings λattn 0.0 42 .9±0.3 1.452 
+
+Amazon-Ratings λattn 0.01 42 .2±0.7 1.040 
+
+Amazon-Ratings λattn 0.1 42 .4±0.8 1.022 
+
+Amazon-Ratings λattn 0.5 42 .3±0.8 1.009 
+
+Amazon-Ratings λattn 1.0 42 .1±0.6 1.005 
+
+Amazon-Ratings Tw 0 43 .4±0.3 1.457 
+
+Amazon-Ratings Tw 50 42 .6±0.9 1.304 
+
+Amazon-Ratings Tw 100 42 .4±0.8 1.273 
+
+Amazon-Ratings Tw 200 41 .9±0.6 1.000 
+
+Amazon-Ratings κ 1.0 43 .2±0.6 1.461 
+
+Amazon-Ratings κ 5.0 42 .4±0.8 1.098 
+
+Amazon-Ratings κ 10.0 42 .2±0.8 1.045 
+
+Amazon-Ratings κ 50.0 42 .0±0.6 1.006 
+
+Cora λattn 0.0 81 .1±0.8 1.000 
+
+Cora λattn 0.01 81 .1±0.8 1.000 
+
+Cora λattn 0.1 81 .1±0.8 1.000 
+
+Cora λattn 0.5 81 .1±0.8 1.000 
+
+Cora λattn 1.0 81 .1±0.8 1.000 
+
+Cora Tw 0 81 .1±0.8 1.014 
+
+Cora Tw 50 81 .1±0.8 1.000 
+
+Cora Tw 100 81 .1±0.8 1.000 
+
+Cora Tw 200 81 .1±0.8 1.000 
+
+Cora κ 1.0 81 .1±0.8 1.000 
+
+Cora κ 5.0 81 .1±0.8 1.000 
+
+Cora κ 10.0 81 .1±0.8 1.000 
+
+Cora κ 50.0 81 .1±0.8 1.000 
+
+Roman-Empire λattn 0.0 72 .8±0.4 1.807 
+
+Roman-Empire λattn 0.01 72 .8±0.3 1.754 
+
+Roman-Empire λattn 0.1 72 .4±0.3 1.393 
+
+Roman-Empire λattn 0.5 71 .4±0.3 1.128 
+
+Roman-Empire λattn 1.0 71 .0±0.7 1.070 
+
+Roman-Empire Tw 0 72 .7±0.5 1.828 
+
+Roman-Empire Tw 50 72 .5±0.5 1.716 
+
+Roman-Empire Tw 100 72 .2±0.4 1.574 
+
+Roman-Empire Tw 200 70 .6±0.5 1.000 
+
+Roman-Empire κ 1.0 72 .7±0.5 1.809 
+
+Roman-Empire κ 5.0 71 .9±0.5 1.348 
+
+Roman-Empire κ 10.0 71 .4±0.6 1.193 
+
+Roman-Empire κ 50.0 70 .8±0.4 1.041 
+
+Wisconsin λattn 0.0 47 .1±5.5 1.000 
+
+Wisconsin λattn 0.01 47 .1±5.5 1.000 
+
+Wisconsin λattn 0.1 47 .1±5.5 1.000 
+
+Wisconsin λattn 0.5 47 .1±5.5 1.000 
+
+Wisconsin λattn 1.0 47 .1±5.5 1.000 
+
+Wisconsin Tw 0 47 .1±5.5 1.001 
+
+Wisconsin Tw 50 47 .1±5.5 1.000 
+
+Wisconsin Tw 100 47 .1±5.5 1.000 
+
+Wisconsin Tw 200 47 .1±5.5 1.000 
+
+Wisconsin κ 1.0 47 .1±5.5 1.000 
+
+Wisconsin κ 5.0 47 .1±5.5 1.000 
+
+Wisconsin κ 10.0 47 .1±5.5 1.000 
+
+Wisconsin κ 50.0 47 .1±5.5 1.000 
+
+26 Learning a Per-Edge Tsallis Index 
+
+Table 14: Ablation: attention regularisation λattn on Roman-Empire. 
+
+λattn Accuracy (%) Mean q ECE 0.0 72 .8±0.4 1.807 0.094 0.01 72 .8±0.3 1.754 0.096 0.1 72 .4±0.3 1.393 0.093 0.5 71 .4±0.3 1.128 0.092 1.0 71 .0±0.7 1.070 0.090 
+
+Table 15: Ablation: warm-up duration Tw on Roman-Empire. 
+
+Tw Accuracy (%) Mean q ECE 0 72 .7±0.5 1.828 0.090 50 72 .5±0.5 1.716 0.095 100 72 .2±0.4 1.574 0.094 200 70 .6±0.5 1.000 0.090 
+
+Table 16: Ablation: learning-rate ratio κ = ηθ /η α on Roman-Empire. 
+
+κ Accuracy (%) Mean q ECE 1.0 72 .7±0.5 1.809 0.093 5.0 71 .9±0.5 1.348 0.093 10.0 71 .4±0.6 1.193 0.091 50.0 70 .8±0.4 1.041 0.093 
+
+Table 17: Ablation: reparameterisation half-width δ on Roman-Empire. 
+
+δ Accuracy (%) Mean q ECE 0.25 71 .6±0.4 1.223 0.093 0.5 72 .0±0.2 1.434 0.093 1.0 72 .5±0.6 1.808 0.090 1.5 72 .7±0.5 2.118 0.090 2.0 72 .2±0.6 2.354 0.085 
+
+Table 18: Granularity ablation on Roman-Empire: shared (Global), per-layer, per-head, or per-edge 
+
+q. “Mean q” is the converged entropic index for the scalar variants; for LTGA-Edge, which has no scalar q, the entry is the gate’s output-weight magnitude and is marked with an asterisk so it cannot be read as a learned q.Granularity Accuracy (%) Mean q ECE LTGA-Edge 72 .9±0.3 0.377 ∗ 0.087 LTGA-Global 72 .6±0.5 1.880 0.093 LTGA-Head 72 .5±0.2 1.809 0.088 LTGA-Layer 72 .7±0.6 1.853 0.092 
+
+27 Learning a Per-Edge Tsallis Index 
+
+Table 19: Depth sweep with over-smoothing diagnostics. Higher Dirichlet energy and higher MAD mean less collapse. Dataset Model L = 2 L = 4 L = 8 
+
+acc Edir MAD acc Edir MAD acc Edir MAD Cora GAT 80 .6±0.5 0.127 0.717 70 .8±6.7 0.039 0.636 28 .5±9.6 0.006 0.188 
+
+Cora GATv2 81 .0±0.5 0.108 0.668 65 .3±6.1 0.023 0.422 17 .1±7.9 0.003 0.092 
+
+Cora GCN 80 .9±0.5 0.155 0.790 59 .4±11 .1 0.034 0.487 44 .5±18 .2 0.030 0.342 
+
+Cora LTGA-Head 81 .0±0.4 0.099 0.667 64 .0±8.3 0.031 0.525 22 .8±12 .4 0.007 0.204 
+
+Roman-Empire GAT 55 .6±0.5 0.336 0.679 46 .9±3.5 0.253 0.758 14 .0±0.2 0.000 0.005 
+
+Roman-Empire GATv2 71 .0±0.8 0.602 0.721 67 .4±0.7 0.568 0.847 12 .0±1.7 0.000 0.003 
+
+Roman-Empire GCN 42 .9±0.4 0.162 0.434 29 .9±0.3 0.086 0.646 12 .7±5.1 0.003 0.024 
+
+Roman-Empire LTGA-Head 72 .4±0.6 0.634 0.752 68 .5±2.1 0.580 0.837 11 .2±4.0 0.000 0.010 
+
+28
