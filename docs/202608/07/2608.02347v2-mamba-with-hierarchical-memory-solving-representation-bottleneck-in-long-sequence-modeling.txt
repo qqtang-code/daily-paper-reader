@@ -1,0 +1,788 @@
+Title: Mamba with Hierarchical Memory: Solving Representation Bottleneck in Long Sequence Modeling
+
+URL Source: https://arxiv.org/pdf/2608.02347v2
+
+Published Time: Thu, 06 Aug 2026 00:33:07 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# Mamba with Hierarchical Memory: Solving Representation Bottleneck in Long Sequence Modeling 
+
+Qinwen Wang ∗
+
+The Hong Kong University of Science and Technology, Guangzhou 
+
+qwang477@connect.hkust-gz.edu.cn 
+
+Jieping Luo *
+
+University of Oxford 
+
+jieping.luo@reuben.ox.ac.uk 
+
+Aoxiang Qin *
+
+The Chinese University of Hong Kong, Shenzhen 
+
+aoxiangqin@link.cuhk.edu.cn 
+
+Ruoyu Zhao 
+
+City University of Hong Kong 
+
+ruoyuzhao8-c@my.cityu.edu.hk 
+
+Jianxiong Tang 
+
+City University of Hong Kong 
+
+jiatang@cityu.edu.hk 
+
+Wei Zhang 
+
+Hainan Bielefeld University of Applied Sciences 
+
+wei.zhang@hainan-biuh.edu.cn 
+
+Zhichao Lu 
+
+City University of Hong Kong 
+
+zhichao.lu@cityu.edu.hk 
+
+Luziwei Leng †
+
+BrainGalaxy 
+
+lengluziwei@braingalaxy.ai 
+
+## Abstract 
+
+Recurrent linear attention models (RLAs) such as Mamba offer efficient linear-time sequence modeling as an alternative to Transformers, yet their fixed - capacity recur-rent states limit long - sequence modeling. Drawing inspiration from hierarchical human memory, we propose Hierarchical Memory Mamba (HMM) to address this limitation. Building upon a pre - trained Mamba backbone, HMM integrates a lightweight working memory that extracts slow paragraph -level semantics (PLS) from the fast sensory memory embedded in the backbone’s hidden states. The PLS is subsequently compressed into persistent long - term memory for task - relevant retrieval. The hierarchical processing of semantic information overcomes the repre-sentation bottleneck of RLAs and endows HMM cross -task generalization through parametric learning, which is not observed in other long - context enhanced Mamba variants. Evaluations on Passkey Retrieval and LongBench-E tasks demonstrate that HMM improves retrieval success by 34.3-37.1% and reasoning accuracy by 1.6-14.2% over strong Mamba - based models, while adding only 2% extra parameters and with minimal training overhead. 
+
+## 1 Introduction 
+
+Transformer-based architectures have been the dominant choice of Large Language Models (LLMs) due to their strong expressive power [ 27 , 17 ]. However, their quadratic computational complex-ity O(L2) with respect to sequence length L poses severe scalability challenges for long-context           
+
+> ∗These authors contributed equally.
+> †Corresponding author. Preprint. arXiv:2608.02347v2 [cs.AI] 5 Aug 2026 2k 4k 8k 16k 32k
+> Context Length
+> −14
+> −12
+> −10
+> −8
+> −6
+> −4
+> −2
+> 0
+> Negative of Perplexity( −PPL )
+> (a) Perplexity on PG-19 ↑
+> MambaExtend
+> HMM (Ours)
+> Probe-Test
+> LongMamba
+> 0510 15 20 25
+> Avg. Score
+> MambaExtend
+> HMM (Ours)
+> Probe-Test
+> LongMamba
+
+×
+
+✓ 
+
+> 8.18
+> 20.40
+> 13.67
+> 18.45
+> Performance
+> Decoupling
+> (b) Score on LongBench-E ↑
+
+Figure 1: Good PPL on PG-19 in (a) does not translate to high reasoning accuracy on LongBench-E (b). HMM resolves this mismatch via hierarchical memory, mitigating semantic aliasing. Note that the y-axis in (a) denotes the negative of PPL for visual consistency with (b), higher is better. modeling. Recurrent linear attention models (RLAs), including RWKV [ 21 ], linear transformers with the delta rule [ 24 , 31 ], and modern State-Space Models (SSMs) [ 14 , 35 ] such as Mamba [ 12 ], address this limitation by performing recurrent updates that scale linearly with sequence length, offering a promising alternative for processing virtually unlimited sequences. Despite their theoretical potential for infinite context-length, empirical studies reveal that RLAs suffer from performance degradation when inference length exceeds the training horizon [ 20 ]. Recent efforts [ 33 , 3, 1] focus on mitigating cumulative decay within the recurrence to enlarge the effective receptive field. However, recent discoveries indicate that finite-capacity recurrent states inevitably suffer from representational collapse as the information allocated per token vanishes [29, 5, 28]. In this work, we first reveal empirically that reducing numerical decay can substantially improve perplexity (PPL), yet this improvement does not reliably translate to gains in long-context reasoning (Fig. 1). We further prove theoretically that this limitation is irreconcilable, stemming from a non-injective mapping that projects an exponentially expanding semantic history space onto a bounded state manifold, causing distinct historical trajectories to become indistinguishable—a phenomenon we refer to as semantic aliasing . We argue that mitigating recurrent decay alone is insufficient, as fixed-dimensional states inherently act as lossy compressors of expanding historical contexts. Long-context failures of RLAs arise not only from cumulative decay, but also from the absence of explicit mechanisms to organize, preserve, and selectively reuse high-level semantic information. Inspired by the multi-stage model of human memory [ 25 , 26 ], wherein information progresses from sensory to working memory and is consolidated into long-term storage for later retrieval, we propose Hierarchical Memory Mamba (HMM) (Fig. 2). Building upon a pre - trained Mamba backbone, HMM integrates a lightweight working memory network that extracts slow-evolving segments of paragraph - level semantics (PLS) from the fast sensory memory embedded in the backbone’s hidden states. The PLS is subsequently encoded into highly-compressed array as persistent long - term memory (LTM) for task - relevant retrieval. Through hierarchical extraction, storage and retrieval of semantic information, HMM circumvents the fixed recurrent state limit of RLAs. Furthermore, the combination of parametric learning of the working memory and the non-parametric storage of LTM endows HMM cross - task generalization, which is not observed in other long -context enhanced Mamba variants. Evaluations on Passkey Retrieval and LongBench-E tasks demonstrate that HMM improves retrieval success by 34.3-37.1% and reasoning accuracy by 1.6-14.2% over strong Mamba - based models, while adding only 2% extra parameters with minimal training overhead. 
+
+## 2 Related Work 
+
+Long Context Language Models. Language models trained with limited context often degrade when evaluated on much longer inputs. While Transformer-based models extend context through specialized positional [ 22 , 9 ] or attention mechanisms [ 34 , 7], such techniques are not directly applicable to RLAs due to architectural difference. Recent work has started to close this gap. DeciMamba [ 3] studies 2Trainable                                       
+
+> Frozen
+> ℎ!Hidden State
+> 𝑥 !Input
+> 𝑦 !Output
+> Sensory
+> Memory
+> Long -Term
+> Memory
+> Encoding Retrieval
+> Input
+> Working
+> Memory Rehearsal
+> (a) (b) ℎ!
+> EMA
+> 𝑆 !
+> (#)=1−𝛼 𝑆 !
+> #%&+𝛼 ℎ#
+> 𝑆 !Mamba
+> Block
+> Segmentation
+> Module
+> Mamba
+> Block
+> Mamba
+> Block
+> ……
+> Injection
+> Module
+> Retrieval
+> Module Encoding
+> Module
+> 𝑀 !
+> 𝑆 !
+> SiLU
+> FFN
+> 𝑊 "
+> 𝑊 #
+> Norm
+> Broadcast
+> 𝑀 !
+> $%&
+> Mean
+> 𝑊 '
+> 𝑀 !
+> Sim 𝑖 ,𝑗 =cos (𝑀 ',𝑀 ()
+> Pick Top -𝐾
+> ℎ!𝑀 !
+> $%& 𝑦 !=𝐶 !+𝐷 𝑥 !
+> 𝑦 #%&=𝐶 #%&+𝐷 𝑥 #%&ℎ!("
+> ℎ!(#
+> …
+> +𝑊 '
+> 𝑦 #%)=𝐶 #%)+𝐷 𝑥 #%)
+> Paragraph -Level
+> Semantics (PLS)
+> Semantic
+> Representation
+
+Figure 2: Overview of HMM. (a) Cognitive Inspiration: Multi-stage human memory involving sensory, working, and long-term memory. (b) Technical Pipeline: Through a trainable working memory network, HMM firstly maps pre-trained Mamba hidden states ( ht) (resembling sensory memory) to high-level semantic representation as long-term memory via Semantic Encoding (red arrow, Sec. 5.1), then retrieves and broadcasts them back to late layers of the pretrained backbone via Semantic Retrieval (green arrow, Sec. 5.2) to enhance the capability for long-context reasoning. length extrapolation in Mamba and proposes training-free token filtering to reduce the effective sequence length in deeper layers. MambaExtend [ 1] instead performs training-free calibration of discretization-related scaling factors to improve robustness under length shift. LongMamba [ 33 ]analyzes channel-wise effective receptive fields and enlarges long-range capability via training-free token filtering targeted at global channels. However, these approaches largely address numerical decay under recurrent dynamics with fixed-capacity. Recent analyses suggest that the fundamental bottleneck of SSMs is representational rather than purely numerical: fixed-capacity states would lead to recency bias and representation over-smoothing as sequence length increases [29, 5, 28]. 
+
+Memory-Augmented Architectures. Memory-augmented architectures improve long-context mod-eling through external space or structured memory mechanisms. Non-parametric methods like Retrieval-Augmented Generation (RAG) [ 18 ] and RETRO [ 4] utilize external databases to main-tain expansive, up-to-date knowledge. Transformer-XL [ 6] and HMT [ 15 ] introduce segment-level recurrent memory for Transformer architectures, however suffer from attention complexity under ultra-long contexts. RLAs such as Gated DeltaNet [ 30 ] and MoM [ 10 ] improves recurrent memory dynamics through gated forgetting or sparse routing. Nevertheless they still rely on continuously rewritten recurrent memories, which may lead to representation collapse under ultra-long contexts while introducing additional memory and parameter overhead. HMM addresses these limitations by using an RLA backbone while introducing a hierarchical memory that overcomes the representation bottleneck of fixed recurrent states, with minimal storage overhead. 
+
+## 3 Preliminary 
+
+We review the the recurrence design of Mamba [ 12 ] and analyze its long-context limitations in the lens of cumulative decay [13, 28]. 
+
+Mamba as a Time-Varying SSM. Mamba is grounded in the S6 layer, which introduces input-dependent dynamics to the standard SSM. For a single channel, the recurrence is governed by 
+
+ht = ¯Atht−1 + ¯Btxt, (1) 
+
+yt = Ctht, (2) where xt ∈ R is the scalar input at time t, and ht ∈ Rdh denotes the latent hidden state with dimension dh. The discretized system matrices ¯At ∈ Rdh×dh and ¯Bt ∈ Rdh×1 are derived from their continuous-time counterparts via a step size ∆t > 0, which is predicted from the current input 
+
+xt to enable selective focus. And Ct ∈ R1×dh denotes the dicrete time-variant output matrices, and 
+
+yt is the output. 3For the convenience of theoretical analysis, we consider the following general linear time-varying form: 
+
+ht = Φ tht−1 + Γ txt, (3) where Φt ∈ Rdh×dh represents the effective state transition operator and Γt ∈ Rdh×1 is the input injection operator, both of which are input-dependent. 
+
+Cumulative Decay. To evaluate the long-term retention of information, we unroll the recurrence to reveal the contribution of a past state hj to the current state ht:
+
+ht =
+
+ tY
+
+> k=j+1
+
+Φk
+
+
+
+hj +
+
+> t
+
+X
+
+> k=j+1
+
+ tY
+
+> m=k+1
+
+Φm
+
+
+
+Γkxk, (4) While Mamba’s selection mechanism allows Φt ≈ I (where I is the identity matrix) to selectively preserve information, practical structural stability constraints require the spectral radius ρ(Φ t) ≤
+
+1 − ϵ on average to prevent numerical explosion [ 13 ], with ϵ > 0 being a small stability margin. Consequently, the cumulative product decays exponentially as ∥ Qtk=j+1 Φk∥ ∼ O((1 − ϵ)t−j ). This fading memory property inherently limits the model’s ability to retain precise details over ultra-long horizons, as the gradient and signal from distant tokens xj diminish before they can be effectively utilized for reasoning at time t.
+
+## 4 Motivation 
+
+4.1 The Illusion of Low Perplexity 
+
+In long-context modeling, it is commonly assumed that numerical stability—typically measured by lower PPL—is sufficient to ensure the effectiveness of historical information [ 3, 33 ]. To examine this assumption, we construct a diagnostic variant Probe that explicitly suppresses cumulative decay by generating a modulation factor for ∆t from the model’s own hidden states. Table 1 compares the performance of this diagnostic variant Probe with baseline Mamba2 [ 8] and LongMamba across different context lengths. The results show that LongMamba substantially stabilizes PPL relative to Table 1: Comparison of PPL on Lambada and reasoning accuracy on LongBench (LB).                             
+
+> Model 2k4k8k16 k32 kAvg LB
+> Mamba2 13.18 265.6 3844 11196 17710 6606 7.1 LongMamba 13.18 14.68 11.21 12.71 16.84 13.72 13.73
+> Probe 13.09 14.27 10.34 11.79 15.73 13.00 9.57
+
+the baseline by alleviating cumulative decay. The Probe further reduces average PPL, outperforming LongMamba across all evaluated context lengths. However, this improvement in numerical stability does not translate into comparable gains on LongBench: the probe attains only 9.57 accuracy, markedly below LongMamba, revealing a decoupling between statistical fluency and semantic utility. 
+
+4.2 Semantic Aliasing 
+
+The decoupling between PPL and reasoning utility indicates that mitigating numerical decay alone is insufficient for Mamba in long-context modeling. We attribute this to a structural bottleneck: a fixed-dimensional recurrent state must compress an ever-growing semantic history, leading to semantic aliasing . Recall the selective SSM recurrence in Eq. (3) . Let FT : X T → H ⊂ Rdh denote the induced mapping from the length-T history x1: T to the terminal state hT . Geometrically, FT maps an exponentially expanding history space of all possible token sequences X T into a bounded, fixed-dimensional manifold H; hence it becomes non-injective at any finite resolution ϵ as T grows [ 16 , 29 ]. We formally define semantic aliasing as the phenomenon where two distinct histories x(a)1: T̸ = x(b)1: T
+
+result in states whose distance is below the model’s discriminative threshold: 
+
+FT (x(a)1: T ) − F T (x(b)1: T ) 2 ≤ ϵ. (5) Appendix A proves that such collisions are unavoidable beyond a context-length threshold (for fixed 
+
+dh and ϵ), implying that the model can become unable to resolve conflicting long-range semantics even without numerical decay. This motivates an external hierarchical memory design to circumvent the structural bottleneck, as illustrated in the next section. 45 Method 
+
+Inspired by hierarchical human memory, HMM adopts a pre-trained Mamba model as sensory memory backbone for token-level representation. A working memory is proposed to extract PLS from hidden states and further encode them into LTM for task-relevant retrieval. The operation of working memory consists of two core procedures: semantic encoding and semantic retrieval. 
+
+5.1 Semantic Encoding 
+
+Semantic encoding consists of a segmentation process that groups token representations into semanti-cally coherent PLS, and a compression process that downsamples PLS into compact LTM preparing for subsequent retrieval. 
+
+Segmentation. Given hidden states ht, we maintain a semantic prototype Sk by measuring semantic consistency via cosine similarity. If cos( Sk, h t) ≥ τ , with τ denoting a threshold, the token is considered semantic consistent and updates the prototype via exponential moving average (EMA): 
+
+Sk ← Norm  (1 − α)Sk + αh t
+
+, (6) where α is the EMA update rate. If cos( Sk, h t) < τ , the token indicates semantic drift, and a counter 
+
+ck accumulates consecutive low-similarity signals. A new segment prototype is created once ck > p ,controlled by the patience parameter p. This yields the PLS, {Sk} ∈ RK×D , with K and D denoting its total length and state dimension of the sensory-memory backbone, respectively. In this way, PLS summarizes the slow-evolving paragraph semantics, ensuring a bounded context and non-vanishing sensitivity to tokens. A suedo code of the segmentation algorithm is provided in Appendix B. 
+
+Compression. Each element of PLS is then downsampled via a lightweight feed-forward network into a compressed memory space, defined as LTM: 
+
+Mk = LN( W2 σ(W1Sk)) , (7) where W1 ∈ RS×D and W2 ∈ RM ×S are learnable weights, S is the dimensionality of an intermediate projection space, and M is the dimension of the state space of LTM. σ(·) denotes a non-linear activation (SiLU) and LN( ·) denotes Layer Normalization. Note that the historical PLS need not to be kept in memory, and its latest element can be discarded once it is compressed into LTM. By ensuring M << D , the compression module achieves minimal storage overhead of LTM, 
+
+{Mk} ∈ RK×M .
+
+5.2 Semantic Retrieval 
+
+After encoding, the working memory selects task relevant LTM via similarity ranking, then injects them back to the sensory backbone, adding useful semantic and context information for the task. 
+
+Selection. The correlation between the latest element of LTM M and other historical elements is calculated by cosine similarity: 
+
+Sim( i, j ) = cos( Mi, M j ) = M ⊤ 
+
+> i
+
+Mj
+
+∥Mi∥ ∥ Mj ∥ , j < i. (8) Then, the top-K relevant historical LTM elements are selected via similarity ranking: 
+
+Ri = topK j
+
+ Sim i,j 
+
+, (9) where Ri denotes the indices of the most semantically similar elements in LTM to Mi. The selection process identifies the most relevant historical LTM element indices for the current representation, providing input for subsequent injection. 
+
+Injection. The selected LTM elements are averaged to form a stable representation of relevant memory for the current task: 
+
+M sta  
+
+> i
+
+= 1
+
+|R i|
+
+X
+
+> r∈R i
+
+Mr . (10) Then, M sta  
+
+> i
+
+is broadcast to all token-level representations within the paragraph summarized by Mi,forming a token-wise tensor M tok  
+
+> t
+
+, which is further upsampled to token-level dimension for injection onto the backbone: 
+
+˜yt = yt + Wp M tok  
+
+> t
+
+, (11) 5where Wp ∈ RD×M is the upsampling weights. In this way, relevant historical memory is retrieved and integrated into the sensory backbone, circumventing the representation bottleneck of fixed recurrent states. 
+
+5.3 Theoretical Analysis 
+
+The hierarchical memory of HMM mitigates semantic aliasing by preventing Jacobian rank collapse in standard recurrent dynamics. In standard SSMs, due to stability constraints, the Jacobian ∂y T 
+
+> ∂x t
+
+,which measures the sensitivity of the current output to a distant input, involves a product of transition operators whose singular values decay exponentially, leading to a collapse in the sensitivity to distant inputs. HMM addresses this by decomposing the total Jacobian into a recurrent path and a hierarchical memory path: 
+
+JHM M = ∂y T
+
+∂x t
+
++ ∂(WpM tok  
+
+> T
+
+)
+
+∂S k∗
+
+∂S k∗
+
+∂x t
+
+. (12) The first term corresponds to the recurrent sensitivity path, which propagates through the product of state transition operators and vanishes as T − t → ∞ under stability constraints. The second term is induced by hierarchical memory path, which injects relevant historical memory directly into the output. Since the PLS Sk∗ -with k∗ denoting the indices of PLS elements selected by Top-K
+
+retrieval-are constructed via local temporal aggregation (Eq. 6), the sensitivity ∂S k∗ 
+
+> ∂x t
+
+depends only on the paragraph length and is independent of the total sequence length T . As a result, the hierarchical memory preserves a non-vanishing sensitivity path even when the recurrent Jacobian collapses. A formal analyse is in Appendix C and Appendix D. 
+
+## 6 Experiments 
+
+In this section, we conduct a comprehensive evaluation of HMM across a suite of complementary benchmarks to assess its long context modeling capabilities. 
+
+6.1 Experimental Settings Datasets. We evaluate HMM on PG-19 [ 23 ], LongBench-E [ 2 ] and Passkey Retrieval [ 1]. We measure PPL on PG-19 following the setup in [ 33 ] to assess fundamental modeling capabilities. LongBench-E is a comprehensive dataset comprising diverse real-world tasks such as long-form question answering and summarization. The Passkey Retrieval task is adopted to probe the effective context length and the model’s ability to retrieve specific information from extended sequences. 
+
+Training Setting. We adopt pretrained Mamba2 [ 8 ] models at different scales (780M and 1.3B) as the backbone for HMM. Unless otherwise specified, the pretrained Mamba backbone is kept frozen and only the parametric working memory is optimized. The additional trainable parameters introduced by HMM account for only ∼2% of the backbone. All adaptation is performed exclusively on sequences sampled from the Pile dataset [ 11 ], while evaluation is conducted on other downstream datasets 
+
+without additional fine-tuning . Note that this setting is distinct from other long-context Mamba variants where fine-tuning were done on downstream datasets, exhibiting cross-task generalization of HMM. Although HMM already shows clear improvements with only 300 adaptation samples, we report results adapted on 6,000 sequences to present the best achievable performance. Table 2: PPL over different evaluation context lengths on PG-19 dataset. The Lower is better.                       
+
+> Method 4k8k16 k32 k
+> Mamba2-780M
+> Vanilla 21.26 2320.31 7507.38 7531.29 LongMamba 11.23 12.06 12.03 12.71 HMM 11.03 11.35 11.11 11.59
+> Mamba2-1.3B
+> Vanilla 14.81 129.33 1142.41 4642.43 LongMamba 10.30 11.44 11.72 12.79 HMM 10.02 10.47 10.98 12.16
+
+Implementation Details. We employ a two-stage hyperparameter selection strategy. First, segmentation parameters ( τ, p ) are calibrated on independent long-form samples to en-sure generalizable boundary detection. Sec-ond, architectural configurations—including semantic encoding layer indices (defaulting to 12) and LTM state dimension (defaulting to 128)—are optimized on a LongBench-E vali-dation split. Univariate ablations on the robust-ness of these choices are detailed in Sec. 6.3. 6Table 3: Benchmark results on LongBench-E tasks. We compare HMM against Vanilla Mamba and recent long-context Mamba variants across various task categories. For task name abbreviations, refer to Appendix H.                                                                                                                                                                                                 
+
+> Model Method Synthetic Summary Single-doc QA Multi-doc QA Few-shot Learning Coding Avg.
+> PC PR GR MN MQA QA 2WM HQA SS TR TQA LCC RB Mamba-2.8B DeciMamba 0.50 1.50 14.86 24.58 18.58 8.91 9.06 4.46 7.34 0.50 12.61 8.67 10.96 9.43 Mamba2-780M Vanilla 0.78 2.76 5.84 7.40 3.45 1.53 1.41 1.13 2.23 9.00 6.35 25.83 12.64 6.18 MambaExtend 0.00 0.00 0.00 0.02 2.17 7.96 11.15 8.29 0.89 21.00 11.00 26.28 17.55 8.18 LongMamba 0.90 3.79 11.50 17.22 10.11 4.13 6.28 4.72 14.7 32.5 43.13 47.77 43.05 18.45 LAMB 2.01 3.44 12.19 9.42 11.22 3.56 5.99 5.22 25.83 38.46 46.47 44.24 36.2 18.79 HMM 0.75 3.18 11.4 17.34 12.08 4.49 8.25 5.66 18.59 44.5 49.31 46.00 43.69 20.40
+> Mamba2-1.3B Vanilla 1.29 0.81 7.66 11.46 5.84 2.19 2.31 2.88 4.69 14.67 10.08 25.71 22.85 8.65 MambaExtend 0.00 0.00 0.01 0.02 0.70 7.34 6.33 9.50 0.00 15.00 12.00 25.19 17.64 7.21 LongMamba 2.02 3.51 14.33 10.28 14.73 5.14 5.73 5.52 14.00 21.67 48.74 42.99 36.75 17.34 LAMB 2.90 4.11 13.09 11.97 12.63 5.72 5.76 7.10 22.83 51.28 48.03 38.85 32.34 19.74 HMM 1.22 1.25 12.54 21.3 12.63 6.83 9.89 5.63 19.12 52.5 51.41 49.83 48.32 22.50 1K 2K 4K 8K 16K 32K 64K
+> Context Length
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> Passkey Depth
+> Vanilla Mamba2-780M
+> Score = 54.3%
+> 1K 2K 4K 8K 16K 32K 64K
+> Context Length
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> HMM-780M
+> Score = 91.4%
+> 1K 2K 4K 8K 16K 32K 64K
+> Context Length
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> Vanilla Mamba2-1.3B
+> Score = 51.4%
+> 1K 2K 4K 8K 16K 32K 64K
+> Context Length
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> HMM-1.3B
+> Score = 85.7%
+> Success Failure
+
+Figure 3: Passkey retrieval accuracy heatmaps. Green indicates success and red indicates failure. Note that the working memory only encodes semantics from a single layer of the backbone and the retrieved memory is projected to all subsequent layers after the encoding layer. 
+
+6.2 Long Context Modeling Language Modeling. Following the setup in LongMamba [ 33 ], we evaluate PPL on PG-19 [ 23 ] using Mamba2-780M and Mamba2-1.3B backbones on sequences up to 32 k. As shown in Table 2, HMM consistently achieves the lowest PPL across all lengths, significantly outperforming vanilla Mamba and surpassing LongMamba, demonstrating superior long-context language modeling capability. 
+
+Reasoning on LongBench-E. We evaluate HMM on LongBench-E [ 2 ] following standard pro-tocols [ 33 , 3, 1 , 32 ]. As shown in Table 3, HMM achieves the best average accuracy among Mamba-based models, with 20.40% on Mamba2-780M and 22.50% on Mamba2-1.3B. The gains are most evident on TR, TQA, MN, LCC, and RB, where successful prediction requires stable access to task-relevant semantics across distant segments rather than local token-level retention. This suggests that HMM benefits from its hierarchical semantic memory, which provides a less decaying semantic access path in long sequences. In contrast, methods such as MambaExtend and LongMamba mainly improve state dynamics or receptive fields, but do not explicitly organize historical context into semantic units, making HMM more effective on tasks requiring global semantic coherence. 
+
+Passkey Retrieval. Beyond long-context perplexity, exact-retrieval tasks provide a more stringent test of whether models can preserve and recover specific information from distant positions [ 19 ]. We employ the Passkey Retrieval task following the MambaExtend protocol [ 1]. Both vanilla Mamba and HMM undergo lightweight fine-tuning (20 steps) solely for format alignment. We evaluate exact retrieval accuracy across sequence lengths ranging from 1k to 64 k at varying depths, HMM improves retrieval success by 34.3-37.1%, with results presented in Fig. 3. This result indicates that hierarchical semantic memory offers an effective alternative to discretization-step calibration for long-range recall. 
+
+Memory Overhead and Throughput Analysis. As shown in Fig.4a, we measure the peak GPU memory usage under different context lengths and compare HMM with the Mamba2 baseline under identical batch size and numerical precision settings. Across all sequence lengths, HMM matches the peak memory footprint of Mamba2, incurring no additional memory overhead and preserving the efficiency and scalability of SSMs. 7Figure 4: (a) Memory footprint comparison between Mamba2 and HMM across context lengths. (b) Sensitivity to segmentation hyperparameters (τ, p ). (c) Layer-wise boundary detection performance. Also, we report detailed throughput results across varying context lengths (e.g., 2k–32k). As shown in Table 4, HMM introduces only a modest prefill overhead ( ≈1.13 ×–1.24 ×). During decoding, HMM achieves throughput comparable to Mamba, as paragraph-level memory is computed once during prefill and reused without additional per-step overhead. Table 4: Latency comparison                                              
+
+> Model Context Length Prefill (s) Prefill (K tok/s) Decode (s) Decode (tok/s) Mamba2 2048 0.058 35.40 4.21 30.40 HMM 2048 0.072 28.32 4.40 29.07 Mamba2 4096 0.074 55.26 4.53 28.29 HMM 4096 0.084 48.50 4.63 27.63 Mamba2 8192 0.126 64.79 4.36 29.34 HMM 8192 0.151 54.68 4.54 28.19 Mamba2 16384 0.249 65.67 4.10 31.22 HMM 16384 0.292 56.04 4.31 29.71
+
+6.3 Ablation Study 
+
+We perform ablation studies from four perspectives: (1) Hyperparameter analysis: the influence of threshold and patience parameters (τ, p ) and the choice of semantic encoding layer; (2) Effectiveness of hierarchical memory: comparison with a parameter-matched Mamba baseline without hierarchical memory; (3) The optimal memory compression rate; (4) Comparison to Transformer baseline and RAG method. Unless otherwise specified, all experiments are conducted on 130M model scale. 
+
+Segmentation Hyperparameters. To analyse the effect of (τ, p ) on segmentation performance, we perform ablations on five randomly sampled multi-topic long-form sequences from the Pile, fixing the injection layer to isolate structural factors. We sweep τ ∈ { 0.7, 0.75 , 0.8, 0.85 , 0.9}
+
+and p ∈ { 6, 8, 10 , 12 , 14 , 16 }. As shown in Fig. 4b, the segmentation quality and downstream performance vary smoothly across a broad range of values, indicating that the proposed segmentation mechanism is not sensitive to precise hyperparameter tuning. 
+
+Semantic Encoding Layer. To identify the optimal layer for semantic encoding, we evaluate the semantic segmentation quality with different PLS extraction layers from the backbone with controlled samples. Fig. 4(c) presents the segmentation results on long sequences sampled from the Pile dataset. A higher F1 score indicates better alignment with the underlying semantic boundaries. For the 1.3B model, the segmentation accuracy reaches its peak around layer 12 (48 layers in total). This aligns well with the intuition that sensory memory primarily resides in the early network layers. Detailed experimental settings are provided in Appendix F. 
+
+Effectiveness of Hierarchical Memory. To rule out long-context fine-tuning as the source of performance gains, we conduct a controlled comparison on sequences lengths ranging up to 32 k.Both HMM and the Mamba backbone are trained on the same 300 long-form sample sequences; HMM updates only its working memory, while the baseline unfreezes an equal number of backbone parameters. As shown in Tables 5 and 6, the parameter-matched Mamba baseline fails to achieve comparable improvements, confirming that the gains stem from the hierarchy of HMM rather than long-context fine-tuning. 8Table 5: PPL comparison under different context lengths. 
+
+Model 4k 8k 16 k 32 k
+
+Mamba2 21.19 776.89 2364.04 2856.38 HMM 16.25 17.01 19.87 29.91 
+
+Table 6: Acc. (%) comparison on long-context reasoning tasks. 
+
+Model 2WM QA MN HQA GR Avg. 
+
+Mamba2 2.53 1.74 5.80 0.46 3.44 2.80 HMM 8.98 4.59 15.11 5.57 10.42 8.90 
+
+Memory Compression. We study the optimal memory compression rate by varying the LTM state dimension and check the performance of HMM. As shown in Table 7, increasing LTM dimension improves performance up to a moderate scale, after which the gain saturates. We therefore set 
+
+M = 128 , providing a balanced trade-off between expressivity and efficiency. Table 7: Effect of LTM dimension on performance.                                                  
+
+> dmem PPL ↓2WM QA MN HQA GR Avg ↑
+> 64 327.38 0.78 0.02 1.07 0.01 0.56 0.49 96 9.83 8.05 3.06 13.18 4.33 5.38 6.80 128 8.92 8.56 3.58 13.58 4.73 5.86 7.26
+> 160 10.89 6.79 3.17 12.77 4.05 5.72 6.50 192 36.82 2.40 2.68 7.32 2.29 4.17 3.77 256 315.28 1.96 0.16 2.33 0.21 0.89 1.11
+
+Comparison to Transformer. We include results from Pythia-1.4B, which is adopted as a Trans-former baseline of the HMM’s Mamba backbone. This enables a more meaningful comparison under similar training conditions. As shown in Table 8, HMM even slightly surpasses the baseline, indicating the potential of hierarchical memory. Table 8: Comparison with the Transformer baseline Pythia-1.4B on LongBench                   
+
+> Model Single-Doc Multi-Doc Summary Synthetic Code & Class Avg ( ↑)Pythia-1.4B 13.17 4.49 13.97 2.32 33.94 20.21 HMM-1.3B 11.83 8.03 14.33 1.81 49.08 21.23
+
+Comparison to RAG. Finally, we compare HMM with a standard RAG-enhanced Mamba[ 18 ]baseline on both PPL and LongBench-E. As shown in Fig. 5, HMM achieves consistently better perplexity and long-context reasoning performance. We attribute this to HMM’s PLS compression and retrieval within the recurrent modeling process, which provides more stable long-range semantic access. In contrast, RAG-based methods rely on external chunks concatenation, which introduces fragmented context representations and additional prefill overhead. HMM achieves ( ≈1.6 ×–2.3 ×)higher prefill throughput than RAG-Mamba under long-context settings. Detailed throughput and latency analyses are provided in Appendix G. 
+
+Figure 5: (a) Perplexity comparison on different context lengths. (b) Comparison on Longbench-E. 97 Conclusion 
+
+In this work, we uncover the inherent decoupling between PPL and long-context reasoning in previous works, demonstrating that optimizing PPL alone is insufficient for effective long-context modeling. We further present theoretical analyses and identify the semantic aliasing issue prevalent in RLAs. Inspired by the hierarchical human memory, we propose the HMM which circumvents the representation bottleneck imposed by fixed recurrent states. By integrating parametric working memory for semantic encoding and retrieval alongside non-parametric LTM storage, HMM achieves strong cross-task generalization and consistently outperforms existing long-context-enhanced Mamba variants. Our work reveals the potential of brain-inspired hierarchical memory design in mitigating inherent representation limitations of recurrent architectures and advancing long-context modeling capabilities. More discussions of the limitations and broader impacts of this work are presented in Appendix I and K. 10 References 
+
+[1] Seyedarmin Azizi, Souvik Kundu, Mohammad Erfan Sadeghi, and Massoud Pedram. Mambaex-tend: A training-free approach to improve long context extension of mamba. In The Thirteenth International Conference on Learning Representations , 2025. [2] Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li. Longbench: A bilingual, multitask benchmark for long context understanding, 2024. [3] Assaf Ben-Kish, Itamar Zimerman, Shady Abu-Hussein, Nadav Cohen, Amir Globerson, Lior Wolf, and Raja Giryes. Decimamba: Exploring the length extrapolation potential of mamba. In 
+
+The Thirteenth International Conference on Learning Representations , 2025. [4] Sebastian Borgeaud, Arthur Mensch, Jordan Hoffmann, Trevor Cai, Eliza Rutherford, Katie Millican, George Bm Van Den Driessche, Jean-Baptiste Lespiau, Bogdan Damoc, Aidan Clark, et al. Improving language models by retrieving from trillions of tokens. In International conference on machine learning , pages 2206–2240. PMLR, 2022. [5] Yingfa Chen, Xinrong Zhang, Shengding Hu, Xu Han, Zhiyuan Liu, and Maosong Sun. Stuffed mamba: State collapse and state capacity of rnn-based long-context modeling. URL https://arxiv. org/abs/2410.07145 , 2024. [6] Zihang Dai, Zhilin Yang, Yiming Yang, Jaime Carbonell, Quoc V. Le, and Ruslan Salakhutdinov. Transformer-xl: Attentive language models beyond a fixed-length context, 2019. [7] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. Flashattention: Fast and memory-efficient exact attention with io-awareness, 2022. [8] Tri Dao and Albert Gu. Transformers are ssms: Generalized models and efficient algorithms through structured state space duality, 2024. [9] Yiran Ding, Li Lyna Zhang, Chengruidong Zhang, Yuanyuan Xu, Ning Shang, Jiahang Xu, Fan Yang, and Mao Yang. Longrope: Extending llm context window beyond 2 million tokens, 2024. [10] Jusen Du, Weigao Sun, Disen Lan, Jiaxi Hu, and Yu Cheng. Mom: Linear sequence modeling with mixture-of-memories, 2025. [11] Leo Gao, Stella Biderman, Sid Black, Laurence Golding, Travis Hoppe, Charles Foster, Jason Phang, Horace He, Anish Thite, Noa Nabeshima, et al. The pile: An 800gb dataset of diverse text for language modeling. arXiv preprint arXiv:2101.00027 , 2020. [12] Albert Gu and Tri Dao. Mamba: Linear-time sequence modeling with selective state spaces. In 
+
+First conference on language modeling , 2024. [13] Albert Gu, Karan Goel, Ankit Gupta, and Christopher Ré. On the parameterization and initialization of diagonal state space models. Advances in Neural Information Processing Systems , 35:35971–35983, 2022. [14] Albert Gu, Karan Goel, and Christopher Re. Efficiently modeling long sequences with structured state spaces. In International Conference on Learning Representations , 2022. [15] Zifan He, Yingqi Cao, Zongyue Qin, Neha Prakriya, Yizhou Sun, and Jason Cong. Hmt: Hierarchical memory transformer for efficient long context language processing, 2025. [16] Samy Jelassi, David Brandfonbrener, Sham M. Kakade, and Eran Malach. Repeat after me: Transformers are better than state space models at copying, 2024. [17] Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret. Transformers are rnns: Fast autoregressive transformers with linear attention. In International conference on machine learning , pages 5156–5165. PMLR, 2020. [18] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al. Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in neural information processing systems , 33:9459–9474, 2020. 11 [19] Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. Lost in the middle: How language models use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173, 2024. [20] Antonio Orvieto, Samuel L Smith, Albert Gu, Anushan Fernando, Caglar Gulcehre, Razvan Pascanu, and Soham De. Resurrecting recurrent neural networks for long sequences. In 
+
+International Conference on Machine Learning , pages 26670–26698. PMLR, 2023. [21] Bo Peng, Eric Alcaide, Quentin Anthony, Alon Albalak, Samuel Arcadinho, Stella Biderman, Huanqi Cao, Xin Cheng, Michael Chung, Matteo Grella, et al. Rwkv: Reinventing rnns for the transformer era. arXiv preprint arXiv:2305.13048 , 2023. [22] Bowen Peng, Jeffrey Quesnelle, Honglu Fan, and Enrico Shippole. Yarn: Efficient context window extension of large language models, 2023. [23] Jack W. Rae, Anna Potapenko, Siddhant M. Jayakumar, and Timothy P. Lillicrap. Compressive transformers for long-range sequence modelling, 2019. [24] Imanol Schlag, Kazuki Irie, and Jürgen Schmidhuber. Linear transformers are secretly fast weight programmers. In International conference on machine learning , pages 9355–9366. PMLR, 2021. [25] John Sweller. Evolution of human cognitive architecture. Psychology of learning and motivation ,43:216–266, 2003. [26] Endel Tulving and Fergus IM Craik. The Oxford handbook of memory . Oxford University Press, 2000. [27] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. [28] Peihao Wang, Ruisi Cai, Yuehao Wang, Jiajun Zhu, Pragya Srivastava, Zhangyang Wang, and Pan Li. Understanding and mitigating bottlenecks of state space models through the lens of recency and over-smoothing, 2025. [29] Kaiyue Wen, Xingyu Dang, and Kaifeng Lyu. Rnns are not transformers (yet): The key bottleneck on in-context retrieval, 2024. [30] Songlin Yang, Jan Kautz, and Ali Hatamizadeh. Gated delta networks: Improving mamba2 with delta rule, 2025. [31] Songlin Yang, Bailin Wang, Yu Zhang, Yikang Shen, and Yoon Kim. Parallelizing linear transformers with the delta rule over sequence length. Advances in neural information processing systems , 37:115491–115522, 2024. [32] Zhifan Ye, Zheng Wang, Kejing Xia, Jihoon Hong, Leshu Li, Lexington Whalen, Cheng Wan, Yonggan Fu, Yingyan Celine Lin, and Souvik Kundu. Lamb: A training-free method to enhance the long-context understanding of ssms via attention-guided token filtering. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics , 2025. [33] Zhifan Ye, Kejing Xia, Yonggan Fu, Xin Dong, Jihoon Hong, Xiangchi Yuan, Shizhe Diao, Jan Kautz, Pavlo Molchanov, and Yingyan Celine Lin. Longmamba: Enhancing mamba’s long-context capabilities via training-free receptive field enlargement. In The Thirteenth International Conference on Learning Representations , 2025. [34] Manzil Zaheer, Guru Guruganesh, Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed. Big bird: Transformers for longer sequences, 2021. [35] Yan Zhong, Ruoyu Zhao, Chao Wang, Jiaqi He, Qinghai Guo, Jianguo Zhang, Zhichao Lu, and Luziwei Leng. Dyn-ssm: Towards the efficient long sequence learning via bio-interpretable dynamics in spiking state space models. IEEE Transactions on Cognitive and Developmental Systems , 2026. 12 A Semantic Aliasing 
+
+Semantic aliasing means that distinct histories map to nearly indistinguishable states, so the model cannot resolve conflicting contexts. We show that semantic aliasing is unavoidable for a fixed-dimensional recurrent state. Although Mamba uses input-dependent selection in the recurrence 
+
+ht = Φ tht−1 + Γ txt (Eq. (3) ), it does not change the state dimension dh, which limits the number of states that remain distinguishable at a finite resolution. 
+
+Theorem A.1 (Inevitability of ϵ-aliasing) . Let H ⊂ Rdh be the set of reachable hidden states, assumed to be bounded such that H ⊆ RBdh 
+
+> 2
+
+(a ball of radius R). Let V be the vocabulary. If the sequence length T satisfies: 
+
+T > dh log 2(3 R/ϵ )log 2 |V | , (13) 
+
+then the mapping FT : V T → H is not injective at resolution ϵ. That is, there exist at least two distinct histories x(a)1: T̸ = x(b)1: T such that ∥F T (x(a)1: T ) − F T (x(b)1: T )∥2 ≤ ϵ.Proof. Let H ⊂ Rdh denote the set of reachable hidden states under the data distribution. We assume 
+
+H is bounded: there exists R > 0 such that H ⊆ RB dh 
+
+> 2
+
+, where Bdh 
+
+> 2
+
+= {h ∈ Rdh : ∥h∥2 ≤ 1}. This is a standard stability assumption for discretized SSM dynamics with bounded inputs as commonly enforced in practice for Mamba-style models [12]. Let N (H, ϵ ) be the ϵ-covering number of H under the ℓ2 metric, i.e., the minimum number of 
+
+ℓ2 balls of radius ϵ needed to cover H. We use ℓ2 to quantify indistinguishability in the hidden space; other norms lead to analogous statements with the corresponding covering bounds. Intuitively, 
+
+N (H, ϵ ) upper bounds how many state “slots” remain reliably distinguishable at resolution ϵ. Since 
+
+H ⊆ RB dh 
+
+> 2
+
+, a standard volumetric bound gives 
+
+N (H, ϵ ) ≤ N (RB dh 
+
+> 2
+
+, ϵ ) ≤
+
+
+
+1 + 2Rϵ
+
+dh
+
+≤
+
+ 3Rϵ
+
+dh
+
+. (14) Let V be the vocabulary and X T = VT the set of length-T token histories. Let FT : X T → H be the history-to-state mapping induced by Eq. (3), defined by FT (x1: T ) = hT .By Eq. (14) , the number of ϵ-distinguishable regions in H is at most N (H, ϵ ) ≤ (3 R/ϵ )dh . Mean-while, the number of distinct length-T token histories is |X T | = |V| T . If |V| T > N (H, ϵ ),then by the pigeonhole principle, two distinct histories must fall into the same ϵ-ball, implying 
+
+∥F T (x(a)1: T ) − F T (x(b)1: T )∥2 ≤ ϵ. Rearranging |V| T > (3 R/ϵ )dh yields the stated condition on T .In Mamba, the input xt ∈ Rdx is a continuous token embedding. However, standard language modeling draws tokens from a finite vocabulary V, and the embedding table induces a finite set 
+
+E = {e(v) : v ∈ V} ⊂ Rdx . Therefore, the realizable embedding-history space X T 
+
+> emb
+
+contains the discrete subset ET with |E T | = |V| T . Thus, counting |V| T provides a valid lower bound on the number of distinguishable histories; allowing more general continuous inputs can only enlarge the set of possible histories and cannot remove ϵ-aliasing. If distinct histories collapse to indistinguishable states at ϵ-resolution, then any state-based readout cannot reliably condition predictions on their long-range differences, yielding an intrinsic accuracy ceiling on retrieval-style long-context tasks. This perspective aligns with recent analyses of recency and over-smoothing in SSMs [28] and retrieval bottlenecks in fixed-size recurrent models [29]. 13 B Details of EMA-based Semantic Segmentation 
+
+Algorithm 1: EMA-based semantic segmentation and PLS construction 
+
+Input: Hidden states h1: L ∈ RL×D , threshold τ , patience p, EMA rate α, minimum segment length m
+
+Output: PLS sequence, S = ( S1, S 2, . . . , S K )
+
+Normalize hidden states: 
+
+ht ← Norm( ht) for t = 1 , . . . , L 
+
+Initialize current prototype Sk ← h1
+
+Initialize prototype list S ← [ ] 
+
+Initialize drift counter ck ← 0,segment length ℓk ← 1
+
+for t = 2 to L do 
+
+Compute semantic similarity: 
+
+sim ← cos( Sk, ht)
+
+if sim ≥ τ then 
+
+Sk ← Norm  (1 − α)Sk + α ht
+
+
+
+ck ← 0
+
+ℓk ← ℓk + 1 
+
+end else 
+
+ck ← ck + 1 
+
+if ck > p and ℓk ≥ m then 
+
+Append Sk to S
+
+Initialize new prototype: Sk ← ht
+
+ck ← 0,
+
+ℓk ← 1
+
+end end end 
+
+Append final Sk to S
+
+return S
+
+## C Mitigating Semantic Aliasing via HMM 
+
+Theorem C.1 (Jacobian Rank Preservation) . Let ˜yT be the output of HMM at time T , and xt be the input at time t (t < T ). In the presence of the hierarchical retrieval mechanism, the Jacobian JHMM 
+
+maintains a non-vanishing rank component; that is, the rank of JHMM does not decay to zero as 
+
+(T − t) → ∞ .Proof. In a standard Mamba or SSM, the hidden state dynamics follow 
+
+hi = Φ ihi−1 + Γ ixi, (15) where Φi ∈ Rdh×dh and Γi ∈ Rdh×din are the discretized transition and input matrices. The output is given by yT = ChT . By the chain rule, the sensitivity of the output to a distant input xt through the recurrent backbone is 
+
+∂y T
+
+∂x t
+
+= C
+
+> T
+
+Y
+
+> i=t+1
+
+Φi
+
+!
+
+Γt. (16) For numerical stability, the spectral radius satisfies ρ(Φ i) < 1. Consequently, the singular values of the transition product QTi=t+1 Φi decay exponentially as (T − t) → ∞ , leading to a structural collapse of the recurrent Jacobian: lim (T −t)→∞ ∂y T 
+
+> ∂x t
+
+= 0 .Unlike standard SSMs, HMM injects retrieved semantic information via an external hierarchical memory. Following the semantic retrieval steps in Sec. 5, the augmented state is 
+
+hHMM  
+
+> T
+
+= (Φ T hT −1 + Γ T xT ) + WpM tok  
+
+> T
+
+, M tok  
+
+> T
+
+= TopK( RT ; qT ), (17) 14 where RT = {Mk} is the LTM, qT is the working memory query, and Wp is the injection projection defined in Sec. 5.2. Accordingly, the total Jacobian in HMM admits the decomposition 
+
+JHMM = ∂y T
+
+∂x t
+
+|{z} 
+
+> Jrecurrent
+
++ CW p
+
+∂M tok 
+
+> T
+
+∂S k∗
+
+∂S k∗
+
+∂x t
+
+| {z }
+
+> Jretrieval
+
+, (18) where k∗ denotes the semantic prototype selected by causal Top-K retrieval. As shown above, Jrecurrent vanishes exponentially as (T − t) → ∞ . In contrast, the retrieval term 
+
+Jretrieval is governed by the sensitivity of the selected prototype Sk∗ to the original input xt. Since 
+
+Sk∗ is constructed via local temporal aggregation over a segment of fixed length Lseg , this sensitivity is independent of the total sequence length T :
+
+∂S k∗
+
+∂x t
+
+≥ γ > 0, (19) for some constant γ determined by the local encoding function (Sec. 5.1). Using the rank inequality rank( A+B) ≥ rank( B)−rank( A) and noting that rank( Jrecurrent ) → 0,we obtain 
+
+lim   
+
+> (T−t)→∞
+
+rank( JHMM ) ≥ rank 
+
+
+
+CW p
+
+∂M tok 
+
+> T
+
+∂S k∗
+
+∂S k∗
+
+∂x t
+
+
+
+. (20) Therefore, the hierarchical memory provides a non-recursive shortcut that preserves a constant-rank Jacobian component. This ensures non-vanishing sensitivity to distant inputs and completes the proof. 
+
+## D Theoretical Analysis of the Architecture of HMM 
+
+In this section, we provide a formal comparison between HMM and common architectural alternatives for mitigating long-context failures in SSMs. To address representational compression and sensitivity decay, one may consider two intuitive strategies: (i) Dimension Scaling, which expands the hidden state dimension dh to increase capacity; and (ii) Internal Path Optimization, which incorporates internal shortcuts or gating within the recurrence. We show that neither approach can simultaneously guarantee Jacobian rank recovery and computational efficiency, whereas HMM achieves both by decoupling semantic memory from the recurrent dynamics. 
+
+D.1 Computational Efficiency: Quadratic vs. Linear Scaling 
+
+A straightforward approach to increasing memory capacity is to enlarge the hidden dimension dh of the SSM. However, this strategy yields limited gains in effective representational rank while incurring prohibitive computational cost. For a sequence of length T , mitigating the representational compression loss (Theorem A.1) requires 
+
+dh to grow with the entropy of the history. Yet the computational complexity of the SSM recurrence (e.g., parallel scan or recurrent update) scales quadratically with the state dimension: 
+
+CSSM ≈ O(T · d2
+
+> h
+
+). (21) As T increases, maintaining bounded distortion necessitates dh to scale at least logarithmically, and often linearly, with T , resulting in super-linear or cubic complexity. This renders dimension scaling impractical for ultra-long sequences. In contrast, HMM decouples memory capacity from the recurrent state. Historical information is stored as paragraph-level semantic prototypes {Sk}, constructed via coarse-grained temporal aggregation (Sec. 5.1), while retrieval selects only a small set of relevant prototypes via Top-K
+
+similarity (Sec. 5.2). The overall complexity is therefore 
+
+CHMM ≈ O(T · d2
+
+> h
+
+)
+
+| {z }
+
+> Recurrent Transition
+
++ O(T · K · dh)
+
+| {z } 
+
+> Top-KSemantic Retrieval
+
+, (22) where K is a small constant. Since retrieval operates on paragraph-level representations and only K
+
+prototypes are activated at each step, HMM preserves linear scaling in T without increasing the core recurrence width. 15 D.2 Jacobian Rank Recovery: Internal vs. External Paths 
+
+Another possible mitigation is to introduce internal shortcuts (e.g., gating or residual connections) within the recurrent dynamics. However, such internal modifications remain subject to the same stability constraints that govern standard SSMs. For any linear recurrent system 
+
+ht = Φ tht−1 + Γ txt, (23) the Jacobian of the hidden state with respect to a past input xj propagates via the chain rule: 
+
+JSSM  
+
+> t,j
+
+= ∂h t
+
+∂x j
+
+=
+
+
+
+> t
+
+Y
+
+> k=j+1
+
+Φk
+
+ Γj . (24) To ensure numerical stability, the spectral radius must satisfy ρ(Φ k) ≤ 1 − ϵ for some ϵ > 0.Consequently, the spectral norm of JSSM  
+
+> t,j
+
+decays exponentially as (t − j) → ∞ , leading to an unavoidable collapse in sensitivity and Jacobian rank. This phenomenon underlies the semantic aliasing effect formalized in Theorem A.1. In contrast, HMM employs an external additive bypass: retrieved semantic inforamtion are injected into the state after the recurrent transition (Eq. 17). This bypass introduces a Jacobian component that does not propagate through the product of transition matrices. As shown in Appendix C, the resulting Jacobian contains a constant-rank term arising from the retrieval pathway, independent of the recurrent decay. Thus, HMM restores long-range sensitivity without modifying the internal recurrence or increasing dh.
+
+## E Training Recipes 
+
+Unless otherwise specified, all models are trained using the AdamW optimizer with the following settings: • All adaptation experiments are conducted on a fixed set of 6,000 long-context sequences sampled from the Pile, with lengths ranging from 2k to 16k. • Gradient clipping with a maximum norm of 1.0; • Weight decay of 0.1 and No dropout; • Linear learning rate warmup followed by cosine decay. Table 9: Model sizes and training hyperparameters used in scaling experiments.                
+
+> Params n_layers d_model Training Steps Learning Rate Tokens
+> 780M 24 1536 6,000 2.5e-4 50M 1.3B 24 2048 6,000 2e-4 50M
+
+## F Semantic Segmentation Evaluation Protocol 
+
+To evaluate the optimal semantic encoding layers on the backbone, we construct long sequences by concatenating multiple documents with different topics sampled from the Pile dataset. Since document boundaries naturally correspond to topic transitions, these concatenation points are treated as ground-truth semantic boundaries. For each evaluated layer, we extract token-level hidden states and apply the proposed EMA-based segmentation algorithm to generate predicted semantic boundaries. Specifically, segmentation is triggered when the cosine similarity between the current token representation and the running segment prototype falls below a threshold τ for more than p consecutive tokens, subject to a minimum segment length constraint. We evaluate segmentation quality using boundary-level F1 score. A predicted boundary is considered correct if it falls within a small tolerance window around a ground-truth boundary. Higher F1 scores 16 indicate better alignment between predicted segments and underlying semantic transitions, reflecting stronger semantic resolution in the corresponding hidden representations. For the experiments in Fig. 4(c), we evaluate multiple layers of the 1.3B Mamba2 model using long sequences sampled from the Pile dataset. The segmentation hyperparameters are selected based on validation performance, with τ ∈ [0 .8] and patience parameter p ∈ [10] .
+
+## G RAG Latency Comparison 
+
+In this section, we compare the prefill latency and throughput of HMM-780M, Vanilla Mamba2-780M, and a RAG-enhanced Mamba2-780M baseline across different context lengths. For the RAG[ 18 ] baseline, the input context is first divided into chunks, after which task-relevant chunks are retrieved and concatenated back into the input sequence for generation. Results are reported in Table 10. We observe that while RAG-Mamba introduces significant overhead due to retrieval, HMM maintains efficient prefill performance with only modest overhead compared to Mamba2. Table 10: Latency comparison across models. Prefill throughput is measured in K tokens/s.                               
+
+> Model Context Prefill (s) Prefill (K tok/s) Mamba2-780M 2048 0.058 35.40 RAG-Mamba 2048 0.092 24.00 HMM 2048 0.072 28.32 Mamba2-780M 4096 0.074 55.26 RAG-Mamba 4096 0.187 30.00 HMM 4096 0.084 48.50 Mamba2-780M 8192 0.126 64.79 RAG-Mamba 8192 0.184 24.00 HMM 8192 0.151 54.68
+
+## H Task Name Abbreviations 
+
+LongBench-E Tasks: 
+
+• 2WM : 2WikiMQA • GR : GovReport • HQA : HotpotQA • LCC : LCC • MQA : MultiFieldQA-en • MN : MultiNews • PC : Passage Count • PR : PassageRetrieval-en • QA : Qasper • RB : RepoBench-P • SS : SAMSum • TR : TREC • TQA : TriviaQA 
+
+LongBench Tasks: 
+
+• PC : Passage Count • SS : SAMSum 17 • 2WM : 2WikiMQA • TQA : TriviaQA • QA : Qasper • VCS : VCSUM (zh) • MSQ : Musique • MN : MultiNews • QMS : QMSum • HQA : HotpotQA • LCC : LCC • NQA : NarrativeQA • DR : DuReader (zh) • MQAzh : MultiFieldQA-zh • MQA : MultiFieldQA-en • GR : GovReport • LS : LSHT (zh) • RB : RepoBench-P • PR : PassageRetrieval-en • PRzh : PassageRetrieval-zh • TR : TREC 
+
+## I Limitations 
+
+While HMM improves long-context modeling for Mamba-based architectures, it is not specifically optimized for tasks that require precise retrieval over large collections of factual information, such as legal or regulatory analysis. In such scenarios, where accurate access to extensive historical facts is critical, the current segmentation and retrieval mechanisms may be insufficient, and more advanced retrieval or indexing strategies are needed. In ultra-long contexts, the primary bottleneck of linear models such as Mamba lies in the accessibility problem caused by recurrent state compression, where useful historical information becomes difficult to retrieve despite being theoretically retained. The PLS mitigates this issue by preserving stable semantic anchors over long ranges, thereby improving effective information accessibility without significantly degrading useful details in practice. However, this design focuses on improving accessi-bility rather than enabling fine-grained or exact retrieval over large factual corpora, which remains an open challenge. Future work may focus on improving the segmentation strategy, enhancing the retrieval module, and extending the framework to better support tasks that demand precise and reliable information access. 
+
+## J Statistical Significant Test 
+
+We conducted significance tests comparing HMM against the strongest baseline model (i.e., Long-Mamba). Utilizing two backbone models (Mamba2-780M and Mamba2-1.3B) and a random seed range of 1 to 3, we ran HMM and each of the baseline models a total of 3 × 2 = 6 times. 
+
+## K Broader Impacts 
+
+This work advances long-context sequence modeling by introducing a hierarchical memory mecha-nism that overcomes the inherent fixed-capacity limitation of RLAs. By enabling structured extraction, storage, and retrieval of semantic memories, HMM improves the utilization of long-range informa-tion. Compared to existing Mamba-based variants, HMM achieves significant gains in both retrieval 18 and reasoning performance while introducing only 2% additional parameters and minimal training overhead. Furthermore, this work suggests a promising direction for building more efficient and scalable sequence models. By leveraging architectural design rather than increasing model size, HMM improves performance while maintaining computational efficiency. Combined with the low memory footprint of linear models and performance comparable to Transformer-based models, HMM has strong potential for real-world deployment in resource-constrained settings, such as embodied AI systems and edge devices, where efficiency, memory usage, and real-time processing are critical. 19
