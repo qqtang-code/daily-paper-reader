@@ -1,0 +1,791 @@
+Title: Allocation Before Ranking: Decoupled Token Compression for OmniLLMs
+
+URL Source: https://arxiv.org/pdf/2608.01665v1
+
+Published Time: Tue, 04 Aug 2026 02:13:09 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Allocation Before Ranking: Decoupled Token Compression for OmniLLMs 
+
+Zhenghui Guo 1 Yilin Yang 1 Yuanbin Man 2 Miao Yin 2
+
+Weidong Shi 1 Rabimba Karanjai 1 Omprakash Gnawali 1 Chengming Zhang 11Department of Computer Science, University of Houston 
+
+> 2
+
+Department of Computer Science and Engineering, The University of Texas at Arlington 
+
+# Abstract 
+
+Token compression in OmniLLMs is typically posed as a single saliency-ranking problem: score each multimodal token, keep the top-K. We argue this abstraction is mis-specified. The same attention score simultaneously decides two things: how much retained capacity each modality receives, and which tokens within a modality are kept. A shared top-K rule therefore inherits this audio-favoring allocation prior, spending retained capacity on audio before video tokens have a chance to compete. We propose M ACER , a training-free compressor that first assigns explicit audio and video budgets, then performs allocation-normalized ranking within each modality at modality-specific shallow layers. M ACER significantly reduces token cost while preserving accuracy across audio-grounded, audio–video joint, visual-dominant, and video-centric benchmarks. At 25% retention, M ACER 
+
+preserves 98.7% of full-token performance on Qwen2.5-Omni-7B and 97.3% on Qwen2.5-Omni-3B. On Qwen2.5-Omni-7B, this 25% setting reaches OmniZip-level performance at 45% retention while using lower FLOPs. On OmniVinci-9B, the same allocation-before-ranking principle improves over shared top-K ranking by up to 12.9 points. 
+
+# 1 Introduction 
+
+Omnimodal large language models (OmniLLMs) unify audio and video understanding by interleaving both modalities and processing them through one decoder [Xu et al., 2025, Ye et al., 2025a, Fu et al., 2024, Ge et al., 2025]. This design enables a single model to jointly understand audio and video, but it also makes inference scale with the combined multimodal sequence. Token compression is therefore necessary. Most existing compressors treat this problem as one saliency ranking: assigning a score to each multimodal token and keeping the top-scoring tokens under a fixed budget. We argue that this ranking-only abstraction is incomplete for OmniLLM token compression. The failure is “ one score, two decisions .” In a shared decoder, attention magnitude both allocates probability mass across modalities and orders tokens within each modality. A shared top-K rule therefore uses the same score to decide how much audio/video capacity survives and which audio/video tokens survive. These are different decisions: cross-modal capacity allocation should be controlled before within-modality token selection, not induced accidentally by raw shared-attention mass. In OmniLLM, the coupling is concrete: shared attention exhibits a persistent, content-responsive audio allocation prior, so ranking audio and video tokens in one space can spend retained capacity on audio before visual evidence has a fair chance to compete. Our diagnostics give three observations that motivate the method. Observation 1: shared attention is not a neutral cross-modal saliency space. Even under video-essential queries, audio receives higher attention mass per token across layers; null-content and distance controls show that the effect is content-responsive rather than a fixed positional sink. Observation 2: the audio-favoring bias 
+
+> Preprint. arXiv:2608.01665v1 [cs.AI] 3 Aug 2026
+
+Figure 1: Shared attention favors audio across depth. ca and cv denote the mean audio and video keys. (a) The query q is closer to ca than to cv , so shared attention favors audio. (b) Under both video-essential (VE) and audio-essential (AE) queries, log(mass a/mass v ) stays positive across layers. (c) At L3 under VE queries, pooled query positions satisfy cos( q, c a) > cos( q, c v ). This geometry illustrates why raw shared attention is not a neutral token-saliency space for omnimodal compression. 
+
+is a budgeting problem, not a video-selection problem. ToMe-style [Bolya et al., 2023] video merging and random video dropping produce similar audio-mass trajectories at matched video keep ratio, while changing the retained audio share directly changes accuracy. Observation 3: audio and video become selection-readable at different shallow depths. Audio readout is stable early, whereas video readout is more layer-sensitive and improves around later shallow layers. We propose M ACER , a training-free inference-time compressor that instantiates this allocation-selection principle. MACER first assigns explicit audio and video budgets, preventing retained capacity from being implicitly determined by raw shared-attention mass. It then ranks tokens only within each modality using allocation-normalized attention scores. Because audio and video saliency become readable at different shallow depths, M ACER reads them at modality-specific layers before pruning. A lightweight video-local temporal coverage term is applied only inside the assigned video budget to reduce temporal over-concentration. We evaluated M ACER on three shared-decoder OmniLLM backbones (Qwen2.5-Omni-7B, Qwen2.5-Omni-3B, and OmniVinci-9B) across four benchmarks that span audio-grounded, audio-video joint, visual-dominant, and video-centric tasks. M ACER achieves the strongest aggregate performance among compared token-pruning baselines at every evaluated retention ratio. At 25% retention, MACER preserves 98.7% of full-token performance on Qwen2.5-Omni-7B (vs. 91.6% for OmniZip). On Qwen2.5-Omni-3B, it preserves 97.3% (vs. 95.5% for OmniZip). On OmniVinci-9B, M ACER 
+
+outperforms shared top-K ranking by up to 12.9 points, showing that the allocation–selection separation transfers across models. • We identify a structural failure of global Top-K omnimodal compression: a single importance score determines both the audio-video token budget and the tokens retained within each modality. No saliency signal fixes this coupling unless the token budget is allocated explicitly before selection. • We propose M ACER , a training-free compressor that decides how many audio and video tokens to keep before deciding which tokens to keep. M ACER first allocates audio/video keep-ratios, then ranks tokens within each modality using attention normalized over that modality, and reads audio and video saliency at different shallow layers. A small temporal-coverage rule prevents retained video tokens from clustering in time. The method requires no training, no model changes, and no second forward pass. • Our results validate that M ACER preserves 98.7% / 97.3% of full-token accuracy on Qwen2.5-Omni-7B/3B at 25% retention, and improves over shared top-K ranking by up to 12.9 points on OmniVinci-9B. 2Figure 2: Capacity allocation, not within-video selection, controls cross-modal balance. (a) A shared top-K rule uses one score for two decisions. (b) ToMe and random dropping differ by at most 0.4 pp at matched video keep ratio, whereas reducing the video keep ratio itself shifts audio mass share by 9.0 pp. (c) The retained audio share α affects accuracy, with a video-heavy split ( α = 0 .10 )outperforming an audio-heavy split ( α = 0 .70 ) by 3.1 points. 
+
+# 2 Related work 
+
+Modality competition in multimodal LLMs. Prior work has shown that MLLMs do not use modalities uniformly: modality bias appears across vision, audio, time-series, and graph inputs [Wu et al., 2025, Zheng et al., 2025], and audio-language or audio-visual analyses show that cross-modal attention can underuse task-relevant modalities [Wang et al., 2025]. These works mainly diagnose representation or attention behavior. We study the deployment-time consequence for compression. When audio and video tokens share a decoder softmax under a fixed retained-token budget, imbalance becomes a capacity-allocation problem: the compressor must decide both which tokens are salient and how much capacity each modality receives. 
+
+Token compression for multimodal LLMs. Multimodal token-compression methods differ by where the retention decision is made and what signal drives it. Encoder-side methods reduce visual, audio-visual, or omnimodal context before or near decoder integration using encoder features, cross-modal guidance, or temporal/event structure [Tao et al., 2025b, Ding et al., 2026, Li and Huang, 2026, Guo et al., 2026, Shao et al., 2025b]. LLM-side methods instead prune or merge tokens using attention, redundancy, or sparsification signals inside the model [Bolya et al., 2023, Chen et al., 2024, Shang et al., 2025, Yang et al., 2025a, Zhang et al., 2025b, Ye et al., 2025b, Xing et al., 2025, Huang et al., 2025, Tao et al., 2025a, Jiang et al., 2025, Shao et al., 2025a], though recent VLM studies question whether text-to-visual attention alone is reliable for visual-token importance [Zhang et al., 2025a]. These methods provide useful saliency signals, but the audio-video budget is usually fixed, implicit, or induced by a shared score. A single shared ranking therefore leaves capacity allocation coupled to within-modality token selection. 
+
+Omnimodal token compression. The closest omnimodal line compresses audio-video contexts directly. OmniZip [Tao et al., 2025b] uses an encoder-side audio-guided scheme before decoder integration, while OmniSIFT, DASH, and FastAV explore modality-asymmetric pruning, audio-driven chunking, or audio-visual pruning [Ding et al., 2026, Li and Huang, 2026, Jung et al., 2026]. MACER differs along the capacity-allocation axis: it exposes the retained audio share as an explicit deployment-level control variable, then performs allocation-normalized selection within each modality using shallow decoder-side attention at modality-specific layers. MACER is complementary to saliency-signal design: it targets a different axis, making the retained audio-video capacity split explicit before modality-local token selection. 
+
+# 3 Shared Ranking Couples Allocation and Selection 
+
+Shared-budget omnimodal compression is often treated as a token-ranking problem: assign a saliency score to each audio and video token, then retain the top-scoring tokens under a common budget. This abstraction is incomplete for shared-decoder OmniLLMs. In a shared attention [Vaswani et al., 2017], attention magnitude does not only score token-level relevance; it also determines how probability 3Figure 3: Audio and video become readable at different depths. We sweep one modality’s probe layer while fixing the other to M ACER ’s default. (a) Video readout is more layer-sensitive than audio readout in most settings. (b) Video readout performs best at L4-L5. (c) Audio readout remains relatively stable across layers. mass is allocated across modalities. A shared ranking rule therefore contains a cross-modal allocation term even when the desired decision is within-modality token selection. 
+
+One attention score, two decisions. A query’s attention to a token does two distinct things at once: it scores how relevant that token is within its modality , and it decides how much probability mass goes to that modality versus the other (Fig. 2a). An exact decomposition makes this concrete. Let each key decompose as k(m) 
+
+> i
+
+= cm + ϵ(m) 
+
+> i
+
+, where cm = 1
+
+> |m|
+
+P 
+
+> i∈m
+
+k(m) 
+
+> i
+
+is the per-clip modality centroid and ϵ(m) 
+
+> i
+
+is the within-modality residual. The log attention mass on modality m admits the exact decomposition 
+
+log mass m(q) = q⊤cm
+
+| {z } 
+
+> ∆alloc ,m
+
++ log X
+
+> i∈m
+
+exp 
+
+
+
+q⊤ϵ(m)
+
+> i
+
+| {z }
+
+> ∆intra ,m
+
+− log Z, (1) where Z = P
+
+> m′
+
+P 
+
+> j∈m′
+
+exp( q⊤k(m′) 
+
+> j
+
+) is the shared attention normalizer. For audio-video compari-son, Z cancels: 
+
+log mass a(q)mass v (q) = q⊤(ca − cv ) + 
+
+log X
+
+> i∈a
+
+exp( q⊤ϵ(a) 
+
+> i
+
+) − log X
+
+> j∈v
+
+exp( q⊤ϵ(v) 
+
+> j
+
+)
+
+ . (2) The first term is an architectural cross-modal allocation factor induced by shared-softmax attention; the bracketed term aggregates within-modality residual structure. A shared top-K rule therefore couples allocation with token-level selection before any model-specific empirical bias is considered. 
+
+Observation 1: shared attention is not a neutral cross-modal saliency space. Even when the query explicitly demands video evidence, attention still allocates more mass to audio per token. At L3 under video-essential (VE) queries, every pooled query token in our diagnostic satisfies 
+
+cos( q, c a) > cos( q, c v ) (645 /645 ), placing the query direction in the audio half-space. Across all 28 layers, log(mass a/mass v ) remains positive under both VE and audio-essential (AE) queries (Fig. 1): query semantics shift the ratio in the expected direction, but do not overturn it. Null-content controls argue that this is not merely a positional sink. Replacing the original audio with silence or scale-matched white noise nearly removes the audio advantage; mismatched real audio produces an intermediate shift (Appendix C.6). The shared attention is therefore responsive to audio content, but content-responsive audio mass is not the same as query-useful audio capacity. This is why raw shared attention is informative yet poorly calibrated for deciding a fixed audio-video retention budget. Whether the saliency signal comes from audio, video, acoustic events, or shared attention over both modalities, the underlying assumption is often the same: one token-level signal can decide both 
+
+how much of each modality to keep and which tokens to keep. These are different decisions. The audio-video balance is set by q⊤(ca − cv ) inside the decoder, encoder-side guides do not directly 4Vision Encoder Audio Encoder             
+
+> User Text Query
+> Time Group 1 Time Group n LLM Text Token Video Token Audio Token Unimportant Token Step1 Layer Readout
+> L3 Audio Layer L5 Video Layer
+> Step2 Audio Token Selection
+> Audio Top-K Retrieval
+> Video Top-K Retrieval
+> Step3 Video Token Selection LLM Layer 4 LLM Layer 6
+> 12345m
+
+# ……… Video Local Time window save   
+
+> Time Group 1 Time Group 2 Time Group n
+> Time window save
+
+# …Figure 4: Macer pipeline. MACER runs a single decoder prefill with staged modality-specific pruning. It reads audio attention at ℓa and immediately applies audio retention; the decoder then continues with retained audio and full video until ℓv , where video retention is applied. The final retained audio and video tokens are merged with text tokens in the original sequence order, and the remaining decoder layers operate on the compressed sequence. control this term, and shared ranking does not separate it from token-level scores. A global Top-K
+
+rule turns token scores into modality budgets. Replacing the score changes which tokens rank highly, but still leaves the audio-video split to be induced by ranking. The token budget should be allocated first, and local selection applied afterward. 
+
+Observation 2: the audio-favoring bias is a budgeting problem, not a video-selection problem. 
+
+In our matched-budget diagnostic, a content-aware within-video selector (ToMe-style merging) and a content-blind selector (random dropping) differ by at most 0.4 pp in audio mass share at the same video keep ratio, whereas reducing the video keep ratio itself increases audio’s mass share by 9.0 pp (Fig. 2b). The retained audio share also has direct accuracy consequences: a video-heavy split outperforms an audio-heavy split by 3.1 points (Fig. 2c). Cross-modal allocation must therefore be set at the capacity level, before within-modality selection begins. 
+
+Observation 3: audio and video become selection-readable at different depths. Audio and video residuals become legible at different layers, and any single probe depth is misaligned with at least one modality (Fig. 3). Video readout is layer-sensitive: earlier layers are allocation-dominated, while L4-L5 better expose within-video discrimination. Audio readout is comparatively flat across shallow layers, since the audio branch does not have to exit a “how much audio at all” regime before ranking residuals. The pattern is asymmetric-an early stable audio band and a later shallow video preference-rather than a sharp optimum at any single layer. 
+
+Design constraints implied by the mechanism. Together, these observations motivate M ACER ’s three core components. Observation 1 motivates allocation-normalized modality scoring, which re-moves modality-mass scale before local token ranking. Observation 2 motivates capacity-coordinated splitting, which assigns audio/video budgets before token selection. Observation 3 motivates modality-specific shallow readout, using an early stable audio probe and a later shallow video probe. There-fore, an Omnimodal compressor should separate capacity allocation, modality-local selection, and modality-specific readout. 
+
+# 4 Method: M ACER 
+
+Section 3 shows that shared-decoder omnimodal compression is better treated as allocation before ranking. Shared attention simultaneously allocates probability mass across modalities and ranks tokens within each modality; a shared top-K rule therefore lets the audio-favoring allocation prior leak into token retention. M ACER (Modality-Aware Capacity-Explicit Retention) implements the allocation-before-ranking principle by separating capacity allocation from within-modality selection. It first assigns audio and video budgets explicitly, so the cross-modal capacity split is no longer an accidental consequence of raw shared-attention mass. It then fills each assigned budget with query-conditioned tokens selected only within the corresponding modality. The actual pruning is staged within a single decoder prefill: audio is pruned at ℓa, and video is pruned later at ℓv .5Concretely, M ACER first assigns audio and video budgets explicitly, then fills each budget using modality-local, allocation-normalized scores read at modality-specific shallow layers. After the split, video retention uses a lightweight video-local coverage bonus as an auxiliary within-video correction for temporal concentration; this bonus never changes the audio–video capacity split. The pipeline is shown in Fig. 4. Let Ia and Iv denote the audio and video token sets entering the LLM, with na = |Ia| and nv = |Iv |.Text tokens are always preserved; M ACER compresses only multimodal prefill tokens. Let Sa and Sv
+
+denote the retained audio and video token sets. Given keep ratio ρ, the multimodal retention budget is 
+
+Kmm = min {na + nv , ⌊ρ(na + nv ) + 0 .5⌋} . (3) Let Q denote the question-token span after prompt templating, and let A(ℓ) 
+
+> h
+
+(q, i ) be the attention probability from query token q to multimodal token i at layer ℓ and head h.MACER is configured by modality-specific readout layers (ℓa, ℓ v ), a retained audio share α, and a temporal coverage weight λc. The audio budget fraction determines how the retained multimodal budget is split between audio and video, while λc weights the coverage bonus used during video-token selection. The values used in the experiments are reported in Sec. 5.1 and Appendix A.4. 
+
+Modality-specific shallow readout. Audio and video become useful for token selection at different shallow depths (Sec. 3). Audio saliency is already stable in early layers, whereas video saliency benefits from a later shallow layer before pruning. M ACER therefore reads audio attention at layer ℓa
+
+and video attention at layer ℓv , rather than forcing both modalities to share one probe depth. Pruning is applied in modality-specific stages at the corresponding readout layers. The audio and video budgets (Ka, K v ) are computed once from the original multimodal token counts before either pruning stage. After layer ℓa is computed, M ACER computes the allocation-normalized audio scores, selects the retained audio set Sa under budget Ka, and removes the unretained audio tokens. The decoder then continues with all text tokens, the retained audio tokens, and the full video token set until layer ℓv . After layer ℓv is computed, M ACER scores video tokens, applies the video-local coverage rule under the video budget Kv , and removes the unretained video tokens. 
+
+Allocation-normalized modality scoring. Raw shared attention is not a neutral token-importance score: it contains both a modality-level allocation factor and a within-modality selection signal (Sec. 3). Allocation-Normalized Modality Scoring (ANMS) removes the modality-level attention mass before ranking tokens within each modality. For modality m ∈ { a, v }, M ACER normalizes each query-to-token attention row within the target modality before averaging across query tokens and heads: 
+
+eA(ℓ)
+
+> m,h
+
+(q, i ) = A(ℓ) 
+
+> h
+
+(q, i )
+
+P 
+
+> j∈Im
+
+A(ℓ) 
+
+> h
+
+(q, j ) + ε , s(m) 
+
+> i
+
+= 1
+
+|Q|H
+
+X
+
+> q∈QH
+
+X
+
+> h=1
+
+eA(ℓm) 
+
+> m,h
+
+(q, i ). (4) Audio scores are normalized only over Ia, and video scores only over Iv . The two ranked lists are never pooled into a shared audio-video top-K. ANMS decides which audio tokens compete with other audio tokens and which video tokens compete with other video tokens; it does not decide how much capacity each modality receives. The row-wise normalization removes the modality-mass scale from each (q, h ) contribution before averaging, so the final score reflects modality-local token preference rather than raw cross-modal attention mass. 
+
+Capacity-coordinated split. The first role of M ACER is to correct the cross-modal capacity error created by the shared attention prior. If audio and video tokens are ranked together, audio can consume a disproportionate fraction of the retained budget before video tokens are ranked within their own modality. Capacity-Coordinated Split (CCS) prevents this by assigning how many audio and video tokens may survive before any within-modality selection is applied. This step reserves modality capacity; it does not yet decide which tokens are useful. Given retained audio share α, we set 
+
+¯Ka = ⌊αK mm + 0 .5⌋, ¯Kv = Kmm − ¯Ka, (5) 6and then reassign unused capacity if one modality has fewer available tokens than its nominal budget: 
+
+Ka = min {na, ¯Ka + max(0 , ¯Kv − nv )}, Kv = Kmm − Ka. (6) Here α is a retained-capacity share, not a raw token-count share. This distinction matters because audio often contributes many raw tokens, while the shared attention already favors audio. Fixing 
+
+α makes the audio-video capacity split an explicit deployment choice, rather than an implicit consequence of raw attention magnitude or a one-way guide from another modality. 
+
+Modality-local token retention. Capacity correction is necessary but not sufficient: assigning more budget to video only improves the answer if the recovered video slots contain evidence that the decoder can use. M ACER therefore fills each modality’s budget using the allocation-normalized scores from Eq. (4). Given scores (s(a), s (v)) and budgets (Ka, K v ), audio tokens are retained by modality-local top-K:
+
+Sa = TopKIdx Ka {s(a) 
+
+> i
+
+: i ∈ Ia}. (7) Video retention follows the same modality-local principle, with a lightweight coverage bonus to avoid concentrating all retained video tokens in the same temporal region. Let c(j) denote the fixed temporal partition index of video token j, obtained from the model-provided temporal position id. Let 
+
+rg = |{ u ∈ Sv : c(u) = g}| be the number of already retained video tokens in partition g. Starting from Sv = ∅, at each greedy step we select 
+
+j⋆ = arg max  
+
+> j∈Iv\Sv
+
+"
+
+s(v) 
+
+> j
+
++
+
+s
+
+λc
+
+1 + rc(j)
+
+#
+
+, (8) then add j⋆ to Sv and update the corresponding partition count. The first term keeps selection query-conditioned, while the second provides a diminishing bonus for less-covered temporal regions. Setting λc = 0 recovers pure video top-K.This rule operates only within the assigned video budget Kv ; it does not change the audio-video capacity split and does not use audio evidence to guide video selection. Unlike asymmetric readout, ANMS, and CCS, the coverage bonus is an auxiliary video-side correction for temporal concentration and is ablated separately in Sec. 5.2. After selection, the retained multimodal tokens Sa ∪ Sv are merged with all text tokens in their original sequence order. The remaining decoder layers then operate on this compressed sequence. 
+
+# 5 Experiment Results 
+
+5.1 Evaluation Setups and Implementation Details Benchmarks and baselines. We evaluate Qwen2.5-Omni-7B and 3B [Xu et al., 2025] on AVUT-Bench [Yang et al., 2025b], DailyOmni [Zhou et al., 2025], WorldSense [Hong et al., 2025], and Video-MME [Fu et al., 2025], covering audio-grounded, audio-video joint, visual-dominant, and video-centric regimes. We compare against representative baselines under a unified Qwen2.5-Omni decoder-side token-accounting protocol: Random retention as a content-blind lower bound; FastV [Chen et al., 2024], an LMM-internal shared-attention ranker; and OmniZip [Tao et al., 2025b], the closest executable encoder-side audio-guided omnimodal compressor under our setting. To test whether M ACER transfers beyond the Qwen2.5-Omni family, we additionally evaluate it on OmniVinci-9B [Ye et al., 2025a] against shared top-K ranking on AVUTBench, DailyOmni, and WorldSense; full results are in Appendix F. 
+
+Implementation and deployment configurations. We implement M ACER on Qwen2.5-Omni-7B/3B and OmniVinci-9B using NVIDIA RTX 6000 Ada 48GB GPUs. Text tokens are always preserved; compression is applied only to decoder-side multimodal prefill tokens. We report perfor-mance and inference cost at three retention rates, ρ ∈ { 25% , 35% , 45% }. Decoding is greedy and FlashAttention-2 [Dao, 2023] is enabled throughout. M ACER exposes the audio-video allocation as an explicit deployment variable. We use (ℓa, ℓ v , α, λ c) = (3 , 5, 0.30 , 0.20) for Qwen2.5-Omni-7B and (4 , 7, 0.32 , 0.30) for Qwen2.5-Omni-3B. These settings are selected once on a held-out split disjoint from all evaluation sets, then frozen across benchmarks, query types, and retention ratios. Appendix D.4 shows that this choice lies in a stable allocation band: allowing a per-benchmark oracle allocation improves the normalized average by only 0.92 percentage points. 7Table 1: Pareto comparison on Qwen2.5-Omni-7B. At 25% retention, M ACER forms a lower-FLOPs operating point than OmniZip at 45%. 
+
+Method Retain FLOPs AVUT DailyOmni WorldSense Avg(3) OmniZip 45% 39.2% 63.07 59.82 44.61 55.83 
+
+MACER (Ours) 25% 34.8% 63.67 62.07 44.80 56.85 
+
+∆ -20pp -4.4pp +0.60 +2.25 +0.19 +1.02 
+
+5.2 Main Results 
+
+All benchmarks are run through LMMs-Eval [Zhang et al., 2024] on the full evaluation sets under a unified protocol. Table 1 reports the headline efficiency comparison; Table 2 then provides the full retention-controlled benchmark results. 
+
+Pareto comparison. Table 1 shows the headline efficiency result. At 25% retention, M ACER uses 4.4pp fewer FLOPs than OmniZip at 45% while improving Avg(3) by 1.02 points, with consistent per-benchmark gains on AVUTBench (+0.60), DailyOmni (+2.25), and WorldSense (+0.19). Table 2: Comparison on Qwen2.5-Omni-7B/3B across audio-grounded, audio-video joint, visual-dominant, and video-centric benchmarks. The best result among token-pruning methods within each retained-ratio block (25%/35%/45%) is in bold, and the second-best is underlined. FastV † is evaluated on H100 due to OOM on Ada6000 under the long multimodal context; its average excludes Video-MME, denoted by “-”.                                                                                                                                                
+
+> Method Settings AVUT DailyOmni WorldSense Video-MME Norm. Avg. Retained Ratio FLOPs Ratio Avg. Avg. Avg. Avg.
+> Qwen2.5-Omni-7B
+> Full Tokens 100% 100% 64.5 62.1 46.8 66.0 100% Random 55% 49.2% 61.0 59.2 43.6 65.4 95.5% FastV †50% 54.1% 58.4 59.8 44.3 -93.8% OmniZip 45% 39.2% 63.07 59.82 44.61 66.3 97.5%
+> MACER (Ours) 45% 50.1% 64.72 63.32 44.00 66.9 99.4%
+> OmniZip 35% 29.6% 61.05 59.40 43.98 65.7 96.0%
+> MACER (Ours) 35% 42.2% 64.63 62.32 45.05 66.2 99.3%
+> OmniZip 25% 20.6% 59.10 57.39 38.18 66.5 91.6%
+> MACER (Ours) 25% 34.8% 63.67 62.07 44.80 66.2 98.7%
+> Qwen2.5-Omni-3B
+> Full Tokens 100% 100% 62.2 60.2 46.4 62.6 100% Random 55% 46.1% 58.7 57.4 42.8 61.1 94.9% FastV †50% 49.2% 55.9 58.0 44.4 -94.0% OmniZip 45% 36.1% 61.30 59.73 45.20 62.80 98.9%
+> MACER (Ours) 45% 48.5% 62.13 59.15 46.45 63.21 99.8%
+> OmniZip 35% 26.8% 60.10 58.06 44.30 62.70 97.2%
+> MACER (Ours) 35% 41.0% 60.52 58.15 45.55 63.37 98.3%
+> OmniZip 25% 18.3% 58.90 56.47 43.40 62.60 95.5%
+> MACER (Ours) 25% 34.1% 59.74 58.40 44.24 63.01 97.3%
+
+Representative baseline comparison. Table 2 shows broad matched-retention gains over compared token-pruning baselines, especially under aggressive compression. On Qwen2.5-Omni-7B, M ACER 
+
+beats OmniZip in 10 of 12 matched benchmark-ratio cells; at 25% retention, the gains reach +4.57 on AVUTBench, +4.68 on DailyOmni, and +6.62 on WorldSense, with Video-MME preserved at full-token level. On Qwen2.5-Omni-3B, M ACER wins 11 of 12 matched benchmark-ratio cells, including all four benchmarks at 25% retention. On OmniVinci-9B, M ACER leads shared top-K ranking by up to 12.9 points (Appendix F). A matched-retention comparison with concurrent DASH [Li and Huang, 2026] appears in Table 16. This widening-gap pattern reflects the same failure mode across baselines: Random has no importance signal, FastV applies global Top-K to decoder attention, and OmniZip uses an encoder-side audio-guided score but still lets the retained composition be induced by pruning. MACER allocates the audio-video token budget before selection. 8Table 3: End-to-end inference efficiency on WorldSense on a single NVIDIA RTX 6000 Ada GPU. FastV runs out of memory under the long context.                                     
+
+> Method ρFLOPs Acc. ↑Total Lat. ↓Prefill ↓Decode ↓Mem. ↓
+> Full Tokens -100% 46.80 10.5s ∼3.70s ∼6.8s 41G FastV 50% 54.1% OOM OmniZip 45% 39.2% 44.61 9.54s 2.38s 7.16s 29G MACER 25% 34.8% 44.80 9.17s 2.53s 6.64s 25G
+
+Table 4: Ablation study on Qwen2.5-Omni-7B at 25% retention. Retained A/V is the benchmark-macro retained multimodal composition, excluding text. Coverage operates only within the assigned video budget and does not change the audio/video split.                               
+
+> Variant Retained A/V AVUT DailyOmni WorldSense Avg. Shared top-Kranking 57.6 / 42.4 61.27 (60.0/40.0) 59.57 (56.7/43.3) 43.60 (56.0/44.0) 54.81 MACER core, no coverage 30.0 / 70.0 63.33 61.82 44.47 56.54 Single readout layer 30.0 / 70.0 57.47 60.87 44.80 54.38
+> MACER full 30.0 / 70.0 63.67 62.07 44.80 56.85
+
+Efficiency analyses. Table 3 confirms the Pareto efficiency advantage end-to-end. M ACER com-presses 20pp more aggressively than OmniZip (retaining only 25% vs. 45% of multimodal tokens), yet simultaneously achieves higher accuracy (+0.19), lower total latency (-0.37s), lower decoding cost (-0.52s), and lower peak memory (-4G), while using 4.4pp fewer FLOPs. M ACER therefore Pareto-dominates OmniZip on accuracy, latency, memory, and compute, while retaining far fewer tokens. 
+
+Ablation study. Table 4 isolates the contribution of each design component. Shared top-K ranking couples allocation with selection, collapsing into a 57.6/42.4 audio/video split and capping accuracy at 54.81. Replacing it with M ACER ’s explicit capacity-coordinated split, modality-local scoring, and asymmetric readout fixes the budget at 30.0/70.0 and lifts accuracy to 56.54 ( +1.73 ), showing that the main gain comes from decoupling allocation from selection. Adding the video-local coverage correction keeps the same budget and further raises accuracy to 56.85 ( +0.31 ; +2.04 over shared top-K), indicating that coverage is a secondary within-video correction. 
+
+# 6 Limitations 
+
+MACER is designed for audio-video OmniLLMs that process audio and video tokens with a shared decoder. Extending the allocation-selection decomposition to models with substantially different multimodal fusion designs remains future work. The method uses shallow decoder-side attention readout before pruning, which enables query-conditioned modality-local scoring. At the evaluated operating points, its latency and memory profile remains favorable in our end-to-end measurements (Table 3). Broader modality combinations and additional backbone families are natural directions for follow-up work. 
+
+# 7 Conclusion 
+
+Omnimodal token compression should not be reduced to a single shared-ranking problem. In audio-video OmniLLMs that place both modalities in the same LLM-side attention stream, shared attention couples cross-modal capacity allocation with within-modality token selection, while audio and video become selection-readable at different shallow depths. M ACER instantiates an allocation-before-ranking principle by assigning audio-video capacity explicitly, ranking tokens locally within each modality, and reading saliency at modality-specific shallow layers, all without retraining. The results on Qwen2.5-Omni-7B/3B and OmniVinci-9B support this decomposition as a design interface for future omnimodal compressors, where allocation, selection, and readout can be improved separately rather than collapsed into one shared score. 9References 
+
+Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph Feichtenhofer, and Judy Hoffman. Token merging: Your ViT but faster. In The Eleventh International Conference on Learning Representations ,2023. URL https://openreview.net/forum?id=JroZRaRw7Eu .Liang Chen, Haozhe Zhao, Tianyu Liu, Shuai Bai, Junyang Lin, Chang Zhou, and Baobao Chang. An image is worth 1/2 tokens after layer 2: Plug-and-play inference acceleration for large vision-language models. In 
+
+Computer Vision – ECCV 2024 , pages 19–35. Springer, 2024. doi: 10.1007/978-3-031-73004-7_2. URL 
+
+https://doi.org/10.1007/978-3-031-73004-7_2 .Tri Dao. Flashattention-2: Faster attention with better parallelism and work partitioning. arXiv preprint arXiv:2307.08691 , 2023. Yue Ding, Yiyan Ji, Jungang Li, Xuyang Liu, Xinlong Chen, Junfei Wu, Bozhou Li, Bohan Zeng, Yang Shi, Yushuo Guan, Yuanxing Zhang, Jiaheng Liu, Qiang Liu, Pengfei Wan, and Liang Wang. OmniSIFT: Modality-asymmetric token compression for efficient omni-modal large language models. arXiv preprint arXiv:2602.04804 , 2026. doi: 10.48550/arXiv.2602.04804. URL https://arxiv.org/abs/2602.04804 .Chaoyou Fu, Haojia Lin, Zuwei Long, Yunhang Shen, Yuhang Dai, Meng Zhao, Yi-Fan Zhang, Shaoqi Dong, Yangze Li, Xiong Wang, et al. Vita: Towards open-source interactive omni multimodal llm. arXiv preprint arXiv:2408.05211 , 2024. Chaoyou Fu, Yuhan Dai, Yongdong Luo, Lei Li, Shuhuai Ren, Renrui Zhang, Zihan Wang, Chenyu Zhou, Yunhang Shen, Mengdan Zhang, Peixian Chen, Yanwei Li, Shaohui Lin, Sirui Zhao, Ke Li, Tong Xu, Xiawu Zheng, Enhong Chen, Caifeng Shan, Ran He, and Xing Sun. Video-MME: The first-ever comprehensive evaluation benchmark of multi-modal LLMs in video analysis. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 24108–24118, 2025. URL 
+
+https://openaccess.thecvf.com/content/CVPR2025/html/Fu_Video-MME_The_First-Ever_ Comprehensive_Evaluation_Benchmark_of_Multi-modal_LLMs_in_CVPR_2025_paper.html .Yuying Ge, Yixiao Ge, Chen Li, Teng Wang, Junfu Pu, Yizhuo Li, Lu Qiu, Jin Ma, Lisheng Duan, Xinyu Zuo, et al. Arc-hunyuan-video-7b: Structured video comprehension of real-world shorts. arXiv preprint arXiv:2507.20939 , 2025. Zhenghui Guo, Yuanbin Man, Junyuan Sheng, Bowen Lin, Ahmed Ahmed, Bo Jiang, Boyuan Zhang, Miao Yin, Sian Jin, Omprakash Gnawali, et al. Event-vstream: Event-driven real-time understanding for long video streams. arXiv preprint arXiv:2601.15655 , 2026. Jack Hong, Shilin Yan, Jiayin Cai, Xiaolong Jiang, Yao Hu, and Weidi Xie. WorldSense: Evaluating real-world omnimodal understanding for multimodal LLMs, 2025. URL https://arxiv.org/abs/2502.04326 .Xiaohu Huang, Hao Zhou, and Kai Han. PruneVid: Visual token pruning for efficient video large language models. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 19959–19973, 2025. URL https://aclanthology.org/2025.findings-acl.1024/ .Jindong Jiang, Xiuyu Li, Zhijian Liu, Muyang Li, Guo Chen, Zhiqi Li, De-An Huang, Guilin Liu, Zhiding Yu, Kurt Keutzer, Sungjin Ahn, Jan Kautz, Hongxu Yin, Yao Lu, Song Han, and Wonmin Byeon. STORM: Token-efficient long video understanding for multimodal LLMs. arXiv preprint arXiv:2503.04130 , 2025. doi: 10.48550/arXiv.2503.04130. URL https://arxiv.org/abs/2503.04130 .Chaeyoung Jung, Youngjoon Jang, Seungwoo Lee, and Joon Son Chung. FastAV: Efficient token pruning for audio-visual large language model inference. arXiv preprint arXiv:2601.13143 , 2026. doi: 10.48550/arXiv. 2601.13143. URL https://arxiv.org/abs/2601.13143 .Bingzhou Li and Tao Huang. DASH: Dynamic audio-driven semantic chunking for efficient omnimodal token compression. arXiv preprint arXiv:2603.15685 , 2026. doi: 10.48550/arXiv.2603.15685. URL 
+
+https://arxiv.org/abs/2603.15685 .Yuzhang Shang, Mu Cai, Bingxin Xu, Yong Jae Lee, and Yan Yan. LLaVA-PruMerge: Adap-tive token reduction for efficient large multimodal models. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 22857–22867, 2025. URL https: //openaccess.thecvf.com/content/ICCV2025/html/Shang_LLaVA-PruMerge_Adaptive_Token_ Reduction_for_Efficient_Large_Multimodal_Models_ICCV_2025_paper.html .Kele Shao, Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. HoliTom: Holistic token merging for fast video large language models. arXiv preprint arXiv:2505.21334 , 2025a. doi: 10.48550/arXiv.2505.21334. URL https://arxiv.org/abs/2505.21334 .
+
+10 Kele Shao, Keda Tao, Kejia Zhang, Sicheng Feng, Mu Cai, Yuzhang Shang, Haoxuan You, Can Qin, Yang Sui, and Huan Wang. When tokens talk too much: A survey of multimodal long-context token compression across images, videos, and audios. arXiv preprint arXiv:2507.20198 , 2025b. Keda Tao, Can Qin, Haoxuan You, Yang Sui, and Huan Wang. DyCoke: Dynamic compres-sion of tokens for fast video large language models. In Proceedings of the IEEE/CVF Con-ference on Computer Vision and Pattern Recognition , pages 18992–19001, 2025a. URL https: //openaccess.thecvf.com/content/CVPR2025/html/Tao_DyCoke_Dynamic_Compression_of_ Tokens_for_Fast_Video_Large_CVPR_2025_paper.html .Keda Tao, Kele Shao, Bohan Yu, Weiqiang Wang, Huan Wang, et al. Omnizip: Audio-guided dynamic token compression for fast omnimodal large language models. arXiv preprint arXiv:2511.14582 , 2025b. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems ,volume 30, 2017. Junyu Wang, Ziyang Ma, Zhengding Luo, Tianrui Wang, Meng Ge, Xiaobao Wang, and Longbiao Wang. Pay more attention to audio: Mitigating imbalance of cross-modal attention in large audio language models, 2025. URL https://arxiv.org/abs/2509.18816 .Huyu Wu, Meng Tang, Xinhan Zheng, and Haiyun Jiang. When language overrules: Revealing text dominance in multimodal large language models, 2025. URL https://arxiv.org/abs/2508.10552 .Long Xing, Qidong Huang, Xiaoyi Dong, Jiajie Lu, Pan Zhang, Yuhang Zang, Yuhang Cao, Conghui He, Jiaqi Wang, Feng Wu, and Dahua Lin. PyramidDrop: Accelerating your large vision-language models via pyramid visual redundancy reduction. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2025. URL https://arxiv.org/abs/2410.17247 .Jin Xu, Zhifang Guo, Jinzheng He, Hangrui Hu, Ting He, Shuai Bai, Keqin Chen, Jialin Wang, Yang Fan, Kai Dang, Bin Zhang, Xiong Wang, Yunfei Chu, and Junyang Lin. Qwen2.5-Omni technical report. arXiv preprint arXiv:2503.20215 , 2025. doi: 10.48550/arXiv.2503.20215. URL https://arxiv.org/abs/2503.20215 .Senqiao Yang, Yukang Chen, Zhuotao Tian, Chengyao Wang, Jingyao Li, Bei Yu, and Jiaya Jia. Vi-sionZip: Longer is better but not necessary in vision language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 19792–19802, 2025a. URL https://openaccess.thecvf.com/content/CVPR2025/html/Yang_VisionZip_Longer_is_ Better_but_Not_Necessary_in_Vision_Language_CVPR_2025_paper.html .Yudong Yang, Jimin Zhuang, Guangzhi Sun, Changli Tang, Yixuan Li, Peihan Li, Yifan Jiang, Wei Li, Zejun Ma, and Chao Zhang. Audio-centric video understanding benchmark without text shortcut. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 6569–6587. Association for Computational Linguistics, 2025b. doi: 10.18653/v1/2025.emnlp-main.333. URL https://aclanthology. org/2025.emnlp-main.333/ .Hanrong Ye, Chao-Han Huck Yang, Arushi Goel, Wei Huang, Ligeng Zhu, Yuanhang Su, Sean Lin, An-Chieh Cheng, Zhen Wan, Jinchuan Tian, et al. Omnivinci: Enhancing architecture and data for omni-modal understanding llm. arXiv preprint arXiv:2510.15870 , 2025a. Weihao Ye, Qiong Wu, Wenhao Lin, and Yiyi Zhou. Fit and prune: Fast and training-free visual token pruning for multi-modal large language models. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, pages 22128–22136, 2025b. doi: 10.1609/aaai.v39i21.34366. URL https: //ojs.aaai.org/index.php/AAAI/article/view/34366 .Kaichen Zhang, Bo Li, Peiyuan Zhang, Fanyi Pu, Joshua Adrian Cahyono, Kairui Hu, Shuai Liu, Yuanhan Zhang, Jingkang Yang, Chunyuan Li, and Ziwei Liu. LMMs-Eval: Reality check on the evaluation of large multimodal models, 2024. URL https://arxiv.org/abs/2407.12772 .Qizhe Zhang, Aosong Cheng, Ming Lu, Renrui Zhang, Zhiyong Zhuo, Jiajun Cao, Shaobo Guo, Qi She, and Shanghang Zhang. Beyond text-visual attention: Exploiting visual cues for effective token pruning in VLMs. In Proceedings of the IEEE/CVF International Conference on Computer Vision , pages 20857–20867, 2025a. Yuan Zhang, Chun-Kai Fan, Junpeng Ma, Wenzhao Zheng, Tao Huang, Kuan Cheng, Denis A. Gudovskiy, Tomoyuki Okuno, Yohei Nakata, Kurt Keutzer, and Shanghang Zhang. SparseVLM: Visual token sparsifica-tion for efficient vision-language model inference. In Proceedings of the 42nd International Conference on Machine Learning , volume 267 of Proceedings of Machine Learning Research , pages 74840–74857. PMLR, 2025b. URL https://proceedings.mlr.press/v267/zhang25s.html .
+
+11 Xu Zheng, Chenfei Liao, Yuqian Fu, Kaiyu Lei, Yuanhuiyi Lyu, Lutao Jiang, Bin Ren, Jialei Chen, Jiawen Wang, Chengxin Li, Linfeng Zhang, Danda Pani Paudel, Xuanjing Huang, Yu-Gang Jiang, Nicu Sebe, Dacheng Tao, Luc Van Gool, and Xuming Hu. MLLMs are deeply affected by modality bias, 2025. URL 
+
+https://arxiv.org/abs/2505.18657 .Ziwei Zhou, Rui Wang, Zuxuan Wu, and Yu-Gang Jiang. Daily-omni: Towards audio-visual reasoning with temporal alignment across modalities, 2025. 
+
+12 Appendix 
+
+This appendix provides the experimental protocol, implementation details, mechanism diagnostics, calibration and robustness sweeps, efficiency accounting, and the additional cross-backbone study that support the main-paper claims. The main paper now contains the primary benchmark table, headline efficiency table, measured latency/memory table, and component ablation table. The appendix therefore keeps only the extended evidence that is not needed for the main experimental narrative: Appendix A describes the evaluation and calibration setup, Appendix B gives the exact MACER procedure, Appendix C reports mechanism controls, Appendix D reports calibration and robustness sweeps, Appendix E reports cost accounting, Appendix F reports OmniVinci-9B transfer, and Appendix G retains additional diagnostic figures. Table 5 summarizes this appendix evidence map. Table 5: Mapping of main-paper claims to appendix sections. The appendix follows the main paper’s scale-specific M ACER settings. 
+
+Main-paper claim Appendix Extended content Experimental setup and re-producibility A Benchmark taxonomy, preprocessing, diagnostic setup, calibration split, token statistics MACER implementation B Exact algorithm, allocation-normalized scoring, ex-plicit capacity split, video coverage rule Shared ranking couples allo-cation and selection C Ratio decomposition, token-count term, Q-centroid diagnostic, packing and distance controls Audio allocation is query-robust and content-conditioned C Per-layer attention statistics, frame-count sanity check, visualized silence/noise/mismatched-audio controls Single-guide saliency does not directly control alloca-tion C ToMe/random invariance, allocation-vs-ranking stress test, and concise encoder-side guide analy-sis Audio/video readout is asym-metric D Centered readout sweeps, full 5×5 heatmaps, sensi-tivity ratios Explicit capacity split and video coverage D Retained-share α robustness, temporal concentra-tion, and matched DASH comparison; main Table 4 reports the component ablation Efficiency reporting E FLOPs-ratio estimates used for the efficiency tables; main Table 3 reports measured latency Cross-backbone support F OmniVinci-9B transfer under native packing and reused 7B readout 
+
+Table 6: Main evaluation-suite taxonomy. Grouping by modality demand helps interpret benchmark-dependent compression behavior, but is not used by M ACER during inference. 
+
+Benchmark Modality demand Temporal regime Role AVUTBench Audio-grounded Mixed Audio allocation sensitivity DailyOmni AV-joint Short clips Cross-modal grounding / event sequence WorldSense Visual-dominant, audio-augmented Mixed/longer Mixed-modality robustness Video-MME Video-centric Short/med/long Video-side anchor 
+
+# A Experimental Protocol and Reproducibility 
+
+A.1 Benchmarks and evaluation protocol 
+
+We group benchmarks by the modality structure of answer-relevant evidence rather than by dataset provenance. The grouping is used only to organize analysis; all M ACER configurations are fixed across benchmarks. 13 AVUTBench contains audio-grounded questions where the audio stream carries primary answer evidence and the video stream often supplies scene context. DailyOmni emphasizes audio–video event alignment, temporal ordering, and cross-modal grounding. WorldSense is mostly visually driven but includes non-trivial audio-augmented cases. Video-MME, evaluated in the no-subtitle setting, provides a video-centric anchor for testing whether an omnimodal compressor remains competitive when the primary evidence is visual. We evaluate Qwen2.5-Omni-7B and Qwen2.5-Omni-3B under fixed preprocessing and decoding settings for each benchmark. Text tokens are always preserved. Compression is applied only to multi-modal prefill tokens. Reported average scores are benchmark-normalized against the corresponding full-token model, so F ULL is 100% for each benchmark before averaging. 
+
+A.2 Model preprocessing and token statistics 
+
+We distinguish dataset-level frame caps from decoder-side token counts. Dataset preprocessing follows the benchmark protocols used in the main paper: Video-MME permits up to 768 raw frames and WorldSense up to 128 raw frames before model-side sampling. M ACER itself operates only on the audio and video tokens that enter the LLM after the model preprocessing pipeline. Unless a benchmark-specific protocol explicitly changes the model sampler, the default Qwen2.5-Omni video preprocessing uses 12 sampled frames, yielding nv = 864 decoder-side video tokens. Audio token counts vary with clip duration; under the default preprocessing the median audio token count is approximately na ≈ 1460 .This token-count imbalance is distinct from the retained capacity split. A setting such as α = 0 .30 
+
+intentionally allocates fewer retained tokens to audio than its raw token share, counterbalancing the audio-favoring allocation prior observed in the shared attention space. All keep ratios and retained budgets are computed from decoder-side multimodal token counts, not from raw frame caps. 
+
+A.3 Mechanism diagnostic setup 
+
+The mechanism analyses use Qwen2.5-Omni-7B on paired audio–video examples. For paired video-essential (VE) and audio-essential (AE) diagnostics, each clip is associated with a VE query and an AE query when available. Attention statistics are computed from question-text tokens after prompt templating, excluding system tokens, BOS tokens, and the answer prefix. Unless otherwise stated, attention is averaged over heads within each layer before computing modality-level summaries. For the main mechanism study, we use N = 500 paired examples. The layer-cell diagnostic in Appendix C.4 and the null-content controls in Appendix C.6 use a smaller paired subset of N = 30 
+
+clips because those controls require paired interventions over original, silence, white-noise, and mismatched-audio variants. Readout-layer sweeps evaluate downstream accuracy under the same compression budget while varying audio and video probe layers. 
+
+A.4 Fixed default selection 
+
+MACER uses fixed backbone-level defaults rather than benchmark-specific or query-specific hy-perparameters. We use a held-out development split of approximately 100 clips, disjoint from all reported evaluation sets and balanced across the modality-demand categories in Table 6, to finalize the backbone-level operating point. Once selected, the configuration is frozen across all reported benchmarks, query types, and keep ratios within that model scale. No model weights are updated. Table 7 reports the scale-specific defaults used in the main paper. The readout layers follow the shallow-readout diagnostics: audio is read from an early stable layer and video from a later shallow layer. Qwen2.5-Omni-7B uses (ℓa, ℓ v ) = (3 , 5) , while Qwen2.5-Omni-3B uses (ℓa, ℓ v ) = (4 , 7) .These settings are frozen within scale; no benchmark-specific or query-specific tuning is used for the reported results. The retained audio share α is treated as a fixed retained-capacity setting, not a raw audio-token share and not a per-example allocation policy. We use α = 0 .30 for 7B and α = 0 .32 for 3B. These values instantiate the same design rule—make the audio–video capacity split explicit rather than letting shared attention determine it implicitly—but we do not assume that one numerical value transfers unchanged across model scales. For video coverage, we use C = 8 coarse temporal chunks and 14 scale-specific coverage strengths λc = 0 .20 for 7B and λc = 0 .30 for 3B. All quantities in Table 7 are fixed before the reported benchmark runs. Appendix D.4 further audits the 7B retained-audio share and shows that the frozen α = 0 .30 setting lies in a stable operating band rather than requiring benchmark-specific allocation tuning. Table 7: Scale-specific M ACER defaults used after held-out calibration. The settings follow the main paper: they are frozen within each model scale, but not shared across 7B and 3B. 
+
+Quantity Qwen2.5-Omni-7B Qwen2.5-Omni-3B Audio readout / pruning after ℓa 3 4Video readout / pruning after ℓv 5 7FLOPs proxy depth Lp = max( ℓa, ℓ v ) 5 7Retained audio share α 0.30 0.32 Video chunks C 8 8Coverage strength λc 0.20 0.30 Text-token handling Always preserved Model weights Frozen Forward passes Single prefill pass; cached readout rows 
+
+A.5 Metrics and statistical tests 
+
+Main benchmark tables report raw benchmark accuracy and the normalized cross-benchmark average. For each benchmark, normalized accuracy is computed relative to the full-token model under the same model scale and evaluation protocol: 
+
+NormAvg( m) = 100 
+
+|B| 
+
+X
+
+> b∈B
+
+Acc m,b 
+
+Acc Full ,b 
+
+. (9) Table 8 summarizes the resulting single-forward-pass M ACER procedure. Table 8: M ACER algorithm. The procedure separates cross-modal capacity coordination from within-modality token selection. The readout layers, retained audio share, and coverage strength are scale-specific values from Table 7. 
+
+1 Set the total multimodal budget Kmm = min {na +nv , ⌊ρ(na +nv )+0 .5⌋} and allocate audio/video budgets (Ka, K v ) using the calibrated retained audio share α.2 Run the decoder through layer ℓa on the full multimodal prefill and cache query-span attention rows for audio. 3 Compute allocation-normalized audio scores s(a) using Eq. (10); select audio tokens by modality-local top-K, Sa = top Ka {s(a) 
+
+> i
+
+: i ∈ Ia}, and prune unretained audio tokens. 4 Continue the same forward pass with all text tokens, retained audio tokens, and full video tokens until layer ℓv ; cache query-span attention rows for video. 5 Compute allocation-normalized video scores s(v), partition video tokens into C coarse chunks, and initialize S(0)  
+
+> v
+
+= ∅ with chunk counts n(0)  
+
+> c
+
+= 0 .6 Run the score-aware chunk-coverage greedy rule in Eq. (14) for Kv steps to obtain Sv . Setting 
+
+λc = 0 recovers pure video top-K.7 Continue the remaining decoder blocks on text tokens plus Sa ∪ Sv in the original sequence order. 
+
+Mechanism intervention tests use paired sign tests unless otherwise stated. For null-content controls, the paired unit is the clip, and the tested quantity is the direction of the shift in mid-layer log( v/a )
+
+relative to the original-audio condition. Main accuracy tables are deterministic evaluations under fixed preprocessing, fixed model weights, fixed decoding, and fixed hyperparameters. We do not attach error bars to all benchmark cells unless repeated full evaluations or paired per-example prediction files are available. For stochastic baselines such as random token dropping, the random seed is fixed when computing the reported table cells. Code and calibrated configurations will be released upon publication. 15 B MACER Implementation Details 
+
+B.1 Allocation-normalized modality scoring 
+
+Raw shared attention is not a neutral token-importance score because it contains both a modality-level allocation factor and a within-modality selection signal. Allocation-Normalized Modality Scoring (ANMS) removes the modality-level attention mass before ranking tokens within each modality. For modality m ∈ { a, v }, M ACER normalizes each query-to-token attention row within the target modality before averaging across query tokens and heads: 
+
+eA(ℓ)
+
+> m,h
+
+(q, i ) = A(ℓ) 
+
+> h
+
+(q, i )
+
+P 
+
+> j∈Im
+
+A(ℓ) 
+
+> h
+
+(q, j ) + ε , s(m) 
+
+> i
+
+= 1
+
+|Q|H
+
+X
+
+> q∈QH
+
+X
+
+> h=1
+
+eA(ℓm) 
+
+> m,h
+
+(q, i ). (10) Audio scores are normalized only over Ia, and video scores only over Iv . The two ranked lists are never pooled into a shared audio–video top-K. ANMS decides which audio tokens compete with other audio tokens and which video tokens compete with other video tokens; it does not decide how much capacity each modality receives. We compute the normalization denominator in fp32 with a small positive ε for numerical stability. 
+
+B.2 Capacity-coordinated split 
+
+Given keep ratio ρ, the multimodal budget is 
+
+Kmm = min {na + nv , ⌊ρ(na + nv ) + 0 .5⌋} . (11) Given retained audio share α, we set 
+
+¯Ka = ⌊αK mm + 0 .5⌋, ¯Kv = Kmm − ¯Ka, (12) and reassign unused capacity if one modality has fewer available tokens than its nominal budget: 
+
+Ka = min {na, ¯Ka + max(0 , ¯Kv − nv )}, Kv = Kmm − Ka. (13) Here α is a retained-capacity share, not a raw token-count share. This prevents the audio–video budget from being implicitly determined by raw shared-attention magnitude or by a one-way guide from another modality. 
+
+B.3 Video score-aware chunk-coverage greedy 
+
+The video coverage rule is applied only after the video budget Kv has been assigned by the capacity split. It does not change the cross-modal capacity split and does not use audio evidence. Its role is limited to reducing over-concentration in video token selection while keeping the selection score-aware. We divide video tokens into C coarse temporal chunks, using the model’s native temporal grouping when available and equal-size token bins otherwise. Let c(j) ∈ { 1, . . . , C } denote the chunk index of video token j. Given the assigned video budget Kv , initialize S(0)  
+
+> v
+
+= ∅ and n(0)  
+
+> c
+
+= 0 for all chunks. At greedy step r = 1 , . . . , K v , select 
+
+jr = arg max  
+
+> j∈Iv\S(r−1)
+> v
+
+s(v) 
+
+> j
+
++
+
+vuut λc
+
+1 + n(r−1) 
+
+> c(j)
+
+ , (14) then update 
+
+S(r) 
+
+> v
+
+= S(r−1)  
+
+> v
+
+∪ { jr }, n(r)  
+
+> c(jr)
+
+= n(r−1)   
+
+> c(jr)
+
++ 1 , (15) with all other chunk counts unchanged. The final retained video set is Sv = S(Kv ) 
+
+> v
+
+. The first term in Eq. (14) preserves query-conditioned video saliency. The second term gives under-covered chunks a diminishing bonus: an empty chunk receives bonus √λc, and after n retained tokens from the same chunk the bonus becomes pλc/(1 + n). Large score gaps are still decided by s(v) 
+
+> j
+
+; the coverage term mainly biases near-ties toward chunks with fewer retained tokens. 16 B.4 Text-token preservation and single-forward-pass staged pruning 
+
+Text tokens are always preserved. MACER applies pruning in two modality-specific stages within a single forward prefill. After layer ℓa, audio scores s(a) are computed and only the selected audio tokens Sa are kept; all text tokens and all video tokens remain active. After layer ℓv , video scores 
+
+s(v) are computed on the current sequence, the video budget Kv is applied with the video-local coverage rule, and only the selected video tokens Sv are kept. After the second pruning stage, the active sequence contains all text tokens plus Sa ∪ Sv in the original relative order. Consequently, the 7B configuration prunes audio after L3 and video after L5, while the 3B con-figuration prunes audio after L4 and video after L7. This is a single-forward-pass implementation with staged pruning, not a single-shot pruning step after Lp = max( ℓa, ℓ v ). In practice, the score in Eq. (10) is averaged over the last K = 4 tokens of the question span Q rather than the full Q. This restriction is applied identically to both the audio readout at ℓa and the video readout at ℓv .
+
+# C Mechanism Diagnostics 
+
+C.1 Allocation–selection decomposition and token-count control 
+
+For a query token q, decompose each modality-m key as 
+
+k(m) 
+
+> i
+
+= cm + ϵ(m) 
+
+> i
+
+, (16) where cm is the per-clip modality centroid and ϵ(m) 
+
+> i
+
+is the within-modality residual. The usual attention scaling factor is absorbed into q. For audio–video comparison, the shared softmax normalizer cancels: 
+
+log mass a(q)mass v (q) = q⊤(ca − cv ) + 
+
+log X
+
+> i∈a
+
+exp( q⊤ϵ(a) 
+
+> i
+
+) − log X
+
+> j∈v
+
+exp( q⊤ϵ(v) 
+
+> j
+
+)
+
+ . (17) The first term is the cross-modal allocation term; the bracketed term is the difference between within-modality residual aggregation terms. The bracketed term is not a pure token-relevance term because it also contains token-count and residual-concentration effects. The main point is that raw shared attention necessarily mixes a cross-modal mass term with modality-local variation, while a shared top-K rule uses the mixed quantity for token retention. The residual aggregation term contains a token-count component: 
+
+log X
+
+> i∈m
+
+exp( q⊤ϵ(m) 
+
+> i
+
+) = log nm + log 1
+
+nm
+
+X
+
+> i∈m
+
+exp( q⊤ϵ(m) 
+
+> i
+
+)
+
+!
+
+. (18) This separates token count from residual concentration. Under the default 12-frame setting, video contributes nv = 864 tokens, while audio has median na ≈ 1460 . Therefore, the audio-favoring attention pattern is not a consequence of video having more raw tokens. Conversely, M ACER ’s retained capacity split deliberately under-samples audio relative to its raw token share to preserve sufficient video evidence under aggressive pruning. 
+
+C.2 Q-centroid mechanism 
+
+Equation (17) identifies q⊤(ca − cv ) as the cross-modal allocation term. We therefore test whether the observed audio prior is mainly driven by query-side alignment with the modality centroids, rather than by key-side geometry alone or by within-audio coherence. Figure 5 reports three complementary diagnostics: interventions on the query direction, layer-wise query-centroid alignment, and the persistence of the same bias at the terminal decode position. 17 Figure 5: Q-centroid mechanism behind the audio prior. (a) Query-side interventions show that audio mass is strongly controlled by alignment between the query direction and the modality centroids; key-side geometry and within-audio coherence controls alone do not explain the prior. (b) Across layers, the query representation is directionally closer to the audio centroid than to the video centroid. (c) The same Q-side audio bias is visible at the decode terminal position, indicating that the allocation tendency is not limited to the averaged query-token span. This diagnostic is consistent with the decomposition: the observed behavior is not merely that audio keys are numerous or locally coherent, but that the shared decoder places query directions in an audio-favoring centroid geometry. This is why raw shared attention can remain a useful content-responsive signal while still being a poor cross-modal capacity allocator. 
+
+C.3 Packing structure and distance-matched controls 
+
+To rule out a simple prefix-sink explanation, we inspect the input packing order. The observed structure is              
+
+> [system/user/template] → ⟨ vision_bos ⟩ ⟨ audio_bos ⟩ → V288 →A50 →V288 →A50 →
+> V288 →Arest →[query]
+
+Audio is interleaved with video blocks rather than placed as a pure prefix. The largest audio block appears close to the query, motivating the distance-matched control below. We control for token distance to the query using quantile-binned non-parametric analysis. Table 9 reports the equal-distance audio–video ratio at selected layers. Early layers show that distance explains a large part of the apparent audio advantage; mid-to-late layers retain an audio-favoring residual even after distance matching. Table 9: Distance-matched analysis. At early layers, matching token distance largely removes the audio advantage. Starting in the mid stack, a residual audio advantage persists after controlling for distance, indicating that the effect is not only a recency artifact.                  
+
+> Layer Equal-distance log( v/a )v/a ratio Interpretation L7 −0.012 0.988 Positional bias dominates L10 +0 .007 1.007 Equal-distance parity L14 −0.725 0.484 Audio residual emerges L19 −0.886 0.412 Audio residual remains stable
+
+Distance matching and null-content ablation probe different confounds: distance matching controls token position while keeping original content, whereas mismatched-audio control disrupts semantic audio–video coupling while keeping a real audio stream. At L14, the two estimates are numerically close: distance-matched analysis gives log( v/a ) = −0.725 , while the mismatched-audio control gives log( v/a ) = −0.746 . The close agreement between the distance-matched and mismatched-audio estimates supports the same qualitative conclusion: the mid-layer residual is not explained by either position or semantic alignment alone. We also fit log-linear regressions 
+
+log( attention ) = β log( distance ) + ϵ
+
+18 per layer. The R2 values range from 0.000 to 0.036, indicating that attention–distance relationships are not well described by a simple power law. The quantile-binned non-parametric analysis above is used for this reason and does not rely on the regression model being well specified. 
+
+C.4 Per-layer attention statistics 
+
+Table 10 reports per-token attention statistics across all 28 decoder layers on the paired-query diagnostic subset (30 clips × 2 query types × 28 layers, head-aggregated, 1680 cells total). Table 10: Per-layer audio–video attention statistics on selected layers. Video wins the per-token attention comparison in only 8.8% of layer–clip–query cells pooled across query types and layers.                                
+
+> Layer log( v/a )median v > a rate Interpretation L0 −3.02 0/60 Strong early positional bias L3 −2.14 0/60 Strong early positional bias L7 −0.73 10/60 Positional effect decaying L9 −0.31 13/60 Weakest audio bias L10 −0.42 12/60 Transition boundary L14 −0.89 7/60 Audio residual emerging L19 −1.03 9/60 Audio residual established L27 −0.96 9/60 Final layer Pooled −0.96 148/1680 (8.8%)
+
+Under video-essential queries, video wins in 12.1% of cells (102/840). Under audio-essential queries, video wins in 5.5% of cells (46/840). The query shifts the ratio systematically in the predicted direction, but does not reliably remove the baseline preference for audio. This supports the main-paper phrasing “query-robust” rather than the stronger and less precise “query-invariant.” 
+
+C.5 Frame-count diagnostic 
+
+To check whether the 12-frame default creates the audio advantage, we vary the video frame count on three paired clips. Table 11 shows that the v/a per-token ratio monotonically decreases with more video tokens in this small diagnostic, suggesting that the 12-frame default is not unusually unfavorable to video in this diagnostic. Table 11: Frame-count diagnostic. The v/a ratio decreases monotonically as frame count increases on the three tested paired clips, indicating that the 12-frame default is not obviously unfavorable to video among the tested settings. Higher frame counts were OOM on our hardware.                  
+
+> Frames nvv/a ratio Monotonic pairs Sign flips 12 864 0.215 ––16 1152 0.200 3/3 vs. 12 020 1440 0.179 3/3 vs. 16 0
+
+C.6 Null-content controls 
+
+We replace original audio with silence, scale-matched white noise, or mismatched real audio. Silence and white noise nearly remove the audio advantage, while mismatched audio produces an intermediate shift. This graded response shows that audio attention is not an input-independent sink: the shared attention space is responsive to audio content. Content responsiveness, however, does not make raw attention magnitude a calibrated capacity signal under compression. Table 12 reports the corresponding shifts in mid-layer log( v/a ) relative to the original-audio condition, and Figure 6 visualizes the same null-content and distance-matched controls. 19 Table 12: Shift in mid-layer log( v/a ) relative to original audio across 30 paired clips. Silence and white noise produce large positive shifts, while mismatched audio produces a smaller but still positive shift.                 
+
+> Condition Mean shift Median shift Min Max Silence +1 .83 +1 .80 +1 .17 +2 .81
+> White noise +1 .60 +1 .55 +0 .81 +2 .49
+> Mismatched +0 .52 +0 .48 −0.04 +1 .66
+
+Figure 6: Null-content and distance-matched controls for the audio prior. (a) Replacing original audio with mismatched real audio, scale-matched white noise, or silence shifts log( v/a ) toward video; the prior therefore responds to audio content rather than behaving as an input-independent sink. (b) Equal-distance matching removes much of the early positional effect, but a mid-layer audio-favoring residual remains. (c) At L14, the mismatched-audio and distance-matched controls give nearly the same residual estimate, supporting the conclusion that neither recency nor semantic audio–video alignment alone explains the mid-layer effect. Sign tests against the null hypothesis of zero shift give silence (30/30 pairs, p = 9 .3 × 10 −10 ), white noise (30/30, p = 9 .3 × 10 −10 ), and mismatched audio (29/30, p = 2 .9 × 10 −8). These tests support the direction of the shift, and the tabled means and medians summarize the paired intervention subset. The original-to-mismatched shift (+0.52) reflects loss of semantic video–audio alignment while preserving acoustic structure. The mismatched-to-white-noise shift (+1.08) reflects destruction of semantic audio content. The white-noise-to-silence shift (+0.23) reflects the residual contribution of acoustic energy versus complete absence. The graded collapse supports a content-conditioned interpretation rather than a pure structural-sink explanation. One pair, clip c030, shows mismatched minus original = −0.04 . We retain it for transparency; the sign-test conclusion is unchanged. We verify that null-content audio streams produce valid encoder outputs: token counts are unchanged across conditions, output norms remain within a normal range, and no NaNs or extreme values occur. The intervention therefore changes audio content rather than breaking the input pipeline. 
+
+C.7 Video-side compression and cross-modal balance 
+
+The main paper uses within-video merging and dropping as the empirical instance of the broader claim that single-modality saliency does not explicitly control cross-modal allocation. This diagnostic isolates video-side token selection from retained video capacity. For each keep ratio, we compare ToMe-style bipartite cosine merging on video tokens against random video dropping. Both methods operate inside the video modality only and use the same retained video budget. After compression, we measure the resulting audio-to-video attention mass ratio in the downstream LLM layers. Figure 7 shows the matched-budget comparison between ToMe-style merging and random video dropping. 20 1.00 0.75 0.50 0.25       
+
+> video keep-ratio ρ
+> 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+> audio share  ra = ma/( ma + mv)
+> (a)
+> ToMe (solid) vs random drop (dashed)
+> natural audio mismatched audio white noise silence 0.75 0.5 0.25
+> video keep-ratio ρ
+> −2 −1 012
+> Δra = rToMe
+> a − rrand
+> a (pp)
+> (b)
+> paired gap (band: ±2 pp)
+
+Figure 7: Within-video selector invariance at matched video budgets. ToMe-style merging and random video dropping are compared at the same retained video ratios across natural-audio and null-content variants. (a) The audio share trajectories nearly overlap for ToMe and random dropping. (b) Paired differences remain within a narrow band, showing that the dominant cross-modal effect is retained video capacity rather than the local video selector used inside a fixed budget. This diagnostic isolates whether a content-aware within-video selector changes cross-modal mass more than a content-blind selector when the retained video budget is fixed. Similar trajectories indicate that the dominant cross-modal effect is retained video capacity rather than local video-token identity. The claim is not that within-video selection is irrelevant to accuracy, but that it is not an explicit lever for audio–video allocation. Compressing video can increase audio’s relative mass share under the shared normalizer. This effect does not mean the query has become more audio-relevant. Rather, the retained evidence composition has changed while the shared softmax still allocates probability mass over the remaining token set. This motivates explicit capacity allocation: M ACER decides how many audio and video tokens are retained before applying within-modality ranking. 
+
+C.8 Allocation removal and within-video ranking preservation 
+
+We further separate cross-modal allocation from within-video ranking by masking audio at the query while measuring both video mass and video-token ranking stability. If the audio prior were simply preventing the model from finding video tokens, removing audio should substantially increase video mass and change the video top-K. Figure 8 shows a different pattern. This stress test is diagnostic rather than a proposed compression method. It shows that preserving or improving the ranking of video tokens is not enough when the retained video budget itself is underspecified. A compressor must therefore decide how many slots video receives before asking which video tokens should fill those slots. 
+
+C.9 Saliency replacement alone does not control global Top-K allocation 
+
+Encoder-side guide methods use one modality, or a structure derived from one modality, to decide retention in another modality or in shared temporal chunks. This design can improve local token choice when the guide modality is well aligned with answer evidence, but the guide remains a proxy for local salience rather than a direct control over decoder-side audio–video capacity. By Eq. (17), audio–video attention mass contains an allocation component q⊤(ca − cv ) in addition to within-modality residual structure. Changing the guide direction changes which modality supplies the proxy; it does not, by itself, create a controlled allocation variable. M ACER therefore delays compression until shallow query-conditioned decoder evidence is available, assigns audio and video capacity explicitly, and then performs token ranking only within each modality. 21 Figure 8: Allocation changes while within-video ranking largely survives. (a) Masking audio at the query produces only a small increase in video attention mass. (b) Most freed audio mass flows to text rather than to video, indicating that removing the audio prior does not automatically restore video capacity. (c) Within-video top-K rankings remain highly stable under the audio mask. The diagnostic supports the separation used by M ACER : cross-modal capacity allocation and within-modality ranking are distinct decisions. 
+
+# D Calibration and Ablations 
+
+D.1 Readout-layer sweep 
+
+This section reports the probe-layer analysis behind M ACER ’s asymmetric readout choice. The centered sweep and heatmaps below are mechanism diagnostics for the shallow readout behavior emphasized in the main paper. They support the 7B default (ℓa, ℓ v ) = (3 , 5) , while the 3B setting is calibrated separately and reported in Table 7. For modality m ∈ { a, v }, define the layer-induced accuracy range 
+
+∆m = max  
+
+> ℓm∈{ 1,..., 5}
+
+Acc( ℓm) − min  
+
+> ℓm∈{ 1,..., 5}
+
+Acc( ℓm), (19) where the other modality’s probe layer is fixed to M ACER ’s 7B default. The ratio ∆v /∆a measures whether video or audio readout is more sensitive to probe-layer choice. The key conclusion is asymmetric sensitivity, not a sharp audio optimum. Video readout changes downstream accuracy substantially as the probe layer moves, whereas audio readout is comparatively flat across the shallow stack. M ACER therefore uses an early stable audio probe and a later video probe, with exact layer choices calibrated per model scale. Figure 9 summarizes the centered readout sweep used to diagnose audio–video readout asymmetry. 
+
+Figure 9: Readout-layer asymmetry between audio and video. We sweep the probe layer of one modality while fixing the other modality to M ACER ’s 7B default readout layer, and report task-centered accuracy ( Acc − mean ℓAcc ) in percentage points. (a) The sensitivity ratio ∆v /∆a is above one in most benchmark–retention settings, showing that video readout is more layer-sensitive than audio readout. (b) Sweeping the video probe layer yields a consistent preference for later shallow layers, especially L4–L5. (c) Sweeping the audio probe layer produces small and inconsistent fluctuations around zero. These results motivate M ACER ’s asymmetric readout: an early stable audio probe and a later video probe. 22 D.2 Full 5x5 readout heatmaps 
+
+Figure 10 expands the centered readout sweep to all 5 × 5 audio–video probe-layer pairs under the calibrated 7B capacity split. 
+
+Figure 10: Full 5 × 5 audio-video probe-layer sweep at the 7B calibrated retained-audio share 
+
+α = 0 .30 and representative keep ratio ρ = 0 .25 . Rows vary the audio probe layer and columns vary the video probe layer under the same compression budget. Heatmaps use task-local color scales; numbers are raw scores. The fixed-share setting aligns the supplementary heatmap with the main-paper M ACER configuration and supports the same asymmetry: video readout is more layer-sensitive than audio readout in most tasks. 
+
+D.3 Asymmetry ratio across retention regimes 
+
+Video sensitivity is strongest at the representative operating point ρ = 0 .25 . At the more aggressive 
+
+ρ = 0 .10 , the asymmetry weakens and can reverse on AVUTBench. M ACER ’s default readout remains fixed across benchmarks and keep ratios within each model scale; the reversal mainly explains why extremely tight retention is less stable. The video-side sweep is consistent with the mechanism analysis: video tokens become more useful for within-modality ranking in the L4–L5 band, whereas earlier layers are more allocation-dominated. The audio-side sweep does not show a sharp global optimum; it shows that shallow audio readout is broadly stable. Table 13 reports the corresponding sensitivity ratios across retention regimes. Table 13: Readout sensitivity ratio under two retention regimes. ∆m is the accuracy range induced by sweeping modality m’s probe layer. Video readout is more sensitive than audio readout in most settings, especially at ρ = 0 .25 . At ρ = 0 .10 , the asymmetry weakens and reverses on AVUTBench, indicating that extremely tight budgets can change the relative importance of probe-layer choice.                   
+
+> Benchmark ∆v/∆aat ρ= 0 .25 ∆v/∆aat ρ= 0 .10
+> AVUTBench 8.91 ×0.76 ×
+> DailyOmni 1.40 ×2.40 ×
+> Video-MME 12 .50 ×4.29 ×
+> WorldSense 27 .00 ×9.00 ×
+
+D.4 Retained-audio share robustness 
+
+Table 14 reports a held-out robustness audit of the retained-audio share at the representative aggressive setting ρ = 0 .25 . The sweep uses the full M ACER procedure with the 7B readout and coverage defaults, (ℓa, ℓ v ) = (3 , 5) and λc = 0 .20 , and varies only α. This audit is used to check whether the fixed retained-audio share is brittle; it is not used to select benchmark-specific or query-specific hyperparameters. The deployed 7B setting α = 0 .30 achieves the best normalized average among fixed settings. The neighboring setting α = 0 .40 is only 0.11 normalized points lower, and a diagnostic oracle that selects 
+
+α separately for each benchmark is only 0.92 points higher. This supports interpreting α = 0 .30 as a stable operating-band choice rather than a fragile benchmark-specific setting. 23 At the default 12-frame setting, audio contributes more raw tokens than video (median na ≈ 1460 ,
+
+nv = 864 ). Thus α = 0 .30 is not a token-count-matching choice. It deliberately retains fewer audio tokens than audio’s raw share, counterbalancing the audio-favoring allocation prior while preserving enough audio capacity for audio-grounded and audio–video joint tasks. Table 14: Robustness of the retained-audio share α on Qwen2.5-Omni-7B. We sweep α at 
+
+ρ = 25% with full M ACER , (ℓa, ℓ v ) = (3 , 5) , and λc = 0 .20 on a 200-example held-out robustness split spanning all four benchmark families. Norm. Avg. is computed by normalizing each row to the Full tokens row on the same split and then averaging across the four benchmark families. The deployed setting α = 0 .30 achieves the best normalized average among fixed settings; the neighboring setting α = 0 .40 is only 0.11 points lower, and a diagnostic benchmark-level oracle improves by only 0.92 points. Thus coarse task- or benchmark-conditioned allocation has limited headroom over the frozen deployment setting, supporting the interpretation of α as a stable operating-band choice rather than a brittle benchmark-specific hyperparameter.                                                 
+
+> Setting AVUT DailyOmni WorldSense Video-MME Norm. Avg. Full tokens 65.83 69.50 44.00 77.00 100.00
+> α= 0 .10 63.32 65.00 44.50 74.00 96.74
+> α= 0 .20 64.82 67.00 44.00 74.50 97.91
+> α= 0 .30 (frozen) 66.50 68.50 43.50 74.50 98.80
+> α= 0 .40 67.00 68.00 43.00 75.00 98.69
+> α= 0 .50 64.00 66.50 42.50 74.00 96.40 Oracle per-benchmark α(diagnostic) 67.00 68.50 44.50 75.00 99.72
+
+D.5 Coverage concentration and ablation 
+
+We bin retained tokens into native 2-second temporal blocks and measure temporal concentration with the Gini coefficient. Lower Gini indicates more uniform timeline coverage. Table 15 reports the temporal concentration diagnostic that motivates the video-local coverage term. The no-coverage ablation sets λc = 0 , which recovers pure video top-K under the same video budget Kv , the same modality-local video scores s(v), and the same tie-breaking rule. Audio selection is unchanged and remains modality-local top-K. Thus the ablation isolates the video-side chunk-coverage term from the core allocation–selection separation. Table 15: Temporal concentration of retained tokens under score-only selection. Video selection is more temporally concentrated than audio selection, motivating a video-specific score-aware chunk-coverage greedy rule.        
+
+> Retention Audio Gini Video Gini Interpretation
+> ρ= 0 .25 0.06 0.33 Video is substantially more concentrated
+
+Main Table 4 reports the full component ablation. We keep the temporal-concentration diagnostic here to explain why the coverage term is included, but we do not duplicate the ablation table in the appendix. 
+
+D.6 Matched-retention comparison with DASH 
+
+Table 16 provides a matched-retention comparison with the concurrent DASH compressor. The comparison is included as an appendix baseline check because it covers a subset of the full main-table grid. M ACER improves over DASH on five of six reported cells and is effectively tied on WorldSense at 25% retention. 24 Table 16: Comparison with DASH [Li and Huang, 2026] under matched retention. M ACER improves over DASH on five of six cells and is effectively tied on WorldSense at 25% retention.                             
+
+> Benchmark Retain DASH MACER ∆
+> AVUTBench 25% 60.90 63.67 +2.77 AVUTBench 35% 61.50 64.63 +3.13 WorldSense 25% 44.90 44.80 -0.10 DailyOmni 25% 59.32 62.07 +2.75 DailyOmni 35% 60.65 62.32 +1.67 DailyOmni 45% 61.49 63.32 +1.83
+
+# E Inference Cost Reporting 
+
+MACER prunes after shallow decoder-side readouts. For a conservative estimate, we charge full multimodal computation through the later modality readout layer, and charge the remaining decoder layers at the retained multimodal sequence length. This convention does not claim additional credit for the earlier audio-pruning stage. 
+
+E.1 Token-layer cost proxy 
+
+Ignoring text tokens and constant factors, the normalized multimodal token-layer cost is 
+
+(na + nv )Lp + Kmm (L − Lp)(na + nv )L ≈ Lp + ρ(L − Lp)
+
+L . (20) Table 17 reports the resulting proxy values for the scale-specific pruning depths used in the main paper. Table 17: Approximate multimodal token-layer cost under scale-specific pruning depths. These values are a cost proxy rather than wall-clock latency.                  
+
+> Keep ratio ρ7B: L= 28 , L p= 5 3B: L= 36 , L p= 7
+> 0.10 26.1% 27.5% 0.25 38.4% 39.6% 0.35 46.6% 47.6% 0.45 54.8% 55.7%
+
+E.2 FLOPs ratios used in the main tables 
+
+The main comparison table uses attention-corrected FLOPs accounting matched to the baseline reporting protocol. Let η denote the attention share of the decoder computation. Input-prune methods use 
+
+ρ(1 − η(1 − ρ)) , (21) while probe-prune methods with a shallow full-context readout proxy use 
+
+Lp + ( L − Lp)ρ(1 − η(1 − ρ)) 
+
+L . (22) For M ACER , we set Lp = max( ℓa, ℓ v ) when reporting estimated FLOPs. This is a conservative accounting proxy for the staged implementation because it charges all multimodal tokens until the later video readout rather than crediting the earlier audio-pruning stage. For Qwen2.5-Omni-7B we use L = 28 , Lp = 5 , and η = 0 .235 . For Qwen2.5-Omni-3B we use L = 36 , Lp = 7 , and η = 0 .36 ,matching the scale-specific readout settings in Table 7. Table 18 gives the corresponding M ACER 
+
+FLOPs ratios. 25 Table 18: Attention-corrected M ACER FLOPs ratios computed from Eq. (22). The values are matched to the revised main-table FLOPs accounting. 
+
+Keep ratio ρ 7B M ACER FLOPs ratio 3B M ACER FLOPs ratio 0.45 50.1% 48.5% 0.35 42.2% 41.0% 0.25 34.8% 34.1% 
+
+E.3 Measured latency table moved to the main paper 
+
+Main Table 3 reports the WorldSense latency and memory measurement. We keep the FLOPs accounting in this appendix because it defines the architecture-level cost estimate, but the measured wall-clock evidence now appears in the main paper so reviewers can inspect it without consulting the appendix. 
+
+# F Cross-Backbone Transfer Study 
+
+Additional backbone: OmniVinci-9B. To test whether M ACER ’s allocation–selection design is specific to Qwen2.5-Omni, we further evaluate it on OmniVinci-9B [Ye et al., 2025a], an NVLabs omnimodal backbone. We keep the shallow readout and one-shot pruning schedule identical to the Qwen2.5-Omni-7B M ACER configuration: audio scores are read at L3, video scores at L5. Thus, the transfer study changes the backbone and sweeps only the retained-audio share α, while keeping the video coverage strength fixed at λc = 0 .20 . Table 19 reports the OmniVinci-9B transfer results. Table 19: Cross-backbone transfer to OmniVinci-9B with explicit capacity split. DailyOmni and WorldSense use the corresponding full-token reference runs for normalization. Cons. Norm. Avg. normalizes each benchmark score to the corresponding full-token result and averages across AVUT, DailyOmni, and WorldSense. M ACER -A ( α = 0 .20 ) yields consistent gains across all three retention levels, while M ACER -B ( α = 0 .40 ) is strongest in the moderate-retention regime ( ρ ∈ { 35% , 45% }), with mean +7 .50 pp over shared top-K. Superscripts mark the full-token reference runs used for normalization.                                                                                                                                                 
+
+> Method αλcρAVUT DailyOmni WorldSense Cons. Norm. Avg. ∆vs. Shared Full tokens ––100% 64.36 †66.50 ‡48.23 ‡100.00 –Shared top-K––25% 55.78 53.75 41.34 84.40 –MACER -A 0.20 0.20 25% 55.78 48.75 45.93 85.07 +0 .67
+> MACER -B 0.40 0.20 25% 50.06 48.75 43.64 80.52 −3.88
+> Shared top-K––35% 51.49 53.75 41.34 82.18 –MACER -A 0.20 0.20 35% 57.21 47.50 42.49 82.80 +0 .62
+> MACER -B 0.40 0.20 35% 55.78 48.75 44.79 84.28 +2 .10
+> Shared top-K––45% 52.92 52.50 40.19 81.50 –MACER -A 0.20 0.20 45% 60.07 46.25 43.64 84.45 +2 .95
+> MACER -B 0.40 0.20 45% 62.93 60.00 45.93 94.41 +12 .91
+> Mean across ρ∈ { 25% ,35% ,45% }
+> Shared top-K––mean –––82.69 –MACER -A 0.20 0.20 mean –––84.11 +1 .41
+> MACER -B 0.40 0.20 mean –––86.40 +3 .71
+> Mean across moderate retention, ρ∈ { 35% ,45% }
+> Shared top-K––mean –––81.84 –MACER -A 0.20 0.20 mean –––83.63 +1 .79
+> MACER -B 0.40 0.20 mean –––89.35 +7 .50
+
+The OmniVinci-9B study further strengthens our central claim. Under OmniVinci’s native input packing, MACER again improves over shared-ranking compression on a second shared-decoder 26 omnimodal backbone. This result provides evidence against two narrow explanations of our main findings: the gains are not merely a Qwen2.5-Omni artifact, and they do not rely on imposing a modified non-interleaved token layout. Instead, they show that explicitly exposing the audio/video capacity split can yield measurable gains even when the backbone uses a different omnimodal packing strategy. We keep this study in the appendix because it covers three benchmark families rather than the full four-benchmark main suite, but its role is important: it provides cross-backbone evidence that omnimodal compression benefits from separating capacity allocation from within-modality token selection. 
+
+# G Additional Visualizations 
+
+G.1 PCA extended layers 
+
+Figure 11 shows PCA of the query-key interaction space at additional layers beyond the main-paper teaser. The transition from sharp modality separation in early layers to gradual mixing in later layers matches the distance-matched and null-content evidence. 27 Figure 11: PCA of query-key interaction space at layers {0, 7, 13 , 14 , 20 , 27 }. Modality identity is a strong early-layer property and gradually mixes with depth. 28

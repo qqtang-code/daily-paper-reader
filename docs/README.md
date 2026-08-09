@@ -6,35 +6,29 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-08
-- 运行时间：2026-08-08 20:39:58 UTC
+- 最新运行日期：2026-08-09
+- 运行时间：2026-08-09 20:15:46 UTC
 - 运行状态：成功
-- 本次总论文数：4
-- 精读区：0
-- 速读区：4
+- 本次总论文数：3
+- 精读区：1
+- 速读区：2
 
 ### 今日简报（AI）
-今日速读4篇论文，聚焦视频token压缩与多模态压缩方向。  
-最值得关注两项：全局码本跨视频压缩，以及面向OmniLLM的先分配后排序的解耦压缩，均获7分。  
-建议优先阅读这两篇高分文章，重点看压缩效率提升与视觉-语义解耦设计。
-- 详情：[/202608/08/README](/202608/08/README)
+今日精读多模态嵌入新作UEmbed，并速读两篇关于OmniLLM压缩与视觉语义解耦的论文。最值得关注UEmbed统一稀疏与稠密嵌入，为多模态检索提供更灵活方案；速读两篇则聚焦大模型视觉压缩的效率与评估。建议优先精读UEmbed，若关注视觉压缩可再结合两篇速读作对比。
+- 详情：[/202608/09/README](/202608/09/README)
 
 ### 精读区论文标签
-- 本次无精读推荐。
+1. [UEmbed: Unified Sparse and Dense Multimodal Embeddings](/202608/09/2608.02583v1-uembed-unified-sparse-and-dense-multimodal-embeddings)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：多模态嵌入模型同时生成稀疏和稠密表示用于检索，契合多模态理解与检索主题。
 
 ### 速读区论文标签
-1. [Rethinking Video Token Compression with a Global Codebook: Learning Once, Compressing Everywhere](/202608/08/2608.01271v1-rethinking-video-token-compression-with-a-global-codebook-learning-once-compressing-everywhere)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：通过全局码本离线压缩视频令牌，降低视频大模型的显存与计算开销
-2. [Allocation Before Ranking: Decoupled Token Compression for OmniLLMs](/202608/08/2608.01665v1-allocation-before-ranking-decoupled-token-compression-for-omnillms)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：面向全模态大模型的解耦token压缩，显式分配音频与视频预算
-3. [Decoupling semantics from vision: A framework for faithful visual-text compression evaluation](/202608/08/2608.01848v1-decoupling-semantics-from-vision-a-framework-for-faithful-visual-text-compression-evaluation)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：多模态大模型中解耦语义与视觉的评估框架
-4. [UEmbed: Unified Sparse and Dense Multimodal Embeddings](/202608/08/2608.02583v1-uembed-unified-sparse-and-dense-multimodal-embeddings)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：统一稀疏与稠密多模态嵌入，将学习式稀疏检索扩展到多模态，符合多模态检索方向。
+1. [Allocation Before Ranking: Decoupled Token Compression for OmniLLMs](/202608/09/2608.01665v1-allocation-before-ranking-decoupled-token-compression-for-omnillms)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：免训练的多模态令牌压缩，解耦模态分配与排序，提升Omni大模型的效率。
+2. [Decoupling semantics from vision: A framework for faithful visual-text compression evaluation](/202608/09/2608.01848v1-decoupling-semantics-from-vision-a-framework-for-faithful-visual-text-compression-evaluation)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：针对多模态大模型中的视觉文本压缩，提出解耦语义的忠实评估框架
 
 
 <div class="dpr-home-promo-card">
