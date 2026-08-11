@@ -6,55 +6,67 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-10
-- 运行时间：2026-08-10 19:52:58 UTC
+- 最新运行日期：2026-08-11
+- 运行时间：2026-08-11 20:37:31 UTC
 - 运行状态：成功
-- 本次总论文数：11
+- 本次总论文数：15
 - 精读区：6
-- 速读区：5
+- 速读区：9
 
 ### 今日简报（AI）
-今日聚焦KV Cache压缩与稀疏注意力，兼及多模态视觉Token剪枝，共解读11篇论文。  
-最值得关注两篇9分工作：从冻结Query-Key几何实现无数据稀疏注意力，以及全局分配KV Cache分辨率与覆盖度。  
-建议优先精读这两篇高分论文，再对比速读中的视觉Token剪枝方法，理解不同压缩策略的取舍。
-- 详情：[/202608/10/README](/202608/10/README)
+今日共推荐15篇论文，精读2篇、速读3篇，核心聚焦KV Cache压缩与长上下文效率优化。  
+最值得关注两篇满分精读：CommitKV通过生命周期感知的提交转换优化多轮智能体缓存，SPECTRA用谱变换编码突破2-bit压缩极限，均达9.0分。  
+建议后续优先追踪KV Cache稀疏预取（如OasisKV）与跨模态长文本压缩（VLZip），兼顾检索增强的AnchorFold。
+- 详情：[/202608/11/README](/202608/11/README)
 
 ### 精读区论文标签
-1. [Autonomy-of-Heads: Data-Free Sparse Attention from Frozen Query-Key Geometry](/202608/10/2608.06849v1-autonomy-of-heads-data-free-sparse-attention-from-frozen-query-key-geometry)  
+1. [CommitKV: Lifecycle-Aware KV Cache Compression via Commit Transitions for Multi-Turn Agents](/202608/11/2608.07855v1-commitkv-lifecycle-aware-kv-cache-compression-via-commit-transitions-for-multi-turn-agents)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：基于查询-键谱几何识别检索头与流式头的无数据稀疏注意力和KV压缩
-2. [Every Cache Entry Earns Its Place: Global Allocation of Resolution and Coverage for KV Cache Compression](/202608/10/2608.07001v1-every-cache-entry-earns-its-place-global-allocation-of-resolution-and-coverage-for-kv-cache-compression)  
+   evidence：面向多轮智能体的生命周期感知KV缓存压缩
+2. [SPECTRA: Pushing the KV Cache Beyond the 2-Bit Cliff via Spectral Transform Coding](/202608/11/2608.07915v1-spectra-pushing-the-kv-cache-beyond-the-2-bit-cliff-via-spectral-transform-coding)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：面向KV缓存压缩的全局资源分配方法，跨层、头、槽联合优化分辨率与覆盖率
-3. [HiSparse: Scaling Sparse-Attention Decoding with Hierarchical KV Cache Management](/202608/10/2608.07009v1-hisparse-scaling-sparse-attention-decoding-with-hierarchical-kv-cache-management)  
+   evidence：基于谱变换编码对KV缓存进行压缩，突破2比特量化极限
+3. [RotaryQuant: Fitting 120B MoE Models on Consumer Hardware via Fused Compressed-Space Attention](/202608/11/2608.08081v1-rotaryquant-fitting-120b-moe-models-on-consumer-hardware-via-fused-compressed-space-attention)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：面向Top-k稀疏注意力服务的层级KV缓存管理，将完整KV保留在宿主内存并以小GPU缓存限定解码占用
-4. [CoinRAG: Contextualized Information Nugget KV Cache Reuse for Long-Context RAG](/202608/10/2608.07458v1-coinrag-contextualized-information-nugget-kv-cache-reuse-for-long-context-rag)  
+   evidence：面向大规模MoE模型的KV缓存压缩与融合压缩空间注意力量化
+4. [VoxZip: Semantic-Anchored Temporal KV Cache Compression for Long-Context Audio Inference](/202608/11/2608.08569v1-voxzip-semantic-anchored-temporal-kv-cache-compression-for-long-context-audio-inference)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：针对长上下文RAG的KV缓存复用，减少冗余上下文处理
-5. [Does Accuracy Equal Evidence? Reasoning Faithfulness under KV Cache Compression](/202608/10/2608.01631v1-does-accuracy-equal-evidence-reasoning-faithfulness-under-kv-cache-compression)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：研究KV缓存压缩对推理忠实度的影响
-6. [Runtime Observability for Heterogeneous Attention Memory](/202608/10/2608.05863v1-runtime-observability-for-heterogeneous-attention-memory)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：为异构注意力记忆（潜变量缓存、稀疏选择器、循环状态）提供运行时观测契约，组合误差上界以管理压缩风险
+   evidence：以ASR转录为语义锚点的无训练KV缓存压缩，提升语音大模型长上下文推理效率
+5. [RippleKV: Cross-Layer KV Cache Allocation via Perturbation Propagation](/202608/11/2608.08684v1-ripplekv-cross-layer-kv-cache-allocation-via-perturbation-propagation)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：基于扰动传播的跨层KV缓存预算分配，用于长上下文LLM推理
+6. [DistillCache: KL-Guided Adaptive KV-Cache Eviction for Memory-Efficient LLM Inference](/202608/11/2608.08878v1-distillcache-kl-guided-adaptive-kv-cache-eviction-for-memory-efficient-llm-inference)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：用强化学习进行自适应KV缓存驱逐
 
 ### 速读区论文标签
-1. [Learning to Predict Middle-Layer Attention in MLLMs for Visual Token Prunin](/202608/10/2608.06411v1-learning-to-predict-middle-layer-attention-in-mllms-for-visual-token-prunin)  
+1. [OasisKV: Scaling In-Decode KV Cache Beyond HBM with Lookahead Sparse Prefetching](/202608/11/2608.08097v1-oasiskv-scaling-in-decode-kv-cache-beyond-hbm-with-lookahead-sparse-prefetching)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：基于预测中间层注意力的多模态视觉token剪枝
-2. [Retrofitting Linear Attention into Diffusion Language Models](/202608/10/2608.06628v1-retrofitting-linear-attention-into-diffusion-language-models)  
+   evidence：通过前视稀疏预取将解码阶段KV缓存扩展到HBM之外
+2. [VLZip: Unified Visual and Textual Compression for Interleaved Long-Context Modeling](/202608/11/2608.08630v1-vlzip-unified-visual-and-textual-compression-for-interleaved-long-context-modeling)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：块混合注意力在扩散语言模型中线性化前缀注意力，降低重复前缀开销
-3. [RoRA: Role-Oriented Regional Allocation for Visual Token Pruning in MLLMs](/202608/10/2608.07088v1-rora-role-oriented-regional-allocation-for-visual-token-pruning-in-mllms)  
+   evidence：面向交错长上下文的多模态统一压缩，提升VLM推理效率
+3. [AnchorFold: A Focus-Then-Fold Framework via Recursive Attention Propagation for Efficient Multi-Vector Visual Document Retrieval](/202608/11/2608.08732v1-anchorfold-a-focus-then-fold-framework-via-recursive-attention-propagation-for-efficient-multi-vector-visual-document-retrieval)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：基于注意力传播的索引压缩实现高效多向量视觉文档检索，直接面向多模态检索
+4. [Omni2LoRA: Coherence-Preserving Parametric Memory for Efficient Omni Language Models](/202608/11/2608.09227v1-omni2lora-coherence-preserving-parametric-memory-for-efficient-omni-language-models)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：面向多模态大模型的免训练视觉令牌剪枝，降低KV缓存存储
-4. [Addressable Memory for Video World Models](/202608/10/2608.07408v1-addressable-memory-for-video-world-models)  
+   evidence：通过LoRA参数化记忆压缩降低全模态语言模型长序列推理的内存瓶颈
+5. [Linearized 2-Simplicial Attention](/202608/11/2608.09307v1-linearized-2-simplicial-attention)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：面向视频世界模型的无训练KV缓存压缩与地址保持框架
-5. [CoDAT: Collaborative Dual-Attention Transformer with Low-Cost Temporal Modeling for Efficient Edge Action Recognition](/202608/10/2608.06691v1-codat-collaborative-dual-attention-transformer-with-low-cost-temporal-modeling-for-efficient-edge-action-recognition)  
+   evidence：线性化注意力机制，固定大小状态实现线性复杂度
+6. [MixFormer: Linear Transformer with Mixture of Memory Experts](/202608/11/2608.09468v1-mixformer-linear-transformer-with-mixture-of-memory-experts)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：带混合记忆专家的线性Transformer，面向高效长上下文建模
+7. [HSMLA: Hierarchical Softmax Multi-scale Linear Attention for Efficient Vision Transformers](/202608/11/2608.07616v1-hsmla-hierarchical-softmax-multi-scale-linear-attention-for-efficient-vision-transformers)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：通过协作双分支注意力模块压缩Q/K/V，是一种面向Transformer的高效注意力机制
+   evidence：面向高效视觉Transformer的多尺度线性注意力机制
+8. [Sparse Attention to Emotion: Efficient Facial Emotion Recognition via Token Reduction](/202608/11/2608.08873v1-sparse-attention-to-emotion-efficient-facial-emotion-recognition-via-token-reduction)  
+   标签：评分：7.0/10、query:sparse-attn
+   evidence：通过令牌缩减的稀疏注意力实现高效视觉Transformer
+9. [Decoupling semantics from vision: A framework for faithful visual-text compression evaluation](/202608/11/2608.01848v1-decoupling-semantics-from-vision-a-framework-for-faithful-visual-text-compression-evaluation)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：面向多模态大模型的视觉-文本压缩评估框架
 
 
 <div class="dpr-home-promo-card">
