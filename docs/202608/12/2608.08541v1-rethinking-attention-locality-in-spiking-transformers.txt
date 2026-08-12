@@ -1,0 +1,496 @@
+Title: Rethinking Attention Locality in Spiking Transformers
+
+URL Source: https://arxiv.org/pdf/2608.08541v1
+
+Published Time: Tue, 11 Aug 2026 01:09:51 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Rethinking Attention Locality in Spiking Transformers 
+
+Zeqi Zheng 1,2,∗ Zizheng Zhu 1,∗ Yuping Yan 2 Wenxuan Pan 2
+
+Zhaofei Yu 3 Yaochu Jin 2
+
+> 1
+
+Zhejiang University 2Westlake University 3Peking University 
+
+> ∗
+
+Equal contribution 
+
+Abstract 
+
+Spiking Transformers provide a promising paradigm for efficient visual processing with spike-driven computation, yet their Softmax-free Spiking Self-Attention (SSA) struggles to establish spatially localized token interactions. Although existing locality-enhanced SSA methods improve accuracy, it remains unclear whether they consistently induce spatial locality across layers and different Spiking Transformer architectures. Through Mean Attention Distance (MAD) analy-sis, we reveal that computational locality does not necessarily translate into spatial locality and show that uniformly applying the same locality enhancement overlooks architecture-dependent deployment requirements. Motivated by these observations, we propose Spatially Contiguous Local Attention with Boundary Continuity Pathway (SCLA-BCP). SCLA computes attention within non-overlapping regions of spatially adjacent tokens, while BCP facilitates cross-boundary information exchange through a lightweight convolutional pathway. Furthermore, we develop a hierarchical locality deployment strategy to effectively apply SCLA-BCP across the two major Spiking Transformer architectures. Extensive experiments on seven static and neuromorphic datasets covering classification, detection, and segmentation demonstrate consistent improve-ments with limited parameter and energy overhead. Notably, our approach improves mAP@50 by up to 9.50% on COCO 2017 and mIoU by up to 3.42% on ADE20K. Visualizations, MAD analysis, and ablation studies further validate its effectiveness. 
+
+# 1 Introduction 
+
+Spiking Neural Networks (SNNs), regarded as the third generation of neural networks (Maass, 1997; Yan et al., 2025), mimic biological neural dynamics and process information through event-driven sparse spikes. Unlike Artificial Neural Networks (ANNs) with continuous-valued activations, SNNs use binary spikes and sparse updates, providing advantages in biological plausibility and energy efficiency (Indiveri and Liu, 2015; Eshraghian et al., 2023). In recent years, Transformer architectures (Vaswani et al., 2017; Dosovitskiy et al., 2020) have been introduced into SNNs, leading to Spiking Transformers that achieve competitive performance across vision tasks, including image classification (Zhou et al., 2024, 2026), object detection (Miao et al., 2025; Xu et al., 2025), and semantic segmentation (Lei et al., 2025; Yao et al., 2025). Existing Spiking Transformer backbones can be broadly divided into two architectural fami-lies: ViT-like plain architectures (Zhou et al., 2023, 2026) and multi-stage hierarchical architectures (Zhou et al., 2024; Yao et al., 2025). Despite their distinct structures, both families rely on Spiking Self-Attention (SSA) as a key component for token interaction. To preserve spike-driven computa-tion, SSA removes the Softmax normalization used in conventional attention, leading to relatively uniform attention distributions (Qiu et al., 2025; Lim et al., 2026) with weak preference for spatially 1arXiv:2608.08541v1 [cs.CV] 9 Aug 2026 adjacent tokens. The resulting insufficient local interactions may constrain the visual representation capability of Spiking Transformers (Li et al., 2026; Zhang et al., 2026). To strengthen local token interactions, recent studies have introduced explicit spatial locality pri-ors into SSA from two main directions. The first modifies the attention computation structure to con-strain token interactions. SGLFormer (Zhang et al., 2024) introduces Local Spiking Self-Attention (LSSA) through offset-based token grouping, inspiring subsequent locality-oriented designs (Liao et al., 2025; Lee et al., 2025). The second augments SSA with local receptive fields. Localized Re-ceptive Field Spiking Self-Attention (LRF-SSA) (Zhang et al., 2026) introduces learnable dilated convolution kernels into SSA to impose explicit locality priors on query–key interactions, thereby enhancing neighboring token dependencies. However, improved task performance alone does not verify whether these mechanisms establish spatially localized attention interactions. Quantitative evidence of consistently reduced token interaction distances across layers and architectures remains limited. To investigate this missing evidence, following previous studies (Dosovitskiy et al., 2021; Zhang et al., 2026), we evaluate representative locality-enhanced SSA methods on different Spiking Trans-formers using Mean Attention Distance (MAD), which quantifies the average spatial range of query– key token interactions. Our analysis, presented in Section 3, reveals two findings. First, LSSA does not consistently reduce MAD across different backbones. This can be attributed to its grouping mechanism: as illustrated in Figure 4(a), tokens within the same group are determined by predefined spatial offsets rather than contiguous neighborhoods. Therefore, LSSA introduces computational lo-cality but does not necessarily establish spatial locality, exposing a computational–spatial locality discrepancy. Second, uniformly replacing all SSA layers with LRF-SSA produces layer-dependent ef-fects: MAD remains nearly unchanged or even increases in several layers. This observation indicates that applying the same locality-enhancement mechanism to all SSA layers overlooks architecture-dependent locality deployment requirements. Guided by these findings, we propose Spatially Contiguous Local Attention with Boundary Con-tinuity Pathway (SCLA-BCP) and a hierarchical locality deployment strategy for applying SCLA-BCP to different Spiking Transformer architectures. SCLA directly addresses the computational– spatial locality discrepancy by partitioning feature maps into non-overlapping, spatially contiguous regions and restricting attention to neighboring tokens within each region. However, such parti-tioning limits direct information exchange across region boundaries. Accordingly, BCP introduces a convolutional pathway mechanism over the original, unpartitioned feature maps and integrates its output through residual fusion. Under the proposed deployment strategy, SCLA-BCP replaces the first half of the SSA layers in ViT-like plain architectures and is applied to all eligible positions in Stages 1–2 of multi-stage hierarchical architectures, while the remaining network components are left unchanged. The main contributions are summarized as follows: • We systematically analyze typical locality-enhanced SSA methods and show that their local-ity mechanisms do not consistently yield spatially closer token interactions, identifying two findings: (i) a discrepancy between computational and spatial locality, and (ii) the potential inadequacy of uniform deployment across all SSA layers. • We propose SCLA-BCP, which aligns the constrained attention scope with spatially contiguous neighborhoods and supports information exchange across local-region boundaries. We further develop a hierarchical locality deployment strategy for effectively applying SCLA-BCP across different Spiking Transformer architectures. • We conduct extensive experiments on representative Spiking Transformer architectures across image classification, object detection, and semantic segmentation. The results show that our 2method surpasses the corresponding baselines and locality-enhanced SSA variants across the evaluated settings with limited overhead, achieving gains of up to 9.50% in mAP@50 on COCO 2017 and 3.42% in mIoU on ADE20K. Evaluations using MAD, attention visualizations, and ablation studies provide further evidence for the proposed design. 
+
+# 2 Related Work 
+
+2.1 Spiking Transformers 
+
+Existing Spiking Transformer backbones can be broadly categorized into two architectural families: (a) ViT-like plain architectures tokenize the input through spiking patch embedding and stack multi-ple Spiking Transformer blocks for feature representation. Spikformer (Zhou et al., 2023) introduced SSA, which used spike-form queries, keys, and values without Softmax normalization. Spike-driven Transformer (SDT) (Yao et al., 2023) reformulated query–key interactions as spike-domain masking and sparse additions to reduce computational complexity. Spikingformer (Zhou et al., 2026) further incorporated membrane potential shortcuts to enhance information propagation and representa-tion capability. (b) Multi-stage hierarchical architectures progressively downsample feature maps to construct multi-scale representations. SDT-V2 (Yao et al., 2024) adopted convolution-based and Transformer-based SNN stages to achieve efficient feature extraction across different resolutions. QKFormer (Zhou et al., 2024) proposed spike-form QK attention to reduce attention complexity and enable efficient spiking feature modeling. Subsequently, SDT-V3 (Yao et al., 2025) extended SDT-V2 by adopting the spike firing approximation training strategy and more efficient spike-driven convolution and self-attention modules, enabling larger-scale Spiking Transformers. However, these architectures share a common issue: removing Softmax (Bridle, 1990) from SSA to preserve spike-driven computation leads to relatively uniform attention distributions (Qiu et al., 2025; Lim et al., 2026) and weak interactions among spatially adjacent tokens (Zhang et al., 2026), limiting visual representation capability. 
+
+2.2 Locality-Enhanced Spiking Self-Attention 
+
+To strengthen local token interactions, recent studies have incorporated spatial locality priors into SSA through two main directions: (a) Modifying attention computation structures to constrain to-ken interactions: SGLFormer (Zhang et al., 2024) proposed LSSA, which partitioned feature maps through offset-based token grouping and performed self-attention within each group, thereby re-stricting the attention computation scope. Following the grid attention design of MaxViT (Tu et al., 2022), SpikeAtConv (Liao et al., 2025) introduced spike-driven grid attention to reorga-nize spatial token interactions. (ii) Augmenting SSA with explicit local receptive fields: LRF-SSA (Zhang et al., 2026) introduced learnable dilated convolution kernels into the attention matrix to inject locality priors into query–key interactions, thereby encouraging interactions among neigh-boring tokens. Subsequently, LSFormer (Li et al., 2026) proposed spatial dilated attention, which grouped channels and assigned different dilation rates to model multi-scale local attention along horizontal and vertical directions. Although these methods report performance gains, exploration and analysis of whether they consistently promote spatially localized token interactions across layers and architectures remain limited. 33 Problem Analysis 
+
+This section investigates whether existing locality-enhanced SSA methods consistently induce spa-tially localized token interactions. We evaluate two representative methods, LSSA and LRF-SSA, on ImageNet-1K using three different backbones, covering both ViT-like plain and multi-stage hierar-chical architectures. As shown in Figure 1, both methods improve accuracy over their corresponding Spikingformer-8-768 QKFormer-10-768 SDT-V3-L 
+
+Model   
+
+> 77.5 78.0 78.5 79.0 79.5 80.0
+> Top-1 Accuracy (%)
+> 77.64 78.37 79.80 77.85 78.58 79.82 77.91 78.70 79.94
+> Baseline w/ LSSA w/ LRF-SSA
+
+Figure 1: Performance comparison of three Spiking Transformer backbones with LSSA and LRF-SSA trained from scratch on ImageNet-1K. "Baseline" denotes the original backbone without additional modules. baselines. However, performance improvements alone cannot verify whether these methods establish spatial locality. Therefore, following the previous study (Dosovitskiy et al., 2021), we measure MAD (see Appendix A) to quantify token interaction ranges, where lower MAD values indicate more localized token interactions. Our analysis reveals two findings: 
+
+3.1 Computational–Spatial Locality Discrepancy 
+
+LSSA constrains token interactions by partitioning feature maps through offset-based token grouping and computing SSA independently within each group. Given a grouping factor g (default g = 2 ), the (r, c )-th group, without considering padding, is formulated as 
+
+Gr,c ={(r + mg, c + ng ) | 0 ≤ m < H/g, 
+
+0 ≤ n < W/g }, r, c ∈ { 0, . . . , g − 1}. (1) Accordingly, the key-token set for a query at (yi, x i) is 
+
+Ni = {j | yj ≡ yi (mod g), x j ≡ xi (mod g)}. (2) As illustrated in Figure 4(a), tokens within Ni share identical coordinate residues modulo g but are distributed at regular spatial intervals rather than forming contiguous neighborhoods. Thus, LSSA reduces the computational scope of attention but does not explicitly enforce interactions among spatially adjacent tokens, revealing a computational–spatial locality discrepancy. To validate this analysis, following the previous analysis (Zhang et al., 2024), we replace the first SSA layer of each backbone with LSSA, retrain the models on ImageNet-1K, and compare MAD at that layer. Figure 2 shows that LSSA does not consistently reduce these distances across different backbones, with only negligible variations observed. This indicates that restricting attention computation through offset-based grouping alone is insufficient to establish spatially localized token interactions, motivating locality mechanisms that explicitly construct regions based on spatial adjacency. 4Spikingformer-8-768 QKFormer-10-768 SDT-V3-L 
+
+Model      
+
+> 0.0 0.1 0.2 0.3 0.4
+> MAD
+> 0.3345 0.3374 0.3514 0.3516 0.3372 0.3376
+> Baseline w/ LSSA
+
+Figure 2: Comparison of MAD between the first SSA layer and its LSSA-replaced counterpart across different Spiking Transformer backbones. 
+
+3.2 Uniform Locality Deployment Issue 
+
+LRF-SSA augments SSA with local receptive-field priors and uniformly applies this enhancement to all SSA layers. However, such uniform deployment assumes that the same locality enhancement is equally effective across all attention layers, which may not consistently induce spatially localized token interactions. To examine this analysis, following the previous study (Zhang et al., 2026), we 1 2 3 4 5 6 7 8              
+
+> 0.30 0.34 0.38 0.42 Spikingformer-8-768
+> 1234567
+> QKFormer-10-768
+> 12345678
+> SDT-V3-L
+> MAD
+
+Layer Index  
+
+> Baseline w/ LRF-SSA
+
+Figure 3: Layer-wise MAD comparison between baseline and LRF-SSA across different Spiking Transformer backbones. replace all SSA layers with LRF-SSA in three backbones and compare MAD layer by layer. As shown in Figure 3, uniformly applying LRF-SSA does not consistently reduce MAD across layers, with layer-dependent variations observed across different backbones. These results indicate that applying the same locality enhancement to all SSA layers overlooks architecture-dependent locality deployment requirements, motivating a hierarchical locality deployment strategy tailored to different Spiking Transformer architectures. 
+
+# 4 Method 
+
+In this section, we introduce Spatially Contiguous Local Attention with Boundary Continuity Path-way (SCLA-BCP) (Figure 4(c)) in Section 4.1 and its corresponding hierarchical locality deployment strategy (Figure 4(d)) in Section 4.2. 54.1 Spatially Contiguous Local Attention with Boundary Continuity Pathway offset-based grouping                     
+
+> (𝑔 = 2)
+> (a) Computational-Spatial Locality Discrepancy (b) Uniform Locality Deployment Issue SSA MLP SSA MLP
+> ……
+> LRF-SSA LRF-SSA Replace Replace Computational Locality ≠Spatial Locality Transformation Pipeline Input 𝑿 𝑸 𝑲 𝑽
+> Local Region Partition Reverse Transformation Pipeline Conv2d BN2d MP2d BCP SSA MLP SSA MLP SSA MLP
+> …
+> SSA MLP Attn&Conv MLP Downsampling Attn&Conv MLP Downsampling SSA MLP Downsampling SSA MLP Downsampling Stage 1 Stage 2 Stage 3 Stage 4
+> ×𝑁 1×𝑁 2×𝑁 3×𝑁 4
+> ViT-like Plain Architecture (Depth = 𝐿 )Multi-stage Hierarchical Architecture SCLA-BCP
+> 𝐿 /2
+> Stage 1 and 2 Replace Replace (d) Hierarchical Locality Deployment Strategy (c) Spatially Contiguous Local Attention with Boundary Continuity Pathway (SCLA-BCP) Does every SSA require enhanced locality?
+> ×𝛼
+> Learnable Scalar Spike Neuron Matrix Multiplication
+> 𝜔 = 2
+> 𝐻 𝑊
+
+Figure 4: Overview of issues in typical locality-enhanced SSA methods, the proposed SCLA-BCP method, and its hierarchical locality deployment strategy. (a) Computational–spatial locality dis-crepancy caused by offset-based token grouping in LSSA. (b) Uniform locality deployment issue in LRF-SSA. (c) Pipeline of SCLA-BCP, illustrated with attention computation on a feature map of H = W = 4 and local region size w = 2 under a pre-activation backbone for simplicity. (d) Hierarchical locality deployment strategy of SCLA-BCP across different architectures. 
+
+Spatially Contiguous Local Attention 
+
+SCLA retains the backbone-specific query, key, and value transformation pipelines while restricting token interactions to non-overlapping, spatially contiguous local regions. Let Xl ∈ RT ×B×Cl×Hl×Wl
+
+denote the input to the l-th block, where T , B, Cl, Hl, and Wl are the number of timesteps, batch size, channels, height, and width, respectively. Omitting the layer index l for clarity, the transformed features are eUξ = Gξ(X) = Sout 
+
+ξ
+
+Bξ
+
+ Φξ
+
+ Sin 
+
+ξ (X) , (3) where, for each ξ ∈ { q, k, v }, Gξ denotes the corresponding projection Φξ, normalization Bξ, and placement of the leaky integrate-and-fire (LIF) (Dayan and Abbott, 2005) activation. Specifically, 
+
+Sout 
+
+ξ is an identity mapping for pre-activation backbones, whereas Sin 
+
+ξ is an identity mapping for post-activation backbones. The local region size w controls the partition granularity of SCLA. Following SGLFormer (Zhang et al., 2024), we set w = H/ 2 for ViT-like plain architectures. For multi-stage hierarchical architectures, we employ stage-wise decreasing region sizes to match the progressively reduced spatial resolutions across stages, following the prior study (Huang et al., 2022). Detailed configurations are provided in Appendix C. Given the selected region size w, SCLA first zero-pads the right and bottom boundaries when necessary: 
+
+¯H =
+
+ Hw
+
+
+
+w, ¯W =
+
+ Ww
+
+
+
+w. (4) The resulting padded feature map is divided into M = MH MW regions, where MH = ¯H/w and 
+
+MW = ¯W /w . Formally, for any Y ∈ RT ×B×C× ¯H× ¯W , the local region partition operation Πw(·) is 6defined by 
+
+[Π w(Y)] t,b,m,c,u,v = Yt,b,c,iw +u,jw +v, (5) where m = iM W + j, 0 ≤ i < M H , 0 ≤ j < M W , and 0 ≤ u, v < w . Each region corresponds exactly to one spatially contiguous w×w block. Applying Πw(·) to the padded query, key, and value features, splitting the channels into h heads, and flattening each region yields Qm,r , Km,r , Vm,r ∈ Rw2×dr for head r in region m. dr denotes the head dimension, and the timestep and batch indices are omitted for clarity. SCLA computes attention independently within each region: 
+
+Am,r = Qm,r K⊤
+
+> m,r
+
+, Om,r = SLIF (Am,r Vm,r ) , (6) where SLIF denotes the LIF neuron. After concatenating the heads, the region-wise features are restored to the padded spatial layout through Π−1 
+
+> w
+
+(·) and cropped to the original spatial dimensions. The cropped feature map is then fed into the backbone-specific output transformation pipeline Go,producing the SCLA output: 
+
+SCLA( X) = Go Crop 
+
+"
+
+Π−1
+
+> w
+
+n
+
+Concat hr=1 Om,r 
+
+oM −1
+
+> m=0
+
+!#! 
+
+. (7) 
+
+Boundary Continuity Pathway 
+
+Although SCLA establishes explicit spatial locality, its fixed region boundaries prevent direct in-teraction between adjacent tokens in different regions. BCP complements SCLA by processing the intact feature map without region partitioning, thereby enabling information exchange across these boundaries. For compactness, define Cl = Pl ◦ B l ◦ D l, where Dl, Bl, and Pl denote a lightweight 
+
+3 × 3 depth-wise convolution, batch normalization, and 3 × 3 maxpooling, respectively. For an input feature Hl, BCP accommodates both pre-activation and post-activation backbones: 
+
+BCP l(Hl) = 
+
+(Cl Sl(Hl) , pre-activation ,
+
+Sl Cl(Hl) , post-activation , (8) where Sl denotes the LIF activation. Both Dl and Pl use a stride of 1 and padding of 1, preserving the spatial resolution. We employ a BCP operating on the block input Xl alongside SCLA. The complete SCLA-BCP computation is given by 
+
+ˆXl = Xl + SCLA l(Xl) + αl BCP l(Xl). (9) The learnable scalar αl is initialized to 0.1, limiting perturbations to residual updates early in train-ing while allowing the model to learn the required boundary-compensation strength. The detailed analysis of the initialization value is presented in Appendix E. Following prior reparameterization strategies (Yao et al., 2024, 2025), these input-independent scalars can be absorbed into adjacent normalization parameters or synaptic weights, preserving spike-driven computation. 
+
+4.2 Hierarchical Locality Deployment Strategy 
+
+Based on the analysis in Section 3.2, we treat deployment depth as a design variable and define distinct SCLA-BCP placement rules for ViT-like plain and multi-stage hierarchical architectures. Let the L replaceable SSA layers of a backbone be indexed by depth as l = 1 , . . . , L , and let K
+
+denote the deployment depth. SCLA-BCP is applied to the first K SSA layers. The remaining 7layers retain their original structures. According to the deployment study in Section 5.2, we use the following architecture-specific settings. 
+
+ViT-like plain architectures. We set K = ⌊L/ 2⌋, corresponding to replacing the first half of the SSA layers. 
+
+Multi-stage hierarchical architectures. We set K to the number of replaceable layers in Stages 1 and 2. Stages 3 and 4 retain their original block structures. 
+
+# 5 Experiments 
+
+This section evaluates SCLA-BCP and its hierarchical locality deployment strategy through three research questions. RQ1: How Should SCLA-BCP Be Deployed across Different Spiking Transformer Architectures? For ViT-like plain and multi-stage hierarchical architectures, what is the optimal deployment depth for each? RQ2: Effectiveness and Applicability. Can our proposed method consistently improve performance across different architectures and diverse vision tasks? RQ3: Spatial Locality of Token Interactions. Does our method enforce localized token interactions as intended and learn more effective spatial representations? 
+
+5.1 Experimental Setup 
+
+We evaluate the proposed approach on seven static and neuromorphic datasets across classification, detection, and segmentation tasks, including CIFAR-10/100 (Krizhevsky et al., 2009), ImageNet-1K (Deng et al., 2009), CIFAR10-DVS (Li et al., 2017), N-Caltech101 (Fei-Fei et al., 2004), COCO 2017 (Lin et al., 2014), and ADE20K (Zhou et al., 2017). Detailed dataset descriptions and evaluation metrics are provided in Appendix B. Experiments are conducted on ViT-like plain (Spikformer (Zhou et al., 2023), SDT (Yao et al., 2023), and Spikingformer (Zhou et al., 2026)) and multi-stage hierarchical (QKFormer 1 (Zhou et al., 2024) and SDT-V3 (Yao et al., 2025)) architectures following their official implementations. We compare the original models (referred to as baselines hereafter) with LSSA (Zhang et al., 2024), LRF-SSA 2 (Zhang et al., 2026), and our method. Detailed training configurations are provided in Appendix C. 
+
+5.2 Hierarchical Locality Deployment Strategy of SCLA-BCP 
+
+To answer RQ1 , we investigate the progressive deployment of SCLA-BCP across network depth in ViT-like plain and multi-stage hierarchical architectures. We train all variants from scratch on ImageNet-1K and report their top-1 accuracy. As shown in Figure 5, QKFormer achieves 79.00% at depth 3 (all deployable layers in Stages 1–2), while depths 4 and 5 reduce accuracy to 78.89% and 78.83%. Spikingformer reaches 78.62% at depth 4 (the first half of SSA layers), while depths 5 and 6 reduce accuracy to 78.52% and 78.41%. These results reveal architecture-specific deployment ranges. Unless otherwise specified, SCLA-BCP is deployed in early layers: the first half of SSA layers for ViT-like plain architectures and the first two stages for multi-stage hierarchical architectures. 
+
+5.3 Effectiveness and Applicability 
+
+To answer RQ2 , we evaluate our method on Spiking Transformer backbones from two architec-tural families across seven static and neuromorphic datasets, covering classification, detection, and 
+
+> 1All QKFormer-related experiments use the corrected GitHub implementation with identified issues fixed.
+> 2All LRF-SSA-related experiments use the corrected publicly available implementation with ternary spike activa-tion removed.
+
+82 3 4 5 6          
+
+> SCLA-BCP Depth (Spikingformer)
+> 78.0 78.2 78.4 78.6 78.8 79.0 79.2
+> Top-1 Accuracy (%)
+> 78.14 78.23 78.62 78.52 78.41
+> 12345
+> SCLA-BCP Depth (QKFormer)
+> 78.54 78.80 79.00 78.89 78.83 Spikingformer-8-768 QKFormer-10-768
+
+Figure 5: Deployment depth analysis of SCLA-BCP on ImageNet-1K across Spiking Transformer architectures. All deployment variants outperform their backbone baselines (78.37% for QKFormer and 77.64% for Spikingformer). segmentation tasks. We compare it with baselines and their LSSA and LRF-SSA variants. 
+
+Classification on small-scale static and neuromorphic datasets 
+
+On CIFAR-10 and CIFAR-100, SCLA-BCP improves all four backbones (Table 1), achieving gains of 0.28–1.90% over baselines and an average improvement of 0.35% over the better-performing LSSA or LRF-SSA variant, while introducing only 0.02–0.04M parameters. On CIFAR10-DVS and N-Caltech101, it improves all three backbones across timestep settings (Table 2), achieving 1.83– 4.49% gains over baselines and an average improvement of 1.81% over the better-performing LSSA or LRF-SSA variant, with only 0.01–0.03M additional parameters. 
+
+Classification on ImageNet-1K 
+
+On ImageNet-1K (Table 3), our method consistently improves Spikingformer, QKFormer, and SDT-V3, achieving 0.51–0.98% gains over baselines (0.69% on average) and outperforming LSSA and LRF-SSA by 0.58% and 0.38% on average, respectively. Notably, on Spikingformer, it raises accuracy from 77.64% to 78.62%, exceeding LSSA and LRF-SSA by 0.77% and 0.71%, respectively. Our approach introduces only 0.03–0.48M parameters and 0.09–0.93 mJ energy overhead over baselines, while requiring at most 0.23M parameters and 0.24 mJ additional energy over LRF-SSA variants. 
+
+Object Detection and Semantic Segmentation 
+
+We further evaluate our method on dense prediction with COCO 2017 and ADE20K. On COCO 2017 (Table 4), our approach improves SDT-V3-S/M by 9.50%/5.60% mAP@50 over baselines and surpasses the stronger locality-enhanced variant (LRF-SSA) by 3.70%/3.60%. It introduces only 0.21M/0.34M parameters and 0.53mJ/0.28mJ energy overhead over baselines, and 0.07M/0.14M pa-rameters and 0.26mJ/0.12mJ over LRF-SSA. On ADE20K (Table 5), our method achieves 41.16%, 42.33%, and 43.72% mIoU on SDT-V3-S/M/L, improving over baselines by 3.42%/2.23%/2.99% and over the stronger LRF-SSA variants by 2.65%/1.64%/2.02%. On average, it introduces only 0.35M parameters and 0.61mJ energy overhead over baselines, and 0.15M parameters and 0.41mJ over LRF-SSA. 9Backbone Param (M) Top-1 Acc. (%) CIFAR-10 CIFAR-100                                                             
+
+> QKFormer 6.74 96.15 80.84
+> +LSSA 7.94 96.31 81.07
+> +LRF-SSA 6.76 96.43 81.11
+> +Ours 6.76 96.58 81.21
+> Spikformer 9.32 95.19 77.86
+> +LSSA 10.56 95.23 78.34
+> +LRF-SSA 9.38 95.37 78.53
+> +Ours 9.36 95.75 79.76
+> SDT 10.28 95.60 78.40
+> +LSSA 12.40 95.54 78.80
+> +LRF-SSA 10.29 95.68 79.30
+> +Ours 10.30 95.91 79.41
+> Spikingformer 9.32 95.95 80.37
+> +LSSA 10.56 96.04 80.41
+> +LRF-SSA 9.37 95.78 80.52
+> +Ours 9.36 96.23 80.91
+
+Table 1: Performance comparison on static datasets with T = 4 . The best results are highlighted in bold. 
+
+Backbone Param (M) Top-1 Acc. (%) 
+
+T = 10 T = 16 
+
+QKFormer 1.50 / 2.02 80.30 / 84.69 81.10 / 86.51 
+
++ LSSA 2.04 / 2.56 80.70 / 85.18 82.20 / 86.83 
+
++ LRF-SSA 1.51 / 2.03 81.30 / 84.93 82.40 / 86.98 
+
++ Ours 1.52 / 2.04 82.80 / 86.99 83.50 / 88.34 
+
+Spikformer 2.57 / 2.60 78.90 / 81.17 80.90 / 83.60 
+
++ LSSA 3.12 / 3.15 79.20 / 81.94 81.40 / 83.74 
+
++ LRF-SSA 2.60 / 2.62 79.60 / 82.89 82.10 / 83.91 
+
++ Ours 2.60 / 2.62 81.00 / 85.66 83.80 / 86.39 
+
+Spikingformer 2.57 / 2.59 80.20 / 82.88 81.40 / 83.59 
+
++ LSSA 3.11 / 3.13 80.60 / 82.39 81.90 / 83.57 
+
++ LRF-SSA 2.58 / 2.60 81.70 / 83.11 82.60 / 84.41 
+
++ Ours 2.58 / 2.60 83.10 / 85.91 83.60 / 86.76 
+
+Table 2: Performance comparison on neuromorphic datasets. Results are reported in the format of CIFAR10-DVS / N-Caltech101, with the best results highlighted in bold. 10 Backbone Model Type Param Power Time Top-1 (M) (mJ) Step Acc (%) 
+
+Spikingformer Spikingformer-8-768 66.36 16.95 
+
+4
+
+77.64 
+
++LSSA Spikingformer-8-768 71.12 18.59 77.85 
+
++LRF-SSA Spikingformer-8-768 66.54 18.35 77.91 
+
++Ours Spikingformer-8-768 66.39 17.20 78 .62 (+0 .98) 
+
+QKFormer HST-10-768 64.96 41.65 
+
+4
+
+78.37 
+
++LSSA HST-10-768 69.73 41.97 78.58 
+
++LRF-SSA HST-10-768 65.12 44.24 78.70 
+
++Ours HST-10-768 65.31 42.58 79 .00 (+0 .63) 
+
+SDT-V3 E-SpikeFormer-S 5.10 1.70 
+
+1 × 4
+
+75.30 
+
++LSSA E-SpikeFormer-S 5.11 1.73 75.36 
+
++LRF-SSA E-SpikeFormer-S 5.24 1.79 75.94 
+
++Ours E-SpikeFormer-S 5.32 1.94 76 .03 (+0 .73) 
+
+SDT-V3 E-SpikeFormer-M 10.00 3.00 
+
+1 × 4
+
+78.50 
+
++LSSA E-SpikeFormer-M 10.05 3.14 78.54 
+
++LRF-SSA E-SpikeFormer-M 10.21 3.24 78.67 
+
++Ours E-SpikeFormer-M 10.36 3.48 79 .10 (+0 .60) 
+
+SDT-V3 E-SpikeFormer-L 19.00 5.90 
+
+1 × 4
+
+79.80 
+
++LSSA E-SpikeFormer-L 19.14 5.92 79.82 
+
++LRF-SSA E-SpikeFormer-L 19.25 5.91 79.94 
+
++Ours E-SpikeFormer-L 19.48 5.99 80 .31 (+0 .51) 
+
+Table 3: Performance comparison on ImageNet-1K with 224 ×224 inputs. Best results are highlighted in bold. Energy consumption follows previous works (Horowitz, 2014; Chowdhury et al., 2022) (details in Appendix D). 
+
+Backbone Model Type Param Power Time mAP@50 (M) (mJ) Step (%) 
+
+SDT-V3 E-SpikeFormer-S 10.05 34.54 
+
+1 × 4
+
+34.70 
+
++LSSA E-SpikeFormer-S 10.15 34.67 39.30 
+
++LRF-SSA E-SpikeFormer-S 10.19 34.81 40.50 
+
++Ours E-SpikeFormer-S 10.26 35.07 44 .20 (+9 .50) 
+
+SDT-V3 E-SpikeFormer-M 21.17 61.68 
+
+1 × 4
+
+46.20 
+
++LSSA E-SpikeFormer-M 21.27 61.70 47.40 
+
++LRF-SSA E-SpikeFormer-M 21.37 61.84 48.20 
+
++Ours E-SpikeFormer-M 21.51 61.96 51 .80 (+5 .60) 
+
+Table 4: Performance comparison on COCO 2017. Best results are highlighted in bold. Detailed energy consumption is reported in Appendix D. 11 Backbone Model Type Param Power Time mIoU (M) (mJ) Step (%) 
+
+SDT-V3 E-SpikeFormer-S 6.60 17.94 
+
+1 × 4
+
+37.74 
+
++LSSA E-SpikeFormer-S 6.63 18.31 38.20 
+
++LRF-SSA E-SpikeFormer-S 6.73 18.13 38.51 
+
++Ours E-SpikeFormer-S 6.81 18.79 41 .16 (+3 .42) 
+
+SDT-V3 E-SpikeFormer-M 11.49 27.60 
+
+1 × 4
+
+40.10 
+
++LSSA E-SpikeFormer-M 11.56 28.45 40.50 
+
++LRF-SSA E-SpikeFormer-M 11.67 27.78 40.69 
+
++Ours E-SpikeFormer-M 11.82 27.89 42 .33 (+2 .23) 
+
+SDT-V3 E-SpikeFormer-L 20.35 34.74 
+
+1 × 4
+
+40.73 
+
++LSSA E-SpikeFormer-L 20.23 36.82 41.60 
+
++LRF-SSA E-SpikeFormer-L 20.62 34.98 41.70 
+
++Ours E-SpikeFormer-L 20.85 35.44 43 .72 (+2 .99) 
+
+Table 5: Performance comparison on ADE20K. Best results are highlighted in bold. Detailed energy consumption is reported in Appendix D. 
+
+5.4 Spatial Locality of Token Interactions 
+
+To answer RQ3 , Figure 6 shows that our method yields lower MAD at every deployed layer across all three backbones. The observed reduction is consistent with the design of SCLA-BCP, in which attention is restricted to spatially contiguous regions, thereby bounding its spatial interaction range. We further visualize the learned spatial interaction patterns in Figure 7. Compared with LSSA and LRF-SSA, our proposed approach produces more concentrated responses on foreground objects while suppressing scattered activations in irrelevant regions, suggesting that our method learns more effective spatial representations. Additional visualization results are provided in Appendix G. 1 2 3 4 5 6 7 8 9 10 0.05 0.10 0.15 0.20 0.25 0.30 0.35 
+
+> MAD
+
+QKFormer-10-768        
+
+> w/ LSSA Avg.: 0.335 w/ LRF-SSA Avg.: 0.333
+> 123456780.15 0.20 0.25 0.30 0.35 0.40
+
+Spikingformer-8-768          
+
+> w/ LSSA Avg.: 0.350 w/ LRF-SSA Avg.: 0.341
+> 12345678910 11 12 0.05 0.10 0.15 0.20 0.25 0.30 0.35
+
+SDT-V3-L 
+
+> w/ LSSA Avg.: 0.331 w/ LRF-SSA Avg.: 0.333
+
+Layer Index   
+
+> w/ SCLA-BCP Avg. MAD (w/ LSSA) Avg. MAD (w/ LRF-SSA)
+
+Figure 6: Layer-wise MAD of SCLA-BCP compared with the average MAD of LSSA and LRF-SSA on ImageNet-1K. 
+
+5.5 Ablation Study 
+
+To analyze the components and design choices of SCLA-BCP, we perform ablation studies on QK-Former (multi-stage hierarchical architecture) and Spikingformer (ViT-like plain architecture) using CIFAR-100 ( T = 4 ) and CIFAR10-DVS ( T = 16 ). The training configurations and deployment 12 Spikingformer 8-768 SDT-V3-L Original Baseline w/ LSSA w/ LRF-SSA w/ Ours Label: Chimpanzee Label: American Coot Pred: Killer Whale Pred: American Coot  
+
+> Pred: Three-toed Sloth Pred: Bluetick Pred: Chesapeake Boy Retriever Pred: Chimpanzee
+
+# �� � �
+
+> Pred: Killer Whale Pred: Killer Whale
+
+# �� � �Figure 7: Comparative visualization on ImageNet-1K using Spikingformer (ViT-like plain archi-tecture) and SDT-V3 (multi-stage hierarchical architecture) with different locality-enhanced SSA variants. strategies are consistent with the main experiments. 
+
+Contributions of SCLA and BCP. Table 6 decomposes the two components. SCLA alone con-sistently improves accuracy over baselines (up to 1.20% on CIFAR10-DVS), validating the benefit of confining attention to local contiguous regions, whereas BCP alone provides only marginal gains on static data (0.05%/0.07% on CIFAR-100). Combining both components further improves per-formance, indicating that BCP does not serve as an additional pathway but compensates for the restricted cross-region information exchange caused by SCLA partitioning.                         
+
+> Backbone Dataset Baseline SCLA BCP Ours only only
+> QKFormer CIFAR-100 80.84 81.05 80.89 81.21
+> CIFAR10-DVS 81.10 82.20 81.90 83.50
+> Spikingformer CIFAR-100 80.37 80.61 80.44 80.91
+> CIFAR10-DVS 81.40 82.60 81.90 83.60
+
+Table 6: Component ablation results on CIFAR-100 ( T = 4 ) and CIFAR10-DVS ( T = 16 ). The SCLA-only setting removes the BCP pathway, while the BCP-only setting replaces SCLA with the original SSA. 
+
+Comparison with shifted-window designs. We examine whether shifted-window attention (SWA) can replace BCP by removing the BCP pathway and applying the SCLA region size w to SWA (Liu et al., 2021). As shown in Table 7, SWA without relative position encoding (RPE) (Wu et al., 2021) performs comparably to SCLA-only, indicating limited benefit from window shifting alone. Standard SWA still underperforms SCLA-BCP by 0.44% on average. This result is expected, as conventional positional encodings are difficult to effectively exploit in SNNs (Lv et al., 2024, 2026), and the introduction of floating-point RPE compromises the spike-driven computation property. 13 Backbone Dataset SCLA SWA SWA Ours only w/o RPE w/ RPE                   
+
+> QKFormer CIFAR-100 81.05 81.02 81.03 81.21
+> CIFAR10-DVS 82.20 82.20 82.90 83.50
+> Spikingformer CIFAR-100 80.61 80.70 80.73 80.91
+> CIFAR10-DVS 82.60 82.30 82.80 83.60
+
+Table 7: Comparison of different cross-region interaction mechanisms for SCLA on CIFAR-100 (T = 4 ) and CIFAR10-DVS ( T = 16 ). 
+
+# 6 Conclusion 
+
+In this work, we investigate the spatial locality issue in SSA and reveal that existing locality-enhanced SSA methods struggle to establish localized token interactions due to a computational– spatial locality discrepancy and uniform locality deployment across different architectures. We pro-pose SCLA-BCP, where SCLA partitions feature maps into local contiguous regions and restricts attention computation within each region, while BCP facilitates information exchange across region boundaries. We further develop a hierarchical deployment strategy to effectively apply SCLA-BCP to different architectures. Extensive experiments across diverse vision tasks demonstrate that our method consistently improves the performance of Spiking Transformers with limited overhead. Ad-ditional qualitative and quantitative analyses, including visualization and ablation studies, validate the effectiveness of our method. 
+
+# References 
+
+John S Bridle. Probabilistic interpretation of feedforward classification network outputs, with re-lationships to statistical pattern recognition. In Neurocomputing: Algorithms, architectures and applications , pages 227–236. Springer, 1990. Sayeed Shafayet Chowdhury, Nitin Rathi, and Kaushik Roy. Towards ultra low latency spiking neural networks for vision and sequential tasks using temporal pruning. In European Conference on Computer Vision , pages 709–726. Springer, 2022. Peter Dayan and Laurence F Abbott. Theoretical neuroscience: computational and mathematical modeling of neural systems . MIT press, 2005. Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-scale hierarchical image database. In 2009 IEEE conference on computer vision and pattern recognition ,pages 248–255. Ieee, 2009. Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. An image is worth 16x16 words: Transformers for image recognition at scale, 2020. Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. An image is worth 16x16 words: Transformers for image recognition at scale. In International Conference on Learning Representations , 2021. 14 Jason K Eshraghian, Max Ward, Emre O Neftci, Xinxin Wang, Gregor Lenz, Girish Dwivedi, Mo-hammed Bennamoun, Doo Seok Jeong, and Wei D Lu. Training spiking neural networks using lessons from deep learning. Proceedings of the IEEE , 111(9):1016–1054, 2023. Li Fei-Fei, Rob Fergus, and Pietro Perona. Learning generative visual models from few training examples: An incremental bayesian approach tested on 101 object categories. In 2004 conference on computer vision and pattern recognition workshop , pages 178–178. IEEE, 2004. Mark Horowitz. 1.1 computing’s energy problem (and what we can do about it). In 2014 IEEE international solid-state circuits conference digest of technical papers (ISSCC) , pages 10–14. IEEE, 2014. Huaibo Huang, Xiaoqiang Zhou, and Ran He. Orthogonal transformer: An efficient vision trans-former backbone with token orthogonalization. Advances in Neural Information Processing Sys-tems , 35:14596–14607, 2022. Giacomo Indiveri and Shih-Chii Liu. Memory and information processing in neuromorphic systems. 
+
+Proceedings of the IEEE , 103(8):1379–1397, 2015. Alex Krizhevsky, Geoffrey Hinton, et al. Learning multiple layers of features from tiny images. 2009. Donghyun Lee, Yuhang Li, Youngeun Kim, Shiting Xiao, and Priyadarshini Panda. Spiking trans-former with spatial-temporal attention. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 13948–13958, 2025. Zhenxin Lei, Man Yao, Jiakui Hu, Xinhao Luo, Yanye Lu, Bo Xu, and Guoqi Li. Spike2former: Efficient spiking transformer for high-performance image segmentation. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, pages 1364–1372, 2025. Hongmin Li, Hanchao Liu, Xiangyang Ji, Guoqi Li, and Luping Shi. Cifar10-dvs: an event-stream dataset for object classification. Frontiers in neuroscience , 11:244131, 2017. Lingdong Li, Hangming Zhang, and Qiang Yu. Breaking global self-attention bottlenecks in transformer-based spiking neural networks with local structure-aware self-attention, 2026. Wangdan Liao, Fei Chen, Changyue Liu, Weidong Wang, and Hongyun Liu. Spikeatconv: an inte-grated spiking-convolutional attention architecture for energy-efficient neuromorphic vision pro-cessing. Frontiers in Neuroscience , 19:1536771, 2025. JinGyo Lim, Seung Gyu Jeong, and Seong-Eun Kim. Rethinking attention in spiking transformers: Overcoming density bias with set similarity. In Forty-third International Conference on Machine Learning , 2026. Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dollár, and C Lawrence Zitnick. Microsoft coco: Common objects in context. In European conference on computer vision , pages 740–755. Springer, 2014. Ze Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan Wei, Zheng Zhang, Stephen Lin, and Baining Guo. Swin transformer: Hierarchical vision transformer using shifted windows. In Proceedings of the IEEE/CVF international conference on computer vision , pages 10012–10022, 2021. Changze Lv, Dongqi Han, Yansen Wang, Xiaoqing Zheng, Xuanjing Huang, and Dongsheng Li. Ad-vancing spiking neural networks for sequential modeling with central pattern generators. Advances in Neural Information Processing Systems , 37:26915–26940, 2024. 15 Changze Lv, Yansen Wang, Dongqi Han, Yifei Shen, Xiaoqing Zheng, Xuanjing Huang, and Dong-sheng Li. Toward relative positional encoding in spiking transformers. Advances in Neural Infor-mation Processing Systems , 38:77559–77584, 2026. Wolfgang Maass. Networks of spiking neurons: the third generation of neural network models. 
+
+Neural networks , 10(9):1659–1671, 1997. Wei Miao, Jiangrong Shen, Hongming Xu, Tommi Kärkkäinen, Qi Xu, Yi Xu, and Fengyu Cong. Advanced spikingyolox: Extending spiking neural network on object detection with spike-based partial self-attention and 2d-spiking transformer. In Proceedings of the 33rd ACM International Conference on Multimedia , pages 10837–10846, 2025. Xuerui Qiu, Malu Zhang, Jieyuan Zhang, Wenjie Wei, Honglin Cao, Junsheng Guo, Rui-Jie Zhu, Yimeng Shan, Yang Yang, and Haizhou Li. Quantized spike-driven transformer. In The Thirteenth International Conference on Learning Representations , 2025. Zhengzhong Tu, Hossein Talebi, Han Zhang, Feng Yang, Peyman Milanfar, Alan Bovik, and Yinxiao Li. Maxvit: Multi-axis vision transformer. In European conference on computer vision , pages 459– 479. Springer, 2022. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. Kan Wu, Houwen Peng, Minghao Chen, Jianlong Fu, and Hongyang Chao. Rethinking and improv-ing relative position encoding for vision transformer. In Proceedings of the IEEE/CVF interna-tional conference on computer vision , pages 10033–10041, 2021. Qi Xu, Jie Deng, Jiangrong Shen, Biwu Chen, Huajin Tang, and Gang Pan. Hybrid spiking vision transformer for object detection with event cameras. In International Conference on Machine Learning , pages 69147–69159. PMLR, 2025. Yinsong Yan, Qu Yang, Yujie Wu, Hanwen Liu, Malu Zhang, Haizhou Li, Kay Chen Tan, and Jibin Wu. Efficient and robust temporal processing with neural oscillations modulated spiking neural networks. Nature communications , 16(1):8651, 2025. Man Yao, Jiakui Hu, Zhaokun Zhou, Li Yuan, Yonghong Tian, Bo Xu, and Guoqi Li. Spike-driven transformer. Advances in neural information processing systems , 36:64043–64058, 2023. Man Yao, JiaKui Hu, Tianxiang Hu, Yifan Xu, Zhaokun Zhou, Yonghong Tian, Bo XU, and Guoqi Li. Spike-driven transformer v2: Meta spiking neural network architecture inspiring the design of next-generation neuromorphic chips. In The Twelfth International Conference on Learning Representations , 2024. Man Yao, Xuerui Qiu, Tianxiang Hu, Jiakui Hu, Yuhong Chou, Keyu Tian, Jianxing Liao, Luziwei Leng, Bo Xu, and Guoqi Li. Scaling spike-driven transformer with efficient spike firing approxima-tion training. IEEE Transactions on Pattern Analysis and Machine Intelligence , 47(4):2973–2990, 2025. Dehao Zhang, Fukai Guo, Shuai Wang, Jingya Wang, Jieyuan Zhang, Yimeng Shan, Malu Zhang, Yang Yang, and Haizhou Li. Neural dynamics self-attention for spiking transformers. In The Fourteenth International Conference on Learning Representations , 2026. 16 Han Zhang, Chenlin Zhou, Liutao Yu, Liwei Huang, Zhengyu Ma, Xiaopeng Fan, Huihui Zhou, and Yonghong Tian. Sglformer: Spiking global-local-fusion transformer with high performance. 
+
+Frontiers in neuroscience , 18:1371290, 2024. Bolei Zhou, Hang Zhao, Xavier Puig, Sanja Fidler, Adela Barriuso, and Antonio Torralba. Scene parsing through ade20k dataset. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 633–641, 2017. Chenlin Zhou, Han Zhang, Zhaokun Zhou, Liutao Yu, Liwei Huang, Xiaopeng Fan, Li Yuan, Zhengyu Ma, Huihui Zhou, and Yonghong Tian. Qkformer: Hierarchical spiking transformer using qk attention. Advances in Neural Information Processing Systems , 37:13074–13098, 2024. Chenlin Zhou, Liutao Yu, Zhaokun Zhou, Han Zhang, Jiaqi Wang, Huihui Zhou, Zhengyu Ma, and Yonghong Tian. Spikingformer: A key foundation model for spiking neural networks. In 
+
+Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 2236–2244, 2026. Zhaokun Zhou, Yuesheng Zhu, Chao He, Yaowei Wang, YAN Shuicheng, Yonghong Tian, and Li Yuan. Spikformer: When spiking neural network meets transformer. In The Eleventh In-ternational Conference on Learning Representations , 2023. 17
