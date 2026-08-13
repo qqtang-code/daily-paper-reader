@@ -1,0 +1,493 @@
+Title: Evidence-Driven Dynamic Visual Selector for Efficient Long Video Understanding
+
+URL Source: https://arxiv.org/pdf/2608.05780v1
+
+Published Time: Fri, 07 Aug 2026 00:43:45 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Evidence-Driven Dynamic Visual Selector for Efficient Long Video Understanding 
+
+# Bo Zhang 1∗, Wenxin Wang 1∗, Feng Chen 2†, Zhihao Zhang 1, Zixuan Wang 1,Changsheng Li 3, Yinjie Lei 1‡
+
+> 1
+
+Sichuan University, 2Adelaide University, 3Beijing Institute of Technology 
+
+Abstract 
+
+Recent advancements in MLLM-based long-form video un-derstanding have mitigated inference-time computational cost and limited context lengths by selecting query-relevant frames. However, existing approaches predominantly rely on external proxy scorers and rigid heuristic rules, inevitably suf-fering from misalignment with the target MLLM’s intrinsic evidence and failing to accommodate the non-uniform spa-tiotemporal information density. In this paper, we propose a fine-grained dynamic visual selection framework named 
+
+EviSelect , grounded in the target MLLM’s internal attention evidence. Our method efficiently probes visual evidence via sparse prefilling as a structured prior to guide distribution-aware dynamic sampling. Specifically, we efficiently approx-imate attention maps of the target MLLM using highly com-pressed visual inputs and sparse attention, well-aligned to the full counterpart. Conditioned on three complementary attention components derived from this prior, we design a lightweight selector that not only precisely locates query-relevant timestamps but also adaptively adjusts the local sampling rate and spatial resolution. To enable evidence-conditioned spatiotemporal sampling, we formulate the se-lector as a stochastic policy and optimize it via GRPO under a joint accuracy–efficiency reward. By rewarding correct pre-dictions under lower visual cost through group-relative com-parisons, our method encourages the policy to allocate com-putation dynamically according to the information density of each video. Across three long video understanding bench-marks, EviSelect achieves superior performance compared to existing methods while reducing selected visual tokens by about 50% and achieving a 3.9 × end-to-end speedup. 
+
+Project Page — https://zhangbo135.github.io/EviSelect/ 
+
+# Introduction 
+
+Long-form video understanding (Cheng et al. 2025; Qin et al. 2025; Chen et al. 2025b) focuses on interpreting events over extended time scales and modeling long-range tempo-ral dependencies in complex video content, enabling criti-cal applications ranging from movie analysis (Rawal et al. 2024) to video surveillance (Elharrouss, Almaadeed, and Al-Maadeed 2021). Although Multimodal Large Language Models (MLLMs) (Bai et al. 2025; Hurst et al. 2024) have demonstrated impressive performance in understanding short video clips, extending their capabilities to long-form videos 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Project lead. ‡ Corresponding author. 
+
+faces a bottleneck. Due to the limited context windows and attention dilution (Qin et al. 2022) in long contexts, MLLMs frequently overlook query-relevant evidence and waste sub-stantial computation on redundant frames. To mitigate this, recent studies (Liu et al. 2025a; Yang and Lam 2025), as illustrated in Fig. 1(a), typically employ heuristic frame selection strategies driven by external proxies to extract query-conditioned frames. For example, Q-Frame (Zhang et al. 2025a) utilizes CLIP (Radford et al. 2021) to score query-frame similarity, performs ranking-based frame selection, and feeds the selected frames into an MLLM with a fixed resolution strategy. However, these paradigms suf-fer from three critical limitations: (1) Objective Misalign-ment . Because proxy signals merely reflect semantic rele-vance rather than align with the target MLLM’s internal evidence requirements (Li et al. 2025b), existing paradigms (Liang et al. 2024; Hu et al. 2025b) inevitably miss subtle but critical visual cues. (2) Static Frame Retrieval . Existing methods (Tang et al. 2025b; Liu et al. 2025a) often treat long-video understanding as an isolated keyframe selection prob-lem, rather than modeling a query-conditioned belief distri-bution over continuous temporal trajectories. Consequently, these approaches lead to temporally myopic selections that over-concentration on visually salient segments while insuf-ficient coverage of sparse yet critical events. (3) Rigid Spa-tiotemporal Configuration . Existing methods (Sheng et al. 2025; Yao et al. 2025) adopt a one-size-fits-all sampling setup—selecting a predetermined number of frames at a fixed spatial resolution—regardless of the underlying non-uniform information density of the video. Such rigid configurations result in inefficient allocation of the computational budget, either over-sampling redundant segments or under-sampling sparse critical events. To alleviate these challenges, we propose EviSelect , a fine-grained dynamic visual selection framework shown in Fig. 1 (b). Rather than relying on external proxies, EviS-elect directly extracts endogenous evidence from attention maps, which inherently reflect its query-conditioned spa-tiotemporal dependencies and actual visual demands. Specif-ically, we first employ a sparse pre-filling mechanism over highly compressed anchor frames to efficiently probe the target MLLM’s internal attention maps at low cost. We further decompose these maps into query–frame relevance, cross-frame temporal dependency, and intra-frame spatial ev-arXiv:2608.05780v1 [cs.CV] 6 Aug 2026 video input 
+
+Query 
+
+(a) Existing Frame Selection Methods 
+
+Text Encoder 
+
+Vision 
+
+Encoder 1F3FTFTQF 3QF 2QF 1QF Q2F
+
+> …
+> … Query-aware
+> Frame Selection
+> Similarity Score T
+> MLLM (Sparse Prefill)
+> Top-k Selection
+> MLLM
+
+Response: 
+
+B
+
+(b) Our method 
+
+Evidence Prior 
+
+> Selector
+> Sampled Frame
+> MLLM
+
+Response: 
+
+A
+
+> …
+> Local Sampling Spatial Resolution Timestamp Retention
+
+video input 
+
+Query Figure 1: Comparison of representative frame selection methods with EviSelect . Existing method (Liu et al. 2025a; Zhang et al. 2025a) typically rely on CLIP to compute query–frame similarity and apply rigid heuristic rules to select keyframes for MLLM. EviSelect rapidly approximates the target MLLM’s attention maps as evidence priors and designs a selector to predict three policy distributions for each timestamp: retention decision, local sampling rate, and spatial resolution, yielding multi-scale visual input for answer generation. idence. A lightweight selector then leverages the three cues to drive a joint distribution-aware sampling policy by pre-dicting three corresponding fine-grained dimensions at each timestamp: retention decision, local sampling rate, and spa-tial resolution. To align this sampling policy with the target MLLM’s actual performance, we formulate the selector as a stochastic policy and optimize it via GRPO (Shao et al. 2024) using a joint accuracy-efficiency reward. By rewarding cor-rect MLLM predictions achieved at lower visual cost, our method drives the policy to adaptively allocate computation according to the video’s intrinsic spatiotemporal information density, rather than relying on fixed heuristics. Our main contributions can be summarized as follows: 
+
+• We propose EviSelect, a fine-grained dynamic visual se-lection framework that reformulates keyframe selection as a distribution-aware dynamic sampling driven by internal evidence of the target MLLM. 
+
+• We propose a sparse prefill mechanism to rapidly approx-imate the evidence prior and a selector for fine-grained, distribution-aware spatiotemporal sampling policy. 
+
+• Extensive experiments on three benchmarks demonstrate that our method achieves state-of-the-art performance with only 50% of the selected visual tokens and accel-erates the end-to-end process by 3.9 ×.
+
+# Related Work 
+
+Long-form Video Understanding. 
+
+Existing MLLMs (Bai et al. 2023; Hurst et al. 2024) have achieved significant progress in vision-language understand-ing, with representative early efforts including BLIP-2 (Li et al. 2023) and Flamingo (Alayrac et al. 2022). How-ever, long-form video understanding remains challenging for MLLM due to their limited context window and pro-hibitive computational cost. To this end, recent studies typ-ically follow two paradigms: (1) token compression (Sun et al. 2025; Chen et al. 2025a), motivated by the substantial visual redundancy across video frames, introduces trainable compression modules and fine-tunes the model to aggregate visual content into fewer tokens (Li, Wang, and Jia 2024; Shu et al. 2025; Chen et al. 2026; He et al. 2025). VideoChat-Flash (Li et al. 2024b) hierarchically compresses long videos from the clip level to the video level. (2) context exten-sion (Shen et al. 2025), which enables MLLMs to handle longer inputs via length extrapolation and additional train-ing on longer videos (Chen et al. 2024; Zhang et al. 2024a). Long-VITA (Chen et al. 2024) adopts context-parallel dis-tributed inference and a logits-masked language modeling head to scale to extremely long token sequences. However, they typically rely on additional model modifications and may struggle to preserve key information in the video. 
+
+Query-based Keyframe Selection. 
+
+Instead of modifying the MLLM via compression or context extension, a complementary research direction for long-form video understanding focuses on selecting query-relevant keyframes to capture critical visual information, ranging from training-free frame matching (Zhu et al. 2025; Zhang et al. 2025a) to training-based selectors (Zhang et al. 2025b; Buch et al. 2025). Training-free methods (Tang et al. 2025b; Liu et al. 2025a) typically rely on external proxies, such as CLIP (Radford et al. 2021) or DINOv2 (Oquab et al. 2023), to select informative frames. For example, DIG (Li et al. 2025a) adapts its sampling strategy based on query type and uses DINOv2 to compute pairwise frame similarity to derive candidate segments, and then leverages an MLLM-based reward signal to expand local segments. AKS (Tang et al. 2025b) uses CLIP to compute frame–query relevance scores and selects keyframes by jointly optimizing relevance and temporal coverage. Meanwhile, training-based selec-tors (Hu et al. 2025b; Yao et al. 2025) model frame se-lection as a learnable policy. Frame-Voyager (Yu et al. 2024) constructs subset-level supervision to query frame subsets combinatorially, rather than selecting frames independently. TSPO (Tang et al. 2025a) proposes a trainable event-aware temporal agent that models event-query correlation for prob-abilistic keyframe selection. Despite their effectiveness, they rely on external proxy scorers and rigid heuristic rules, which suffer from misalignment with the intrinsic preferences of the target MLLM, and often fail to accommodate the dynamic spatiotemporal information density. 
+
+Reinforcement Learning for MLLMs. 
+
+Recent reinforcement learning methods (Zhang et al. 2024b; Kim 2026) have advanced beyond classic RLHF pipelines (Rafailov et al. 2023) by adopting group-based policy optimization objectives for more stable MLLM opti-mization. In particular, Group Relative Policy Optimization (GRPO) (Shao et al. 2024) estimates advantages through within-group relative ranking among multiple sampled can-didates for the same input within each update, reducing reliance on critic training and improving robustness under high-variance rewards. Such group-based RL formulations have been explored in a range of applications, especially for tasks emphasizing strong reasoning (Wu et al. 2025) or struc-tured decision-making (Feng et al. 2025; Wang et al. 2026), where relative preference signals are easier to obtain and more stable than absolute scalar rewards. In this paper, our EviSelect takes a novel perspective that directly leverages GRPO to optimize dynamic sampling strategy that balances accuracy and token efficiency, which directly addresses the most critical bottleneck in long video understanding: extract-ing decisive evidence from extremely long contexts. 
+
+# Methodology 
+
+Overview 
+
+As shown in Fig. 2, given a textual query Q and a long video 
+
+V , we aim to construct a compact yet informative multi-scale visual input Vs that aligns with the target MLLM’s intrinsic evidence demands and adapts to the video’s dynamic infor-mation density. We cast this process as a distribution-aware spatiotemporal sampling policy that outputs fine-grained vi-sual allocation decisions ut = ( zt, ρ t, λ t) at each timestamp 
+
+t, representing timestamp retention, local temporal sampling rate, and spatial resolution, respectively. Our framework ef-ficiently captures the target MLLM’s attention priors and models the joint sampling policy. In the evidence grounding stage, we perform an efficient probing pass through the sparse prefilling of the target MLLM over a highly compressed vi-sual token of V , obtaining attention maps A as structured priors. Then we decompose A into three complementary cues: query-frame relevance Aqf for zt, cross-frame tempo-ral dependency Af f for ρt, and intra-frame spatial saliency 
+
+Aif for λt. Conditioned on these cues, a lightweight selector directly predicts the joint distribution over ut, and is trained through GRPO with a joint accuracy-efficiency reward. As a result, the selector dynamically adjusts the fine-grained de-cisions, extracting only the essential visual context. Finally, we resample V according to these decisions to produce Vs
+
+for final inference by the target MLLM. 
+
+Evidence Grounding 
+
+We extract layer-wise attention priors from the target MLLM via an efficient probing pass on a highly compressed video. Specifically, we perform sparse prefilling to obtain block-level sparse attentions {A(l)}Ll=1 for all L layers, which are decomposed into three evidence cues Aqf , Af f , and Aif .
+
+Sparse Evidence Probing. Although all sampling deci-sions (zt, ρ t, λ t) are operated at the frame level, they require evidence at different granularities: temporal retention and lo-cal temporal sampling mainly depend on frame-level query relevance and cross-frame dependency, whereas spatial-resolution selection requires within-frame token structure. We therefore obtain these cues through an efficient sparse prefilling pass (Fan et al. 2026; Lai et al. 2025), circumvent-ing the heavy computational cost of reconstructing dense token-level attention over the full video. We first uniformly partition the video timeline into con-secutive temporal segments and use the midpoint of each segment as an anchor timestamp, yielding T anchors. Each anchor frame is then spatially downsampled, and the result-ing frames form the compressed visual input Vc. The target MLLM encodes Vc into visual tokens, which are concate-nated with the query tokens of Q to form the prefilling context sequence X. During prefilling stage, we employ block-sparse attention (Lu et al. 2025) to efficiently obtain the attention maps and apply adaptive top-p retention (He et al. 2024), which ensures that the retained key blocks cover at least p
+
+of the attention mass. By constraining the attention mass discarded, top-p retention strategy reduces the perturbation introduced by sparsification (Lin et al. 2025), so the resulting attention maps closely approximate those of full attention. We further validate this similarity in Tab. 7. Formally, this probing process is abstracted as: 
+
+n
+
+A(l)o
+
+= SparsePrefill( X; τp, B ), (1) where l ∈ { 1, . . . , L } index the transformer layers, τp is the cumulative probability threshold for retention, and B is the block size used by block-sparse attention, which set to the number of visual tokens per frame Nv (or a divisor of it) so that block boundaries align with frame boundaries. 
+
+Evidence Decomposition. We average the attention maps across heads while preserving the layer dimension. Since the block boundaries are aligned with frame boundaries, the visual blocks corresponding to each anchor frame can Figure 2: Overview of our method. Our method efficiently probes visual evidence to enable distribution-aware dynamic sampling. We partition the video into uniform timestamps, construct a highly compressed visual input, and employ sparse attention to rapidly approximate the MLLM’s attention maps. A lightweight selector then predicts three policy distributions for each timestamp, including retention decision, sampling rate, and spatial resolution. These decisions are used to resample the video for final inference. The policy is optimized via GRPO with a joint accuracy–efficiency reward. be directly located in A(l). Then we extract three comple-mentary evidence cues Aqf , Af f and Aif through deter-ministic slicing and aggregation, without recomputing atten-tion or introducing learnable parameters. As illustrated in Fig. 2, query-frame cue Aqf ∈ RL×T is obtained by av-eraging the attention from the complete query-token group to the visual blocks of each anchor frame. Intra-frame cue 
+
+Aif ∈ RL×T ×Nv ×Nv retains the token-level causal atten-tion within each anchor frame, retaining its spatial struc-ture. Cross-frame cue Af f ∈ RL×(T −1) ×(T −1) captures the attention from each anchor frame to its preceding anchor frames, where each pairwise score is computed by averaging the attention between their visual blocks. Since Af f is in-dexed by frame pairs rather than individual timestamps, we aggregate it along both directions: for each anchor frame, the attention it assigns to preceding frames and the attention it receives from subsequent frames are averaged at each layer, yielding timestamp-aligned temporal evidence Ef f . For the other two cues, Eqf directly inherits the timestamp-aligned query-frame relevance scores from Aqf , while Eif is ob-tained by vectorizing the layer-wise intra-frame attentions of 
+
+Aif at each timestamp. 
+
+Distribution-Aware Dynamic Sampling 
+
+Given the evidence priors extracted from the target MLLM, we model visual selection as a distribution-aware sampling policy over the timestamp sequence. Concretely, the selec-tor takes Eqf , Ef f , and Eif as inputs, and predicts three timestamp-wise categorical distributions: πkeep over times-tamp retention zt ∈ { 0, 1}, which retains ( zt = 1 ) or dis-cards ( zt = 0 ) timestamp t; πrate over local sampling level 
+
+ρt ∈ R , which specifies the number of frames uniformly sampled from the temporal segment corresponding to times-tamp t; and πres over spatial resolution λt ∈ L , which de-termines the resolution to which the sampled frames from this segment are resized. Here, R and L denote predefined candidate sets. To fuse the three cues, we project each of them into a common embedding space with the timestamp dimension preserved. The three projected features are con-catenated along the feature dimension and processed by a shared lightweight MLP to obtain the fused hidden represen-tations h. Three independent prediction heads then take h as input and output πkeep (· | h), πrate (· | h), and πres (· | h)
+
+for all T anchor timestamps in one forward pass. The joint policy over the sampling decisions is formulated as: 
+
+πs
+
+ {ut}Tt=1 | Q, V c
+
+ =
+
+> T
+
+Y
+
+> t=1
+
+πkeep (zt | h)
+
+· πrate (ρt | h) πres (λt | h).
+
+(2) The sampled decisions are then applied to the original video V . For a retained anchor ( zt = 1 ), we uniformly sam-ple ρt frames from its corresponding temporal segment and resize them to the resolution specified by λt; otherwise, the segment is skipped. Finally, the sampled frames are arranged chronologically to form the multi-scale frame sequence Vs
+
+for downstream MLLM inference. 
+
+Policy Optimization with GRPO 
+
+For each training instance (Q, V c), we sample a group of G
+
+candidate decision sequences and evaluate them using target MLLM. The reward of our method is composed of perfor-mance and efficiency rewards. Specifically, the performance reward Rper is binary, assigning 1 to a correct answer and 
+
+0 otherwise. We define the efficiency reward as a weighted combination of a retention term and a token-cost term: 
+
+Reff = η 1 −
+
+PTt=1 zt
+
+T
+
+!
+
++ (1 − η)
+
+
+
+1 − CVs
+
+Cmax 
+
+
+
+, (3) where η balances retention and token-cost; CVs is the total number of visual tokens in Vs, jointly determined by ρt and λt selected across all retained timestamps; and Cmax is the corresponding upper bound obtained by applying maximum sampling level and resolution at same retained timestamps. When all candidates in a group are incorrect, the perfor-mance rewards are identical, while the efficiency rewards may still differ. A naive additive two rewards would there-fore rank the candidates solely according to their visual cost, encouraging a low-cost policy. To avoid this, we activate the efficiency reward only if the group contains a correct candi-date. Concretely, for a group of G candidates, we define: 
+
+Cacc ≜ 1{∃ j ∈ { 1, . . . , G } : Rper ,j = 1 }, (4) where Rper ,j is the performance reward of the j-th candidate. The overall reward of the i-th candidate is defined as: 
+
+Ri = Rper ,i + α C acc Reff ,i , (5) where α controls the strength of the efficiency reward. Fi-nally, we optimize the selector policy using GRPO by maxi-mizing the following objective: 
+
+J(θ) = E
+
+"
+
+1
+
+G
+
+> G
+
+X
+
+> i=1
+
+min 
+
+
+
+ri(θ)Ai, clip  ri(θ), 1 − ϵ, 1 + ϵAi
+
+#
+
+,
+
+(6) where Ai = Ri−mean( R1,R 2,...,R G)std( R1,R 2,...,R G)+ δ is the group-relative ad-vantage computed from the group rewards, δ is a small con-stant for numerical stability. The importance ratio is defined as ri(θ) = πs,θ (u(i)1: T |Q,V c)   
+
+> πs,θ old (u(i)1: T|Q,V c)
+
+, which compares the probabili-ties assigned to the sampled decision sequence by the current and old selector policies. Here, θold denotes the selector pa-rameters before the current optimization update, and ϵ is the clipping threshold. Notably, we exclude the KL-divergence term used in GRPO, as our selector is trained from scratch and has no reference model to regularize against. 
+
+# Experiments 
+
+Benchmarks 
+
+To evaluate the effectiveness of our method, we conduct ex-tensive experiments on three widely used long-form video understanding benchmarks: (1) MLVU (Zhou et al. 2024), a multi-task benchmark that ranges from 3 minutes to 2 hours (average video duration: 12 minutes) and covers di-verse video genres such as movies and surveillance footage. We evaluate on the “M-Avg” portion of the “Dev” split, fol-lowing (Zhang et al. 2024c). (2) LongVideoBench (Wu et al. 2024), evaluated on the validation set without subtitles (aver-age video duration: 12 minutes), containing 1,337 QA pairs across 17 fine-grained categories. (3) Video-MME (Fu et al. 2025) comprises 900 videos with durations split into short ( <
+
+2min), medium (4 ∼15min), and long (30 ∼60min), totaling 2,700 QA pairs (average video duration: 17 minutes). 
+
+Implementation Detail 
+
+We evaluate our framework on two MLLMs: Qwen2.5-VL-7B (Bai et al. 2025) and LLaVA-Video-7B (Zhang et al. 2024d). All experiments are conducted on 4 NVIDIA H100 GPUs. Following TSPO (Tang et al. 2025a), our lightweight selector (0.1B parameters) is trained on the same 10K subset of LLaVA-Video-178K dataset (Zhang et al. 2024d) for one epoch, with a learning rate of 5 ×10 −4 and a batch size of 1. In the GRPO algorithm, we set G = 8 , the efficiency reward coefficient α = 0 .1, the retention–budget trade-off 
+
+η = 0 .5, and the clipping threshold to ϵ = 0 .2. During evidence grounding, we uniformly divide each video into consecutive 2-second temporal segments and use the central timestamp of each segment as its anchor. Each anchor frame is spatially downsampled and represented by Nv = 20 visual tokens. The top-p threshold is set to τp = 0 .97 and the block size is fixed by default at B = 20 . To accommodate the intrinsic temporal patch size of the visual encoder (e.g., a temporal patch size of 2 in Qwen2.5-VL (Bai et al. 2025)), we define the candidate set for sampling rate as R = {1, 2, 4, 8}.The spatial resolution candidate set L comprises 4 levels 
+
+90 × 160 , 360 × 640 , 540 × 960 , and 720 × 1280 .
+
+Main Results 
+
+Comparison with Existing Methods. As shown in Tab.1, LLaVA-Video-7B equipped with EviSelect achieves state-of-the-art performance across three general long video bench-marks, while using fewer selected visual tokens. Compared with TSPO (Tang et al. 2025a), our EviSelect achieves per-formance improvements of 1.9% on Video-MME (Fu et al. 2025), 0.9% on MLVU (Zhou et al. 2024), and 0.7% on LongVideoBench (Wu et al. 2024), while using only 1701 to-kens on average, reducing the answer-stage visual-token bud-get by 49% compared with TSPO (3360 tokens). Moreover, EviSelect using Qwen2.5-VL-7B (Bai et al. 2025) also brings consistent improvements over TSPO, demonstrating strong generalization across different MLLM. Meanwhile, it also achieves competitive performance in challenging “Long" subset of Video-MME. This indicates its robust ability to localize query-relevant content even under extremely long contexts, which benefits from our use of the evidence priors of the target MLLM to dynamically identify key timestamps. 
+
+Inference Efficiency. As shown in Tab. 2, Selected tokens 
+
+denotes the average number of visual tokens selected for and passed to the target MLLM. For EviSelect, Selection includes the complete evidence-grounding pass, selector inference, frame resampling, and final input construction. MLLM mea-sures the subsequent time for the target MLLM to process the input and generate the answer, and Overall reports the end-to-end latency as the sum of these two stages. Compared with TSPO (Tang et al. 2025a), EviSelect reduces the selection time from 9.2 s to 2.1 s and the answer-stage visual-token cost from 3360 to 1701. It also reduces MLLM inference time from 0.78 s to 0.45 s, resulting in an end-to-end latency of 2.55 s and a 3.9× speedup. 
+
+Ablation Study 
+
+Effect of Different Components. To evaluate the contri-bution of each component in EviSelect, we conduct com-prehensive ablation studies on MLVU (Zhou et al. 2024) and LongVideoBench (Wu et al. 2024) using LLaVA-Video-7B (Zhang et al. 2024d) as the MLLM. As shown in Tab. 3, the retention strategy alone improves accuracy over the uniform-sampling (64.4% →65.4% on MLVU and Model Avg. Selected Tokens LLM Size Selector LongVideoBench MLVU Video-MME Val Dev Long Avg 
+
+Closed-Source MLLM 
+
+GPT-4o (Hurst et al. 2024) - - Uniform 66.7 64.6 65.3 71.9 GPT-4V (OpenAI 2023) - - Uniform 61.3 49.2 53.5 59.9 Gemini-1.5-Flash (Team et al. 2023) - - Uniform 61.6 - 61.1 70.3 Gemini-1.5-Pro (Team et al. 2023) - - Uniform 64 - 67.4 75.0 
+
+Open-Source MLLM 
+
+Video-LLaVA (Lin et al. 2024) 2048 7B Uniform - 36.2 - 39.9 Qwen-VL (Bai et al. 2023) 2048 7B Uniform - - 37.8 41.1 Oryx-1.5 (Liu et al. 2024) 14400 7B Uniform 56.3 - 51.2 58.8 LLaVA-Onevision (Li et al. 2024a) 6272 7B Uniform 56.4 64.7 46.7 58.2 NVILA (Liu et al. 2025b) 8192 7B Uniform 57.7 70.1 54.8 64.2 Apollo (Zohar et al. 2025) 2FPS 7B Uniform 58.5 68.7 - 61.3 LongVU (Shen et al. 2024) 1FPS 7B DINOv2 - 65.4 - 60.6 LLaVA-Video-7B* 3360 7B Uniform 57.4 64.4 51.3 60.3 +AKS (Tang et al. 2025b) 3360 7B CLIP 61.6 - - 62.2 +TSPO (Tang et al. 2025a)* 3360 7B TSPO-0.4B 61.4 68.2 52.9 62.1 +EviSelect 1701 7B 0.1B 62.1 69.1 53.7 64.0 
+
+Qwen2.5-VL-7B* 2912 7B Uniform 55.4 54.3 48.9 57.1 +FastV + DyToK (Li et al. 2025b) 1568 7B — 54.5 43.3 - 58.8 +Q-Frame (Zhang et al. 2025a) 2912 7B CLIP 57.37 56.81 49.02 -+DIG (Li et al. 2025a) 2912 7B DINOv2 57.89 63.98 51.93 -+TSPO (Tang et al. 2025a)* 2912 7B TSPO-0.4B 58.1 65.1 52.1 59.1 +EviSelect 1439 7B 0.1B 59.2 66.1 53.0 60.8 
+
+Table 1: Evaluation of long-form video understanding on three commonly used benchmarks. “*” denotes our reproduced results. Method Selected Tokens Latency (s) Selection MLLM Overall Uniform 3360 0 0.78 0.78             
+
+> CoS (Hu et al. 2025a) 13440 28.4 2.70 31.10 TSPO (Tang et al. 2025a) 3360 9.2 0.78 9.98 EviSelect 1701 2.1 0.45 2.55
+
+Table 2: End-to-end inference efficiency. Retention Adaptive Frame Adaptive Spatial Token LVB MLVU Strategy Sampling Resolution                          
+
+> ✗✗✗3360 57.4 64.4
+> ✓✗✗2100 58.5 65.4
+> ✓✓✗2730 59.1 67.2
+> ✓✗✓2048 60.3 67.9
+> ✓✓✓1701 62.1 69.1
+
+Table 3: Ablation study of different components. 57.4% →58.5% on LongVideoBench). This indicates that evidence-driven timestamp retention is crucial for discard-ing redundant segments while preserving critical evidence, whereas uniform sampling frequently misses query-relevant visual cues. Moreover, based on timestamp retention, both adaptive strategies bring further gains: adaptive frame sampling im-proves accuracy from 65.4% to 67.2%, and adaptive spatial resolution improves it to 67.9%, indicating that a fixed token 62.3 62.1 60.9 58.3 
+
+# 1 2 4 858 60 62 Timestamp Sampling Interval 
+
+Figure 3: Effect of the anchor timestamp sampling interval. allocation fails to accommodate the uneven distribution of temporal and spatial information. Notably, adaptive spatial resolution achieves higher accuracy with fewer tokens than adaptive frame sampling. We attribute this to the higher re-dundancy in spatial dimension: the semantics of most frames are well preserved at low resolution, so adaptive spatial res-olution removes redundant tokens with little semantic loss, whereas densifying frames incurs a larger token overhead for a smaller gain. Combining all components, which reduce redundancy along orthogonal dimensions, achieves the best accuracy (69.1% on MLVU and 62.1% on LongVideoBench) at the lowest cost of 1701 tokens. 
+
+Effect of Anchor Interval. Fig. 3 examines the effect of the anchor interval used in evidence grounding on Local Sampling Rate ( ρt) Token Acc 8 4 2 1
+
+## ✓ ✗ ✗ ✗ 3045 60.7 
+
+## ✗ ✓ ✗ ✗ 2048 60.3 
+
+## ✗ ✗ ✓ ✗ 1624 58.5 
+
+## ✗ ✗ ✗ ✓ 1356 55.2 
+
+## ✓ ✓ ✗ ✗ 2458 61.0 
+
+## ✓ ✓ ✓ ✗ 1950 61.5 
+
+## ✓ ✓ ✓ ✓ 1701 62.1 
+
+Table 4: Ablation on the frame-sampling candidate set R.Frame Resolution ( λt) Token Acc 720P 540P 360P 90P 
+
+✓ ✗ ✗ ✗ 4261 59.3 
+
+✗ ✓ ✗ ✗ 2735 59.1 
+
+✗ ✗ ✓ ✗ 2059 57.5 
+
+✗ ✗ ✗ ✓ 1563 54.9 
+
+✓ ✓ ✗ ✗ 3218 60.2 
+
+✓ ✓ ✓ ✗ 2879 61.1 
+
+✓ ✓ ✓ ✓ 1701 62.1 
+
+Table 5: Ablation on the spatial-resolution candidate set L.Model Selected tokens LLM Size Selector LongVideoBench MLVU Video-MME Val Dev Long Avg LLaVA-Video-7B* 3360 7B Uniform 57.4 64.4 51.3 60.3 Qwen → LLaVA 1659 7B 0.1B 59.8 67.5 52.5 62.1 EviSelect 1701 7B 0.1B 62.1 69.1 53.7 64.0 
+
+Qwen2.5-VL-7B* 2912 7B Uniform 55.4 54.3 48.9 57.1 LLaVA → Qwen 1475 7B 0.1B 57.5 62.2 51.6 59.7 EviSelect 1439 7B 0.1B 59.2 66.1 53.0 60.8 
+
+Table 6: Cross-backbone transfer of the selector. LongVideoBench (Wu et al. 2024). The default 2-second in-terval achieves 62.1% accuracy, closely matching the denser 1-second setting (62.3%), while requiring only about half the probing-token cost, as the number of anchor frames doubles when the interval is halved. In contrast, coarser intervals de-grade accuracy noticeably, dropping to 60.9% at 4 seconds and 58.3% at 8 seconds, since the sparser anchor sequence fails to cover short events and abrupt state changes, leaving the selector without sufficient evidence for precise tempo-ral localization. We therefore adopt the 2-second interval by default, as it strikes the best accuracy–cost balance. 
+
+Effect of Multi-level Temporal Sampling. Tab. 4 compares different configurations of R used by adaptive frame sam-pling on LongVideoBench (Wu et al. 2024). Enabling all four candidates yields the best accuracy at a lower token cost: compared with the best single-candidate configuration, it improves accuracy by 1.4% while reducing the token cost from 3045 to 1701. Accuracy also improves consistently as more candidates become available. These results indicate that no fixed sampling rate suits both fast actions and slowly changing scenes, whereas adaptive frame sampling adapts to the varying temporal dynamics across video segments. 
+
+Effect of Multi-level Spatial Resolution. Tab. 5 examines different configurations of the candidate set L used by adap-tive spatial resolution on LongVideoBench (Wu et al. 2024). Enabling all resolution candidates achieves the highest ac-curacy (62.1%) at a lower token cost. In contrast, using only the lower resolution ( 90 × 160 ) is cheap but drops accu-racy to 54.9%, as low-resolution frames lose subtle visual evidence; using only the highest resolution ( 720 × 1280 )Cue Pear. ↑ Spear. ↑ JS ↓ Top-10% ↑ Keep Mass-rec. ↑                        
+
+> Aqf 0.89 0.86 0.022 0.75 0.60 0.985
+> Af f 0.89 0.87 0.015 0.76 0.52 0.987
+> Aif 0.87 0.83 0.002 0.62 ––Random 0.00 0.00 ∼0.10 0.10 ––
+
+Table 7: Alignment between sparse and dense attention maps. reaches merely 59.3% while incurring the largest token cost (4261), since it spends many tokens on background regions that provide little information and may distract the model. These results suggest that effective resolution allocation is not about uniformly increasing image quality, but about as-signing resolution adaptively on demand. 
+
+Cross-backbone Transfer of Evidence-Grounded Selec-tor. As shown in Tab. 6, we evaluate cross-backbone transfer by swapping the trained selectors between LLaVA-Video-7B and Qwen2.5-VL-7B without further training. The trans-ferred selectors consistently outperform uniform sampling while using fewer answer-stage tokens, improving Video-MME Avg from 60.3% to 62.1% for LLaVA and from 57.1% to 59.7% for Qwen. However, they still underperform native EviSelect results, indicating that the learned selection policy is partially transferable but still backbone-dependent. 
+
+Reliability of Sparse Attention Maps. To verify whether attention maps obtained from sparse prefilling reliably ap-proximate their dense counterparts, we compare the two on 200 sampled videos. As shown in Tab. 7, all three sparse cues achieve Pearson correlations of 0.87–0.89 with dense atten-Evidence LVB ↑ MLVU ↑ Video-MME ↑         
+
+> CLIP (Radford et al. 2021) 60.3 66.7 61.9 Random prior 56.4 59.8 58.2 Internal sparse-prefill 62.1 69.1 64.0
+
+Table 8: Evidence-source ablation. tion, substantially exceeding the random reference. More-over, Aqf and Af f recover over 98% of the dense-attention mass while retaining only about half of the positions, con-firming that sparse probing captures the high-mass evidence rather than depending on near-complete coverage. 
+
+Effect of the Evidence Source. To study the effect of the evidence source, we independently train three selectors from scratch with internal, CLIP, and random priors under oth-erwise identical settings. As shown in Tab. 8, the internal sparse-prefill prior achieves 65.1 average accuracy, outper-forming the CLIP prior by 2.1%, while random prior de-grades the average to 58.1. These results indicate that the se-lector benefits directly from the quality of its input evidence, and that evidence from the target MLLM itself provides more faithful guidance than from an external retriever. 
+
+# Conclusion 
+
+In this paper, we present EviSelect , a framework that leverages the target MLLM’s internal attention priors for distribution-aware spatiotemporal sampling. Through sparse prefilling on compressed inputs, EviSelect efficiently approx-imates attention evidence, which guides a lightweight selec-tor to predict retention, local sampling rate, and spatial reso-lution policies. Optimized end-to-end via GRPO under a joint accuracy–efficiency reward, this probabilistic policy dynam-ically aligns visual inputs with the target MLLM’s intrinsic requirements. Experiments on three long-video benchmarks show that EviSelect consistently outperforms prior methods while using about 50% fewer answer-stage visual tokens on average and achieving a 3.9× end-to-end speedup. 
+
+Limitations. Since evidence priors are extracted from the internal attention of the target MLLM, our EviSelect may have limited generalization when transferred to other MLLMs. Moreover, it is not applicable to closed-source MLLMs where internal attentions are inaccessible. 
+
+# References 
+
+Alayrac, J.-B.; Donahue, J.; Luc, P.; Miech, A.; Barr, I.; Hasson, Y.; Lenc, K.; Mensch, A.; Millican, K.; Reynolds, M.; et al. 2022. Flamingo: a visual language model for few-shot learning. Advances in neural information processing systems , 35: 23716–23736. Bai, J.; Bai, S.; Yang, S.; Wang, S.; Tan, S.; Wang, P.; Lin, J.; Zhou, C.; and Zhou, J. 2023. Qwen-vl: A frontier large vision-language model with versatile abilities. arXiv preprint arXiv:2308.12966 , 1(2): 3. Bai, S.; Chen, K.; Liu, X.; Wang, J.; Ge, W.; Song, S.; Dang, K.; Wang, P.; Wang, S.; Tang, J.; et al. 2025. Qwen2. 5-vl technical report. arXiv preprint arXiv:2502.13923 .Buch, S.; Nagrani, A.; Arnab, A.; and Schmid, C. 2025. Flexible Frame Selection for Efficient Video Reasoning. In 
+
+Proceedings of the Computer Vision and Pattern Recognition Conference , 29071–29082. Chen, F.; He, Y.; He, S.; He, Y.; Liu, J.; Lin, L.; Liu, A.; Li, Z.; Zhang, J.; Sun, Z.; et al. 2026. OmniSparse: Training-Aware Fine-Grained Sparse Attention for Long-Video MLLMs. In 
+
+Proceedings of the AAAI Conference on Artificial Intelli-gence , volume 40, 20023–20031. Chen, F.; He, Y.; Lin, L.; Gou, C.; Liu, J.; Zhuang, B.; and Wu, Q. 2025a. Sparsity Forcing: Reinforcing Token Sparsity of MLLMs. arXiv preprint arXiv:2504.18579 .Chen, Y.; Huang, W.; Shi, B.; Hu, Q.; Ye, H.; Zhu, L.; Liu, Z.; Molchanov, P.; Kautz, J.; Qi, X.; et al. 2025b. Scaling rl to long videos. arXiv preprint arXiv:2507.07966 .Chen, Y.; Xue, F.; Li, D.; Hu, Q.; Zhu, L.; Li, X.; Fang, Y.; Tang, H.; Yang, S.; Liu, Z.; et al. 2024. Longvila: Scaling long-context visual language models for long videos. arXiv preprint arXiv:2408.10188 .Cheng, C.; Guan, J.; Wu, W.; and Yan, R. 2025. Scaling Video-Language Models to 10K Frames via Hierarchical Differential Distillation. arXiv preprint arXiv:2504.02438 .Elharrouss, O.; Almaadeed, N.; and Al-Maadeed, S. 2021. A review of video surveillance systems. Journal of Visual Communication and Image Representation , 77: 103116. Fan, Q.; Huang, H.; Wu, Z.; Wang, J.; Wang, B.; and He, R. 2026. Flashprefill: Instantaneous pattern discovery and thresholding for ultra-fast long-context prefilling. arXiv preprint arXiv:2603.06199 .Feng, L.; Xue, Z.; Liu, T.; and An, B. 2025. Group-in-group policy optimization for llm agent training. arXiv preprint arXiv:2505.10978 .Fu, C.; Dai, Y.; Luo, Y.; Li, L.; Ren, S.; Zhang, R.; Wang, Z.; Zhou, C.; Shen, Y.; Zhang, M.; et al. 2025. Video-mme: The first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis. In Proceedings of the Computer Vision and Pattern Recognition Conference , 24108–24118. He, Y.; Chen, F.; Liu, J.; Shao, W.; Zhou, H.; Zhang, K.; and Zhuang, B. 2024. Zipvl: Efficient large vision-language models with dynamic token sparsification. arXiv preprint arXiv:2410.08584 .He, Y.; Chen, F.; Liu, J.; Shao, W.; Zhou, H.; Zhang, K.; and Zhuang, B. 2025. Zipvl: Accelerating vision-language mod-els through dynamic token sparsity. In 2025 IEEE/CVF In-ternational Conference on Computer Vision (ICCV) , 20477– 20486. IEEE. Hu, J.; Cheng, Z.; Si, C.; Li, W.; and Gong, S. 2025a. Cos: Chain-of-shot prompting for long video understanding. arXiv preprint arXiv:2502.06428 .Hu, K.; Gao, F.; Nie, X.; Zhou, P.; Tran, S.; Neiman, T.; Wang, L.; Shah, M.; Hamid, R.; Yin, B.; et al. 2025b. M-llm based video frame selection for efficient video understand-ing. In Proceedings of the Computer Vision and Pattern Recognition Conference , 13702–13712. Hurst, A.; Lerer, A.; Goucher, A. P.; Perelman, A.; Ramesh, A.; Clark, A.; Ostrow, A.; Welihinda, A.; Hayes, A.; Rad-ford, A.; et al. 2024. Gpt-4o system card. arXiv preprint arXiv:2410.21276 .Kim, Y. 2026. MC-GRPO: Median-Centered Group Rel-ative Policy Optimization for Small-Rollout Reinforcement Learning. arXiv preprint arXiv:2601.22582 .Lai, X.; Lu, J.; Luo, Y.; Ma, Y.; and Zhou, X. 2025. Flexpre-fill: A context-aware sparse attention mechanism for efficient long-sequence inference. arXiv preprint arXiv:2502.20766 .Li, B.; Zhang, Y.; Guo, D.; Zhang, R.; Li, F.; Zhang, H.; Zhang, K.; Zhang, P.; Li, Y.; Liu, Z.; et al. 2024a. Llava-onevision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 .Li, J.; Li, B.; Li, J.; and Lu, Y. 2025a. Divide, then Ground: Adapting Frame Selection to Query Types for Long-Form Video Understanding. arXiv preprint arXiv:2512.04000 .Li, J.; Li, D.; Savarese, S.; and Hoi, S. 2023. Blip-2: Boot-strapping language-image pre-training with frozen image en-coders and large language models. In International confer-ence on machine learning , 19730–19742. PMLR. Li, X.; Wang, Y.; Yu, J.; Zeng, X.; Zhu, Y.; Huang, H.; Gao, J.; Li, K.; He, Y.; Wang, C.; et al. 2024b. Videochat-flash: Hierarchical compression for long-context video modeling. 
+
+arXiv preprint arXiv:2501.00574 .Li, Y.; Gui, H.; Fan, Z.; Wang, J.; Kang, B.; Chen, B.; and Tian, Z. 2025b. Less Is More, but Where? Dynamic To-ken Compression via LLM-Guided Keyframe Prior. arXiv preprint arXiv:2512.06866 .Li, Y.; Wang, C.; and Jia, J. 2024. Llama-vid: An image is worth 2 tokens in large language models. In European Conference on Computer Vision , 323–340. Springer. Liang, H.; Li, J.; Bai, T.; Huang, X.; Sun, L.; Wang, Z.; He, C.; Cui, B.; Chen, C.; and Zhang, W. 2024. Keyvideollm: Towards large-scale video keyframe selection. arXiv preprint arXiv:2407.03104 .Lin, B.; Ye, Y.; Zhu, B.; Cui, J.; Ning, M.; Jin, P.; and Yuan, L. 2024. Video-llava: Learning united visual representation by alignment before projection. In Proceedings of the 2024 conference on empirical methods in natural language pro-cessing , 5971–5984. Lin, C.; Tang, J.; Yang, S.; Wang, H.; Tang, T.; Tian, B.; Stoica, I.; Han, S.; and Gao, M. 2025. Twilight: Adaptive Attention Sparsity with Hierarchical Top-p Pruning. arXiv preprint arXiv:2502.02770 .Liu, S.; Zhao, C.; Xu, T.; and Ghanem, B. 2025a. BOLT: Boost Large Vision-Language Model Without Training for Long-form Video Understanding. In Proceedings of the Computer Vision and Pattern Recognition Conference ,3318–3327. Liu, Z.; Dong, Y.; Liu, Z.; Hu, W.; Lu, J.; and Rao, Y. 2024. Oryx mllm: On-demand spatial-temporal understanding at arbitrary resolution. arXiv preprint arXiv:2409.12961 .Liu, Z.; Zhu, L.; Shi, B.; Zhang, Z.; Lou, Y.; Yang, S.; Xi, H.; Cao, S.; Gu, Y.; Li, D.; et al. 2025b. Nvila: Efficient frontier visual language models. In Proceedings of the Computer Vision and Pattern Recognition Conference , 4122–4134. Lu, E.; Jiang, Z.; Liu, J.; Du, Y.; Jiang, T.; Hong, C.; Liu, S.; He, W.; Yuan, E.; Wang, Y.; et al. 2025. Moba: Mix-ture of block attention for long-context llms. arXiv preprint arXiv:2502.13189 .OpenAI. 2023. GPT-4V(ision) system card. Oquab, M.; Darcet, T.; Moutakanni, T.; Vo, H.; Szafraniec, M.; Khalidov, V.; Fernandez, P.; Haziza, D.; Massa, F.; El-Nouby, A.; et al. 2023. Dinov2: Learning robust visual fea-tures without supervision. arXiv preprint arXiv:2304.07193 .Qin, M.; Liu, X.; Liang, Z.; Shu, Y.; Yuan, H.; Zhou, J.; Xiao, S.; Zhao, B.; and Liu, Z. 2025. Video-XL-2: Towards Very Long-Video Understanding Through Task-Aware KV Sparsification. arXiv preprint arXiv:2506.19225 .Qin, Z.; Han, X.; Sun, W.; Li, D.; Kong, L.; Barnes, N.; and Zhong, Y. 2022. The devil in linear transformer. In 
+
+Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing , 7025–7041. Radford, A.; Kim, J. W.; Hallacy, C.; Ramesh, A.; Goh, G.; Agarwal, S.; Sastry, G.; Askell, A.; Mishkin, P.; Clark, J.; et al. 2021. Learning transferable visual models from natural language supervision. In International conference on machine learning , 8748–8763. PmLR. Rafailov, R.; Sharma, A.; Mitchell, E.; Manning, C. D.; Er-mon, S.; and Finn, C. 2023. Direct preference optimization: Your language model is secretly a reward model. Advances in neural information processing systems , 36: 53728–53741. Rawal, R.; Saifullah, K.; Farré, M.; Basri, R.; Jacobs, D.; Somepalli, G.; and Goldstein, T. 2024. Cinepile: A long video question answering dataset and benchmark, 2024. URL https://arxiv. org/abs/2405.08813 .Shao, Z.; Wang, P.; Zhu, Q.; Xu, R.; Song, J.; Bi, X.; Zhang, H.; Zhang, M.; Li, Y.; Wu, Y.; et al. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open lan-guage models. arXiv preprint arXiv:2402.03300 .Shen, X.; Xiong, Y.; Zhao, C.; Wu, L.; Chen, J.; Zhu, C.; Liu, Z.; Xiao, F.; Varadarajan, B.; Bordes, F.; et al. 2024. Longvu: Spatiotemporal adaptive compression for long video-language understanding. arXiv preprint arXiv:2410.17434 .Shen, Y.; Fu, C.; Dong, S.; Wang, X.; Zhang, Y.-F.; Chen, P.; Zhang, M.; Cao, H.; Li, K.; Lin, S.; et al. 2025. Long-vita: Scaling large multi-modal models to 1 million to-kens with leading short-context accuracy. arXiv preprint arXiv:2502.05177 .Sheng, Y.; Hao, Y.; Li, C.; Wang, S.; and He, X. 2025. SeViCES: Unifying Semantic-Visual Evidence Con-sensus for Long Video Understanding. arXiv preprint arXiv:2510.20622 .Shu, Y.; Liu, Z.; Zhang, P.; Qin, M.; Zhou, J.; Liang, Z.; Huang, T.; and Zhao, B. 2025. Video-xl: Extra-long vision language model for hour-scale video understanding. In Pro-ceedings of the Computer Vision and Pattern Recognition Conference , 26160–26169. Sun, B.; Zhao, J.; Wei, X.; and Hou, Q. 2025. LLaVA-Scissor: Token Compression with Semantic Connected Com-ponents for Video LLMs. arXiv preprint arXiv:2506.21862 .Tang, C.; Han, Z.; Sun, H.; Zhou, S.; Zhang, X.; Wei, X.; Yuan, Y.; Zhang, H.; Xu, J.; and Sun, H. 2025a. Tspo: Temporal sampling policy optimization for long-form video language understanding. arXiv preprint arXiv:2508.04369 .Tang, X.; Qiu, J.; Xie, L.; Tian, Y.; Jiao, J.; and Ye, Q. 2025b. Adaptive keyframe sampling for long video understanding. In Proceedings of the Computer Vision and Pattern Recog-nition Conference , 29118–29128. Team, G.; Anil, R.; Borgeaud, S.; Alayrac, J.-B.; Yu, J.; Sori-cut, R.; Schalkwyk, J.; Dai, A. M.; Hauth, A.; Millican, K.; et al. 2023. Gemini: a family of highly capable multimodal models. arXiv preprint arXiv:2312.11805 .Wang, X.; Chen, F.; Zhang, W.; Yan, H.; Wang, Z.; Li, C.; and Lei, Y. 2026. PolicyTrim: Boosting Intrinsic Policy Ef-ficiency of Vision-Language-Action Models. arXiv preprint arXiv:2606.22540 .Wu, D.; Liu, F.; Hung, Y.-H.; and Duan, Y. 2025. Spatial-mllm: Boosting mllm capabilities in visual-based spatial in-telligence. arXiv preprint arXiv:2505.23747 .Wu, H.; Li, D.; Chen, B.; and Li, J. 2024. Longvideobench: A benchmark for long-context interleaved video-language understanding. Advances in Neural Information Processing Systems , 37: 28828–28857. Yang, Y.; and Lam, K.-M. 2025. HFS: Holistic Query-Aware Frame Selection for Efficient Video Reasoning. arXiv preprint arXiv:2512.11534 .Yao, Y.; Yun, Y.; Wang, J.; Zhang, H.; Zhao, D.; Tian, K.; Wang, Z.; Qiu, M.; and Wang, T. 2025. K-frames: Scene-Driven Any-k Keyframe Selection for long video understand-ing. arXiv preprint arXiv:2510.13891 .Yu, S.; Jin, C.; Wang, H.; Chen, Z.; Jin, S.; Zuo, Z.; Xu, X.; Sun, Z.; Zhang, B.; Wu, J.; et al. 2024. Frame-voyager: Learning to query frames for video large language models. 
+
+arXiv preprint arXiv:2410.03226 .Zhang, P.; Zhang, K.; Li, B.; Zeng, G.; Yang, J.; Zhang, Y.; Wang, Z.; Tan, H.; Li, C.; and Liu, Z. 2024a. Long context transfer from language to vision. arXiv preprint arXiv:2406.16852 .Zhang, R.; Gui, L.; Sun, Z.; Feng, Y.; Xu, K.; Zhang, Y.; Fu, D.; Li, C.; Hauptmann, A.; Bisk, Y.; et al. 2024b. Direct pref-erence optimization of video large multimodal models from language model reward. arXiv preprint arXiv:2404.01258 .Zhang, S.; Yang, J.; Yin, J.; Luo, Z.; and Luan, J. 2025a. Q-Frame: Query-aware Frame Selection and Multi-Resolution Adaptation for Video-LLMs. arXiv preprint arXiv:2506.22139 .Zhang, Y.; Lu, Y.; Wang, T.; Rao, F.; Yang, Y.; and Zhu, L. 2025b. FlexSelect: Flexible Token Selection for Efficient Long Video Understanding. arXiv preprint arXiv:2506.00993 .Zhang, Y.; Wu, J.; Li, W.; Li, B.; Ma, Z.; Liu, Z.; and Li, C. 2024c. Llava-video: Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 .Zhang, Y.; Wu, J.; Li, W.; Li, B.; Ma, Z.; Liu, Z.; and Li, C. 2024d. Video instruction tuning with synthetic data. arXiv preprint arXiv:2410.02713 .Zhou, J.; Shu, Y.; Zhao, B.; Wu, B.; Xiao, S.; Yang, X.; Xiong, Y.; Zhang, B.; Huang, T.; and Liu, Z. 2024. Mlvu: A comprehensive benchmark for multi-task long video under-standing. arXiv e-prints , arXiv–2406. Zhu, Z.; Xu, H.; Luo, Y.; Liu, Y.; Sarkar, K.; Yang, Z.; and You, Y. 2025. Focus: Efficient keyframe selection for long video understanding. arXiv preprint arXiv:2510.27280 .Zohar, O.; Wang, X.; Dubois, Y.; Mehta, N.; Xiao, T.; Hansen-Estruch, P.; Yu, L.; Wang, X.; Juefei-Xu, F.; Zhang, N.; et al. 2025. Apollo: An exploration of video under-standing in large multimodal models. In Proceedings of the Computer Vision and Pattern Recognition Conference ,18891–18901. Supplementary Materials 
+
+# Implementation Details 
+
+Backbone-Specific Resolution Policy. 
+
+We use a unified spatial policy across backbones, while its concrete implementation depends on the visual encoder. For Qwen2.5-VL, the four spatial levels are implemented by re-sizing the input frames to 720 ×1280 , 540 ×960 , 360 ×640 ,and 90 ×160 , respectively. In contrast, LLaVA-Video maps every input frame to a fixed number of visual tokens, so changing the raw input resolution does not produce different visual-token budgets. We therefore implement the same four levels after visual encoding using bilinear-interpolation pool-ing with strides of 1, 2, 4, and 8, respectively. For LLaVA-Video, the resolution labels used in the main paper refer to these equivalent post-encoding visual-token-budget levels rather than input resolutions. 
+
+Additional Training Details. 
+
+To stabilize early training under sparse correctness signals, we adopt a staged reward schedule. The efficiency-reward coefficient α = 0 .1 reported in the main paper denotes its target value after warm-up. During the first 15% of the train-ing steps, we optimize the selector using only the perfor-mance reward, corresponding to α = 0 . From 15% to 30% of training, we linearly increase α from 0 to 0.1. We use the full reward with α = 0 .1 for the remaining training steps. The total training cost is 133 GPU-hours on NVIDIA H100 GPUs. During policy sampling, if all sampled retention decisions are zero, we discard the retention sample and resample the retention decisions until at least one timestamp is retained. The accepted decision sequence therefore always contains at least one retained timestamp, ensuring a non-empty visual input and a well-defined Cmax .
+
+Detailed Sparse Prefilling. 
+
+We use Q to denote the textual query and qi to denote the projected attention query at token position i. Layer and head indices are omitted for clarity. The prefilling context is organized as X =[Xsys ; Xvis ; XQ], consisting of a system-prompt prefix, vi-sual tokens, and the tokenized query, respectively. The system-prompt prefix is always visible to subsequent tokens and is excluded from sparse block selection. We partition the visual sequence in a frame-aligned man-ner. Each anchor frame contains Nv consecutive visual to-kens, and the block size B is chosen such that B divides Nv .Consequently, each frame is partitioned into Nv /B contigu-ous blocks, and no visual block crosses a frame boundary. The query tokens are partitioned independently into consec-utive blocks of size B, while its final block may contain fewer than B tokens. Let Kj denote the set of projected key vectors associated with the tokens in the j-th block. We represent the block by the mean of its keys: 
+
+¯kj = 1
+
+|Kj |
+
+X
+
+> km∈Kj
+
+km. (7) For each projected attention-query vector qi, let Hi denote the blocks that precede position i. A block belongs to Hi only if it ends before token position i and belongs to the same input sample. We compute the block-level affinity as 
+
+gi,j = qi ¯k⊤
+
+> j
+
+√d , Kj ∈ H i, (8) where d is the attention-head dimension. The affinities are normalized over the valid historical blocks: 
+
+pi,j = exp( gi,j )
+
+P  
+
+> Kr∈H i
+
+exp( gi,r ) . (9) We rank the Hi in descending order of pi,j and retain the smallest subset Si ⊆ H i whose cumulative probability reaches τp, while masking out all remaining historical blocks. For evidence extraction, we reconstruct a coarse token-level attention map from the block-level affinities. Tokens in a retained historical block share its corresponding block-level affinity, whereas tokens in the system-prompt prefix and the causal prefix of the current block retain their exact attention logits: 
+
+ai,m =
+
+
+
+qik⊤
+
+> m
+
+√d , m ∈ E i,gi,j , km ∈ Kj , K j ∈ S i,
+
+−∞ , otherwise ,
+
+(10) where Ei contains the causally valid system-prefix tokens and the causal prefix of the current block. The coarse attention map is obtained by row-wise normalization: 
+
+eAi,m = exp( ai,m )
+
+P 
+
+> n
+
+exp( ai,n ) . (11) Applying this reconstruction at each layer and averaging over attention heads produces the layer-wise coarse attention maps {A(l)}Ll=1 . Using the boundaries of the system, visual, and query-token regions, we group the frame-aligned visual blocks according to their corresponding anchor frames and extract Aqf , Af f , and Aif .
+
+# Additional Results and Analysis 
+
+Qualitative Results. 
+
+Fig. 4 compares the keyframe selection patterns and model responses of uniform sampling and EviSelect. In the left example, when recognizing tiny text such as a battery model number, uniform sampling is query-agnostic, select-ing frames from various irrelevant scenes. In contrast, our method not only localizes the relevant temporal segment but also adaptively assigns a higher resolution to the selected frames to preserve fine-grained details, achieving the correct Qusetion : What is the specific model number printed on the front of the battery? 
+
+> Uniform Sampling Our method Response : Model A2849
+> Qusetion : Where does the chameleon’s tongue stick to the butterfly at the first point of contact?
+> Uniform Sampling
+> Our method
+> Response : Model A3121
+> Response : The tip of the left wing
+> Response : Between the eye and antenna
+
+Figure 4: Qualitative comparison between uniform sampling and our method. Question : What color is the man filming with his     
+
+> phone wearing as they cross the finish line?
+> Question : How many different framed pictures are
+> there in this house?
+> Question : How many different framed pictures are
+> there in this house?
+> EviSelect: Black Ground Truth: Pink EviSelect: Three Ground Truth: Two EviSelect: Three Ground Truth: Two
+
+Figure 5: Representative failure cases of EviSelect. answer with fewer frames. In the right example, the query relies on the critical moment when the chameleon shoots its tongue and catches the butterfly. Our method adaptively densifies sampling around this action while using a lower res-olution to control cost, thereby capturing the relevant visual evidence with a lower overhead. These examples qualitatively illustrate that our method leverages the MLLM’s internal ev-idence priors to localize query-relevant timestamps, adap-tively increases resolution to recognize subtle details, and adjusts the sampling rate to capture rapid temporal changes. 
+
+Failure Case Analysis. 
+
+As shown in Fig. 5, we present representative failure cases of EviSelect. In the left example, the query depends on the brief moment when the man crosses the finish line. During evidence grounding, the uniformly spaced anchor frames fail to capture this brief event. Although the MLLM can infer relatively smooth temporal changes from discrete frames, it cannot recover visual evidence that is entirely absent from the sampled input. A potential improvement is to perform an initial higher-rate or motion-aware scan, followed by adaptive refinement around high-change or high-uncertainty intervals. In the right example, the selector retrieves frames contain-ing all target instances, but the MLLM still fails on the count-ing task. The error arises from inadequate cross-frame dedu-plication and instance aggregation rather than missing visual evidence. Because one instance can appear across multiple frames with substantial viewpoint changes, the MLLM may count redundant observations as distinct entities. A promis-ing direction is to incorporate cross-frame instance associa-tion and redundancy-aware selection constraints: for count-ing queries, the selector should retain a canonical frame for each unique instance, whereas reasoning-intensive queries may require complementary multi-view evidence. 
+
+Hyperparameter Analysis. 
+
+We analyze the effects of the per-frame token count, block size, and top-p threshold. 
+
+Per-Frame Token Count Nv.
+
+The number of tokens per frame directly determines the cost of evidence grounding. As shown in the left panel of Fig. 6, 0.94 0.96 0.98 30 40 50 60 70 Ratio 
+
+> Accuracy
+
+# tp
+
+> Ratio of Important Tokens (%)
+
+# 60.0 60.5 61.0 61.5 62.0 62.5 
+
+> Accuracy (%)
+
+# 51020 40 80 12345678 Frame Selection Time 
+
+> Accuracy
+> Evidence Grounding Time (s)
+
+# 59 60 61 62 63 
+
+> Accuracy (%)
+
+# 6 12 20 30 42 0123456789 Frame Selcetion Time Accuracy 
+
+> Frame Selection Time (s)
+
+# 60.5 61.0 61.5 62.0 62.5 
+
+> Accuracy (%)
+
+Figure 6: Influence of the per-frame token count Nv , block size B, and top-p threshold τp on LongVideoBench. increasing Nv improves accuracy but also increases frame-selection time. The gains quickly saturate, while overly ag-gressive compression causes a substantial performance drop. We therefore use Nv = 20 as a balance between accuracy and efficiency. This result suggests that the evidence-grounding stage can reliably identify relevant content from compact per-frame representations without requiring a high-fidelity reconstruction of every frame. 
+
+Block Size B.
+
+We vary the block size over B ∈ { 5, 10 , 20 , 40 , 80 }, with each frame represented by 20 visual tokens. The settings 
+
+B = 40 and B = 80 intentionally allow blocks to span ad-jacent frames as non-frame-aligned sensitivity settings. As shown in the middle panel of Fig. 6, smaller blocks provide finer-grained evidence and generally improve performance, whereas larger blocks can mix tokens from different frames and blur temporal boundaries. We use B = 20 because re-ducing it further substantially increases the frame-selection time while providing only marginal accuracy gains. 
+
+Top-p Threshold τp.
+
+The right panel of Fig. 6 shows how τp affects performance and the retained-token ratio. A lower threshold reduces com-putation but may discard context required for a reliable evi-dence prior. Conversely, performance gains quickly saturate as the threshold increases. We therefore use τp = 0 .97 , which provides a favorable accuracy–efficiency balance.

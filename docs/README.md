@@ -6,49 +6,47 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-12
-- 运行时间：2026-08-12 20:52:48 UTC
+- 最新运行日期：2026-08-13
+- 运行时间：2026-08-13 20:56:31 UTC
 - 运行状态：成功
 - 本次总论文数：9
-- 精读区：3
-- 速读区：6
+- 精读区：5
+- 速读区：4
 
 ### 今日简报（AI）
-今日共处理9篇论文，精读2篇、速读6篇，重点覆盖KV-Cache压缩与高效注意力机制。  
-最值得关注的是《KVDiagnosis》（9.0）对长上下文KV-Cache压缩诊断基准的构建，以及《HSMLA》（8.0）提出的分层Softmax多尺度线性注意力。  
-建议优先精读这两篇，理解其方法后可在长文本推理和视觉Transformer任务中实践对比。
-- 详情：[/202608/12/README](/202608/12/README)
+今日9篇论文聚焦注意力机制与长视频理解，两篇精读获9.0高分。最值得关注低秩注意力动态路由（FLARE++）与混合门控注意力，均属高效注意力创新。建议优先精读这两篇，再辅以速读中长视频动态选择与内存流工作。
+- 详情：[/202608/13/README](/202608/13/README)
 
 ### 精读区论文标签
-1. [KVDiagnosis: A Diagnostic Benchmark for KV-Cache Compression in Long-Context Language Models](/202608/12/2608.09412v1-kvdiagnosis-a-diagnostic-benchmark-for-kv-cache-compression-in-long-context-language-models)  
+1. [FLARE++: Low-rank attention with dynamic attention routing](/202608/13/2608.11519v1-flare-low-rank-attention-with-dynamic-attention-routing)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：为KV缓存压缩方法提供诊断数据、机制分类与标准化评测基准
-2. [HSMLA: Hierarchical Softmax Multi-scale Linear Attention for Efficient Vision Transformers](/202608/12/2608.07616v2-hsmla-hierarchical-softmax-multi-scale-linear-attention-for-efficient-vision-transformers)  
+   evidence：低秩注意力与动态token路由机制，直接面向Transformer高效注意力
+2. [Hybrid Gated Attention](/202608/13/2608.11805v1-hybrid-gated-attention)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：混合门控策略提升注意力效率与表示能力
+3. [LoSA: Near-Lossless Sparse Attention for Training-Free Video Diffusion Acceleration](/202608/13/2608.12032v1-losa-near-lossless-sparse-attention-for-training-free-video-diffusion-acceleration)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：用于训练无关视频扩散加速的近乎无损稀疏注意力
+4. [When Vision Becomes Text: Visual Token Pruning via Cross-Modal Residual Guidance in VLMs](/202608/13/2608.10489v1-when-vision-becomes-text-visual-token-pruning-via-cross-modal-residual-guidance-in-vlms)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：通过跨模态残差引导对VLM视觉Token剪枝，在保持多模态理解的同时降低推理成本。
+5. [QV-PIC: Query-Aware Visual Position-Independent Caching for Efficient RAG Serving](/202608/13/2608.12121v1-qv-pic-query-aware-visual-position-independent-caching-for-efficient-rag-serving)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：面向高效视觉Transformer的线性注意力机制
-3. [Neural Introspection Gating for Adaptive KV-Cache Reuse in Vision-Language-Action Models](/202608/12/2608.10824v1-neural-introspection-gating-for-adaptive-kv-cache-reuse-in-vision-language-action-models)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：VLA模型中基于神经内省的自适应KV缓存复用
+   evidence：面向高效RAG的查询感知视觉压缩与位置无关KV缓存
 
 ### 速读区论文标签
-1. [Rethinking Attention Locality in Spiking Transformers](/202608/12/2608.08541v1-rethinking-attention-locality-in-spiking-transformers)  
+1. [Evidence-Driven Dynamic Visual Selector for Efficient Long Video Understanding](/202608/13/2608.05780v1-evidence-driven-dynamic-visual-selector-for-efficient-long-video-understanding)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：脉冲Transformer中的注意力局部性分析与边界感知局部注意力
-2. [AnchorFold: A Focus-Then-Fold Framework via Recursive Attention Propagation for Efficient Multi-Vector Visual Document Retrieval](/202608/12/2608.08732v1-anchorfold-a-focus-then-fold-framework-via-recursive-attention-propagation-for-efficient-multi-vector-visual-document-retrieval)  
+   evidence：利用稀疏预填充的动态视觉选择以提升视频理解效率
+2. [StreamFlow: Dynamic Memory Flows for Streaming Video Understanding](/202608/13/2608.10949v1-streamflow-dynamic-memory-flows-for-streaming-video-understanding)  
    标签：评分：7.0/10、query:multimodal
-   evidence：面向多向量视觉文档检索的无训练索引压缩，使用递归注意力传播聚焦重要区域
-3. [SparSTAR: Sparse Attention for SpaceTime AutoRegressive Video Synthesis](/202608/12/2608.10519v1-sparstar-sparse-attention-for-spacetime-autoregressive-video-synthesis)  
+   evidence：面向流式视频理解的高效视觉记忆框架，属于多模态大模型研究
+3. [Three Tokens Force Exponential Feature Rank in Nonnegative Kernel Attention](/202608/13/2608.11427v1-three-tokens-force-exponential-feature-rank-in-nonnegative-kernel-attention)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：面向自回归视频生成的稀疏注意力机制
-4. [Dynamic Context Adapters: Efficiently Infusing History into Vision-and-Language Models](/202608/12/2608.10525v1-dynamic-context-adapters-efficiently-infusing-history-into-vision-and-language-models)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：面向VLM的高效历史上下文注入，避免二次注意力和内存爆炸
-5. [SlimVLM: Sensitivity-aware Dynamic Structured Pruning with Adaptive Visual Token Selection for Efficient Vision-Language Models](/202608/12/2608.03580v1-slimvlm-sensitivity-aware-dynamic-structured-pruning-with-adaptive-visual-token-selection-for-efficient-vision-language-models)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：通过结构化剪枝和自适应视觉令牌选择提升视觉-语言模型效率
-6. [MotionCraft: Latent World Modeling with Sparse Attention for Visual Upscaling](/202608/12/2608.08553v1-motioncraft-latent-world-modeling-with-sparse-attention-for-visual-upscaling)  
+   evidence：对非负核注意力与全注意力的理论对比，揭示高效注意力的表达能力边界。
+4. [AnchorFold: A Focus-Then-Fold Framework via Recursive Attention Propagation for Efficient Multi-Vector Visual Document Retrieval](/202608/13/2608.08732v1-anchorfold-a-focus-then-fold-framework-via-recursive-attention-propagation-for-efficient-multi-vector-visual-document-retrieval)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：将稀疏注意力机制应用于视频超分辨率以建模长距离时空依赖
+   evidence：利用递归注意力传播压缩多向量视觉文档检索索引，属于注意力驱动的记忆压缩
 
 
 <div class="dpr-home-promo-card">
