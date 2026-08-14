@@ -6,47 +6,52 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-13
-- 运行时间：2026-08-13 20:56:31 UTC
+- 最新运行日期：2026-08-14
+- 运行时间：2026-08-14 20:56:26 UTC
 - 运行状态：成功
-- 本次总论文数：9
-- 精读区：5
+- 本次总论文数：10
+- 精读区：6
 - 速读区：4
 
 ### 今日简报（AI）
-今日9篇论文聚焦注意力机制与长视频理解，两篇精读获9.0高分。最值得关注低秩注意力动态路由（FLARE++）与混合门控注意力，均属高效注意力创新。建议优先精读这两篇，再辅以速读中长视频动态选择与内存流工作。
-- 详情：[/202608/13/README](/202608/13/README)
+今日聚焦视频理解与扩散语言模型加速，重点推出稀疏注意力与缓存复用两项优化方案。  
+最值得关注SCOPE（视频稀疏注意力）与Archer（扩散模型状态回滚），分别解决长视频计算瓶颈和生成效率问题。  
+普通读者可留意视频理解与生成模型提速趋势，后续或将显著降低AI处理长视频的硬件门槛。
+- 详情：[/202608/14/README](/202608/14/README)
 
 ### 精读区论文标签
-1. [FLARE++: Low-rank attention with dynamic attention routing](/202608/13/2608.11519v1-flare-low-rank-attention-with-dynamic-attention-routing)  
+1. [SCOPE: Subspace Clustering with Online Per-Head Top-K Estimation for Sparse Video Attention](/202608/14/2608.12780v1-scope-subspace-clustering-with-online-per-head-top-k-estimation-for-sparse-video-attention)  
    标签：评分：9.0/10、query:sparse-attn
-   evidence：低秩注意力与动态token路由机制，直接面向Transformer高效注意力
-2. [Hybrid Gated Attention](/202608/13/2608.11805v1-hybrid-gated-attention)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：混合门控策略提升注意力效率与表示能力
-3. [LoSA: Near-Lossless Sparse Attention for Training-Free Video Diffusion Acceleration](/202608/13/2608.12032v1-losa-near-lossless-sparse-attention-for-training-free-video-diffusion-acceleration)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：用于训练无关视频扩散加速的近乎无损稀疏注意力
-4. [When Vision Becomes Text: Visual Token Pruning via Cross-Modal Residual Guidance in VLMs](/202608/13/2608.10489v1-when-vision-becomes-text-visual-token-pruning-via-cross-modal-residual-guidance-in-vlms)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：通过跨模态残差引导对VLM视觉Token剪枝，在保持多模态理解的同时降低推理成本。
-5. [QV-PIC: Query-Aware Visual Position-Independent Caching for Efficient RAG Serving](/202608/13/2608.12121v1-qv-pic-query-aware-visual-position-independent-caching-for-efficient-rag-serving)  
+   evidence：视频DiT的无训练稀疏注意力
+2. [Archer: Adaptive Reuse of Cached Hidden States for Efficient Rollback in Diffusion Language Models](/202608/14/2608.08086v2-archer-adaptive-reuse-of-cached-hidden-states-for-efficient-rollback-in-diffusion-language-models)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：面向高效RAG的查询感知视觉压缩与位置无关KV缓存
+   evidence：面向回滚扩散语言模型的KV缓存方法
+3. [Deferred Audio Pruning with Local Audio-Visual Dynamics for Omni-LLMs](/202608/14/2608.08794v1-deferred-audio-pruning-with-local-audio-visual-dynamics-for-omni-llms)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：多模态LLM中的令牌剪枝与KV缓存开销降低
+4. [LoKiFormer: Locality-aware Attention with Decoupled Knowledge Memory for Efficient Large Language Model Pretraining](/202608/14/2608.12419v1-lokiformer-locality-aware-attention-with-decoupled-knowledge-memory-for-efficient-large-language-model-pretraining)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：通过局部感知注意力与解耦知识存储提升大模型预训练效率
+5. [MARCH: Scaling Recurrent Memory with Content-Routed State Anchors](/202608/14/2608.12435v1-march-scaling-recurrent-memory-with-content-routed-state-anchors)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：用内容路由状态锚点扩展循环记忆，缓解KV缓存增长
+6. [vToken: Token-Level Virtualization for Reclaimable KV Caches](/202608/14/2608.13263v1-vtoken-token-level-virtualization-for-reclaimable-kv-caches)  
+   标签：评分：8.0/10、query:sparse-attn
+   evidence：令牌级KV缓存虚拟化，可回收PagedAttention块内碎片
 
 ### 速读区论文标签
-1. [Evidence-Driven Dynamic Visual Selector for Efficient Long Video Understanding](/202608/13/2608.05780v1-evidence-driven-dynamic-visual-selector-for-efficient-long-video-understanding)  
+1. [Archer: Adaptive Reuse of Cached Hidden States for Efficient Rollback in Diffusion Language Models](/202608/14/2608.08086v1-archer-adaptive-reuse-of-cached-hidden-states-for-efficient-rollback-in-diffusion-language-models)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：利用稀疏预填充的动态视觉选择以提升视频理解效率
-2. [StreamFlow: Dynamic Memory Flows for Streaming Video Understanding](/202608/13/2608.10949v1-streamflow-dynamic-memory-flows-for-streaming-video-understanding)  
-   标签：评分：7.0/10、query:multimodal
-   evidence：面向流式视频理解的高效视觉记忆框架，属于多模态大模型研究
-3. [Three Tokens Force Exponential Feature Rank in Nonnegative Kernel Attention](/202608/13/2608.11427v1-three-tokens-force-exponential-feature-rank-in-nonnegative-kernel-attention)  
+   evidence：面向支持回滚的扩散语言模型，自适应复用缓存KV以降低推理成本
+2. [StreamFlow: Dynamic Memory Flows for Streaming Video Understanding](/202608/14/2608.10949v1-streamflow-dynamic-memory-flows-for-streaming-video-understanding)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：对非负核注意力与全注意力的理论对比，揭示高效注意力的表达能力边界。
-4. [AnchorFold: A Focus-Then-Fold Framework via Recursive Attention Propagation for Efficient Multi-Vector Visual Document Retrieval](/202608/13/2608.08732v1-anchorfold-a-focus-then-fold-framework-via-recursive-attention-propagation-for-efficient-multi-vector-visual-document-retrieval)  
+   evidence：流式多模态动态视觉记忆
+3. [When Vision Becomes Text: Visual Token Pruning via Cross-Modal Residual Guidance in VLMs](/202608/14/2608.10489v1-when-vision-becomes-text-visual-token-pruning-via-cross-modal-residual-guidance-in-vlms)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：利用递归注意力传播压缩多向量视觉文档检索索引，属于注意力驱动的记忆压缩
+   evidence：利用跨模态残差引导剪枝视觉token，提升视觉语言模型推理效率
+4. [Scaling Representation Diversity: Modulated Attention and Reconstructive Regularization for Visual Grounding](/202608/14/2608.12748v1-scaling-representation-diversity-modulated-attention-and-reconstructive-regularization-for-visual-grounding)  
+   标签：评分：6.0/10、query:multimodal
+   evidence：视觉定位与视觉语言对齐，属于多模态理解方向
 
 
 <div class="dpr-home-promo-card">
