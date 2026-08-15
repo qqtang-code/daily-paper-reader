@@ -6,52 +6,34 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-14
-- 运行时间：2026-08-14 20:56:26 UTC
+- 最新运行日期：2026-08-15
+- 运行时间：2026-08-15 19:09:35 UTC
 - 运行状态：成功
-- 本次总论文数：10
-- 精读区：6
-- 速读区：4
+- 本次总论文数：4
+- 精读区：2
+- 速读区：2
 
 ### 今日简报（AI）
-今日聚焦视频理解与扩散语言模型加速，重点推出稀疏注意力与缓存复用两项优化方案。  
-最值得关注SCOPE（视频稀疏注意力）与Archer（扩散模型状态回滚），分别解决长视频计算瓶颈和生成效率问题。  
-普通读者可留意视频理解与生成模型提速趋势，后续或将显著降低AI处理长视频的硬件门槛。
-- 详情：[/202608/14/README](/202608/14/README)
+今日精读2篇、速读2篇，共处理4篇论文，聚焦视觉定位与流式大模型。  
+最值得关注的是视觉grounding的表示多样性（8.0分）和流式VLM的实时感知/长记忆权衡（8.0分）。  
+建议优先精读这两篇高分论文，理解其注意力调节与重建正则化、以及时序记忆机制。
+- 详情：[/202608/15/README](/202608/15/README)
 
 ### 精读区论文标签
-1. [SCOPE: Subspace Clustering with Online Per-Head Top-K Estimation for Sparse Video Attention](/202608/14/2608.12780v1-scope-subspace-clustering-with-online-per-head-top-k-estimation-for-sparse-video-attention)  
-   标签：评分：9.0/10、query:sparse-attn
-   evidence：视频DiT的无训练稀疏注意力
-2. [Archer: Adaptive Reuse of Cached Hidden States for Efficient Rollback in Diffusion Language Models](/202608/14/2608.08086v2-archer-adaptive-reuse-of-cached-hidden-states-for-efficient-rollback-in-diffusion-language-models)  
+1. [Scaling Representation Diversity: Modulated Attention and Reconstructive Regularization for Visual Grounding](/202608/15/2608.12748v1-scaling-representation-diversity-modulated-attention-and-reconstructive-regularization-for-visual-grounding)  
+   标签：评分：8.0/10、query:multimodal
+   evidence：通过调制注意力和重构正则化提升视觉定位这一多模态理解任务的泛化能力
+2. [StreamTTT: Reconciling Real-Time Perception and Long-Term Memory in Streaming VLMs](/202608/15/2608.13416v1-streamttt-reconciling-real-time-perception-and-long-term-memory-in-streaming-vlms)  
    标签：评分：8.0/10、query:sparse-attn
-   evidence：面向回滚扩散语言模型的KV缓存方法
-3. [Deferred Audio Pruning with Local Audio-Visual Dynamics for Omni-LLMs](/202608/14/2608.08794v1-deferred-audio-pruning-with-local-audio-visual-dynamics-for-omni-llms)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：多模态LLM中的令牌剪枝与KV缓存开销降低
-4. [LoKiFormer: Locality-aware Attention with Decoupled Knowledge Memory for Efficient Large Language Model Pretraining](/202608/14/2608.12419v1-lokiformer-locality-aware-attention-with-decoupled-knowledge-memory-for-efficient-large-language-model-pretraining)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：通过局部感知注意力与解耦知识存储提升大模型预训练效率
-5. [MARCH: Scaling Recurrent Memory with Content-Routed State Anchors](/202608/14/2608.12435v1-march-scaling-recurrent-memory-with-content-routed-state-anchors)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：用内容路由状态锚点扩展循环记忆，缓解KV缓存增长
-6. [vToken: Token-Level Virtualization for Reclaimable KV Caches](/202608/14/2608.13263v1-vtoken-token-level-virtualization-for-reclaimable-kv-caches)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：令牌级KV缓存虚拟化，可回收PagedAttention块内碎片
+   evidence：将长程历史写入注意力上下文之外的在线快速权重，为流式VLM保留短滑动KV缓存
 
 ### 速读区论文标签
-1. [Archer: Adaptive Reuse of Cached Hidden States for Efficient Rollback in Diffusion Language Models](/202608/14/2608.08086v1-archer-adaptive-reuse-of-cached-hidden-states-for-efficient-rollback-in-diffusion-language-models)  
+1. [Prof-K: Probabilistic One-Pass Filtering for Efficient Top-k Selection](/202608/15/2608.12573v1-prof-k-probabilistic-one-pass-filtering-for-efficient-top-k-selection)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：面向支持回滚的扩散语言模型，自适应复用缓存KV以降低推理成本
-2. [StreamFlow: Dynamic Memory Flows for Streaming Video Understanding](/202608/14/2608.10949v1-streamflow-dynamic-memory-flows-for-streaming-video-understanding)  
-   标签：评分：7.0/10、query:sparse-attn
-   evidence：流式多模态动态视觉记忆
-3. [When Vision Becomes Text: Visual Token Pruning via Cross-Modal Residual Guidance in VLMs](/202608/14/2608.10489v1-when-vision-becomes-text-visual-token-pruning-via-cross-modal-residual-guidance-in-vlms)  
+   evidence：面向注意力剪枝和稀疏激活的高效单遍top-k选择算法
+2. [Alaya-EVOKE: From Linear-Scaling Supervision to Endless World](/202608/15/2608.13546v1-alaya-evoke-from-linear-scaling-supervision-to-endless-world)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：利用跨模态残差引导剪枝视觉token，提升视觉语言模型推理效率
-4. [Scaling Representation Diversity: Modulated Attention and Reconstructive Regularization for Visual Grounding](/202608/14/2608.12748v1-scaling-representation-diversity-modulated-attention-and-reconstructive-regularization-for-visual-grounding)  
-   标签：评分：6.0/10、query:multimodal
-   evidence：视觉定位与视觉语言对齐，属于多模态理解方向
+   evidence：通过外部化持久世界状态来限制上下文，以应对键值缓存增长开销
 
 
 <div class="dpr-home-promo-card">
