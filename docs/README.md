@@ -6,32 +6,40 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-16
-- 运行时间：2026-08-16 19:29:33 UTC
+- 最新运行日期：2026-08-17
+- 运行时间：2026-08-17 20:35:25 UTC
 - 运行状态：成功
-- 本次总论文数：4
+- 本次总论文数：6
 - 精读区：2
-- 速读区：2
+- 速读区：4
 
 ### 今日简报（AI）
-今日精读2篇高分论文，聚焦边缘LLM切换与视觉定位新方法。最值得关注的是8.0分的KV缓存迁移方案和视觉grounding表征多样性技术。建议优先了解这两篇，速读部分可留意视觉token压缩的安全性。
-- 详情：[/202608/16/README](/202608/16/README)
+今日聚焦KV缓存压缩与线性注意力遗忘机制，共精读2篇、速读4篇。  
+最值得关注：Transform Coding视角的KV压缩（10分）与线性注意力“第二擦除方向”（9分），直击长序列推理效率。  
+建议优先精读这两篇论文，核心思路可迁移至显存优化与长上下文模型部署。
+- 详情：[/202608/17/README](/202608/17/README)
 
 ### 精读区论文标签
-1. [ImpactHO: Importance-Aware KV Cache Transfer for Multi-User Edge LLM Handover](/202608/16/2608.10545v1-impactho-importance-aware-kv-cache-transfer-for-multi-user-edge-llm-handover)  
-   标签：评分：8.0/10、query:sparse-attn
-   evidence：边缘大模型切换中的重要性感知KV缓存传输
-2. [Scaling Representation Diversity: Modulated Attention and Reconstructive Regularization for Visual Grounding](/202608/16/2608.12748v1-scaling-representation-diversity-modulated-attention-and-reconstructive-regularization-for-visual-grounding)  
-   标签：评分：8.0/10、query:multimodal
-   evidence：面向视觉定位的调制注意力与JEPA辅助流，属于多模态理解方向。
+1. [KV Cache Compression Through the Lens of Transform Coding](/202608/17/2608.14191v1-kv-cache-compression-through-the-lens-of-transform-coding)  
+   标签：评分：10.0/10、query:sparse-attn
+   evidence：通过变换编码和率失真理论进行注意力感知的KV缓存压缩
+2. [The Query Knows What to Forget: A Second Erase Direction for Linear Attention](/202608/17/2608.13668v1-the-query-knows-what-to-forget-a-second-erase-direction-for-linear-attention)  
+   标签：评分：9.0/10、query:sparse-attn
+   evidence：提出查询导出的擦除方向以改进线性注意力，减少长上下文干扰
 
 ### 速读区论文标签
-1. [Not All Visual Tokens Are Equally Safe to Remove:Consequence-Sensitive Visual Token Compression](/202608/16/2608.09176v1-not-all-visual-tokens-are-equally-safe-to-removeconsequence-sensitive-visual-token-compression)  
+1. [Lapis: Laplacian Spiking Attention via First-Spike Timing and Membrane Leakage](/202608/17/2608.11865v1-lapis-laplacian-spiking-attention-via-first-spike-timing-and-membrane-leakage)  
    标签：评分：7.0/10、query:sparse-attn
-   evidence：面向视觉语言模型的后果敏感视觉Token压缩，降低注意力计算量。
-2. [Putting Registers to Work: Task Registers for Token Pruning in Vision Transformers](/202608/16/2608.10989v1-putting-registers-to-work-task-registers-for-token-pruning-in-vision-transformers)  
+   evidence：利用首脉冲延迟和拉普拉斯核提出新型脉冲注意力，适用于高效Transformer
+2. [Self-Correcting Long-Horizon Search Agents via Tree-Structured Memory](/202608/17/2608.10676v1-self-correcting-long-horizon-search-agents-via-tree-structured-memory)  
    标签：评分：6.0/10、query:sparse-attn
-   evidence：面向视觉Transformer跨任务高效推理的token剪枝研究
+   evidence：用树结构化记忆压缩LLM搜索轨迹并保留证据，解决上下文增长问题
+3. [Consolidator: Learning Persistent Routed Memory Across Context Boundaries](/202608/17/2608.11701v1-consolidator-learning-persistent-routed-memory-across-context-boundaries)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：跨上下文边界的持久记忆；清除KV缓存并利用长期记忆进行长上下文处理
+4. [Reduced Matrix Multiplication: Input-Adaptive Matrix-Product Reduction for LLM Inference](/202608/17/2608.13426v1-reduced-matrix-multiplication-input-adaptive-matrix-product-reduction-for-llm-inference)  
+   标签：评分：6.0/10、query:sparse-attn
+   evidence：无训练、输入自适应的Transformer矩阵乘法约简，可提升LLM推理效率
 
 
 <div class="dpr-home-promo-card">
