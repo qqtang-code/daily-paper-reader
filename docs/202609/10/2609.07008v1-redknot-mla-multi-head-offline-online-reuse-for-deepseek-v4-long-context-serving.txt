@@ -1,0 +1,429 @@
+Title: RedKnot-MLA: Multi-Head Offline-Online Reuse for DeepSeek-V4 Long-Context Serving
+
+URL Source: https://arxiv.org/pdf/2609.07008v1
+
+Published Time: Wed, 09 Sep 2026 01:47:54 GMT
+
+Number of Pages: 6
+
+Markdown Content:
+# RedKnot-MLA: Multi-Head Offline–Online Reuse for DeepSeek-V4 Long-Context Serving 
+
+Yang Liu ∗† Zhaokai Luo ∗† Huayi Jin † Ruozhou He † Chenchen Hong † Mingxiao Ma †
+
+Biao Zhang † Zhiyong Wang † Boyu Wang ¶ Guanjie Chen ¶ Yifei Liu ♣ Tao Xie §‡ Junhao Hu §‡ †Xiaohongshu Inc., China ‡Peking University ¶Huawei Cloud ♣Shanghai Jiao Tong University 
+
+> §
+
+Beijing Tongming Lake Information Technology Application Innovation Center 
+
+> ∗
+
+Corresponding to: Yang Liu <xiaoyi52@xiaohongshu.com > or Zhaokai Luo <luozhaokai@xiaohongshu.com >
+
+github:https://github.com/rednote-machine-learning/RedKnot 
+
+Abstract 
+
+Multi-head latent attention (MLA) exposes many logical query heads through one packed latent KV stream. This rep-resentation is memory efficient, but it removes the physical per-head cache boundary assumed by conventional head-wise reuse. We present RedKnot-MLA , a DeepSeek-V4 realization of RedKnot’s head-aware reuse principle. Each immutable document is processed offline at canonical po-sition zero; certified Local-head contributions are retained as MLA-Off . At serving time, query-side RoPE relocation restores the document’s request position, a small Global-head set and protected Local token rows are recomputed as MLA-Online , and the two paths are merged before a single shared output projection. The packed MLA latent is never split. DeepSeek-V4-Flash uses 37 reusable layers and a 56/8 Local/Global partition, giving a 75.29% analytic logical head-row ceiling; the Pro-0813 profile uses 55 layers and 112/16 heads, giving 78.89%. Frozen Flash operating points show hot-artifact TTFT speedups of 2 .02–3 .84 ×. At 256K, the archived three-dataset study reports an aggregate F1 change of +3 .24 percentage points, an EM change of +4 .16 points, and a 78.7–79.5% analytic major-operator arithmetic saving, while one dataset decreases by 2.81 F1 points. A separate author-reported 256K hot-artifact QPS measurement is approximately 2 .0×; because its raw con-currency trace is not included in this bundle, we mark it as preliminary rather than archived evidence. We describe the factorization, position repair, token-row closure, sparse-MoE support, TP8 integration, and the measurement boundaries needed to interpret these results. 
+
+1 Introduction 
+
+Non-prefix KV reuse can avoid repeatedly encoding retrieved documents in RAG and agentic workloads. CacheBlend [Yao et al., 2025], CacheSlide [Liu et al., 2026a], EPIC [Hu et al., 2025], and HYPIC [Liu et al., 2026c] re-pair or link cached segments after their context changes. RedKnot instead decomposes reuse at attention-head gran-ularity: document-stable heads can be reused while request-sensitive heads remain online [Liu et al., 2026b]. Applying that idea to DeepSeek-V4 is not a mechanical port. MLA has many logical query heads but only one physical packed latent KV stream [DeepSeek-AI, 2024a,b, 2026]; manufac-turing a physical cache per logical head would duplicate the latent state and defeat the native representation. 
+
+RedKnot-MLA preserves the packed latent and fac-torizes the logical-head output contribution . Local heads are evaluated per document at canonical position zero and stored as a projected offline artifact. The online request rotates queries into each document’s canonical frame, eval-uates one Global head per native output group, repairs se-lected Local token rows, and combines document segments with a stable segmented merge. A group-aligned sliced pro-jection makes the Local and Global contributions additive before the shared second output projection. Indexer-guided token-row closure and a conservative adaptive MoE policy reduce the token-wide work that would otherwise remain after head reuse; they support, rather than replace, the defining multi-head decomposition. Figure 1 gives the evidence-aware headline. It deliber-ately keeps four quantities separate. TTFT is an archived hot-artifact diagnostic; the 256K QPS bar is the author’s approximately 2 × result but its raw concurrency trace is not bundled; the compute bars are analytic ledgers rather than board-level achieved FLOPs; and the quality bars come from the paired three-dataset v6 study. These values therefore describe an attainable operating envelope, not one homogeneous scaling experiment. The report makes four contributions: • an exact logical-head factorization that leaves MLA’s physical packed latent KV representation unchanged; • canonical-position offline artifacts with online RoPE re-location, Global-head recomputation, and protected-row correction; • concrete Flash and Pro profiles plus fused prefetch, vali-dation, and merge integration for an eight-GPU tensor-parallel runtime; and • a protocol-qualified evaluation that distinguishes mea-sured latency and quality, preliminary QPS, and analytic compute accounting. 
+
+2 MLA-Off/MLA-Online Design 
+
+2.1 Logical heads, one physical latent 
+
+Let O ∈ RT ×H×d be the logical attention-head output of an MLA layer. We partition the logical heads into disjoint Local and Global sets, 
+
+L ∩ G = ∅, L ∪ G = {1, . . . , H }. (1) Local and Global are RedKnot-MLA execution roles, not physical MLA KV-head types. The shared packed latent C
+
+remains native and is paged exactly once. The first output projection is bias free and can be sliced by the disjoint 1arXiv:2609.07008v1 [cs.AI] 7 Sep 2026 RedKnot-MLA at a glance: latency, throughput, arithmetic, and quality solid = archived/analytic | hatched = author-reported preliminary 
+
+A. Hot-artifact TTFT 
+
+> frozen Flash operating points
+
+B. 256K serving 
+
+> speedup; protocols differ
+
+C. Arithmetic 
+
+> analytic omission ratios
+
+D. 256K quality 
+
+> paired v6 aggregate
+> 01234
+> 2.91x
+> 64K
+> 3.20x
+> 128K
+> 2.02x
+> 256K
+> 3.84x
+> 440K
+> Recomputed / RedKnot-MLA; mixed frozen evidence units
+> 012
+> 2.02x
+> TTFT
+> ~2.0x
+> QPS*
+> 1.40x
+> Seq.
+> *author-reported; raw QPS trace not bundled
+> 0% 50% 100%
+> 75.3%
+> Head-row
+> 79.1%
+> Major-op
+> different ledgers; values are not additive
+> 00.4 0.8
+> +0.032
+> F1
+> +0.042
+> EM
+> blue Recomputed | yellow RedKnot-MLA
+> Headline values come from distinct archived protocols; QPS is preliminary and must not be read as a bundled concurrency sweep.
+
+Figure 1: Performance overview. Panel A shows frozen hot-artifact TTFT diagnostics. Panel B separates the archived 256K TTFT ratio, the author-reported preliminary QPS ratio (hatched), and an archived sequential request-rate diagnostic; the latter used unequal output-token totals and is not a concurrency-QPS result. Panel C reports two non-additive analytic omission ratios. Panel D reports paired aggregate F1/EM at 256K. 
+
+logical-head channel ranges into Wa,L and Wa,G . With inverse output RoPE denoted by R−1, define 
+
+zoff = Wa,L R−1(OL), (2) 
+
+zonline = Wa,G R−1(OG). (3) The projected state and layer output are 
+
+z = zoff + zonline , y = Wbz. (4) Equation 4 is an exact linear identity when OL and OG
+
+equal full-recomputation outputs. Approximation enters only when a Local state is restored in a changed request context. Global heads and protected Local rows provide the correction path. 
+
+2.2 Canonical offline artifacts 
+
+Every immutable document is tokenized and evaluated inde-pendently with its first content token at position zero. This makes an artifact independent of the document’s eventual order in a request. In each reusable layer, the producer retains the native packed latent, projected Local contri-bution, Indexer/controller metadata, boundary metadata, and a certificate binding the checkpoint, tokens, profile, tensor-parallel geometry, and artifact generation. Artifacts are immutable and generation-atomic. 
+
+Algorithm 1. Build one canonical MLA-Off document artifact 
+
+Input: document tokens x, profile Π, checkpoint identity hm
+
+Output: certified immutable artifact A 
+
+> 1
+
+p ← (0 , 1, . . . , |x| − 1)  
+
+> 2
+
+(C, {O(l) 
+
+> L
+
+}, I, B ) ← NativeProducer (x, p, Π)  
+
+> 3
+
+for all reusable layers l ∈ R do  
+
+> 4
+
+z(l)off ← W (l)
+
+> a,L
+
+R−1(O(l) 
+
+> L
+
+) 
+
+> 5
+
+end for  
+
+> 6
+
+k ← Hash (hm, x, Π, TP , generation)  
+
+> 7
+
+A ← AtomicPublish (k, C, z off , I, B ) 
+
+> 8
+
+return A
+
+No online request is allowed to consume A unless every TP rank validates the same certificate. Missing layers, to-ken/profile mismatch, stale generation, incompatible TP geometry, or rank disagreement causes an explicit fallback to full recomputation before any reuse-specific collective is entered. 
+
+2.3 Online position restoration and segmented merge 
+
+Suppose document i, built at positions 0 , . . . , n i −1, appears at request offset ∆ i. RoPE orthogonality gives 
+
+⟨R(pq )q, R (pk + ∆ i)k⟩ = ⟨R(pq − ∆i)q, R (pk)k⟩. (5) The runtime therefore rotates the online query by −∆i, at-tends directly to the canonical latent Ci, restores the output phase, and combines segment statistics with a numerically stable log-sum-exp merge. It need not rewrite or physically concatenate each latent cache. The Local contribution is not restored blindly. The pro-tected token-row set is 
+
+A = Q ∪ N ∪ D ∪ B128 ∪ Itop ∪ T32K , (6) where Q contains query rows, N new rows, D dirty rows, 
+
+B128 the first and last 128 rows of each relocated segment, 
+
+Itop rows selected by the native Indexer recomputed in the current request, and T32K the recent 32K tail. A fixed controller may expand the active budget to 10%, 20%, or 25% of candidate rows. Cached Local values on A are 
+
+replaced , never double counted. 2Offline per-document build (canonical position 0) 
+
+Document 
+
+> tokens + pos 0 model/profile hash
+
+Native producer 
+
+> shared latent KV Indexer/state
+
+Local heads 
+
+> 56/64 (Flash) 112/128 (Pro)
+
+Offline projection 
+
+> inverse RoPE sliced W_a -> z_off
+
+Certified artifact 
+
+> z_off + packed latent Indexer/state + generation
+
+Online request (true concatenated positions) 
+
+Validate + relocate 
+
+> offset/phase checks query-side RoPE
+
+Selective online 
+
+> Global heads + dirty Local rows
+
+Online projection 
+
+> inverse RoPE sliced W_a
+
+Projection merge 
+
+> z_off + z_on dirty-row scatter
+
+Shared tail 
+
+> one W_b + TP next-layer state
+> generation-atomic restore
+> Row closure: query + 128-token boundaries + dirty islands + native Indexer Top-512 Adaptive MoE: preserve all tokens; physically compact routed fanout Top-6 -> K in {3,4,5,6}; shared expert remains active
+
+Figure 2: RedKnot-MLA preserves DeepSeek-V4’s single packed MLA latent stream. Offline, each independently positioned document produces a certified Local-head contribution. Online, query-side RoPE relocation, Global-head recomputation, and protected-row replay produce the complementary state. Both paths meet in sliced Wa space before one shared Wb projection. 
+
+Algorithm 2. Relocate, recompute, and merge one online layer 
+
+Input: layer l, artifacts {Ai}, offsets {∆i}, request r
+
+Output: layer output y(l) 
+
+> 1
+
+AllRanksValidate ({Ai}, l, r, Π)  
+
+> 2
+
+A ← ProtectedRows (r, {Ai.I l, A i.B l}) 
+
+> 3
+
+WaitPrefetch (LayerGroup( l))  
+
+> 4
+
+for all document segments i do  
+
+> 5
+
+qi ← R(−∆i)q 
+
+> 6
+
+(OG,i , O L, A,i , s i) ← SelectiveMLA (qi, A i.C l, A) 
+
+> 7
+
+( ˜OG,i , ˜OL, A,i ) ← RestorePhase (OG,i , O L, A,i , ∆i) 
+
+> 8
+
+end for  
+
+> 9
+
+(OG, O L, A) ← SegmentedLSEMerge ({ ˜OG,i , ˜OL, A,i , s i}) 
+
+> 10
+
+zonline ← W (l)
+
+> a,G
+
+R−1(OG) + W (l)
+
+> a,L
+
+R−1(OL, A) 
+
+> 11
+
+z ← RestoreAndReplace ({Ai.z off ,l }, z online , A) 
+
+> 12
+
+return W (l) 
+
+> b
+
+z
+
+2.4 Adaptive sparse MoE as a supporting path 
+
+Head reuse alone does not remove token-wide FFN work. For active rows in reusable middle layers, the native router first produces its Top-6 routed experts with weights p(1) ≥· · · ≥ p(6) . We normalize these six weights only to decide the retained fanout, ̂
+
+p j = p(j)
+
+∑6 
+
+> r=1
+
+p(r)
+
+, (7) 
+
+Kt = min {k ∈ { 3, 4, 5, 6} :
+
+> k
+
+∑
+
+> j=1
+
+̂
+
+p j ≥ τ
+
+ . (8) The executed experts keep their original router weights p(j);they are not renormalized. The shared expert is always re-tained, and all full-recompute fence layers keep native Top-6 routing. Thus an ambiguous router distribution automati-cally uses more experts, while a concentrated distribution can use as few as three. Head-row, token-row, and expert-fanout savings overlap and are never added as independent percentages. 
+
+3 Profiles and Runtime Integration 
+
+3.1 DeepSeek-V4 Flash and Pro profiles 
+
+Both profiles keep the first and last three transformer lay-ers as full-recompute fences. In the middle region, the Lo-cal/Global split aligns with DeepSeek-V4’s native output groups: every group of eight logical heads keeps one Global head online and assigns seven Local heads to MLA-Off. Flash therefore uses 3 full-recompute, 37 reusable, and 3 full-recompute layers (3F–37R–3F), with 56/8 Local/Global heads. Pro-0813 uses 3F–55R–3F and 112/16 heads. The structural logical head-row ceiling is 
+
+Smax head = NR
+
+N
+
+|L|
+
+H , (9) which is 75.29% for Flash and 78.89% for Pro. These are eligibility ceilings, not whole-model FLOP or time savings. Flash has paired long-context evidence; Pro currently has TP8 load/HTTP smoke validation only. 
+
+3.2 Turning omitted work into latency reduction 
+
+The TP8 fast path groups restoration and online execu-tion rather than treating cache management as a sequence of small kernels. Artifacts are stored by layer group, TP rank, and projected output-channel range. While layer l is running, a dedicated CUDA stream prefetches tiles for a future layer group; device events, not host polling, guard consumption. Repeated document bundles reuse compact segment-pointer geometry. The consumer fuses query-side RoPE views, Global-head and protected-row attention, sliced Wa projection, Local restoration, and row-wise replacement into a contiguous projected state. The shared Wb projection runs once. This avoids repeated HBM materialization, scatter/gather ker-nels, and extra TP barriers that can otherwise erase arith-metic savings. SegPagedAttention provides the segment placement abstraction while the underlying MLA latent re-mains packed; it does not create physical pages per logical head. 3Execution profiles and per-dataset 256K v6 quality profile geometry is analytic; v6 bars are paired measurements 
+
+A. Head-factorized profiles 
+
+> dense / reusable / dense; Local / Global
+
+B. 256K generalized paired evaluation (v6)    
+
+> F1 bars; EM, hot TTFT, and physical token-row saving below
+> Flash-0731 75.29% 37 reuse 56 Local
+> layers 3/37/3 (43) | heads 56/8 (64) | 1 packed KV
+> Pro-0813 78.89% 55 reuse 112 Local
+> layers 3/55/3 (61) | heads 112/16 (128) | 1 packed KV
+> ceiling = reusable-layer fraction x Local-head fraction
+> Pro: profile + TP8/HTTP smoke; no paired long-context claim
+> 00.4 0.8
+> Delta +0.000
+> 2Wiki
+> EM 0.500/0.500 1.88x | 77.2% rows
+> Delta +0.125
+> Hotpot
+> EM 0.500/0.625 1.89x | 78.3% rows
+> Delta -0.028
+> MultiField
+> EM 0.250/0.250 1.51x | 79.3% rows
+> Delta +0.032
+> Aggregate
+> EM 0.417/0.458 1.76x | 78.3% rows
+> Recomputed RedKnot-MLA
+> Equal-weight aggregate: F1 0.5723 -> 0.6047; EM 0.4167 -> 0.4583; major-op ledger 79.1%
+
+Figure 3: Profile geometry and the paired 256K v6 dataset breakdown. The left panel is analytic and preserves one physical packed KV stream. The right panel is measured by dataset: bars show F1, annotations show F1 change, EM, hot-artifact TTFT speedup, and physical token-row saving. Pro geometry must not be read as a Pro long-context performance result. 
+
+The runtime also records four non-interchangeable names-paces: logical head-row saving, physical token-row saving, analytic major-operator arithmetic saving, and measured wall-clock timing. Certification counters additionally make any fallback visible. A result is rejected if the RedKnot-MLA arm silently runs full recomputation. 
+
+4 Evaluation 
+
+4.1 Setup and protocol 
+
+Experiments use one local DeepSeek-V4-Flash check-point on eight NVIDIA H200 GPUs with TP=8 and DP=CP=PP=1. The archived environment uses CPython 3.11.13, PyTorch 2.9.1 with CUDA 12.8, FlashMLA 1.0.0, and SGL Kernel 0.3.20. TTFT is measured from model-forward entry to first-token availability after runtime and kernel warm-up. Host snapshot preparation and offline arti-fact construction are excluded from hot-artifact TTFT for both arms. At each length, the release suite contains 15 frozen records: ten short-answer cases for task-quality aggrega-tion and five longer-output cases for paired text inspection. The Recomputed arm processes the complete request on-line without a hidden prefix advantage. The RedKnot-MLA arm treats document one as a prefix; the remaining doc-uments were independently built at position zero and are relocated online. Both arms share exact tokens, offsets, checkpoint, generation parameters, output cap, TP geome-try, and timing boundary. The four headline TTFT points are independently frozen diagnostics rather than samples from one unbiased scaling sweep. 
+
+4.2 Hot-artifact performance and modeled bound-aries 
+
+Figure 4 preserves the user’s four-length engineering view but labels its evidence class on every panel. The hot-artifact points are archived diagnostics: 2 .91 ×, 3 .20 ×,2.02 ×, and 3 .84 × at 64K, 128K, 256K, and 440K. Their non-monotonicity is expected because the evidence units and fixed overheads differ; the figure must not be interpreted as a controlled scaling law. Cold-artifact latency includes first-time artifact construc-tion and therefore does not inherit the hot result. The simple planning model in panel B assumes construction contributes 0.75 normalized recomputation units, yielding 0.80–0 .99 ×; these values are projections, not measurements. Likewise, the 59.00%, 66.18%, 70.20%, and 72.06% curve in panel C models the growing share of reusable work with con-text length. The underlying Flash structural ceiling remains length independent at 75.29%. The 256K first-document-prefix sensitivity ledger independently reports 70.20–73.17% as the active-row allowance moves from 25% to 10%. The author additionally reports approximately 2 .0× hot-artifact QPS at 256K. We retain that point in Figure 1 because throughput is an important serving outcome, but render it as preliminary. The current bundle does not con-tain its concurrency, arrival/batching policy, fixed gen-eration length, completed-request counts, or raw timing window. The archived sequential service-rate diagnostic is 0 .031015 → 0.043408 requests/s (1 .40 ×), but the arms produced 110 versus 84 output tokens, so it is not a fair QPS substitute. A publication-grade QPS claim requires fixed-output workloads at several concurrency levels and confidence intervals. 
+
+4.3 256K generalization and quality 
+
+Figure 3 closes the cross-dataset loop. For 2WikiMQA, Hot-potQA, and MultiFieldQA-en, F1 changes are respectively 0.0000, +0 .1250, and −0.0281; EM changes are 0, +0 .125, and 0. The equal-weight aggregate changes from 0.5723 to 0.6047 F1 and from 0.4167 to 0.4583 EM. Mean hot-artifact TTFT speedup is 1 .76 ×, mean physical token-row saving is 78.3%, and the separately calculated major-operator ledger is 78.7–79.5% (79.1% mean). The aggregate improves, but the 2.81-point MultiFieldQA-en F1 decrease prevents a 4Figure 4: Evidence-aware 64K–440K engineering envelope. Only panel A is an archived hot-artifact diagnostic. Panel B is a cold-artifact model with Scold = 1 /(0 .75 + 1 /S hot ) and no archived cold run. Panel C is an analytic extrapolation anchored by the 256K 70.20–73.17% ledger, not board FLOPs. Panel D is a 99%–100% design target, not empirical F1/EM. 
+
+universal “less than one point” quality claim. The supplementary figure isolates the sparse-MoE sup-port path rather than crediting its result to full RedKnot-MLA. Across 50 8K examples, physical K3 changes aggre-gate F1 from 0.5905 to 0.5793 with unchanged EM of 0.42; its paired bootstrap 95% interval is [ −0.0800 , +0 .0569]. On five paired 256K prompts, MoE-only model prefill improves from 14.918 s to 13.885 s (1 .074 ×). This modest isolated gain explains why system-level head and token-row omission, not expert pruning alone, drives the long-context TTFT result. 
+
+5 Reproducibility and Limitations 
+
+The public repository packages frozen JSONL suites, pro-file files, sparse-FFN parameters, the benchmark driver, environment manifest, and a one-command wrapper: 
+
+> git clone \ git@github.com:rednote-machine-learning/RedKnot.git cd RedKnot/test/srt/redknot ./run_deepseek_v4_flash_reproduction.sh
+
+The wrapper executes the 64K, 128K, 256K, and 440K suites, prints Recomputed and RedKnot-MLA outputs side by side, and reports TTFT plus analytic compute ledgers. It validates the environment and data hashes, uses a release lock to prevent two TP8 owners, stops only its recognized GPU holder, preserves failure logs, and restores the holder when the suite exits. Each record binds the checkpoint and profile hashes, token hash, segment offsets, artifact gen-eration, active-row policy, expert fanout, warm-up/repeat counts, timing scope, fallback counters, and generated text. Three limitations define the present claim boundary. First, the four length points are curated diagnostics with mixed evidence units; larger randomized per-dataset samples and AB/BA repetitions are needed for population estimates. Second, the QPS point is author reported but not yet trace backed in this bundle; multi-concurrency, fixed-output sweeps must replace it before it is called a reproducible measurement. Third, compute values are analytic ledgers over named operators. Hardware counters are required to report achieved FLOPs, HBM traffic, collective time, energy, and utilization. Pro-0813 likewise needs paired long-context quality and latency runs before its 78.89% structural ceiling can be connected to serving performance. 
+
+6 Conclusion 
+
+RedKnot-MLA adapts head-aware reuse to DeepSeek-V4 MLA without fragmenting the packed latent KV representa-tion. Independently built Local-head artifacts are relocated with query-side RoPE, combined with Global-head and protected-row recomputation, and merged before one shared projection. Flash uses a 3F–37R–3F, 56/8 Local/Global pro-file; Pro uses 3F–55R–3F and 112/16. The archived Flash points demonstrate multi-fold hot-artifact TTFT reduction, while the 256K paired study shows large analytic arithmetic omission with aggregate F1/EM preservation and a visi-ble per-dataset regression. The preliminary approximately 2× QPS point is promising, but its raw concurrency trace remains an explicit release task. Keeping those evidence boundaries visible turns the report into a reproducible sys-tems description rather than a single unqualified headline. 5Supplemental results: task quality, strict paired model prefill, and compute sensitivity 
+
+A. Paired quality B. 256K paired prefill C. Compute sensitivity     
+
+> 0.0 0.5 1.0
+> MuSiQue
+> +0.000
+> Hotpot
+> -0.024
+> 2Wiki
+> +0.100
+> MultiField
+> -0.149
+> Trivia
+> +0.017
+> Top-6 K3
+> Bar labels are per-task Delta F1; n=10 per task Aggregate Delta F1 -0.0112; 95% CI [-0.0800, +0.0569]
+> 13.8 14.4 15.0
+> Top-6 K3
+> MuSiQue Hotpot 2Wiki MultiField Trivia
+> Strict model prefill (seconds); K3 wins 5/5 pairs Mean 14.918 -> 13.885 s; 1.074x
+> 70% 72% 74%
+> 73.17%
+> 10%
+> 71.19%
+> 20%
+> 70.20%
+> 25%
+> Online active-row allowance
+> Analytic major-operator FLOPs proxy
+
+Figure 5: Supporting sparse-execution evidence. Panels A and B are MoE-only studies and must not be presented as end-to-end RedKnot-MLA performance. Panel C is an analytic first-document-prefix compute sensitivity curve. 
+
+References 
+
+DeepSeek-AI. DeepSeek-V2: A strong, economical, and effi-cient mixture-of-experts language model. arXiv preprint arXiv:2405.04434 , 2024a. DeepSeek-AI. DeepSeek-V3 technical report. arXiv preprint arXiv:2412.19437 , 2024b. DeepSeek-AI. DeepSeek-V4: Towards highly effi-cient million-token context intelligence. Tech-nical report, DeepSeek-AI, 2026. URL https: //huggingface.co/deepseek-ai/DeepSeek-V4-Pro/ blob/main/DeepSeek V4.pdf. Technical Report. J. Hu, W. Huang, W. Wang, H. Wang, T. Hu, Z. Qin, H. Feng, X. Chen, Y. Shan, and T. Xie. EPIC: Efficient position-independent caching for serving large language models. In Proceedings of the 42nd International Con-ference on Machine Learning , volume 267, pages 24391– 24402. PMLR, 2025. Y. Liu, Y. Gu, L. Zhang, C. Wu, G. Xue, J. Li, M. Guo, J. Hu, and J. Meng. CacheSlide: Unlocking cross position-aware KV cache reuse for accelerating LLM serving. In 
+
+24th USENIX Conference on File and Storage Technolo-gies (FAST ’26) , pages 83–99. USENIX Association, Feb. 2026a. Y. Liu, Z. Luo, H. Jin, Z. Wang, R. He, B. Wang, G. Chen, and J. Hu. RedKnot: Efficient long-context LLM serving with head-aware KV reuse and SegPagedAttention, 2026b. URL https://arxiv.org/abs/2606.06256. Y. Liu, J. Wu, Y. Liu, J. Hu, M. Li, X. Chen, and W. Chen. HYPIC: Accelerating hybrid-attention LLM serving with position-independent caching. arXiv preprint arXiv:2607.01299 , 2026c. J. Yao, H. Li, Y. Liu, S. Ray, Y. Cheng, Q. Zhang, K. Du, S. Lu, and J. Jiang. CacheBlend: Fast large language model serving for RAG with cached knowledge fusion. In Proceedings of the Twentieth European Conference on Computer Systems (EuroSys ’25) , pages 94–109. ACM, 2025. doi: 10.1145/3689031.3696098. 6

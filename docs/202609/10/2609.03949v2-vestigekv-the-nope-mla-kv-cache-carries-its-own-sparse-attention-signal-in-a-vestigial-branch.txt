@@ -1,0 +1,628 @@
+Title: VestigeKV: The NoPE-MLA KV Cache Carries Its Own Sparse-Attention Signal in a Vestigial Branch
+
+URL Source: https://arxiv.org/pdf/2609.03949v2
+
+Published Time: Thu, 10 Sep 2026 01:21:11 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+Preprint 
+
+# VESTIGE KV: T HE NOPE-MLA KV C ACHE CARRIES 
+
+# ITS OWN SPARSE -A TTENTION SIGNAL IN A VESTI -
+
+# GIAL BRANCH 
+
+WenJie Fan 
+
+Yotta Labs 
+
+fanwj@mail.ustc.edu.cn fanwenjie@yottalabs.ai https://github.com/fan-wenjie/vestigekv 
+
+# ABSTRACT 
+
+A long-lived KV cache must be compressed before the queries that will read it exist. Selection by observed attention collapses there: on a NoPE-MLA model, H2O and SnapKV retrieve 0.00 and 0.33 of needles at 8× compression, because a token’s importance has not yet been observed. VestigeKV instead derives a sparse attention pattern from a signal the cache already carries, occupying the sparse-attention literature’s one unoccupied quadrant: training-free and query-independent. In NoPE-MLA the 64-dimensional decoupled branch is a vestige of RoPE that training repurposes into a salience channel; reading 11% of each row, it partitions the cache into an attended tier and a GPU-resident archive that no row ever leaves, reachable each step by a certified, query-adaptive trigger. Nothing is trained and cache rows are never quantized, so every quality effect attributes to selection and scheduling. On Kimi Linear 48B, retrieval holds at 1.00 under 
+
+8× and 0.96 under 32 × from 8k to 65k context, with zero gap to full-row se-lection, and the recall tier holds 128 × at 1.00 (8k). Both tiers stay on the GPU, so the win is speed , not memory: the per-step scan reads ∼26% of the bytes dense attention would, and on a two-node sglang deployment the crossover sits at ∼40k context, reaching 1.18 × at 256k and 1.39 × at 496k. The mechanism is exclusive to NoPE: the identical operator on a RoPE MLA collapses to 0.08, query-independent salience exists only without rotation, and query-universal ex-act merging is provably impossible under RoPE. All thresholds were frozen before their data; 20 archived verdicts and 8 closed routes accompany the paper. 
+
+# 1 INTRODUCTION : CAPABILITY , COST , AND REQUIRED CHANGES 
+
+For a reader holding stock Kimi Linear weights, the offer is as follows (for Kimi K3’s Gated-MLA 1
+
+the machinery extends by proof — Section 3d — while the signal content is untested; see Limita-tions): 
+
+> 1
+
+K3’s NoPE Gated-MLA architecture is reported in its public release materials; no archival citation exists at submission time. 
+
+1arXiv:2609.03949v2 [cs.LG] 9 Sep 2026 Preprint                              
+
+> effect attended tier 576 →18 dims/token at 32 ×(archive bit-exact, GPU-resident) with retrieval 0.96 (8k–65k); lossless at 8×; with the recall tier, 1.00 at 128 ×
+> selection cost read 11% of each row once per compression event; one low-pass filter (O(Tlog T))+top-m; decode path unchanged model changes none — weights, kernels, arithmetic untouched; this is a cache policy :read latent cache[ . . . ,512:] , rank, free rows recall tier (standard) archived rows stay GPU-resident +a(64+ r)-dim index; per step, one fused index scan and the certified fired set admitted — full attention reads drop from 1152 to ∼294 bytes/token with the 16-bit index — 3.9×on the KV path in bytes (Eq. 2); both tiers GPU-resident: the win is speed, not memory NoPE exclusivity the signal is query-independent salience, which exists only when the score is one fixed bilinear form; measured 0.08 under RoPE
+
+Structurally, VestigeKV is a sparse attention; what distinguishes it is the origin of the pattern . Fixed geometry (Beltagy et al., 2020; Zaheer et al., 2020; Xiao et al., 2024) ignores content; trained pat-terns (Yuan et al., 2025; Lu et al., 2025) cost pre-training; score-based selection (Zhang et al., 2023; Li et al., 2024; Tang et al., 2024) is training-free but query-dependent. VestigeKV occupies the remaining quadrant — training-free and query-independent — because the pretrained NoPE cache already carries the pattern in its vestigial branch; that quadrant is exactly what compression-before-the-query requires (Section 2), and it exists only under NoPE (Table 4). The paper owes the reader three things: the mathematics that makes a query-independent signal possible and merging impossible (Section 3); the engineering, down to a recall tier with per-step certificates (Section 4); and the measurements (Section 5). Each piece names the NoPE dividend and the RoPE obstruction. 
+
+# 2 THE PROBLEM : THE CACHE IS COMPRESSED BEFORE ITS QUERIES EXIST 
+
+In a long-lived cache, the query that will need a token arrives after the compression decision. Any statistic of observed attention is blind to that query: on our NoPE-MLA testbed, H2O drops to 0.00 needle retrieval at 8× where VestigeKV holds 1.00 (full comparison in Table 9), and giving H2O half its budget as a recent window changes nothing — the failure is informational, not budgetary. (Timeline illustration: Appendix C, Figure 5.) 
+
+NoPE dividend: under a fixed bilinear form, salience is a property of the token alone, so a signal can survive compression-before-query (Section 3a). Under RoPE: the winner of attention depends on the query’s position; the pre-query setting has no usable signal, which is why the RoPE-era literature selects on observed attention and inherits this collapse. 
+
+# 3 THEORY : THE MATHEMATICS OF A POSITION -FREE CACHE 
+
+The cache row and the two maps that read it: 
+
+˜Cu = [ˆ cu; ru], sh(t, u ) = λ Qht , ˜Cu , vhu = W hU V ˆcu, (1) with Qht = [ W h⊤ 
+
+> U K
+
+qh,c t ; qh,r t ] the absorbed query and λ the attention scale. Everything follows from one structural fact: under NoPE, both maps depend on u only through the row itself. 
+
+Lemma 1 (Exchangeability) . NoPE-MLA attention output is a function of the multiset {{ ˜Cu}} :
+
+oht = P 
+
+> u
+
+esh(t,u )vhu
+
+ P  
+
+> u
+
+esh(t,u ), and both sums are symmetric in u by Eq. 1. 
+
+Three consequences, one per pillar of the paper. 
+
+(a) Query-independent salience exists (the selector). The score is one bilinear form, so 
+
+arg max u sh(t, u ) = arg max u⟨A⊤ 
+
+> h
+
+xt, x u⟩, writing x for hidden states and Ah for the per-head bilinear form with rank Ah ≤ dhead ; every read direction lies in one fixed low-rank subspace, so the tokens that can ever win are the extreme points of the hidden-state cloud against one fixed cone 2Preprint — measured at 2.3–6.7% of tokens. Under RoPE the form is the family Ah(∆) = W ⊤ 
+
+> q
+
+R∆Wk; the cone sweeps with position and the winner set inflates to 10.2–46.8%. A compression decision made before its queries can only rely on a query-independent signal, and only NoPE has one. 
+
+(b) Merging is impossible; selection is forced (the method). Proposition 1 (Minimum exact cache) . Over any open set of queries, a representative cache 
+
+{(Cg , b g )}Bg=1 with logit offsets reproducing attention exactly for all queries satisfies B ≥
+
+#{distinct rows }.Proof sketch. Exactness for all Q means P 
+
+> g
+
+ebg e⟨Q,C g ⟩ = P 
+
+> u
+
+e⟨Q, ˜Cu⟩ (and the v-weighted ana-logue). The characters Q 7 → e⟨Q,C ⟩ of (Rd, +) are linearly independent on any open set, so the representative multiset must contain every distinct row with weight equal to its multiplicity. Full proof in Appendix A. Under RoPE equal content at distinct positions is never equal as rows, ∥Ruk − Rv k∥2 =
+
+P 
+
+> j
+
+4 sin 2 θj (u−v)2 ∥k(j)∥2 > 0, so B = T : exact compression is zero, and every practical method must select. Under NoPE +MLA the merge class is wider than equality (a corollary: 
+
+cv = αc u, α > 0, rv = ru suffices, by positive homogeneity of RMSNorm) — but a pre-registered measurement finds this class empty on real corpora, so selection is forced there too. 
+
+(c) Per-token certificates (the recall tier). For any surrogate row Cg(u) with ∥ ˜Cu − Cg(u)∥ ≤ εu
+
+and any future query, |∆s| ≤ λ∥Q∥εu — a query-uniform bound, available only because the form is fixed (under RoPE it must hold over the whole rotation orbit). Section 4.2 builds the archive index from exactly this decomposition. 
+
+(d) Gate commutation (extension to Gated-MLA). Every guarantee above concerns the attended 
+
+set — which rows enter the softmax multiset — and none concerns what happens to the aggregate afterwards. So for any attention variant of the form ot = G xt, P 
+
+> u∈S
+
+pu(S) vu
+
+ with p the softmax of the same fixed NoPE bilinear score over the attended set S, the machinery transfers verbatim: par-tition exactness, exchangeability (Lemma 1), the certificate of (c), and ranking stationarity all hold for S regardless of G, and output perturbation bounds carry over up to G’s Lipschitz constant in its second argument — for an elementwise sigmoid output gate that constant is at most one, so the bound tightens . Query-side positive gating of the score preserves the per-query ranking (a positive factor is monotone), and a query-independent per-row gate absorbs into the row exactly as the resid-ual scalar does. The one form that does not transfer is a query-row-coupled score gate, which breaks the fixed bilinear form — the same obstruction as rotation, and the boundary of the theory. Kimi K3 is reported to use a NoPE Gated-MLA of the output-gated form; the machinery therefore extends by the argument above, while the signal content — whether K3’s training reallocates its un-roped branch into a salience channel as Kimi Linear’s does (Section 3.2) — is an empirical property of K3’s training that this study does not measure. 3.1 EVICTION COMMUTES WITH TIME 
+
+A consequence of Lemma 1 worth isolating, because it licenses a schedule the experiments use and RoPE cannot. 
+
+Corollary 1 (Ranking stationarity) . Under NoPE, s(qt, u ) = λ⟨Qt, ˜Cu⟩ (Eq. 1) contains neither t
+
+nor the age of row u. Hence any row-intrinsic ranking (such as σ), once computed, is valid at every later step, and a global top-m maintained incrementally (a heap, later rows displacing earlier ones) equals the one-shot global top-m computed at the end. Eviction decisions are final. 
+
+The measured footprint is the streaming result of Section 5: blockwise compression equals one-shot global compression trial by trial at both ratios, and so does blockwise compression with global rebalance (constant m, later rows displacing earlier ones) at matched final budget. Under RoPE the corollary fails at an intrinsic rate: the cached score s(qt, u ) = λ q ⊤ 
+
+> t
+
+Rt−uWK ˜Cu =P 
+
+> i
+
+ai(u) cos( ωi(t−u)+ ϕi(u)) oscillates per frequency band, so the pairwise order of any two rows flips as t grows and a frozen ranking goes stale; the only remedy is re-scoring every archived row against the current position at every rebalance, so no eviction decision is ever final. NoPE deletes 3Preprint this staleness failure mode entirely; the remaining failure of a constant-m schedule is genuine budget contention (a later high-σ row displacing a needle), a memory-for-quality trade, not signal failure. The schedule itself is prior art (H2O (Zhang et al., 2023) lineage); the dividend attaches to the signal. 3.2 THE VESTIGE , AND THE NEW JOB TRAINING GAVE IT 
+
+Which rows to select is decided by anatomy. The branch ru exists because rotary position cannot pass MLA’s low-rank bottleneck ( Rt−u does not commute with the up-projection), so DeepSeek-V2 routes position around it in a per-token, MQA-shared channel. Under NoPE the released code caches the branch but never rotates it (no rotary call in the reference implementation; skip rope=True 
+
+in sglang ): the positional job is gone. Training reallocates the freed channel into the cache’s salience channel; the measurements behind this account (branch/content norm ratios, cross-model NoPE vs. RoPE; Table 3) are in Appendix C. 
+
+NoPE dividend: a 64-dim channel with no positional duty becomes, under training, the cache’s magnitude/salience channel — readable at 11% cost. Under RoPE: the same 64 dims must encode rotation frequencies; their low-pass residual is phase, not salience, and the identical statistic scores 0.08 (Table 4). 
+
+The read budget, computed. Decode-time attention is bandwidth-bound: KV-path time tracks bytes read per step. The three-term budget follows from the construction above: 
+
+reads( ρ, r ) = ρ · 576 
+
+| {z } 
+
+> attended
+
++ (1 − ρ)(64 + r + 1) 
+
+| {z }
+
+> index scan
+
++ f · 576 
+
+| {z } 
+
+> admitted
+
+dims/token , (2) where the +1 counts the per-row residual scalar ηu. In bytes (what bandwidth prices): rows are 
+
+1152 B, the 16-bit index scan reads its (64+ r+1) dims at 2 B ( ≈260 B/row), and the budget lands at ∼294 vs. 1152 B/token — 3.9× (a full-precision index blunts this to 2.1×). At ρ=1 /32 , r=64 
+
+the admitted fraction f measures 0.4–0.8% on document decode ( 0.5–2.6% on needle contexts); the trigger term is under 1% . The ratio is asymptotic in context and batch — attention is per-request-unamortizable (what the method cuts) while shared weights amortize — so the reported ratios are a conservative floor. The realized pipeline is seven fused kernels inside the decode CUDA graph (Section 4); the per-step adder is 68 μs. 
+
+# 4 ENGINEERING 
+
+classic MLA VestigeKV                   
+
+> xtproj.
+> kv a ,q
+> append row to cache attention over all Trows ot
+> xtproj.
+> kv a ,q
+> append row to cache attention over kept ∪fetched ot
+> compression event: read branch slice, rank σ,keep m, archive +index per step: index scan
+> →fetch ≤jrows unchanged added policy
+
+Figure 1: The delta from classic MLA, per layer. Every model operation (gray) is byte-identical — projections, kernels, arithmetic, weights. What is added (orange) is cache-membership policy: a compression event that ranks rows by the branch slice, and the per-step scan-and-fetch that redeems its no-row-deleted promise. The two are halves of one algorithm — without the recall, the partition is just lossy eviction (Appendix D). Removing the whole orange path (the kill-switch) recovers classic MLA exactly, byte-for-byte. 4Preprint 4.1 THE EVICTION POLICY 
+
+For a closed prefix block of branch vectors r0: T , F the sequence-axis rFFT, bandwidth κ:
+
+σu = ru −  F−1⊮[0 ,κ )Fr 
+
+> u
+
+per fixed 4096-token block ; (3) the transform runs over fixed-length blocks (the close granularity), never the whole prefix: κ counts frequency bins , so a whole-prefix transform would let the cutoff period drift with context length (≥256 tokens at T =4096 but ≥32k tokens at 512k), changing what “anomalous” means as S grows. Fixed windows keep σ’s meaning scale-invariant, make it naturally incremental (each block is trans-formed exactly once, at close; its σ is immutable), and let prefill and decode-time closes share one bit-identical implementation. We keep the σ-top-m rows (plus 4 sinks and the recent window) in the attended tier; move every other row, bit-exactly, to the archive of Section 4.2. No row is ever deleted in deployment : the invariant is a partition (pure deletion appears only as an ablation), and it is a cache-manager policy, not a model change — the selector reads the trailing 64 dims of each row, a contiguous slice. The partition stays live during decode: every 4096 generated tokens the newest block closes, its σ joins the stored record, and one global top-m over all closed rows rebalances the tier; evicted rows enter the archive through cached projections, so the invariant holds during generation exactly as at prefill (live-archive gate: parity PASS, ∆CE median +0.0020 nats, needle 8/8). 
+
+NoPE dividend: the policy consults no observed attention and never revisits a decision: the signal exists query-free (Section 3a) and frozen rankings never stale (Corollary 1). Under RoPE: the branch signal is phase-buried (measured 0.08 branch-alone) and any frozen ranking goes stale at the frequency-band rate. 
+
+4.2 THE RECALL TIER 
+
+Eviction discards rows whose importance arrives later; production systems keep them recallable (Chen et al., 2024). VestigeKV’s trigger is query-adaptive, not quota : each step’s fired set is the archived rows that, after certified inflation, could still beat the kept tier’s best for this query — empty when the query is well served, the minimal sufficient set for the recall target τ when its target was evicted. Fixed budgets under- and over-fetch by construction; a decision does neither. Archived row u keeps an index entry (ru, V ⊤ 
+
+> r
+
+ˆcu, η u): the exact branch summand of every future logit, a rank-r sketch of the content summand ( Vr from the context’s own prefix queries), and the sketch residual norm ηu = ∥(I − Vr V ⊤ 
+
+> r
+
+)ˆ cu∥. Per decode step, over archived rows: 
+
+score( t, u ) = λ q r⊤ 
+
+> t
+
+ru
+
+| {z }
+
+> exact summand
+
++ λ (V ⊤ 
+
+> r
+
+qc′ 
+
+> t
+
+)⊤(V ⊤ 
+
+> r
+
+ˆcu)
+
+| {z }
+
+> sketch
+
++ z λ ∥(I−Vr V ⊤ 
+
+> r
+
+)qc′ 
+
+> t
+
+∥ ηu/pdc−r
+
+| {z }
+
+> certificate scale
+
+, (4) with qc′ 
+
+> t
+
+= W ⊤ 
+
+> U K
+
+qct the absorbed content query, dc=512 the content-latent width, and the 1/√dc−r
+
+factor putting the residual on a per-dimension scale before calibration; fetch the top-j rows whose score exceeds the tier-1 maximum. z has a closed form: over hard calibration queries (those whose causal-argmax row is archived) the required inflation is zq = (max 1 −idx t)/cert t, and 
+
+z is the conformal quantile z(⌈(n+1) τs⌉) of these, which by exchangeability alone guarantees 
+
+P (target recovered ) ≥ τs on a fresh hard query — no distributional assumption, no external cal-ibration corpus (labels are computable at compression time, before any row is deleted). The scan level τs = τ / (1 − α) and the gate’s false-close budget α = (1 − τ )/2 both derive from the sin-gle recall target τ by an even split of the miss budget, and the minimum calibration sample size 
+
+⌈τs/(1 − τs)⌉ is the smallest n for which that order statistic exists — the tier has exactly one quality knob. 5Preprint            
+
+> tier 1: kept rows
+> m×576 , exact index
+> (T−m)×(64+ r)
+> attention
+> max logit s∗
+> scan, Eq. 4 top-j > s ∗?merged softmax ot
+> tier 2: archive
+> (T−m)×576 , exact
+> qt
+> s∗
+> fetch ids rows archive tier (GPU) attended tier (GPU)
+
+Figure 2: Per decode step: tier-1 attention yields s∗; the index scan admits the archived rows that could compete; fetched rows join that query’s softmax as exact copies (Lemma 1). Both tiers are GPU-resident: the archive is not a demotion to slower storage but a cheaper read discipline over the same memory — the per-step saving is attention bytes, and the deployment form is exactly this two-tier loop. Two lemmas make the construction precise. 
+
+Lemma 2 (Index certificate) . For every future query and archived row, s(t, u ) = λq r⊤ 
+
+> t
+
+ru +
+
+λ(V ⊤ 
+
+> r
+
+qc′ 
+
+> t
+
+)⊤(V ⊤ 
+
+> r
+
+ˆcu) + δt,u with |δt,u | ≤ λ∥(I − Vr V ⊤ 
+
+> r
+
+)qc′ 
+
+> t
+
+∥ ηu. The first two terms are computable from the index alone; the bound is Cauchy–Schwarz on the sketch residual and holds for all queries because the form is fixed — under RoPE it would have to hold over the rotation orbit. 
+
+Lemma 3 (Bounded leakage) . Let F be the rows admitted to a step’s softmax (kept ∪ fetched) and 
+
+s∗ = max u∈F s(t, u ). If every excluded row satisfies s(t, u ) ≤ s∗ − γ, the total excluded softmax weight is at most (T − | F |) e−γ relative to the maximal included weight, and the output error is bounded by that mass times max u∥vu∥.Proof. Each excluded weight is at most e−γ times the maximal included weight; sum over excluded rows and bound the output difference by excluded mass times the largest value norm. Lemma 2 is what the scan computes; Lemma 3 is why fetching only score-competitive rows suffices: the trigger exists to make the premise of Lemma 3 hold with high measured probability (0.941 in dis-tribution). Guaranteed variants were measured and closed: the sound Cauchy–Schwarz bound fires on 99.5% of steps, and Gaussian-derived thresholds are invalidated by a selection effect (the argmax rows are precisely the residual outliers, at 3.5–10.9 σ). The adopted z is therefore the distribution-free conformal quantile of the empirically required inflations — assumption-light where the Gaus-sian route was assumption-broken. 
+
+NoPE dividend: the index owes its 64 exact dims and its per-row certificate to a sidecar term that nothing rotates; both quantities are single numbers per row. Under RoPE: each would have to hold over the whole rotation orbit — the obstruction quantified next. 
+
+4.3 THE ATTENTION IMPLEMENTATION ON A PRODUCTION STACK 
+
+Throughout, k denotes 1024 tokens (so 4k prefill is 4096 tokens, 64k is 65536 , and the 512k la-tency sweep reaches 524288 ). The mathematics of Section 3 buys a specific engineering property, and this subsection makes it concrete: we port VestigeKV into standard sglang as an attention backend ( --attention-backend vestigekv mla ) and serve Kimi Linear 48B across two GPUs (pipeline parallel), with the eviction running under CUDA graphs at zero per-step host cost. No kernel is written: the backend wraps the stock fused MLA-decode kernel and changes only which rows it reads . The backend enforces its own precondition rather than trusting the operator: selection is refused unless the model is a NoPE-MLA cache ( mla use nope ), because a positional encoding on the decoupled branch destroys the eviction signal (Table 4); it also refuses page size ̸=1 and speculative decoding, which the kept-index tables do not yet address. A config that fails any check raises rather than degrades silently. 
+
+Decode step: seven kernels inside the model graph. Per layer the attended set is kept ∪ tail ∪
+
+fired (qt), both tiers always on. The whole recall step — online-softmax prologue over kept rows, 6Preprint batched archive scan (native bf16/fp16 tensor-core dots), deterministic compaction, and the all-layer CSR pack — runs as seven fused Triton kernels baked into the decode CUDA graph : one 
+
+cudaGraphLaunch per step, no second graph, no VestigeKV-triggered recapture (worst-case-capacity buffers refresh in place). Calibration fits on the request’s first decode queries with a provi-sional index serving from step one; the O(S) calibrated build runs on a side stream. At S=512 k the trigger rate is 99 .8% per step: recall is a necessary component, and no production off-switch exists. Pre-fusion implementations remain in-tree as bit-parity oracles; the fused pipeline’s greedy output is token-identical to the unfused one. 
+
+Speedup accounting: what this buys, and where. Decode step time decomposes as t(S) = 
+
+C0 + Tnet + A(S), and attention A(S) is the only term any selection scheme can shrink. On this deployment (two GPUs over ethernet pipeline), the measured decomposition is C0 ≈ 5.5 ms (MoE with 3B active parameters, 20 linear-attention layers, sampling), Tnet ≈ 2.0 ms (four NCCL hops per step, measured), and Adense ≈ 0.57 ms at S=64 k by measured-slope calibration — attention is 7% of the step there. VestigeKV replaces Adense = kS with kρS (kept attention) + ks(1 − ρ)S
+
+(the archive scan at 260 B/row with the 16-bit index) + R, where the fused pipeline’s fixed adder measures R = 68 μs, batch-independent (the 4k-context arms measure even). The S-slope ratio is 
+
+ρ + ks/k ≈ 0.26 : the scan must touch every archived row every step — what the recall guarantee costs — so the attention slope drops to a quarter, not to zero. 
+
+What it measures. Measured attention slopes: ∼0.7 vs. 7.6 ns per step per cached token — be-low the byte account, for a measured reason (the dense arm’s long-S slope exceeds its own band-width floor via split-count growth, which vestigekv sidesteps by holding its attended set near ρS ). Crossover at ∼40k; 1.18 × at 256k, 1.39 × at 496k: this is a long-context method , deployment-dependent in the direction that understates the method — this testbed’s large C0 and Tnet suppress 
+
+the ratio; single-device or NVLink lifts the table. 
+
+Where it does not buy anything. The start of a request is its slowest stretch — the adaptive calibration window (8–64 decode steps) fits the conformal certificate on live queries, a per-request cost bounded by the window and independent of S (the first bucket runs ∼0.2 ms/step above steady state; gone well before 112k). It is not what keeps bs=1 throughput near dense at 64k +4k (the transient is under 0.3% of a 4k-token decode): that near-parity is the steady-state attention share — 7% of the step at 64k — where compression’s saving is roughly offset by the recall scan; the advantage appears where attention’s share grows, with batch and with context length. Two scope notes: the advantage is speed, not memory (both tiers GPU-resident; nothing is deleted; host-offload is future work), and launch-to-launch network variance is ±15% on the fixed terms, so each arm’s curve is one launch and cross-arm claims quote ∆-vs-4k. A stage-separated profile confirms the account at kernel level (attention 8.8% → 20 .8% of GPU-busy from batch 1 to 16; the compressed kernel shrinks 4.3×–15 ×). One property classic sparse attention does not have: the attention volume is not a fixed budget. The tier-1 set is proportional (ρT plus the tail; the only schedule measured quality-flat in length), and the fired set is query-dependent, zero to a measured worst case of 3,983 rows (the theoretical worst case attends the whole cache exactly — quality unharmed, one step’s latency degenerates). An optional cap — ArkVale’s budgeted top-j on our certified scores — hard-bounds per-step work where a latency SLO needs it; the mainline is uncapped. This MoE-dominated deployment is the conservative end of the envelope: on an attention-dominated stack (dense decoder, single device) the same slope ratio acts on a far larger share of the step, and the end-to-end ratio approaches the attention-only account of Section 3.2. Both arms of every comparison run the same graphs, and every serving number comes from sglang ’s own benchmark module (Section 6). 
+
+NoPE dividend: the kept set is frozen before any query exists, so the sparse pattern is a compile-time constant of the decode graph: selection costs zero on the token path. Under RoPE: a RoPE selector must consult the live query, forcing an out-of-graph rebuild per step — the pattern cannot be captured. 
+
+The digest obstruction under RoPE — why ArkVale/Quest-style page summaries are structurally loose under rotation and tighten under NoPE — is detailed in Appendix B. 7Preprint 
+
+# 5 EXPERIMENTS AND RECOMMENDED CONFIGURATION 
+
+Protocol. Every serving number in this paper follows the continuous-generation protocol, because that is the deployment form: bs=1 latency is one request prefilled at 4k and decoded continuously to 512k (decode-time block closes and the live archive run throughout, so each step’s cost is the sys-tem’s true per-step cost at that length), and throughput is 64k-prefill/4k-decode requests swept over batch size. No fixed-decode-at-a-prefill-length point is quoted as a performance claim. Both arms run from one source tree — the baseline is the wrapped base itself ( --attention-backend triton ) — each arm’s curve is collected within a single launch, and every launch log prints the same content-level weight fingerprint. Quality tables report the deployed two-tier form; the tier-1 ablation is demoted to Appendix D (recovery 1.00 at 128 ×). 
+
+Figure 3: Left: bs=1 continuous decode, one launch per arm, one statistic (median per 4096-token bucket; client records to 224k, server decode log beyond; splice invisible by construction). Crossover at ∼40k; the ves-tigekv attention slope is flat at ∼0.7 ns per step per cached token vs. dense 7.6; 1.18 × at 256k, 1.39 × at 496k. The left-edge elevation is the calibration transient; spikes are the block-close sawtooth. Right: throughput, 64k prefill + 4k decode, bs ≤ 16 (memory cap): the advantage grows with batch (attention does not amortize across the batch; shared weights do) — launch-noise even at bs=1, 8.0% at bs=12. 
+
+Primary metric: needle-retrieval intact rate ( ∆NLL < 1 nat), uncompressed baseline gated (all trials passed); gates and process in Section 6. Per-layer proxies are demoted: in 10 recorded cases a per-layer proxy mispredicted end-to-end retrieval, the worst a learned selector at +0 .41 offline / −0.71 
+
+end-to-end. Three further results, tables in Appendix C: (i) the frozen dual-arm control — the identical operator collapses on RoPE (0.89 NoPE vs. 0.08 RoPE at 32 ×; Table 4); (ii) the recall tier restores what eviction loses (0.89 → 1.00 at 32 ×, 0.69 → 1.00 at 128 ×) while admitting only 0.5–2.6% extra rows per query, and a larger sketch rank cuts fire rate while recall rises (Table 5); (iii) teacher-forced ∆CE is effectively lossless at the standard configuration ( ∼0.0006 bits/byte at 32 ×), while the recent-only floor matches on CE yet degrades the needle answer by +15 nats of NLL — continuation loss cannot arbitrate retrieval, which is why needle is primary (Table 6). At 8× retrieval is lossless (1.00); quality at fixed ratio improves with length (0.69 at 8k → 0.83 at 32k, 128 ×). 5.1 THE DEPLOYMENT PATH MEASURES THE SAME 
+
+The tables above come from an HF-forward harness ( harness/ in the code release) that records exactly which rows selection and recall keep and fetch. Two links tie it to the deployed system, both reproducible from the release. Selection parity : the fused kernels’ fired-and-fetched row sets are bit-identical to the harness’s on shared inputs (registered parity tests), and a per-step row-set assertion holds over a full benchmark (Section 6). Serving quality : on the serving path with recall live every step, VestigeKV is statistically indistinguishable from dense — Table 2: 64-shot gsm8k 0.830 vs. 0.821, MAUVE 0.999 vs. 0.930 (shared per-context seeds), teacher-forced ∆CE median +0.0020 nats (Table 2). Because the fired set is bit-identical between harness and port, the retrieval and language-modeling numbers transfer to the deployment unchanged. 8Preprint 5.2 RECOMMENDED CONFIGURATION 
+
+One quality knob, everything else derived or structural. The deployment exposes exactly one quality parameter, the recall target τ = 0 .90 ; the rest of the trigger calibration is a closed-form chain: 
+
+α = (1 − τ )/2 (the gate’s false-close budget), τs = τ / (1 − α) (the scan-level target that leaves room for the gate), z = z(k) with k = ⌈(n+1) τs⌉ (the conformal quantile, closed form over the calibration scores), min hard = ⌈τs/(1 − τs)⌉ = 18 (the smallest calibration set that can certify τs), an 8 → 64 
+
+adaptive calibration window, and a Zmax = 8 clamp. Distinct from the knob are the structural constants — not tuned per deployment, each with a stated reason: ρ = 1 /32 (the compression ratio, an experimental axis), κ = 16 (low-pass bandwidth), r = 64 (index rank), 4 sinks, a one-block recent window, and the 4096-token close granularity that anchors σ’s scale invariance. An optional per-layer index cascade preserves recovery exactly and cuts the scan term to 0.65 –0.79 ×
+
+(its uniform variant is refuted; Appendix D). The ratio floor for a constant-m schedule is 1/32 — the only measured ratio flat in length (Table 8; deeper ratios degrade precisely at long context, where a floor binds); tier-2 recovery extends depth at length (12/12 at an instrumental 256 × in the deployment loop). Every default traces to a pre-registered measurement; the full table (each value with its basis) is Appendix C, Table 7. The load-bearing facts: ρ=1 /8 is lossless and 1/32 the default; the sketch rank stays at r=64 because the GPU-resident archive makes fetches free (larger r buys only a lower fire rate); the fetch is uncapped by default (the fired set is the certificate’s decision, not a quota; topj=16 is an optional worst-case-latency bound); the trigger z and the entropy gate derive in closed form from the single target τ =0 .90 .
+
+NoPE dividend: the entire configuration self-calibrates from the context being compressed — possi-ble because labels, thresholds and the sketch basis are all functions of one fixed bilinear form. Under RoPE: calibration targets move with query position; every threshold must chase a distribution that the compression step cannot observe. 
+
+# 6 MEASUREMENT INTEGRITY 
+
+Every gate was driven with a known-bad input and shown to refuse it before being trusted; every threshold was frozen, dated, before its data; all wall-clock numbers come from sglang ’s own benchmark module on one source tree, with a per-decode-step attended-row-set assertion proven on both arms (zero violations) and a content-level weight fingerprint on every launch. The full protocol — gates, Wilson intervals, the row-set invariant, and the serving methodology — is Appendix E. 
+
+# 7 RELATED WORK 
+
+Trained sparse attention (Yuan et al., 2025; Lu et al., 2025) buys content-aware patterns with pre-training; VestigeKV inherits its pattern from a channel that NoPE training has already repurposed, at zero training cost — the kinship is structural, the provenance is not. Observed-attention eviction (Zhang et al., 2023; Li et al., 2024; Oren et al., 2024; Xiao et al., 2024) selects on attention already seen; Section 2 measures the setting where that information does not yet exist. Branch-differential studies (Ma et al., 2026b;a) measure the rotated branch and report that rotation destroys its position-free structure (branch-only AUC 0.43 ), leaving the unrotated case open — the case measured here. ArkVale (Chen et al., 2024) deserves the closest comparison: the evict-summarize-recall architec-ture is theirs, and VestigeKV inherits it. Four differences, one theoretical. (i) Signal : query-history page importance vs. a query-independent signal that exists before any query does (Section 2, where history has nothing to read). (ii) Granularity : page-level lossy digests vs. row-level bit-exact latents plus a 16-bit index. (iii) Admission : a top-k page quota vs. an uncapped calibrated competition against the query’s kept-tier maximum — the fired set is a per-query decision, zero to everything (their budgeted rule survives in ours as an optional worst-case-latency bound, Section 4.3). (iv) Cer-tificate : a digest bounds page relevance only up to a bounding volume valid over the whole rotation orbit — under RoPE no tight query-uniform bound exists (Appendix B, Table 1) — whereas the fixed NoPE bilinear form makes the per-row Cauchy–Schwarz bound query-uniform, which a con-formal threshold can then calibrate; stationarity (Corollary 1) additionally freezes the ranking into a capture-time constant. ArkVale is the right architecture attached to a score family where no tight 9Preprint certificate can exist; NoPE is where it acquires a proof. Page-bound selection (Tang et al., 2024) inherits the same digest obstruction; trained compression (Lin et al., 2025; Gelberg et al., 2026) changes the model, which VestigeKV does not. Per-step exact merging under RoPE (Tian et al., 2025) is the strongest possible there; Proposition 1 shows the query-universal version exists only under NoPE +MLA. Architecture from (DeepSeek-AI, 2024); the NoPE deployment from (Kimi Team et al., 2025); NoPE’s length-generalization case from (Kazemnejad et al., 2023; Wang et al., 2024). Appendix I derives the dividend each cited method inherits under NoPE. 
+
+# 8 LIMITATIONS 
+
+Scope boundaries (full table: Appendix F): one measured model, Kimi Linear 48B Base — the only released NoPE-MLA checkpoint (K3’s Gated-MLA is covered by gate-commutation; its salience content is untested); selector ordering replicates on a NoPE GQA hybrid, eviction depth does not (depth is MLA-conditional); the depth’s mechanism is open; per-step consultation is probabilistic (0.9–1.0, 1.00 end to end); long- context suites are future work. 
+
+# 9 OUTLOOK : TRAINING AGAINST THIS MATHEMATICS 
+
+Everything above is post-hoc. If training is allowed, the theory marks prospects (not claims): a trained index channel could make sketch residuals small by construction, reviving guaranteed -recall sparse attention; training toward position-free latents on repeated spans would make Proposition 1’s collapse live, taking cache size to O(distinct content ); and eviction-aware fine-tuning (Gelberg et al., 2026) has a uniquely stable target under NoPE. All conditional on scale. 
+
+# 10 CONCLUSION 
+
+A production NoPE-MLA model keeps, in a channel its architecture no longer needs, a trained record of which tokens matter: reading it costs 11% of the cache, acting on it compresses 8–32 ×
+
+with retrieval intact, a recall tier restores 128 ×, and none of it survives rotation. The vestige is the signal. 
+
+# REFERENCES 
+
+Iz Beltagy, Matthew E. Peters, and Arman Cohan. Longformer: The long-document transformer. 
+
+arXiv preprint arXiv:2004.05150 , 2020. Renze Chen, Zhuofeng Wang, Beiquan Cao, et al. ArkVale: Efficient generative LLM inference with recallable key-value eviction. In NeurIPS , 2024. URL https://openreview.net/ forum?id=4oAt5L4lYe .DeepSeek-AI. DeepSeek-V2: A strong, economical, and efficient mixture-of-experts language model. arXiv preprint arXiv:2405.04434 , 2024. URL https://arxiv.org/abs/2405. 04434 .Yoav Gelberg, Yam Eitan, et al. Training transformers for KV cache compressibility. arXiv preprint arXiv:2605.05971 , 2026. URL https://arxiv.org/abs/2605.05971 .Amirhossein Kazemnejad, Inkit Padhi, Karthikeyan Natesan Ramamurthy, Payel Das, and Siva Reddy. The impact of positional encoding on length generalization in transformers. In NeurIPS ,2023. URL https://arxiv.org/abs/2305.19466 .Kimi Team, Yu Zhang, Zongyu Lin, Xingcheng Yao, et al. Kimi Linear: An expressive, efficient attention architecture. arXiv preprint arXiv:2510.26692 , 2025. URL https://arxiv.org/ abs/2510.26692 .Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. SnapKV: LLM knows what you are looking for before generation. In NeurIPS , 2024. URL https://arxiv.org/abs/2404.14469 .10 Preprint Bokai Lin, Zihao Zeng, Zipeng Xiao, et al. MatryoshkaKV: Adaptive KV compression via trainable orthogonal projection. In ICLR , 2025. URL https://arxiv.org/abs/2410.14731 .Enzhe Lu, Zhejun Jiang, Jingyuan Liu, et al. Moba: Mixture of block attention for long-context llms. arXiv preprint arXiv:2502.13189 , 2025. Bole Ma, Jan Eitzinger, Harald Koestler, and Gerhard Wellein. Kamera: Unified position-invariant multimodal KV cache for training-free reuse. arXiv preprint arXiv:2606.23581 , 2026a. URL 
+
+https://arxiv.org/abs/2606.23581 .Bole Ma, Jan Eitzinger, and Harald K¨ ostler. Irminsul: MLA-native position-independent caching for agentic LLM serving. arXiv preprint arXiv:2605.05696 , 2026b. URL https://arxiv. org/abs/2605.05696 .Matanel Oren, Michael Hassid, Nir Yarden, Yossi Adi, and Roy Schwartz. Transformers are multi-state RNNs. In EMNLP , 2024. URL https://arxiv.org/abs/2401.06104 .Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. Quest: Query-aware sparsity for efficient long-context LLM inference. In ICML , 2024. URL https: //arxiv.org/abs/2406.10774 .Yuxuan Tian, Zihan Wang, Yebo Peng, et al. KeepKV: Achieving periodic lossless KV cache compression for efficient LLM inference. arXiv preprint arXiv:2504.09936 , 2025. URL https: //arxiv.org/abs/2504.09936 .Jie Wang et al. Length generalization of causal transformers without position encoding. arXiv preprint arXiv:2404.12224 , 2024. URL https://arxiv.org/abs/2404.12224 .Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. In ICLR , 2024. URL https://arxiv.org/abs/ 2309.17453 .Jingyang Yuan, Huazuo Gao, Damai Dai, et al. Native sparse attention: Hardware-aligned and natively trainable sparse attention. arXiv preprint arXiv:2502.11089 , 2025. Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed. Big bird: Trans-formers for longer sequences. In NeurIPS , 2020. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, et al. H2O: Heavy-hitter oracle for efficient generative inference of large language models. In NeurIPS , 2023. URL 
+
+https://arxiv.org/abs/2306.14048 .
+
+# A PROOFS 
+
+Lemma 1 is proved where stated. Full proof of Proposition 1: 
+
+Proof of Proposition 1. Suppose P 
+
+> g
+
+ebg e⟨Q,C g ⟩v(Cg ) = P 
+
+> u
+
+e⟨Q, ˜Cu⟩v( ˜Cu) and the same identity without the v factors, for all Q in an open set. For pairwise-distinct Ci, the functions Q 7 → e⟨Q,C i⟩
+
+are characters of (Rd, +) and hence linearly independent on any open set; matching coefficients forces the representative multiset to contain every distinct row with ebg equal to its multiplicity, so B ≥ #{distinct rows }. Under RoPE the displayed distance bound makes all T rows pairwise distinct. Under NoPE +MLA, if cv = αc u (α > 0) and rv = ru, positive homogeneity of RM-SNorm gives ˆcv = ˆ cu, hence identical rows: the merge class strictly contains vector equality. The value side is consistent because v is a function of the row — in standard attention, with V cached independently, no such consistency holds and the numerator identity is not even well-posed. 11 Preprint 
+
+# B THE DIGEST OBSTRUCTION UNDER ROPE 
+
+The prior recall design (Chen et al., 2024) scores an evicted page K by a bounding-sphere digest, 
+
+I(q, K ) = max k∈K q · k ≤ q · c + r∥q∥, sound only when r encloses every key — and adopts a non-enclosing radius because the sound one overestimates, giving up the guarantee. Under RoPE that dilemma is structural. A page is P consecutive positions of cached keys Ruku; even for constant 
+
+content k,
+
+∥Ruk − Rv k∥2 = X 
+
+> j
+
+4 sin 2 θj (u−v)2 ∥k(j)∥2 =⇒ r2 ≳ X  
+
+> θj≥2/P
+
+∥k(j)∥2, (5) so the radius is of order the fast-frequency key norm regardless of content coherence: the digest cannot be tight. The center fares no better — per frequency pair the page mean carries the Dirichlet factor 
+
+> 1
+> P
+
+XP −1 
+
+> u=0
+
+eiθ j u = | sin( P θ j /2) |
+
+P | sin( θj /2) | ≪ 1 for fast θj , (6) so q · c is blind to exactly the dimensions inflating r. NoPE removes both at the root — rows are content-only — and replaces the estimate with structure the digest never had: an exact summand (Lemma 2), a per-token certificate with a measured accuracy knob, and by Section 3(a) a fixed winner set, so rankings may be prefetched where the RoPE family Ah(∆) forces re-ranking every step. Table 1: Each ArkVale-style limitation, its mechanism, and the measured effect of removing ro-tation. Same digest protocol on both models (32-token pages, sphere digests per their Eq. 1–2); recall@8 pages of the true-argmax page, worst layer — the tail-risk statistic that decides adoptabil-ity.                  
+
+> limitation mechanism RoPE NoPE digest looseness Eq. 5: orbit-inflated radius 1.78–1.86 ×spread (removed) worst-layer recall (heuristic r)deep layers position-dominated 0.024 0.67 worst-layer recall (sound r)sound radius unusable 0.014 0.97 per-step re-ranking winner set sweeps with position 10.2–46.8% union 2.3–6.7% union
+
+NoPE dividend: exact summands, per-token certificates, layer-uniform recall, and prefetchable rankings — the parts of a recall tier that mathematics can supply. Under RoPE: every one of these reduces to a heuristic estimate; the residual risk hides in specific layers (0.024 at the worst), which is the adoption-blocking tail risk. 
+
+# C EXPERIMENT TABLES (HARNESS )          
+
+> cache row ˜Cu(576 dims), one per token per layer content latent ˆcu: 512 dims, RMSNormed (direction only) ru
+> σu=∥ru−low-pass (r)u∥ ⇒ keep top-mrows exactly, evict the rest
+
+Figure 4: VestigeKV reads only the branch (orange, 11% of the row). Kept rows are exact; nothing else is stored. 12 Preprint 
+
+> t
+> future queries prefix needle compression the attention that makes the needle matter
+
+Figure 5: The needle’s importance is conferred entirely by queries that do not exist at compression time; H2O accumulates prefix attention, SnapKV reads a window before the cut — both see nothing (Table 9). Table 2: Deployed-path quality on the final fused code (bars frozen before data; both numbers verba-tim). gsm8k runs 64-shot so the prompt ( ∼9k tokens) crosses the close granularity and compression is genuinely engaged; MAUVE generations share per-context sampling seeds across arms. Units: accuracy gaps read in percentage points, MAUVE in raw score (a divergence-derived quantity; rel-ative percentages are not meaningful for either), and only the ∆CE row carries a natural relative reading ( +0 .17% of the model’s bits/byte in aggregate: 0.5879 →0.5889).                             
+
+> dense (triton) vestigekv bar gsm8k 64-shot ( n=800 )0.821 0.830 ≥dense −0.07 (2 σ)MAUVE (16 ctx, gpt2-large) 0.930 0.999 ≥dense −0.10
+> teacher-forced ∆CE (nats) +0.0020 median (bit-equivalence transfer) ≤0.05
+> measurement NoPE (Kimi) RoPE (DSV2) branch/content row norm (max) 3.48 ×1.01 ×
+> score-variance share (11% of dims) 67.6% (branch is positional) top-1 retention, branch only 0.9869 n/a ∗
+> top-1 retention, content only 0.0001 n/a ∗
+> normalization content is RMSNormed; the branch is the row’s only magnitude path
+
+Table 3: The branch is the trained salience channel. Static rows from weights alone; behavioral rows from 512 real queries × 32 heads. ∗Retention is a norm-type ranking and rotations are isometries, so the statistic is insensitive to RoPE by construction (measured: 0.99 on DSV2 as well) — it cannot discriminate the arms. The discriminating measurement is the end-to-end dual-arm selector (0.08 on DSV2). Table 4: Tier-1 ablation. Left: dual-arm acceptance, frozen before either arm ran: work on NoPE 
+
+and fail on RoPE (DeepSeek-V2-Lite, matched layers, 32 ×). Right: branch-width ablation — post-hoc PCA truncation before σ; monotone degradation below 32 dims.                         
+
+> NoPE RoPE VestigeKV 0.89 0.08 full-row eviction 0.86 0.42 top-1 union 2.3–6.7% 10.2–46.8% branch dims 4816 32 64 @32 ×0.42 0.50 0.54 0.75 0.88 @128 ×0.12 0.17 0.38 0.62 0.67
+
+Table 5: Left: end-to-end recovery ( L=8192 , 24 trials) — the tier restores what eviction loses, admitting only 0.5–2.6% extra rows per query. Right: the index-rank knob — a larger sketch cuts trigger rate and fetch volume while recall rises (tighter bounds rank better). Rows/query is a document-perplexity figure; retrieval-heavy steps legitimately fetch more (5–37 rows per layer at 
+
+r=192 on needle contexts, recovery still 1.00).                        
+
+> 32 ×128 ×
+> eviction only 0.89 0.69
+> +recall tier 1.00 1.00 sketch rank r64 128 192 256 fire rate 0.028 0.008 0.004 0.002 rows/query 15.2 3.6 1.2 1.2 hard recall 0.950 0.931 0.974 0.962
+
+13 Preprint Table 6: General language-modeling cost ( ∆CE, nats/token, held-out; the top row is the deployed two-tier form, the lower rows its ablations continuation, 6 docs). The standard configuration is effectively lossless ( ∼0.0006 bits/byte at 32 × for ∼4-byte tokens). The recent-only floor matches on CE while scoring +15 nats on needle — continuation loss alone cannot arbitrate retrieval, which is why needle is the primary metric. 
+
+∆CE 8× 32 × 128 ×
+
+eviction + recall tier (standard) +0.0011 +0.0018 +0.0022 eviction only +0.0055 +0.0090 +0.0104 recent-only floor +0.0055 +0.0093 +0.0112 parameter recommended basis ratio ρ 1/8 lossless; 1/32 default Table 8 bandwidth κ 16 ( L ≤ 16 k); 64 ( L ≥ 32 k) tracks context length sinks / recent first 4 / one block sink dominance of attention mass sketch rank r 64 minimizes per-step scan bytes (reads 26% of full at r=64 vs 47% at r=192 ; the 16-bit index halves both); larger r buys only a lower fire rate (0.004 at r=192 , recall 0.974) that the fused pipeline no longer needs fetch uncapped (default) the fired set is the certificate’s decision, not a quota; topj=16 is an optional worst-case-latency optimization (recall 0.93–0.98 across data families at the cap) trigger z conformal quantile at τs, from τ =0 .90 closed form; in-context; no external corpus entropy gate auto-off if cal. fire rate > 60% self-deciding; saves the scan only where it filters tier-2 placement GPU-resident fetch free; per-step reads 1152 → ∼ 294 
+
+bytes/token (16-bit index) 
+
+Table 7: Empirical defaults. Every value traces to a pre-registered measurement. 
+
+# D TIER -1 ABLATION DETAIL 
+
+The deployed form always runs both tiers; the tables below switch the recall tier off to isolate the selector. They support one sentence of the main text — without the recall, the partition is just lossy eviction — and are not final quality. Table 8: Tier-1 ablation (recall tier off; not the deployed form). Rates at 8k and 32k pool seeds 11 +12 under the frozen rule of the pre-registration archive ( n=24 –36 ); 65k is single-seed ( n=12 ). Branch-only selection (VestigeKV, reads 11% of each row) vs. full-row selection at matched budget. 
+
+L=8192 L=32768 L=65536 32 × 64 × 128 × 32 × 64 × 128 × 32 × 64 × 128 ×
+
+VestigeKV 0.89 0.79 0.69 0.96 0.92 0.83 0.92 0.75 0.58 Full-row selection 0.86 0.79 0.69 0.92 0.83 0.83 0.92 0.75 0.58 
+
+14 Preprint Table 9: Tier-1 ablation (recall tier off). Needle intact rate when compression precedes the query (L=8192 , 24 trials; L=32768 , 12 trials). The recent-window variant rules out a budgetary explana-tion for the collapse (Section 2). These methods remain strong in their design setting (query present at compression); this is the other setting. 
+
+8× 32 × 128 ×
+
+H2O (Zhang et al., 2023) 0.00 0.00 0.00 SnapKV (Li et al., 2024) 0.33 0.04 0.00 H2O + recent (half budget) 0.00 0.00 0.00 StreamingLLM (Xiao et al., 2024) 0.00 0.00 0.00 VestigeKV 1.00 0.89 0.69 H2O / SnapKV, L=32768 0.00 / 0.42 0.00 / 0.00 0.00 / 0.00 VestigeKV, L=32768 1.00 0.96 0.83 
+
+# E MEASUREMENT INTEGRITY : FULL PROTOCOL 
+
+Every check below was driven with a known-bad input and shown to refuse it before being trusted; every threshold in this paper was frozen, dated, before its data. All reported rates are exact fractions over the stated trial counts; Wilson 95% intervals for every primary rate are in Appendix G. Table 11 (Appendix G) lists each gate with the known-bad input it was proven to catch. 
+
+Executable row-set invariant. The serving port extends the same discipline to the deployment: a per-decode-step assertion ( SGLANG DEBUG VESTIGEKV ROWS ) checks, on every pipeline rank and every layer, that the attended row set is the intended one — the kept table exists, no active slot is empty, the baseline arm attends the full prefix, the compressed arm attends well below it. Each failure mode is unit-tested to fire on the broken form before being trusted, and the final benchmark campaign ran a full proof round with the assertion enabled on both ranks and both arms across all batch sizes: zero violations. 
+
+Serving-stack performance methodology. All wall-clock numbers are produced by sglang ’s own benchmark module ( sglang.benchmark.serving with per-token ITLs saved raw), with no benchmarking code of our own; the orchestration only launches the server and switches the arm. Both arms run from one source tree with identical CUDA-graphed code paths, each arm’s curve is collected within a single launch (fixed launch-state terms cancel in the ∆-vs-4k reading), above 
+
+∼224k context the server-side decode log is the per-token authority (client-side inter-token stamps degrade under stream batching, a measured artifact), and every launch log prints the checkpoint’s content-level fingerprint so all arms provably load identical weights. 
+
+# F SCOPE BOUNDARIES : FULL TABLE 
+
+Every scope boundary of this study, with its measured status: 15 Preprint 
+
+limitation status one measured model all measurements are on Kimi Linear 48B (the Base checkpoint; post-training survival of the signal is untested). For Kimi K3’s Gated-MLA the machinery extends by the gate-commutation argument; the branch’s salience content there is an untested empirical claim one NoPE-MLA family Kimi Linear 48B is the only released NoPE-MLA checkpoint; selector ordering replicates on a NoPE GQA hybrid (Granite-4.0-H), eviction depth does not — depth claims are MLA-conditional mechanism of the depth open; three pre-registered candidate explanations were refuted by our own runs, recorded in the pre-registration archive row reachability existence is constructive (the partition deletes nothing); per-step consultation is probabilistic (recall 0.9–1.0, 1.00 end to end; the fired set itself is deterministic by construction given the query). Pure deletion loses rows irrecoverably ( +15 nats of NLL on the needle answer) tasks, length needle probes to 256k, held-out CE at 8k, 64-shot QA ( ∼9k prompts, n=800 ) and MAUVE on the serving path; serving latency measured to 512k. Standard long-context suites are future work 
+
+# G INTERVAL ESTIMATES FOR THE PRIMARY RATES 
+
+Needle intact rates are exact fractions over small trial counts; Wilson 95% intervals make the resolu-tion explicit. Neighboring ratios at one length are often not separated at these n. The separations the paper leans on hold: tier-1 vs. the recent-window arm (0 successes in every cell) and tier-2 recov-ery vs. its eviction arm. The flatness of 1/32 across lengths is a consistency observation (identical counts at all three lengths), not a separation claim. Table 10: Wilson 95% intervals, count/trials [lower, upper]. Tier-1 ablation rows above the rule; deployment-loop rows below. 
+
+32 × 64 × 128 ×
+
+L=8192 32/36 [0.75,0.96] 19/24 [0.60,0.91] 25/36 [0.53,0.82] 
+
+L=32768 23/24 [0.80,0.99] 22/24 [0.74,0.98] 20/24 [0.64,0.93] 
+
+L=65536 11/12 [0.65,0.99] 9/12 [0.47,0.91] 7/12 [0.32,0.81] recall tier, 128 ×, 8k 24/24 [0.86,1.00] deployment loop, tier-1, 32 × 11/12 [0.65,0.99] deployment tier-2, 512 ×@8k, 256 ×@32k 12/12 [0.76,1.00], 12/12 [0.76,1.00] 
+
+Table 11: Gates and process. 
+
+gate known-bad input it was proven to catch identity operator ( ∆CE = 0 ) eager /sdpa kernel mismatch ( 1.4 × 10 −1)uncompressed-baseline gate trials the base model cannot retrieve hook fire counts silent non-capture (verdicts about nothing) leakage floor (cache destroyed ⇒ 0.00 ) uncompressed layers recovering the needle pre-registration, 20 verdicts three retracted mechanisms; a rejected learned selector 
+
+# H DEPLOYMENT SPECIFICATION 
+
+The serving schedule end to end, for an engineer holding stock weights. Each item is tagged: [M] = measured in this paper’s record; [D] = design, licensed by the stated result but not itself wall-clock-measured. 
+
+Lifecycle of a request. 
+
+16 Preprint 1. Below the activation threshold L∗: the partition is off; the attended set is everything, no index, no compaction — byte-identical to the stock MLA path at zero added cost. [D; the switch-on is retroactive-tax-free by the streaming equalities of Section 5 [M]] 2. Block close (every 4096 rows past L∗): σ from the 64-dim branch, global top-m rebalance, sinks and open tail always attended. [M: trial-exact vs one-shot] 3. Compression event (prefill end): tier-2 index build — 64-dim exact summand, rank-r
+
+sketch from the context’s own queries, per-row certificate; z and the entropy gate self-calibrate from the prefix; the gate disables itself where it cannot calibrate. [M] 4. Per decode step : attended-tier attention; index scan; fetch top-j=16 fired rows into this step. [M: recovery 1.00 at 128 × and 512 ×/8k, 256 ×/32k in the serving loop] 5. Optional per-layer cascade : stage-1 sidecar shortlist enabled per layer iff calibration hard-target recall ≥ 0.90 (holdout-verified); scan ×0.65 (8k) / ×0.79 (32k); the uniform variant is refuted and must not ship. [M] 
+
+Placement and knobs. Ratio target 1/32 , floor 1/32 for constant-m schedules (the only ratio measured flat in length) [M]; sketch rank r=64 : tier-2 is GPU-resident (fetches free), so r minimizes scan bytes [M]; tier-2 is mandatory — the partition deletes nothing [M]. Cache rows are never quantized (the controlled-variable rule); the scan’s index metadata is stored 16-bit with fp32-ieee arithmetic and post-rounding calibration [M]. 
+
+Asynchrony contract. All block-close work ( σ, rebalance, compaction, pre-threshold precompu-tation) may run off the critical path: inputs are immutable rows, early/late computation is equivalent by Corollary 1, and a lagging update only enlarges the attended set by one block — the conservative direction. Sync points: a per-block write event, a barrier before the index build, an atomic swap of the attended set. [D, licensed by [M] equalities] 
+
+Kernel mapping. No new kernels: kept rows compact once into pages (final by Corollary 1) and run on stock paged attention; the gate consumes the LSE that kernel already emits; the index scan is one GEMV per layer; fetched rows merge as one extra split-KV partition. [D; the LSE-gate substitution itself is measured] 
+
+# I THE DIVIDEND INSIDE PRIOR ALGORITHMS 
+
+Claim up front: NoPE confers a family of algorithmic dividends, not one. Two structural facts — the score is a single fixed bilinear form, and rankings commute with time (Corollary 1) — turn into distinct, unclaimed guarantees inside one published cache-management algorithm after another once transplanted to NoPE-MLA: statistics become stationary, voting horizons become unbounded, screening bounds become admissible, projection objectives become clean, merging acquires an ex-actness certificate, and reuse becomes zero-copy. The main text derives two instances (the selector, Section 3; page digests, Section B); this appendix enumerates the rest. Each is a derivation from the setup of Section 3; none is a new measurement, and we say so where the measured record limits the claim. 
+
+Accumulated-attention eviction (H2O, TOVA). These methods score row u by attention mass observed under past queries, ˆs(u) = P 
+
+> t
+
+softmax -weight (qt, u ) (Zhang et al., 2023; Oren et al., 2024). What the statistic estimates: 
+
+Eˆs(u) =
+
+
+
+n Eq
+
+h
+
+w λ⟨Q, ˜Cu⟩i
+
+NoPE: no t enters — one number per row, 
+
+P 
+
+> t
+
+Eq
+
+h
+
+w λ q ⊤Rt−uWK ˜Cu
+
+i
+
+RoPE: a function of the age profile {t − u}. (7) Under NoPE the estimand is time-invariant, so the estimate transfers to every future query from the same distribution. Under RoPE a future query at t′ = t + Lgen evaluates the integrand at a rotation the statistic never sampled; by the band expansion of Corollary 1 the mismatch oscillates per frequency, so the heavy-hitter statistic has a shelf life set by the band sum. NoPE removes the shelf life. 17 Preprint 
+
+Observation-window voting (SnapKV). SnapKV votes with the last window’s queries immedi-ately before generation (Li et al., 2024). The score a vote certifies and the score generation consumes differ, for the same (q, u ), by exactly 
+
+st′ (q, u ) − st(q, u ) = λ q ⊤ Rt′−u − Rt−u
+
+WK ˜Cu, t′ = t + Lgen , (8) which vanishes identically under NoPE ( R ≡ I) and oscillates per frequency band under RoPE. The vote’s validity horizon is therefore unbounded under NoPE and equal to the generation length under RoPE. 
+
+Attention sinks (StreamingLLM). Equation 8 applied to a fixed sink row u: under NoPE the sink’s score against any query direction is length-invariant, so the mechanism of Xiao et al. (2024) is exactly stable; under RoPE the same difference term rides the lowest frequency bands and drifts with distance. 
+
+Page-bound pruning (Quest). Quest skips pages whose per-page score bound falls below the running best (Tang et al., 2024). Under NoPE the score is linear in the row for a fixed form, so interval arithmetic over a per-page box B(P ) = [ ℓ, h ] ⊇ { ˜Cu}u∈P gives a true bound, 
+
+max  
+
+> u∈P
+
+λ⟨Q, ˜Cu⟩ ≤ λX
+
+> d
+
+max  Qdℓd, Q dhd
+
+, (9) and pruning by it is admissible : no page containing the argmax is skipped beyond box slack. Mea-sured caution: admissible is not automatically useful — on this checkpoint, boxes over the 256-dim index at page size 64 prune under 0.2% of pages (per-dim maxima over 64 rows exceed every ac-tual row’s score in high dimension); tight page digests are the open problem, the guarantee is the opening. Under RoPE the left side is max u∈P λ q ⊤R∆u WK ˜Cu with ∆u varying inside the page, so an honest bound must also maximize over the rotation orbit — the radius inflation of Eq. 5 — and tightness is lost with page span. Combined with the measured layer-uniformity of NoPE page digests (Section B), this is the theoretical opening for a hierarchical recall index with a per-step scan sublinear in context length; we have not built or measured one. 
+
+Trainable projections (MatryoshkaKV). For an orthogonal projector Π on the content latent, the NoPE score error is exactly |λ⟨Q, (I − Π) ˜Cu⟩| — a clean, query-uniform objective (Lin et al., 2025). Under RoPE the same objective is position-dependent unless Π near-commutes with the whole rotation family, 
+
+sup 
+
+> ∆
+
+R⊤
+
+> ∆
+
+ΠR∆ − Π ≈ 0, (10) which ties the projector to the frequency pairing and shrinks the feasible set to band-aligned sub-spaces. The measured record bounds the claim: on the frozen Kimi Linear checkpoint the read-out is full-rank (rank 512 ), so this dividend accrues to future training (Section 9), not to the deployed weights. 
+
+Lossless merging (KeepKV). KeepKV merges cache entries with the ambition of losslessness (Tian et al., 2025). Proposition 1 is the exactness certificate that ambition needs, and it is available only under NoPE-MLA: identical rows merge exactly with an ln m bias, the RMSNorm homogene-ity class enlarges the merge set, and under RoPE the merge class is empty. The measured record again bounds the claim: on real corpora the tolerant merge class is empty at 5% tolerance, so the certificate currently has no application domain on this checkpoint. 
+
+Position-independent reuse (Irminsul, Kamera). Cross-request cache reuse (Ma et al., 2026b;a) is the exchangeability lemma applied across sequences: a NoPE-MLA row is valid at any position in any context, so reuse is zero-copy. RoPE reuse pays a re-rotation of every moved row. These systems exploit the property; the lemma names it. 18

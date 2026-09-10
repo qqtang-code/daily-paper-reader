@@ -1,0 +1,870 @@
+Title: Modern Transformers Are Implicit Hybrids: From Functional Differentiation to Principled Hybrid Architecture Design
+
+URL Source: https://arxiv.org/pdf/2609.02986v1
+
+Published Time: Fri, 04 Sep 2026 00:03:29 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# MODERN TRANSFORMERS ARE IMPLICIT HYBRIDS :FROM FUNCTIONAL DIFFERENTIATION TO 
+
+# PRINCIPLED HYBRID ARCHITECTURE DESIGN 
+
+Runlin Shi Bojian Yin Guoqi Li ∗
+
+Institute of Automation, Chinese Academy of Sciences, Beijing, China 
+
+ABSTRACT 
+
+Hybrid architectures combining Full Attention (FA) and Linear Attention (LA) are increasingly prominent, yet their allocation remains largely heuristic. We seek an evidence-grounded basis in the head-level functional organization learned by modern RoPE-based Transformers. Behavioral retrieval and local-streaming probes reveal useful tendencies but do not yield a complete taxonomy. We there-fore propose two faithful intervention-based metrics: RoPE Frequency Impor-tance Score (RFIS), which measures how each frequency contribution affects a head’s complete attention distribution, and RoPE Positional Dependence (RPD), which isolates the effect of rotary positional modulation. Applied to Qwen3-series models and Llama3.1, RFIS suggests and RPD verifies a complete two-type taxonomy comprising retrieval and positional heads in RoPE Transformers, separated by a salient mid-low-frequency band. Controlled Transformers show that this functionally separating band follows the training-length positional scale; we term this mechanism-level boundary the Global Positional Band (GPBand). Its global positional dependence suggests a potential cause of zero-shot length-extrapolation failure and, together with the layer-specific head distribution, yields two design principles: (i) positional modeling should operate only locally, while global access should be implemented through position-independent retrieval; and 
+
+(ii) retrieval and positional functions should be assigned at head granularity with layer-specific allocation. We instantiate these principles in the Head-wise Hy-brid Architecture (HwH), using NoPE FA for global retrieval and LA for local positional modeling. With an overall FA-to-LA ratio less than 1:3 , HwH retains strong language modeling and commonsense reasoning while improving retrieval and substantially strengthening zero-shot long-context extrapolation over Trans-former, LA, and a 1:3 layer-wise hybrid baseline. Ablations validate both princi-ples and the component roles, highlighting principled hybrid architecture design as a promising route toward future foundation models. 
+
+1 INTRODUCTION 
+
+Full Attention (FA) provides exact token-to-token access but incurs quadratic sequence complex-ity (Vaswani et al., 2017) and a KV cache that grows with context during autoregressive decod-ing (Shazeer, 2019). Fixed-state LA offers recurrent efficiency (Katharopoulos et al., 2020) but can struggle with exact long-range retrieval (Arora et al., 2024a; Jelassi et al., 2024). Their combina-tion is attractive, but neither mechanism determines how a hybrid should be organized. Existing systems rely on fixed allocations or empirically selected architectural choices (Lieber et al., 2024; Wang et al., 2025; Team et al., 2025; Dong et al., 2024; Zuo et al., 2025). This leaves the central design question unresolved: which roles should be assigned to FA or LA, at what granularity, and with what allocation strategy? The functional differentiation learned by modern RoPE-based Transformers offers a natural design reference (Figure 1). Prior work identifies retrieval heads that support long-range access (Wu et al., 2024; Zhang et al., 2025b); subsequent methods exploit this specialization for post-training KV-
+
+> ∗
+
+Corresponding author. 
+
+1arXiv:2609.02986v1 [cs.LG] 2 Sep 2026 (a) Original retrieval tendency 
+
+> Qwen3-4B - 36 layers x 32 query heads (QRScore)
+
+(b) Layer-wise ranked retrieval tendency 
+
+> Head identities sorted within each layer (QRScore) Layer 1 - 36 Query head Layer 1 - 36 Rank within layer
+
+(c) Binary head-function differentiation     
+
+> Representative Qwen3-4B heads; frequency decreases downward
+> Retrieval - L13H28 Positional - L13H5
+> RFIS RPD RFIS RPD
+> high low
+> GPBand high-frequency clean weak GPBand low-frequency gradient broad above GPBand strong GPBand sparse below GPBand position dependency: GPBand and above Below GPBand: RPD << RFIS
+
+(c) Binary head-function differentiation 
+
+> Representative Qwen3-4B heads; frequency decreases downward
+
+(d) Head-wise Hybrid Architecture (HwH)  
+
+> Attention head dimension allocation (HwH-std)
+> Global retrieval Local positional
+> all local 1:7 1:3 1:7 all local Layer 1 (top) - Layer 24 (bottom)
+> mechanism distribution
+
+(e) Real-world retrieval - 1.4B scale    
+
+> Each task axis is normalized to its best model; labels show maxima FDA (66.2) SWDE (47.3) SQuAD (45.8) NQ (26.6) TriviaQA (61.3) DROP (24.0) 25% 50% 75% Transformer GDN Inter HwH-std
+
+(f) NIAH-Single-2 length extrapolation - 380M        
+
+> Depth-averaged exact-match curve from the heatmap 050 100 1K 2K 4K 6K 8K Accuracy (%) Context length Transformer GDN Inter HwH-std
+
+(g) Function-specific components 
+
+> Global retrieval head
+> NoPE FA - Position-invariant retrieval; uses the full head dimension. RoPE FA - Breaks length extrapolation; restricts suitable dimensions.
+> Local positional head
+> Linear attention - Strong performance on short sequences. - Implicit global modeling impairs length extrapolation.
+
+Figure 1: Overview: from Transformer functional differentiation to principled hybrid design. (a) Retrieval tendency of Qwen3-4B measured by QRscore. (b) Layer-specific retrieval distribu-tion after within-layer head sorting. (c) RFIS/RPD reveal GPBand-separated retrieval and positional functions. (d) HwH instantiates two principles: (i) positional modeling should operate only lo-cally, while global access should be implemented through position-independent retrieval; and (ii) 
+
+retrieval and positional functions should be assigned at head granularity with layer-specific allo-cation. (e) Comparison on real-world retrieval benchmarks. (f) Zero-shot length extrapolation on NIAH-Single-2. (g) NoPE FA serves global retrieval; LA serves local positional modeling. cache optimization or checkpoint conversion (Xiao et al., 2024; Tan et al., 2026). However, these methods begin with pretrained Transformers and do not independently characterize the complemen-tary function; they therefore cannot by themselves ground architecture design from scratch. To establish a complete mechanism-level taxonomy, we begin with behavioral probes of head-level functional differentiation. We use QRscore (Zhang et al., 2025b) to measure retrieval tendency and introduce LDscore to measure local-streaming tendency. The two probes do not yield a complete taxonomy, so behavioral evidence alone cannot classify all heads mechanistically. We consequently turn to the underlying RoPE-frequency dependence and propose two faithful intervention-based metrics. RoPE Frequency Importance Score (RFIS) measures how removing one frequency con-tribution changes a head’s complete attention distribution, whereas RoPE Positional Dependence 
+
+(RPD) isolates whether that effect arises from rotary positional modulation. RFIS motivates, and RPD directly verifies, a complete two-type taxonomy comprising retrieval and positional heads in RoPE Transformers: the former emphasize frequencies below a salient mid-low-frequency band, whereas the latter emphasize the band and the frequencies above it. Together, these results establish retrieval and positional modeling as complementary mechanism-level functions. Controlled Transformers further show that this functional boundary follows the training-length po-sitional scale. We therefore term it the Global Positional Band (GPBand). The associated global po-sitional fitting suggests a potential failure mode beyond the training length. Together with the depth-varying head distribution in Figure 1b, this yields two principles: (i) positional modeling should operate only locally, while global access should be implemented through position-independent re-trieval; and (ii) retrieval and positional functions should be assigned at head granularity with layer-specific allocation. We instantiate these principles in the Head-wise Hybrid Architecture (HwH), which assigns NoPE FA to global retrieval and LA to local positional modeling with a layer-specific FA-to-LA ratio no 2greater than 1:3 . From-scratch pretraining shows that HwH retains strong language modeling and commonsense reasoning, improves retrieval, and substantially strengthens zero-shot extrapolation over Transformer, pure-LA, and layer-wise hybrid baselines. Component and allocation ablations further validate both principles and the roles assigned to FA and LA (Figure 1d–g). Our contributions are summarized as follows: • We propose RFIS and RPD, faithful and bounded intervention-based metrics for RoPE-frequency analysis, and use them to establish a complete head-level taxonomy of retrieval and positional modeling in RoPE Transformers. • We characterize the training-length-related salient mid-low-frequency band in RoPE Trans-formers as the functional boundary of this taxonomy, term it GPBand, and identify global positional fitting as a potential cause of extrapolation failure. • We derive two hybrid-design principles and validate them through from-scratch HwH ex-periments, which also confirm LA’s role in local positional modeling and NoPE FA’s role in position-independent global retrieval. • We reveal RoPE Transformers as implicit functional hybrids and motivate principled hy-bridization with better function-specific components as a promising route toward future foundation models. 
+
+2 PRELIMINARIES 
+
+Full attention and grouped-query attention. For a sequence X ∈ RT ×d, FA (Vaswani et al., 2017) forms Q = XW Q, K = XW K , and V = XW V . A head of dimension dh outputs 
+
+O = softmax 
+
+ QK ⊤
+
+√dh
+
++ M
+
+
+
+V, (1) where M is the causal mask. FA requires O(T 2) pairwise interactions, and its KV cache grows linearly with context. Grouped-query attention (GQA) (Ainslie et al., 2023) shares each of G ≤ H
+
+KV heads among a group of H Query heads; let g(h) map Query head h to its KV head. The cases 
+
+G = H and G = 1 recover MHA and MQA (Shazeer, 2019), respectively. We measure each Query head separately because it retains its own query projection and attention distribution. 
+
+Linear attention. LA replaces pairwise FA with a fixed-size recurrent state (Katharopoulos et al., 2020). A basic recurrence is 
+
+St = St−1 + vtk⊤ 
+
+> t
+
+, ot = Stqt, (2) where St ∈ Rdv ×dk , giving linear sequence complexity and constant-size recurrent memory for fixed dimensions. We use Gated DeltaNet (GDN) (Yang et al., 2025b), which adds data-dependent decay and a delta-rule update: 
+
+St = St−1
+
+ αt(I − βtktk⊤ 
+
+> t
+
+) + βtvtk⊤ 
+
+> t
+
+, ot = Stqt, (3) Here αt, β t ∈ (0 , 1) control retention and updating. 
+
+Rotary position embedding. Rotary Position Embedding (RoPE) partitions each Query and Key head into F = dh/2 two-dimensional groups and rotates group r ∈ { 0, . . . , F − 1} by frequency 
+
+ωr (Su et al., 2023): 
+
+ωr = θ−2r/d h , R(φ) = 
+
+cos φ − sin φ
+
+sin φ cos φ
+
+
+
+,
+
+˜q(r) 
+
+> t
+
+= R(tω r )q(r) 
+
+> t
+
+, ˜k(r) 
+
+> s
+
+= R(sω r )k(r) 
+
+> s
+
+.
+
+(4) Here θ is the RoPE base and r = 0 is the highest frequency. The resulting dot product decomposes into exact frequency contributions, 
+
+˜q⊤ 
+
+> t
+
+˜ks = 
+
+> F−1
+
+X
+
+> r=0
+
+
+
+q(r)
+
+> t
+
+⊤
+
+R(( s − t)ωr ) k(r) 
+
+> s
+
+, (5) so each group has rotation period 2π/ω r and a distinct positional scale. 33 FUNCTIONAL DIFFERENTIATION AND PRINCIPLES FOR HYBRID DESIGN 
+
+3.1 BEHAVIORAL PROBES OF ATTENTION -H EAD TENDENCIES 
+
+We measure each Query head’s retrieval tendency with QRscore, based on query-to-evidence atten-tion (Zhang et al., 2025b), and its local-streaming tendency with LDscore, based on the fraction of non-sink attention within a recent window (Appendix A.1). Qwen3-4B is the primary model for analysis; Qwen3-1.7B, Qwen3-8B, and Llama3.1-8B-Instruct provide cross-scale and cross-family checks (Appendix A.3). Its retrieval tendency is sparse, absent from the boundary layers, and concentrated near the middle (Figure 1a–b). Because retrieval and local-streaming tendencies are not globally complementary (Appendix A.2), they provide behavioral anchors and a layer-specific allocation pattern, but not a complete taxonomy. 3.2 RFIS R EVEALS RETRIEVAL –P OSITIONAL FUNCTIONAL DIFFERENTIATION 
+
+To characterize the RoPE-frequency dependence underlying these behavioral tendencies, we intro-duce the RoPE Frequency Importance Score (RFIS). RFIS removes one two-dimensional frequency contribution from a head’s logits while holding every other contribution fixed, then measures the resulting change in the complete attention distribution. Formally, for sample x, let Cx(i) be the keys visible to query position i. At layer ℓ, Query head h, and frequency r, with g(h) its GQA KV head, the exact contribution to the query–key logit is 
+
+cRoPE  
+
+> ℓ,h,i,j,r
+
+= q⊤ 
+
+> ℓ,h,i,r
+
+R(( j − i)ωr ) kℓ,g (h),j,r . (6) The complete logits and attention distribution over the visible keys are 
+
+zℓ,h,i,j = 
+
+> F−1
+
+X
+
+> r=0
+
+cRoPE  
+
+> ℓ,h,i,j,r
+
+, pℓ,h,i = softmax( zℓ,h,i ). (7) Removing frequency r gives 
+
+z(−r) 
+
+> ℓ,h,i
+
+= zℓ,h,i − cRoPE  
+
+> ℓ,h,i,r
+
+, p(−r) 
+
+> ℓ,h,i
+
+= softmax 
+
+
+
+z(−r)
+
+> ℓ,h,i
+
+
+
+. (8) For distributions a, b and m = ( a + b)/2, let 
+
+DJS (a, b) = 12 DKL (a∥m) + 12 DKL (b∥m). (9) The per-query and aggregate scores are 
+
+IRFIS  
+
+> ℓ,h,i,r
+
+=
+
+DJS 
+
+
+
+pℓ,h,i , p(−r)
+
+> ℓ,h,i
+
+
+
+ln 2 , RFIS ℓ,h,r = Ex∼D Ei∼Q (x)
+
+IRFIS 
+
+> ℓ,h,i,r
+
+ . (10) The nested expectation weights samples equally. RFIS is a faithful intervention-based metric nat-urally bounded in [0 , 1] ; larger values indicate stronger dependence on information represented by that frequency. Appendix C gives further theoretical details. The RFIS panels in Figure 2 show a salient mid-low-frequency band in both representative layers. Retrieval heads depend more on frequencies below it, with a general tendency toward greater impor-tance at lower frequencies, and show little dependence on the band or above. Non-retrieval heads instead emphasize the band and higher frequencies; LDscore has no comparably clear relation. Since retrieval requires stable, approximately position-invariant semantic matching, these patterns suggest a mechanism-level differentiation between retrieval and positional heads. However, RFIS alone cannot verify that the latter pattern depends specifically on rotary modulation, motivating RPD. 3.3 RPD V ERIFIES THE POSITIONAL INTERPRETATION OF RFIS RFIS identifies important frequency contributions but does not by itself determine whether their effects depend on position. We therefore introduce RoPE Positional Dependence (RPD), which replaces the relative rotation of one frequency with the identity while preserving its learned Q/K coordinates: 
+
+cNoPE  
+
+> ℓ,h,i,j,r
+
+= q⊤ 
+
+> ℓ,h,i,r
+
+kℓ,g (h),j,r . (11) 4The resulting single-frequency RoPE-to-NoPE intervention is 
+
+z(r→NoPE)  
+
+> ℓ,h,i
+
+= zℓ,h,i − cRoPE  
+
+> ℓ,h,i,r
+
++ cNoPE  
+
+> ℓ,h,i,r
+
+, p(r→NoPE)  
+
+> ℓ,h,i
+
+= softmax 
+
+
+
+z(r→NoPE) 
+
+> ℓ,h,i
+
+
+
+. (12) We define 
+
+IRPD  
+
+> ℓ,h,i,r
+
+=
+
+DJS 
+
+
+
+pℓ,h,i , p(r→NoPE) 
+
+> ℓ,h,i
+
+
+
+ln 2 , RPD ℓ,h,r = Ex∼D Ei∼Q (x)
+
+IRPD 
+
+> ℓ,h,i,r
+
+ . (13) RPD is likewise a faithful intervention-based metric bounded in [0 , 1] , targeting rotation dependence rather than total channel importance. Measurement settings and further theoretical details are in Appendices B.1 and C. 0816 24 32 40 48 56 63                 
+
+> Frequency group (a) Layer 14 RFIS
+> 00.00026 0.0084 0.064 0.27 0.82
+> QR
+> LD
+> (b) Layer 14 RPD
+> 00.00026 0.0083 0.063 0.27 0.81
+> QR
+> LD
+> 0816 24 32 40 48 56 63
+> Frequency group (c) Layer 30 RFIS
+> 00.0003 0.0096 0.073 0.31 0.94
+> QR
+> 04812 16 20 24 28 31
+> Query head
+> LD
+> (d) Layer 30 RPD
+> 00.0003 0.0097 0.074 0.31 0.95
+> QR
+> 04812 16 20 24 28 31
+> Query head
+> LD
+
+Figure 2: RFIS and RPD in Qwen3-4B Layers 14 and 30. RFIS (left) separates below-band retrieval dependence from band-and-above importance; RPD (right) identifies the latter as positional. QRscore/LDscore strips are aligned below each heatmap; frequencies descend from high to low, and panels use independent zero-to-maximum scales. RPD follows RFIS at the salient band and above, confirming that this pattern depends on rotary positional modulation, while below-band RPD is nearly zero (Figure 2, right). This verifies the RFIS hypothesis: non-retrieval heads with band-and-above dependence are positional, whereas re-trieval heads use approximately position-invariant low-frequency information. RFIS and RPD thus establish a complete two-type taxonomy of retrieval and positional heads in RoPE Transformers. 3.4 GLOBAL POSITIONAL BAND 
+
+Because the salient band separates positional dependence from approximately position-invariant retrieval dependence, we hypothesize that its positional scale is tied to the context length over which global positional structure is learned. Production LLMs cannot isolate this relation because context-extension training produces multiple depth-varying bands (Appendix B.2). We therefore train two matched 380 M-parameter QKNorm Transformers at sequence length 2048 , changing only the RoPE base from θ = 10 4 to 10 6.50816 24 31                     
+
+> Frequency group (a) θ= 10 4, sequence length = 2048 RFIS
+> 03.5e-05 0.0011 0.0085 0.036 0.11
+> (b) θ= 10 6, sequence length = 2048 RFIS
+> 05.3e-05 0.0017 0.013 0.054 0.16
+> 04812 16 20 23
+> Layer
+> 0816 24 31
+> Frequency group (c) θ= 10 4, sequence length = 2048 RPD
+> 03.3e-05 0.001 0.0079 0.033 0.1
+> 04812 16 20 23
+> Layer (d) θ= 10 6, sequence length = 2048 RPD
+> 05e-05 0.0016 0.012 0.051 0.16
+
+Figure 3: Controlled validation of the salient band’s positional scale. Layer-mean RFIS (top) and RPD (bottom) in matched Transformers. Changing θ from 10 4 to 10 6 moves the band from groups 21 –22 to 14 –15 while preserving training-length-scale periods; panels use independent zero-to-maximum scales. At θ = 10 4, groups 21 –22 have periods 2650 and 3533 tokens; at θ = 10 6, groups 14 –15 have periods 2650 and 4080 . The indices change, but both RFIS/RPD bands remain at the scale of the 
+
+2048 -token training context. The intervention results therefore establish that this training-length-related band marks the mechanism-level boundary between retrieval and positional dependence. We refer to this functionally characterized boundary as the Global Positional Band (GPBand). Deriva-tions and controls for QKNorm and training length appear in Appendix B.4. 
+
+Local positional-modeling hypothesis. GPBand shows that positional heads fit global dependen-cies at the training scale; beyond that range, the learned representation may fail to generalize, making global positional fitting a potential cause of extrapolation failure. We therefore hypothesize that po-sitional modeling need only be local, while global sequence modeling can be completed through position-independent retrieval. 
+
+Architectural principles. Together with the coexistence and depth-varying distribution of the two head types, this analysis yields two principles: (i) positional modeling should operate only locally, while global access should be implemented through position-independent retrieval; and (ii) retrieval and positional functions should be assigned at head granularity with layer-specific allocation. Sec-tion 4 tests them through pretraining from scratch. 
+
+4 EMPIRICAL VALIDATION WITH THE HEAD -W ISE HYBRID ARCHITECTURE 
+
+4.1 HEAD -W ISE HYBRID ARCHITECTURE 
+
+HwH instantiates the two principles from Section 3 as an architectural inductive bias. Within each layer, NoPE FA heads provide position-independent global retrieval and LA (GDN) heads pro-vide local positional modeling; their outputs are concatenated before the standard output projection. These component assignments are tested by the ablations in Section 4.3. The standard configuration, HwH-std , follows the observed layer-specific distribution: the first and last layers use only GDN; the middle half uses NoPE-FA:GDN = 1:3 ; and the remaining shallow and deep layers use 1:7 . Ratios denote allocated Q/K/V dimensions, so FA occupies at most one quarter of a layer. Overall, HwH-std allocates less FA than Inter, the 1:3 layer-wise baseline used in our comparisons. 64.2 MAIN COMPARISON 
+
+We pretrain matched 380 M and 1.4B models for 15 B and 100 B tokens, respectively, on FineWeb-Edu (Penedo et al., 2024), using the Mistral tokenizer with a vocabulary size of 32 ,000 and a 2Kcontext length under the same standard training protocol. We compare HwH-std with a RoPE Trans-former, pure GDN, and Inter, which alternates three GDN layers with one NoPE FA layer. Full training and evaluation details appear in Appendix D. 
+
+Language modeling. HwH-std matches or exceeds all baselines at 380 M and remains competitive at 1.4B (Table 1), retaining strong language modeling and commonsense reasoning across scales. Table 1: Language modeling perplexity ( ↓) and commonsense-reasoning accuracy (%, ↑). Hel-laSwag and ARC-C use normalized accuracy; best and second-best results are bold and underlined. 
+
+Model Wiki ↓ LAMB. ↓ LAMB. HellaS. PIQA ARC-E ARC-C WinoG. OBQA Avg. 
+
+380M parameters; 15B training tokens 
+
+Transformer 29.10 38.26 33.09 39.05 66.54 56.90 27.73 51.22 21.60 42.30 GDN 28.71 36.03 31.36 39.55 67.03 58.12 26.88 49.33 23.00 42.18 Inter 27.69 36.05 31.65 39.52 65.83 57.87 27.30 50.28 22.00 42.07 HwH-std 27.41 34.84 32.76 39.93 67.57 57.87 28.16 50.75 22.40 42.78 
+
+1.4B parameters; 100B training tokens 
+
+Transformer 17.36 13.31 46.30 55.30 72.42 69.87 38.31 56.91 29.20 52.61 GDN 17.32 13.42 44.19 55.54 72.20 71.30 36.69 58.96 27.60 52.35 Inter 16.82 11.97 47.68 55.99 72.36 71.55 38.48 58.48 26.80 53.05 
+
+HwH-std 16.85 12.11 47.68 55.96 72.09 70.12 36.60 58.25 28.20 52.70 
+
+Retrieval. Pure GDN is weakest on real-world retrieval; Inter outperforms Transformer on most tasks, while HwH-std achieves the best overall result (Table 2). On RULER NIAH, Transformer scores zero on all three tasks at 4K and therefore exhibits no zero-shot length extrapolation. HwH-std maintains strong in-distribution retrieval and performs best at 4K, demonstrating both excellent overall retrieval and substantially stronger length extrapolation. Table 2: Real-world retrieval and RULER NIAH at the 1.4B scale.                                                                                    
+
+> Real-world retrieval NIAH-Single-1 NIAH-Single-2 NIAH-Single-3 Model FDA SWDE SQuAD NQ TriviaQA DROP Avg. 1K 2K 4K 1K 2K 4K 1K 2K 4K Transformer 46.19 45.27 40.68 25.12 61.26 22.47 40.17 100.0 100.0 0.0 100.0 99.8 0.0 70.8 67.6 0.0 GDN 16.33 22.95 35.22 21.79 58.23 21.42 29.33 100.0 100.0 99.4 99.8 85.0 35.2 87.0 52.6 23.0 Inter 64.43 40.95 42.73 26.64 59.72 24.01 43.08 100.0 100.0 99.8 100.0 100.0 79.6 39.8 67.4 35.8 HwH-std 66.15 47.25 45.84 25.28 60.13 23.19 44.64 100.0 100.0 100.0 99.8 100.0 99.6 69.2 58.4 46.2
+
+Zero-shot length extrapolation. To compare zero-shot length extrapolation across architectures more closely, we evaluate the 380 M models with a NIAH-Single-2 heatmap over sequence lengths from 1024 to 8192 and depth percentages from 0% (shallowest, sequence end) to 100% (deepest, sequence beginning), with 10 examples per cell. Figure 4 reports exact-match accuracy. Because the 1.4B Transformer already exhibits no zero-shot extrapolation on NIAH-Single-2 in Table 2, we omit its detailed 380 M heatmap from the main-text comparison. GDN maintains ex-trapolation above 2K, but only when the target lies within an approximately training-length-sized local window near the sequence end. Inter outperforms GDN through 5K and exhibits a clear lost-in-the-middle pattern (Liu et al., 2024), and its extrapolation nearly vanishes beyond 5K. HwH-std extrapolates nearly perfectly through 4K—twice the training sequence length—and achieves the strongest performance among all models beyond 4K. Together with the language-modeling and re-trieval results, these findings provide empirical validation of both principles formulated in Section 3. The following ablations isolate the component roles and layer-specific allocation. 7(a) GDN             
+
+> 1K 2K 4K 6K 8K
+> 100 80 60 40 20 0
+> (b) Inter
+> 1K 2K 4K 6K 8K
+> (c) HwH-std
+> 1K 2K 4K 6K 8K
+> 025 50 75 100
+> Depth Percent / Acc (%) Sequence Length
+
+Figure 4: NIAH-Single-2 accuracy for GDN, Inter, and HwH-std. Depth runs from 0% (sequence end; bottom) to 100% (sequence beginning; top); white curves are depth averages on the same scale. 4.3 FUNCTION -S PECIFIC COMPONENTS 
+
+At 380 M, HwH-swa replaces GDN with sink-free sliding-window attention (SWA; window 128 )with RoPE, while HwH-std-r replaces NoPE FA with RoPE FA. The first comparison tests LA’s role in local positional modeling; the second tests position-independent FA for global retrieval. Figure 5 summarizes task averages and depth-averaged NIAH curves. Detailed task-level results and complete 380 M NIAH-Single-2 heatmaps are provided in Appendix E.1. (a) Commonsense and retrieval averages                
+
+> 010 20 30 40 50
+> HwH-std 42.8 29.0
+> HwH-swa 42.1 29.3
+> HwH-std-r 42.6 23.7
+> Average score (%) Commonsense Retrieval
+> (b) Depth-averaged NIAH-Single-2 accuracy
+> 025 50 75 100 1K 2K 4K 6K 8K
+> Accuracy (%) Context length HwH-std HwH-swa HwH-std-r
+
+Figure 5: Function-specific component ablations at 380 M: (a) task averages and (b) depth-averaged NIAH-Single-2 accuracy. GDN is stronger than SWA in commonsense reasoning, whereas SWA slightly improves retrieval and substantially improves extrapolation. Thus, GDN contributes effective local positional model-ing, while its implicit global state neither aids retrieval nor extrapolation. Replacing NoPE FA with RoPE FA sharply degrades retrieval and extrapolation without improving general modeling ability, confirming NoPE FA’s advantage for position-independent global retrieval and the cost of global RoPE positional modeling. 4.4 LAYER -S PECIFIC ALLOCATION 
+
+HwH-uni uses NoPE-FA:GDN = 1:3 in every layer; HwH-rmfl removes NoPE FA from the first and last layers; and HwH-std additionally uses 1:7 outside the middle half. This progression isolates the layer-specific allocation principle. Figure 6 summarizes the comparison; detailed results are in Appendix E.1. All variants retain comparable commonsense-reasoning ability. Removing NoPE FA from the first and last layers markedly improves extrapolation, especially through 4K; reducing its outer-layer ra-tio from 1:3 to 1:7 further improves extrapolation beyond 4K and strengthens retrieval. These results support the layer-specific allocation principle motivated by the depth-varying functional differentia-tion observed in RoPE Transformers. 8(a) Commonsense and retrieval averages                
+
+> 010 20 30 40 50
+> HwH-uni 42.9 27.1
+> HwH-rmfl 42.9 27.0
+> HwH-std 42.8 29.0
+> Average score (%) Commonsense Retrieval
+> (b) Depth-averaged NIAH-Single-2 accuracy
+> 025 50 75 100 1K 2K 4K 6K 8K
+> Accuracy (%) Context length HwH-uni HwH-rmfl HwH-std
+
+Figure 6: Layer-specific allocation ablations at 380 M: (a) task averages and (b) depth-averaged NIAH-Single-2 accuracy. 
+
+5 RELATED WORKS 
+
+Hybrid Architectures. Hybrid architectures differ primarily in allocation granularity. At whole-layer granularity, Lieber et al. (2024), MiniMax et al. (2025), Waleffe et al. (2024), Team et al. (2025), and Qwen Team (2026) interleave FA and LA layers. Wang et al. (2025) systematically analyze layer-wise allocations and recommend LA-to-FA ratios of 3:1 –6:1 , while Chen et al. (2026) combine inter-layer hybridization with refinements to positional encoding and architecture in Qwen3 conversion. A related softmax-only local–global hybrid, Puvvada et al. (2025), interleaves RoPE SWA with NoPE FA and applies dynamic attention-score scaling at inference. Within layers, Hua et al. (2022), Zancato et al. (2024), Munkhdalai et al. (2024), Nunez et al. (2025), Dong et al. (2024), Zhang et al. (2025a), and Zuo et al. (2025) combine FA and LA through parallel branches or distinct head types. At head granularity, Tan et al. (2026) retain FA specifically at retrieval-critical heads when converting pretrained Transformers. Beyond fixed structural allocation, Li et al. (2026) vary the active mechanism across layers and token positions. 
+
+Mechanistic Analysis of Attention Heads and RoPE. Prior work examines attention-head func-tions and their relation to RoPE. Wu et al. (2024) identify retrieval heads and causally link them to long-context recall; Xiao et al. (2024) detect them with trainable gates and assign other heads to streaming; Zhang et al. (2025b) extend detection to query-to-evidence behavior; and Tan et al. (2026) assess head necessity through activation and path patching. Hong et al. (2024) connect non-uniform RoPE frequency use to token distance. Barbero et al. (2024) use per-frequency Q/K norms as approximate indicators of frequency usage, linking high frequencies to positional behavior and low frequencies to semantic matching. Urrutia et al. (2025) derive per-frequency positional and sym-bolic scores through input permutation. Both accounts separate low-frequency semantic or symbolic behavior from high-frequency positional behavior, leaving the middle frequencies without a suffi-cient mechanism-level explanation. Using the same norm-based analysis, Oka et al. (2026) observe the salient band and relate its location theoretically to the RoPE base and training length. 
+
+6 CONCLUSION 
+
+We establish a complete head-level taxonomy of retrieval and positional modeling in modern RoPE-based Transformers and identify the training-length-related GPBand as its functional boundary. This analysis yields two hybrid-design principles: (i) positional modeling should operate only locally, while global access should be implemented through position-independent retrieval; and (ii) retrieval and positional functions should be assigned at head granularity with layer-specific allocation. From-scratch HwH experiments validate these principles and the respective roles of LA and NoPE FA, supporting principled hybrid design for future foundation models. Future work may extend these analyses and principles to function-aligned GQA, other modalities, larger scales, improved components, and hybrid designs beyond multi-head Transformers. 9AI USE STATEMENT 
+
+Generative AI tools were used to assist with language polishing, L ATEX formatting, and figure preparation. The authors reviewed all AI-assisted outputs and take full responsibility for the final manuscript. 
+
+REFERENCES 
+
+Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebron, and Sumit Sanghai. GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Check-points. In The 2023 Conference on Empirical Methods in Natural Language Processing , 2023. Simran Arora, Sabri Eyuboglu, Michael Zhang, Aman Timalsina, Silas Alberti, Dylan Zinsley, James Zou, Atri Rudra, and Christopher R´ e. Simple linear attention language models balance the recall-throughput tradeoff. arXiv preprint arXiv:2402.18668 , 2024a. Simran Arora, Aman Timalsina, Aaryan Singhal, Benjamin Spector, Sabri Eyuboglu, Xinyi Zhao, Ashish Rao, Atri Rudra, and Christopher R´ e. Just Read Twice: Closing the Recall Gap for Recurrent Language Models. arXiv preprint arXiv:2407.05483 , 2024b. Federico Barbero, Alex Vitvitskyi, Christos Perivolaropoulos, Razvan Pascanu, and Petar Veliˇ ckovi´ c. Round and Round We Go! What makes Rotary Positional Encodings useful? In 
+
+The Thirteenth International Conference on Learning Representations , 2024. Yonatan Bisk, Rowan Zellers, Ronan Le Bras, Jianfeng Gao, and Yejin Choi. PIQA: Reasoning about Physical Commonsense in Natural Language. Proceedings of the AAAI Conference on Artificial Intelligence , 34(05):7432–7439, 2020. Yingfa Chen, Zhen Leng Thai, Zihan Zhou, Zhu Zhang, Xingyu Shen, Shuo Wang, Chaojun Xiao, Xu Han, and Zhiyuan Liu. Hybrid Linear Attention Done Right: Efficient Distillation and Effec-tive Architectures for Extremely Long Contexts. arXiv preprint arXiv:2601.22156 , 2026. Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord. Think you have Solved Question Answering? Try ARC, the AI2 Reasoning Challenge. arXiv preprint arXiv:1803.05457 , 2018. Xin Dong, Yonggan Fu, Shizhe Diao, Wonmin Byeon, Zijia Chen, Ameya Sunil Mahabaleshwarkar, Shih-Yang Liu, Matthijs Van Keirsbilck, Min-Hung Chen, Yoshi Suhara, Yingyan Celine Lin, Jan Kautz, and Pavlo Molchanov. Hymba: A Hybrid-head Architecture for Small Language Models. In The Thirteenth International Conference on Learning Representations , 2024. Dheeru Dua, Yizhong Wang, Pradeep Dasigi, Gabriel Stanovsky, Sameer Singh, and Matt Gardner. DROP: A Reading Comprehension Benchmark Requiring Discrete Reasoning Over Paragraphs. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers) ,pp. 2368–2378, 2019. Tianyu Gao, Alexander Wettig, Howard Yen, and Danqi Chen. How to Train Long-Context Lan-guage Models (Effectively). arXiv preprint arXiv:2410.02660 , 2025. gkamradt. Gkamradt/LLMTest NeedleInAHaystack. GitHub repository, 2026. URL https:// github.com/gkamradt/LLMTest_NeedleInAHaystack .Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, et al. The Llama 3 Herd of Models. arXiv preprint arXiv:2407.21783 , 2024. Xiangyu Hong, Che Jiang, Biqing Qi, Fandong Meng, Mo Yu, Bowen Zhou, and Jie Zhou. On the token distance modeling ability of higher RoPE attention dimension. In Findings of the Associa-tion for Computational Linguistics: EMNLP 2024 , pp. 5877–5888, 2024. Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shantanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. RULER: What’s the Real Context Size of Your Long-Context Lan-guage Models? arXiv preprint arXiv:2404.06654 , 2024. 10 Weizhe Hua, Zihang Dai, Hanxiao Liu, and Quoc Le. Transformer Quality in Linear Time. In 
+
+Proceedings of the 39th International Conference on Machine Learning , pp. 9099–9117, 2022. Samy Jelassi, David Brandfonbrener, Sham M. Kakade, and Eran Malach. Repeat After Me: Trans-formers are Better than State Space Models at Copying. In Proceedings of the 41st International Conference on Machine Learning , pp. 21502–21521, 2024. Mandar Joshi, Eunsol Choi, Daniel Weld, and Luke Zettlemoyer. TriviaQA: A Large Scale Distantly Supervised Challenge Dataset for Reading Comprehension. In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 1601– 1611, 2017. Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and Franc ¸ois Fleuret. Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention. In Proceedings of the 37th International Conference on Machine Learning , pp. 5156–5165, 2020. Tom Kwiatkowski, Jennimaria Palomaki, Olivia Redfield, Michael Collins, Ankur Parikh, Chris Alberti, Danielle Epstein, Illia Polosukhin, Jacob Devlin, Kenton Lee, Kristina Toutanova, Llion Jones, Matthew Kelcey, Ming-Wei Chang, Andrew M. Dai, Jakob Uszkoreit, Quoc Le, and Slav Petrov. Natural Questions: A Benchmark for Question Answering Research. Transactions of the Association for Computational Linguistics , 7:452–466, 2019. Yixing Li, Ruobing Xie, Zhen Yang, Xingwu Sun, Shuaipeng Li, Weidong Han, Zhanhui Kang, Yu Cheng, Chengzhong Xu, Di Wang, and Jie Jiang. TransMamba: A Sequence-Level Hybrid Transformer-Mamba Language Model. arXiv preprint arXiv:2503.24067 , 2026. Opher Lieber, Barak Lenz, Hofit Bata, Gal Cohen, Jhonathan Osin, Itay Dalmedigos, Erez Safahi, Shaked Meirom, Yonatan Belinkov, Shai Shalev-Shwartz, Omri Abend, Raz Alon, Tomer Asida, Amir Bergman, Roman Glozman, Michael Gokhman, Avashalom Manevich, Nir Ratner, Noam Rozen, Erez Shwartz, Mor Zusman, and Yoav Shoham. Jamba: A Hybrid Transformer-Mamba Language Model. arXiv preprint arXiv:2403.19887 , 2024. Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. Lost in the Middle: How Language Models Use Long Contexts. Transactions of the Association for Computational Linguistics , 12:157–173, 2024. Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. Pointer Sentinel Mixture Models. In International Conference on Learning Representations , 2017. Todor Mihaylov, Peter Clark, Tushar Khot, and Ashish Sabharwal. Can a Suit of Armor Conduct Electricity? A New Dataset for Open Book Question Answering. In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , pp. 2381–2391, 2018. MiniMax, Aonian Li, Bangwei Gong, Bo Yang, et al. MiniMax-01: Scaling Foundation Models with Lightning Attention. arXiv preprint arXiv:2501.08313 , 2025. Tsendsuren Munkhdalai, Manaal Faruqui, and Siddharth Gopal. Leave No Context Behind: Efficient Infinite Context Transformers with Infini-attention. arXiv preprint arXiv:2404.07143 , 2024. Elvis Nunez, Luca Zancato, Benjamin Bowman, Aditya Golatkar, Wei Xia, and Stefano Soatto. Expansion Span: Combining Fading Memory and Retrieval in Hybrid State Space Models. arXiv preprint arXiv:2412.13328 , 2025. Yui Oka, Istumi Saito, Kyosuke Nishida, and Kuniko Saito. Frequency Bands in RoPE: Base Fre-quency and Context Length Shape the Interpolation–Extrapolation Trade-Off. In The Fourteenth International Conference on Learning Representations , 2026. Denis Paperno, Germ´ an Kruszewski, Angeliki Lazaridou, Quan Ngoc Pham, Raffaella Bernardi, Sandro Pezzelle, Marco Baroni, Gemma Boleda, and Raquel Fern´ andez. The LAMBADA dataset: Word prediction requiring a broad discourse context. arXiv preprint arXiv:1606.06031 , 2016. Guilherme Penedo, Hynek Kydl´ ıˇ cek, Loubna Ben allal, Anton Lozhkov, Margaret Mitchell, Colin Raffel, Leandro Von Werra, and Thomas Wolf. The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale. arXiv preprint arXiv:2406.17557 , 2024. 11 Krishna C Puvvada, Faisal Ladhak, Santiago Akle Serano, Cheng-Ping Hsieh, Shantanu Acharya, Somshubra Majumdar, Fei Jia, Samuel Kriman, Simeng Sun, Dima Rekesh, and Boris Gins-burg. SWAN: An Efficient and Scalable Approach for Long-Context Language Modeling. In 
+
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pp. 2424–2438, 2025. Qwen Team. Qwen/Qwen3.6-27B · Hugging Face. Hugging Face model card, 2026. URL https: //huggingface.co/Qwen/Qwen3.6-27B .Pranav Rajpurkar, Robin Jia, and Percy Liang. Know What You Don’t Know: Unanswerable Ques-tions for SQuAD. In Proceedings of the 56th Annual Meeting of the Association for Computa-tional Linguistics (Volume 2: Short Papers) , pp. 784–789, 2018. Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. WinoGrande: An Ad-versarial Winograd Schema Challenge at Scale. arXiv preprint arXiv:1907.10641 , 2019. Noam Shazeer. Fast Transformer Decoding: One Write-Head is All You Need. arXiv preprint arXiv:1911.02150 , 2019. Jianlin Su, Yu Lu, Shengfeng Pan, Ahmed Murtadha, Bo Wen, and Yunfeng Liu. RoFormer: En-hanced Transformer with Rotary Position Embedding. arXiv preprint arXiv:2104.09864 , 2023. Lintang Sutawika, Leo Gao, Hailey Schoelkopf, Stella Biderman, Jonathan Tow, Baber Abbasi, ben fattori, Charles Lovering, farzanehnakhaee70, Jason Phang, Anish Thite, Fazz, Aflah, Niklas Muennighoff, Thomas Wang, sdtblck, nopperl, gakada, tttyuntian, researcher2, Chris, Julen Etx-aniz, Zdenˇ ek Kasner, Khalid, Jeffrey Hsu, AndyZwei, Pawan Sasanka Ammanamanchi, Dirk Groeneveld, Ethan Smith, and Eric Tang. EleutherAI/lm-evaluation-harness: Major refactor. Zen-odo, 2023. URL https://zenodo.org/records/10256836 .Zhentao Tan, Wei Chen, Jingyi Shen, Yao Liu, Xu Shen, Yue Wu, and Jieping Ye. HydraHead: From Head-Level Functional Heterogeneity to Specialized Attention Hybridization. arXiv preprint arXiv:2606.20097 , 2026. Gemma Team, Thomas Mesnard, Cassidy Hardin, Robert Dadashi, et al. Gemma: Open Models Based on Gemini Research and Technology. arXiv preprint arXiv:2403.08295 , 2024. Kimi Team, Yu Zhang, Zongyu Lin, Xingcheng Yao, et al. Kimi Linear: An Expressive, Efficient Attention Architecture. arXiv preprint arXiv:2510.26692 , 2025. Felipe Urrutia, Jorge Salas, Alexander Kozachinskiy, Cristian Buc Calderon, Hector Pasten, and Cristobal Rojas. Decoupling Positional and Symbolic Attention Behavior in Transformers. arXiv preprint arXiv:2511.11579 , 2025. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is All you Need. In Advances in Neural Infor-mation Processing Systems , volume 30, 2017. Roger Waleffe, Wonmin Byeon, Duncan Riach, Brandon Norick, Vijay Korthikanti, Tri Dao, Albert Gu, Ali Hatamizadeh, Sudhakar Singh, Deepak Narayanan, Garvit Kulshreshtha, Vartika Singh, Jared Casper, Jan Kautz, Mohammad Shoeybi, and Bryan Catanzaro. An Empirical Study of Mamba-based Language Models. arXiv preprint arXiv:2406.07887 , 2024. Dustin Wang, Rui-Jie Zhu, Steven Abreu, Yong Shan, Taylor Kergan, Yuqi Pan, Yuhong Chou, Zheng Li, Ge Zhang, Wenhao Huang, and Jason Eshraghian. A Systematic Analysis of Hybrid Linear Attention. arXiv preprint arXiv:2507.06457 , 2025. Wenhao Wu, Yizhong Wang, Guangxuan Xiao, Hao Peng, and Yao Fu. Retrieval Head Mechanisti-cally Explains Long-Context Factuality. In The Thirteenth International Conference on Learning Representations , 2024. Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Junxian Guo, Shang Yang, Haotian Tang, Yao Fu, and Song Han. DuoAttention: Efficient Long-Context LLM Inference with Retrieval and Streaming Heads. In The Thirteenth International Conference on Learning Representations , 2024. 12 An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. Qwen3 Technical Report. arXiv preprint arXiv:2505.09388 , 2025a. Songlin Yang, Jan Kautz, and Ali Hatamizadeh. Gated Delta Networks: Improving Mamba2 with Delta Rule. arXiv preprint arXiv:2412.06464 , 2025b. Luca Zancato, Arjun Seshadri, Yonatan Dukler, Aditya Golatkar, Yantao Shen, Benjamin Bowman, Matthew Trager, Alessandro Achille, and Stefano Soatto. B’MOJO: Hybrid State Space Realiza-tions of Foundation Models with Eidetic and Fading Memory. In Advances in Neural Information Processing Systems , volume 37, pp. 130433–130462, 2024. Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. HellaSwag: Can a Ma-chine Really Finish Your Sentence? In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics , pp. 4791–4800, 2019. Michael Zhang, Simran Arora, Rahul Chalamala, Alan Wu, Benjamin Spector, Aaryan Singhal, Krithik Ramesh, and Christopher R´ e. LoLCATs: On Low-Rank Linearizing of Large Language Models. arXiv preprint arXiv:2410.10254 , 2025a. Wuwei Zhang, Fangcong Yin, Howard Yen, Danqi Chen, and Xi Ye. Query-Focused Retrieval Heads Improve Long-Context Reasoning and Re-ranking. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pp. 23791–23805, 2025b. Jingwei Zuo, Maksim Velikanov, Ilyas Chahed, Younes Belkada, Dhia Eddine Rhayem, Guillaume Kunsch, Hakim Hacid, Hamza Yous, Brahim Farhat, Ibrahim Khadraoui, Mugariya Farooq, Giu-lia Campesan, Ruxandra Cojocaru, Yasser Djilali, Shi Hu, Iheb Chaabane, Puneesh Khanna, Mo-hamed El Amine Seddik, Ngoc Dung Huynh, Phuc Le Khac, Leen AlQadi, Billel Mokeddem, Mohamed Chami, Abdalgader Abubaker, Mikhail Lubinets, Kacper Piskorski, and Slim Frikha. Falcon-H1: A Family of Hybrid-Head Language Models Redefining Efficiency and Performance. 
+
+arXiv preprint arXiv:2507.22448 , 2025. 
+
+A DETAILED BEHAVIORAL ANALYSIS 
+
+A.1 BEHAVIORAL PROBE DEFINITIONS AND MEASUREMENT SETTINGS 
+
+QRscore. We follow the query-focused retrieval-head detection method of Zhang et al. (2025b). Unlike copy-paste-based detection on synthetic Needle-in-a-Haystack tasks (Wu et al., 2024), QRscore measures retrieval tendency through query-context attention on realistic in-context retrieval tasks. Consider a prompt {D , q }, where D = {d1, d 2, . . . , d N } is a sequence of candidate passages fol-lowed by query q, and let D∗(q) ⊆ D be the gold-passage set. For layer ℓ and Query head h, let 
+
+Aℓ,h ∈ RT ×T denote the post-softmax causal attention matrix, and let Q(q) and Di denote the to-ken positions of q and di, respectively. Following the original definition, the query-focused retrieval score toward passage di is 
+
+QRscore ℓ,h (q, d i) = 1
+
+|Q (q)|
+
+X
+
+> u∈Q (q)
+
+X
+
+> v∈D i
+
+Aℓ,h (u, v ). (14) Aggregating over the gold passages gives the score for query q:
+
+QRscore ℓ,h (q) = 1
+
+|Q (q)|
+
+X
+
+> di∈D ∗(q)
+
+X
+
+> u∈Q (q)
+
+X
+
+> v∈D i
+
+Aℓ,h (u, v ). (15) 13 For an evaluation dataset T = {(q, D, D∗(q)) }, the head-level score is 
+
+QRscore ℓ,h, T = 1
+
+|T | 
+
+X
+
+> (q, D,D∗(q)) ∈T
+
+QRscore ℓ,h (q). (16) We abbreviate QRscore ℓ,h, T as QRscore ℓ,h when the evaluation dataset is fixed. A larger value means that the head assigns more attention from the query to task-relevant context. 
+
+LDscore. We introduce LDscore to measure local-streaming tendency: the extent to which a head concentrates its non-sink attention within a recent context window. For a long-context sample x,let U(x) denote the evaluated query-token positions. We use zero-based token indices and exclude position 0, which often serves as an attention sink. For u ∈ U (x), recent-window size R, layer ℓ,and Query head h, the token-level score is 
+
+LDscore ℓ,h (u; R) = 
+
+Puv=max(1 ,u −R+1) Aℓ,h (u, v )
+
+Puv=1 Aℓ,h (u, v ) . (17) This is the fraction of non-sink attention mass assigned to the recent window. Averaging over the evaluated query positions gives the sample-level score: 
+
+LDscore ℓ,h (x; R) = 1
+
+|U (x)|
+
+X
+
+> u∈U (x)
+
+LDscore ℓ,h (u; R), (18) For an evaluation dataset X , the head-level score is 
+
+LDscore ℓ,h, X (R) = 1
+
+|X | 
+
+X
+
+> x∈X
+
+LDscore ℓ,h (x; R). (19) We abbreviate LDscore ℓ,h, X (R) as LDscore ℓ,h when the evaluation dataset and window size are fixed. A larger value means that a greater fraction of the head’s non-sink attention lies within the recent context window. 
+
+Measurement and visualization settings. All behavioral measurements are computed at Query-head granularity. Inputs are truncated to 32 ,768 tokens for the Qwen3 series and Llama3.1-8B-Instruct, and to 8,192 tokens for Gemma-7B. The 32 ,768 -token setting matches Qwen3’s long-context pretraining length (Yang et al., 2025a). For QRscore, we preserve the relative position of the gold evidence span whenever a sample is truncated. For LDscore, we sample 100 long-context sequences from the book-65536 subset of ProLong (Gao et al., 2025), tokenize them with the corresponding model tokenizer, truncate each sequence to the model-specific length above, and evaluate the final 128 retained query positions. For visualization, each model–metric matrix is min– max normalized independently; the analyses use the original scores. A.2 QWEN 3-4B B EHAVIORAL PATTERNS 
+
+Figure 7 compares retrieval and local-streaming tendencies in Qwen3-4B. Consistent with Figure 1a, retrieval tendency is sparse, negligible at the boundary layers, and concentrated in the middle lay-ers. The first and last layers instead show strong local-streaming tendency, and the two tendencies are approximately complementary across parts of the middle layers. This relation does not hold throughout the network: in several early layers, including layers 1–6, retrieval tendency is almost absent without a correspondingly strong or structured local-streaming pattern; in later layers before the final layer, including layers 25 –34 , both tendencies are weak and broadly distributed. QRscore and LDscore therefore identify behavioral anchors but do not yield a complete taxonomy. A.3 CROSS -S CALE AND CROSS -F AMILY BEHAVIORAL CONSISTENCY 
+
+Qwen3-1.7B and Qwen3-8B test within-family consistency across scale (Yang et al., 2025a), while Llama3.1-8B-Instruct (Grattafiori et al., 2024) and Gemma-7B (Team et al., 2024) provide cross-family comparisons. Figure 8 shows consistent retrieval and local-streaming trends across the three Qwen3 scales and similar layer-specific organization in both other model families. The within-family agreement may partly reflect the shared architecture and training pipeline. Qwen3 reports strong-to-weak logit distillation for smaller post-trained models, but not explicit attention-head alignment; we therefore leave the source of the close head-level agreement open. 14 0 8 16 23 31     
+
+> Query head
+> 0918 26 35
+> Layer (a) QRscore
+> 00.25 0.50 0.75 1
+> 0816 23 31
+> Query head (b) LDscore
+> 00.25 0.50 0.75 1
+
+Figure 7: Qwen3-4B behavioral tendencies. (a) Retrieval tendency measured by QRscore. (b) 
+
+Local-streaming tendency measured by LDscore. Rows denote layers and columns Query heads; each metric is independently normalized for visualization. 0714 20 27                     
+
+> Layer Qwen3-1.7B
+> 0714 20 27
+> Layer
+> 04811 15
+> Head rank
+> 0714 20 27
+> Layer
+> Qwen3-4B
+> 0816 23 31
+> Head rank
+> Qwen3-8B
+> 0816 23 31
+> Head rank
+> Llama3.1-8B
+> 0816 23 31
+> Head rank
+> Gemma-7B
+> 04811 15
+> Head rank
+> 00.25 0.50 0.75 1
+> QRscore LDscore Sorted QRscore
+
+Figure 8: Behavioral tendencies across model scales and families. Columns show Qwen3-1.7B, Qwen3-4B, Qwen3-8B, Llama3.1-8B-Instruct, and Gemma-7B. Rows show retrieval tendency (QRscore), local-streaming tendency (LDscore), and retrieval tendency sorted in descending order within each layer. The first two rows preserve the original Query-head order; each model–metric matrix is independently normalized for visualization. 15 B ADDITIONAL RFIS AND RPD A NALYSIS 
+
+B.1 MEASUREMENT SETTINGS 
+
+For the pretrained-model RFIS and RPD measurements, we sample 100 long-context sequences from the book-65536 subset of ProLong (Gao et al., 2025) and tokenize them with the corre-sponding model tokenizer. Sequences are truncated to 32 ,768 tokens for the Qwen3 series and Llama3.1-8B-Instruct, and to 8,192 tokens for Gemma-7B. The controlled 380 M Transformers are evaluated on 2,048 -token sequences. In all cases, both metrics are evaluated over the final 128 
+
+retained query positions. We cache the pre-RoPE Q/K vectors, reconstruct the complete logits in equation 7, and perform the RFIS and RPD interventions separately for every layer, Query head, and frequency. The visible-key set is unchanged by either intervention. Under GQA, Query heads that share a KV head are still measured independently because they retain distinct queries, frequency contributions, and complete attention distributions. RFIS and RPD use the same samples and query positions, and all analyses use their raw bounded scores without head-wise normalization. Each RFIS/RPD panel is visualized on its own raw zero-to-maximum scale. To resolve variation near zero, the heatmap color assigned to a normalized raw score t = s/s max follows the monotone display mapping t 7 → t0.20 . The colorbar uses the same mapping with a uniformly distributed palette and raw-score ticks sampled more densely near zero. This transformation affects visualization only and does not modify the reported scores or analyses. B.2 LAYER -M EAN FREQUENCY STRUCTURE IN QWEN 3-4B 0 4 8 12 16 20 24 28 32 35          
+
+> Layer
+> 0816 24 32 40 48 56 63
+> Frequency group (a) Qwen3-4B RFIS
+> 00.00026 0.0085 0.064 0.27 0.83
+> 04812 16 20 24 28 32 35
+> Layer (b) Qwen3-4B RPD
+> 00.00026 0.0085 0.064 0.27 0.83
+
+Figure 9: Layer-mean RFIS and RPD in Qwen3-4B. (a) RFIS; (b) RPD. Scores are averaged over Query heads, with frequencies descending from high to low; panels use independent zero-to-maximum scales. Multiple GPBand-like bands vary with depth, unlike the single layer-invariant band in controlled Transformers. Figure 9 complements the head-level plots in the main text by exposing the aggregate band locations across all layers. The RFIS and RPD means contain multiple separated bands rather than the single sharp ridge observed under controlled training. A plausible explanation is Qwen3’s multi-stage pretraining, whose final stage increases the sequence length from 4,096 to 32 ,768 (Yang et al., 2025a): different layers may retain positional scales learned at different stages. Because the public training history does not identify a unique effective length for every layer, these dispersed bands are treated as GPBand-like structures rather than used to estimate a single training length. This motivates the controlled experiments below, where the training length and RoPE base are known. 16 B.3 CROSS -F AMILY MECHANISM -L EVEL CONSISTENCY 
+
+Figure 10 provides a mechanism-level cross-family check. In both Llama3.1-8B-Instruct layers, retrieval-associated heads emphasize lower frequencies with weak positional dependence, whereas positional heads show similar RFIS and RPD at the salient mid-low-frequency band and above. The LD strips again do not yield an alternative complete taxonomy. Llama3.1 therefore reproduces the RoPE-frequency dependence underlying the retrieval–positional differentiation found in Qwen3-4B. 0816 24 32 40 48 56 63                 
+
+> Frequency group (a) Layer 13 RFIS
+> 00.00014 0.0045 0.034 0.14 0.44
+> QR
+> LD
+> (b) Layer 13 RPD
+> 03.8e-05 0.0012 0.0092 0.039 0.12
+> QR
+> LD
+> 0816 24 32 40 48 56 63
+> Frequency group (c) Layer 14 RFIS
+> 00.00018 0.0059 0.044 0.19 0.57
+> QR
+> 04812 16 20 24 28 31
+> Query head
+> LD
+> (d) Layer 14 RPD
+> 09.8e-05 0.0031 0.024 0.1 0.31
+> QR
+> 04812 16 20 24 28 31
+> Query head
+> LD
+
+Figure 10: Cross-family RoPE-frequency dependence in Llama3.1-8B-Instruct. Rows show layers 13 and 14 ; columns show RFIS and RPD. Aligned QR and LD strips report retrieval and local-streaming tendencies. Frequencies descend from high to low, and each RFIS/RPD panel uses its own raw zero-to-maximum scale. 
+
+Implication for GQA. Figures 10 and 2 reveal more than mixed functions within the same KV group. Because Query heads in a GQA group share the same Key frequency coordinates, their fre-quency dependencies interfere through this common representation: some individual heads simul-taneously exhibit characteristics of both the below-band retrieval pattern and the band-and-above positional pattern. The dominant two functions remain identifiable, but their signatures are often entangled rather than cleanly separated. Future work should quantify the performance effects of this interference and study function-aligned KV grouping or other ways to decouple the two dependen-cies. B.4 CONTROLLED ANALYSIS OF GPB AND 
+
+Configuration and observed shifts. We compare three matched approximately 380 M-parameter Transformers with QKNorm with head dimension dh = 64 : two are trained at length 2048 with RoPE bases θ = 10 4 and 10 6, and the third is trained at length 4096 with θ = 10 4. Architecture, tokenizer, data, and optimization are otherwise fixed. Figure 11 shows that changing θ moves the band from groups 21 –22 to 14 –15 , while doubling the training length moves it to approximately group 24 .17 0816 24 31                                                 
+
+> Frequency group (a) θ= 10 4,L= 2048 RFIS
+> 03.5e-05 0.0011 0.0085 0.036 0.11
+> (b) θ= 10 6,L= 2048 RFIS
+> 05.3e-05 0.0017 0.013 0.054 0.16
+> (c) θ= 10 4,L= 4096 RFIS
+> 03.8e-05 0.0012 0.0093 0.039 0.12
+> 04812 16 20 23
+> Layer
+> 0816 24 31
+> Frequency group (d) θ= 10 4,L= 2048 RPD
+> 03.3e-05 0.001 0.0079 0.033 0.1
+> 04812 16 20 23
+> Layer (e) θ= 10 6,L= 2048 RPD
+> 05e-05 0.0016 0.012 0.051 0.16
+> 04812 16 20 23
+> Layer (f) θ= 10 4,L= 4096 RPD
+> 03e-05 0.00095 0.0072 0.03 0.093
+
+Figure 11: Controlled RoPE-base and training-length comparisons with QKNorm. Rows show layer-mean RFIS and RPD. Columns show (θ, L train ) = (10 4, 2048) , (10 6, 2048) , and (10 4, 4096) .Each panel uses an independent raw zero-to-maximum scale. With F = dh/2 = 32 two-dimensional frequency groups, group r has angular frequency and rotation period 
+
+ωr = θ−r/F , λr = 2πωr
+
+= 2 πθ r/F . (20) Table 3 converts the observed bands into positional scales. The coordinate index changes with θ and training length, while the corresponding periods remain tied to the training-length scale. Table 3: Rotation periods at the controlled GPBands. 
+
+θ Ltrain Group r Period λr λr /L train 
+
+10 4 2048 21 2650 1.29 10 4 2048 22 3533 1.73 10 6 2048 14 2650 1.29 10 6 2048 15 4080 1.99 10 4 4096 24 6283 1.53 
+
+Connection to Frequency Bands. Oka et al. (2026) locate a high-norm band from two-dimensional Q/K norms and explain it through the positional variation available to RoPE over the training length. Their appendix jointly analyzes the sine and cosine coordinates through the full covariance 
+
+Σ(x) = Cov m∼Unif[0 ,L train ]
+
+ cos( mω )sin( mω )
+
+ 
+
+=
+
+Σ11 (x) Σ12 (x)Σ12 (x) Σ22 (x)
+
+
+
+, x = ωL train , (21) where 
+
+Σ11 (x) = 12 + sin(2 x)4x −
+
+ sin xx
+
+2
+
+,
+
+Σ22 (x) = 12 − sin(2 x)4x −
+
+ 1 − cos xx
+
+2
+
+,
+
+Σ12 (x) = 1 − cos(2 x)4x − sin xx
+
+1 − cos xx .
+
+(22) 18 Under a fixed coefficient-norm budget, the maximum centered variation is determined by 
+
+λmax (Σ(x)) . Maximizing this quantity gives x⋆ ≈ 4.493409 and hence 
+
+r⋆ = F log θ
+
+ Ltrain 
+
+x⋆
+
+
+
+, λ⋆ = 2πL train 
+
+x⋆ ≈ 1.398 Ltrain . (23) For Ltrain = 2048 , this predicts r⋆ = 21 .27 at θ = 10 4 and r⋆ = 14 .18 at θ = 10 6, with period 
+
+2864 in both cases, matching groups 21 –22 and 14 –15 . For Ltrain = 4096 and θ = 10 4, it predicts 
+
+r⋆ = 23 .68 and period 5727 , close to observed group 24 with period 6283 . RFIS therefore recovers the band through its effect on the complete attention distribution, while RPD establishes that the same band is specifically position dependent. Layer 0 of the length-4096 model appears unusually retrieval-like, which may be a small-model boundary-layer effect; it does not affect the layer-specific distribution consistently observed in Qwen3 and Llama3.1. 
+
+Effect of QKNorm. The norm-defined empirical band in Oka et al. (2026) differs from the the-oretical index by an approximately 1.1 factor in several pretrained models. Figure 12 shows that removing QKNorm shifts the θ = 10 4 band from groups 21 –22 toward group 23 and the θ = 10 6
+
+band from groups 14 –15 toward group 15 –16 , after layer 0.0816 24 31                                 
+
+> Frequency group (a) θ= 10 4,L= 2048 RFIS w/o QKNorm
+> 05.3e-05 0.0017 0.013 0.054 0.16
+> (b) θ= 10 6,L= 2048 RFIS w/o QKNorm
+> 03.6e-05 0.0012 0.0087 0.037 0.11
+> 04812 16 20 23
+> Layer
+> 0816 24 31
+> Frequency group (c) θ= 10 4,L= 2048 RPD w/o QKNorm
+> 05.2e-05 0.0016 0.013 0.053 0.16
+> 04812 16 20 23
+> Layer (d) θ= 10 6,L= 2048 RPD w/o QKNorm
+> 03.7e-05 0.0012 0.0091 0.038 0.12
+
+Figure 12: Controlled models without QKNorm. Rows show layer-mean RFIS and RPD at train-ing length 2048 ; columns show θ = 10 4 and 10 6. Relative to Figure 3, the bands shift toward lower frequencies. This suggests one possible explanation for part of this offset: without QKNorm, the growth of Q/K norms may need to be compensated for by shifting the band toward lower frequencies and smaller rotary angles to maintain stable global positional representations. This interpretation remains a hypothesis; direct norm trajectories would be needed to verify the causal training dynamics. B.5 GEMMA -7B AND THE LIMITS OF NORM -B ASED ANALYSIS 
+
+Gemma-7B provides a useful comparison with the norm-based analysis of Barbero et al. (2024). The RFIS/RPD detections in Figure 13 show that its dominant position-dependent Band extends unusually far into the low-frequency range. With F = 128 , θ = 10 4, and an approximately 8000 -token training length, equation 23 predicts r⋆ ≈ 104 .0 and λ⋆ ≈ 11 ,186 . Groups 100 and 110 have periods 8379 and 17 ,206 , respectively, so the expected training-length-related band lies between them. RPD, however, remains strong through approximately group 120 , whose period is 35 ,333 .This extension may reflect the absence of QKNorm or an undocumented training pipeline. A weaker band near group 96 , with period 6283 < 8000 , is also visible, but its role remains unclear. 19 0 4 8 12 16 20 24 27        
+
+> Layer
+> 0816 24 32 40 48 56 64 72 80 88 96 104 112 120 127
+> Frequency group (a) Gemma-7B RFIS
+> 05.9e-05 0.0019 0.014 0.06 0.18
+> 04812 16 20 24 27
+> Layer (b) Gemma-7B RPD
+> 05.2e-05 0.0017 0.013 0.053 0.16
+
+Figure 13: Layer-mean RFIS and RPD in Gemma-7B. The dominant position-dependent struc-ture lies near groups 110 –120 , below the training-length prediction near group 104 ; a weaker band appears near group 96 . Panels use independent raw zero-to-maximum scales. This result changes the interpretation of the low-frequency dependence reported by Barbero et al. (2024): a substantial portion of the region identified through Q/K norms is highly position dependent rather than position-invariant retrieval structure. Frequency location and norm magnitude therefore cannot directly determine whether a RoPE channel depends on positional modulation; RPD is re-quired for that distinction. Figure 14 nevertheless shows the same two dominant dependence patterns in Gemma-7B layers 
+
+14 and 16 : retrieval-associated heads emphasize lower frequencies with comparatively weak RPD, whereas positional heads show matched RFIS/RPD activity near the shifted GPBand and above. Because the boundary lies close to the lowest-frequency end and the head contains 128 frequency groups, each individual contribution is visually diluted, making the positional pattern less distinct than in Qwen3 or Llama3.1. The shifted and extended boundary therefore remains unresolved, but it neither provides a stable third frequency-dependence pattern nor contradicts our central retrieval– positional differentiation result. 
+
+C THEORETICAL DETAILS OF RFIS AND RPD 
+
+Relation to norm-based analysis. Barbero et al. (2024) approximate RoPE-frequency usage us-ing mean per-frequency Q/K norms, motivated by the fact that the Cauchy–Schwarz inequality bounds the magnitude of each frequency’s contribution in terms of these norms. Because norms discard directional alignment between Q and K, this magnitude-only approximation introduces error when estimating each frequency’s realized contribution to attention. RFIS instead removes the exact contribution of one frequency from the Q/K attention computation while holding all others fixed and measures the resulting change in the complete attention distribution, providing a more faith-ful frequency-importance metric. RPD then applies a further controlled intervention: it leaves the frequency’s Q/K vectors unchanged and replaces only its relative RoPE rotation with the identity, thereby isolating dependence on rotary positional modulation, which norm-based analysis cannot measure. 20 0816 24 32 40 48 56 64 72 80 88 96 104 112 120 127 
+
+> Frequency group
+
+(a) Layer 14 RFIS 
+
+> 00.0002 0.0065 0.049 0.21 0.63
+> QR
+> LD
+
+(b) Layer 14 RPD 
+
+> 00.0002 0.0064 0.048 0.2 0.62
+> QR
+> LD
+> 0816 24 32 40 48 56 64 72 80 88 96 104 112 120 127
+> Frequency group
+
+(c) Layer 16 RFIS     
+
+> 00.00021 0.0066 0.05 0.21 0.64
+> QR
+> 04812 15
+
+Query head 
+
+> LD
+
+(d) Layer 16 RPD     
+
+> 00.00018 0.0057 0.043 0.18 0.56
+> QR
+> 04812 15
+
+Query head 
+
+> LD
+
+Figure 14: Head-level RoPE-frequency dependence in Gemma-7B. Rows show layers 14 and 16 ;columns show RFIS and RPD with aligned QR and LD strips. Frequencies descend from high to low, and each RFIS/RPD panel uses its own raw zero-to-maximum scale. 21 C.1 BOUNDEDNESS OF THE NORMALIZED JS READOUT 
+
+Throughout the RFIS and RPD definitions, log denotes the natural logarithm. Let m = ( p + q)/2.Non-negativity follows from the two KL terms in equation 9. For the upper bound, mj ≥ pj /2, so for every pj > 0,
+
+log pj
+
+mj
+
+≤ ln 2 . (24) Therefore, 
+
+DKL (p∥m) = X
+
+> j
+
+pj log pj
+
+mj
+
+≤ ln 2 . (25) The same argument applies to q, giving 
+
+0 ≤ DJS (p, q) ≤ ln 2 . (26) Equality at the upper bound requires disjoint supports. A softmax with finite valid logits assigns positive probability throughout the common support, so attention distributions generally approach rather than attain the normalized value 1. The value ln 2 therefore follows only from the chosen logarithm base. With base-b logarithms, the upper bound and normalization constant would both be 
+
+log b 2, leaving the normalized RFIS and RPD scores unchanged. 
+
+D ADDITIONAL EXPERIMENTAL DETAILS 
+
+Pretraining. We train matched models from scratch on the sample-100BT subset of FineWeb-Edu (Penedo et al., 2024) with the Mistral tokenizer (vocabulary size: 32 ,000 ) and a sequence length of 2048 . The approximately 380 M and 1.4B models are trained for 15 B and 100 B tokens with global batch sizes of 256 and 1,024 , respectively, using standard mixed-precision training. Within each scale, all architecture comparisons use the same data order, optimizer schedule, and evaluation protocol. Attention variants are width matched by holding the total Q/K/V dimension per layer at 1024 and 2048 , respectively. At 380 M, NoPE-FA heads use Q/K/V dimension 64 and GDN heads use 128 ; at 1.4B, both use 128 . Ratio labels in Section 4 refer to the share of total head dimension. The small parameter-count differences arise from GDN’s additional decay and gating parameters; because the capacity-defining Q/K/V widths are matched, these auxiliary parameters do not materially affect the fairness of the comparison. All models use fused AdamW with β1 = 0 .9,
+
+β2 = 0 .95 , ϵ = 10 −15 , weight decay 0.1, and a peak learning rate of 3 × 10 −4. We apply 1024 
+
+warmup steps followed by cosine decay to 10% of the peak rate and clip the gradient norm at 1.0.
+
+Baselines. Transformer uses RoPE FA throughout, GDN uses only LA, and Inter alternates three GDN layers with one NoPE FA layer. These baselines isolate homogeneous FA, homogeneous LA, and coarse layer-wise hybridization from HwH’s head-wise, layer-specific allocation. 
+
+Evaluation. All evaluations use LM Evaluation Harness (Sutawika et al., 2023). Perplexity uses WikiText (Merity et al., 2017) and the OpenAI-formatted LAMBADA benchmark (Paperno et al., 2016). Commonsense reasoning uses LAMBADA, HellaSwag (Zellers et al., 2019), PIQA (Bisk et al., 2020), ARC-Easy/Challenge (Clark et al., 2018), WinoGrande (Sakaguchi et al., 2019), and OpenBookQA (Mihaylov et al., 2018). Real-world retrieval uses FDA and SWDE (Arora et al., 2024a), SQuAD (Rajpurkar et al., 2018), Natural Questions (Kwiatkowski et al., 2019), Trivi-aQA (Joshi et al., 2017), and DROP (Dua et al., 2019), using the cloze-completion variants of Arora et al. (2024a;b). Synthetic retrieval uses RULER NIAH-Single-1/2/3 (Hsieh et al., 2024). The dense NIAH-Single-2 evaluation follows the length–depth-like protocol of gkamradt (2026) with the fixed-depth RULER construction, the Paul Graham Essays haystack, and 128 genera-tion tokens. The grid contains context-length limits 1024 , 1536 , . . . , 8192 and depth percentages 
+
+0% , 10% , . . . , 100% , where 0% is the shallowest insertion at the sequence end and 100% the deep-est at the sequence beginning. We sample 10 examples for each of the 15 × 11 cells, totaling 1650 
+
+examples per model. Heatmaps place 100% depth at the top and 0% at the bottom; overlaid curves average accuracy across the 11 depths at each length and use the same 0–100 vertical scale. 22 Short-length instability at small scale. The 380 M Transformer and HwH-std-r exhibit anoma-lously poor NIAH-Single-2 performance at 1K. Rather than returning the seven-digit target, their specific erroneous responses include saltimbocca , saltintesta , and the underscore-only blank . These are not simply repeated phrases that dominate the haystack: for ex-ample, saltimbocca occurs only once in the corresponding sample, roughly 10 –20% into the sequence, yet is selected as the answer. This behavior suggests that the affected small-scale architec-tures can lock onto a salient distractor or fall into a blank-response mode even within short contexts, reflecting limited short-sequence robustness rather than length-extrapolation behavior. The 1.4BTransformer remains stable at both 1K and 2K, further showing that the phenomenon is scale- and configuration-dependent. 
+
+Controlled GPBand models. The controlled 380 M RoPE Transformers follow the same data, tokenizer, model scale, and optimization hyperparameters as the 380 M pretraining runs above. They vary only the factors under study: the RoPE base, training sequence length, and, for the designated variants, the use of QKNorm. 
+
+E ADDITIONAL HWH C ONFIGURATION DETAILS 
+
+Tokenizer. All models use the same Mistral tokenizer with a vocabulary size of 32 ,000 across model scales and architecture variants. Table 4 records the exact distinctions among the 380 M ablation models. “Outer layers” denotes the shallow and deep layers outside the middle half, excluding the first and last layers. HwH-swa uses sink-free RoPE SWA with window 128 as its local component. All other variants use GDN. Table 4: Configurations of the HwH ablation models. Ratios denote global-component:local-component Q/K/V dimensions.                               
+
+> Model Global Local First/last Middle half Outer layers HwH-uni NoPE FA GDN 1:3 1:3 1:3
+> HwH-rmfl NoPE FA GDN all local 1:3 1:3
+> HwH-std NoPE FA GDN all local 1:3 1:7
+> HwH-swa NoPE FA SWA all local 1:3 1:7
+> HwH-std-r RoPE FA GDN all local 1:3 1:7
+
+E.1 DETAILED ABLATION RESULTS 
+
+Tables 5–8 provide the task-level ablation results, and Figure 15 consolidates the complete length– depth grids for all 380 M baselines and ablations. Table 5: Language modeling for the functional-component ablation at 380 M. Metrics and formatting follow Table 1;                                           
+
+> Model Wiki ↓LAMB. ↓LAMB. HellaS. PIQA ARC-E ARC-C WinoG. OBQA Avg. HwH-std 27.41 34.84 32.76 39.93 67.57 57.87 28.16 50.75 22.40 42.78
+> HwH-swa 28.97 38.54 32.76 39.11 66.81 56.19 27.22 51.85 21.00 42.13 HwH-std-r 27.32 38.15 31.01 40.01 66.87 57.62 29.52 52.64 20.80 42.64
+
+Table 6: Real-world retrieval for the functional-component ablation at 380 M.                             
+
+> Model FDA SWDE SQuAD NQ TriviaQA DROP Avg. HwH-std 24.14 31.05 32.74 17.29 49.17 19.45 28.98 HwH-swa 30.22 26.73 31.90 17.58 47.04 22.47 29.32
+> HwH-std-r 6.53 21.15 31.74 14.06 48.93 19.60 23.67
+
+23 (a) Transformer               
+
+> 100 80 60 40 20 0
+> (b) GDN (c) Inter (d) HwH-std
+> 100 80 60 40 20 0
+> (e) HwH-swa (f) HwH-std-r (g) HwH-uni
+> 1K 2K 4K 6K 8K
+> 100 80 60 40 20 0
+> (h) HwH-rmfl
+> 1K 2K 4K 6K 8K
+> (i) HwH-std
+> 1K 2K 4K 6K 8K
+> 025 50 75 100
+> Depth Percent / Acc (%) Sequence Length
+
+Figure 15: Complete 380 M NIAH-Single-2 results. Rows show baselines, component ablations, and allocation ablations, with HwH-std repeated as reference. Depth runs from 100% (deepest; top) to 0% (shallowest; bottom); white curves are depth averages on the same scale. Table 7: Language modeling for the layer-specific allocation ablation at 380 M. Metrics and format-ting follow Table 1; 
+
+Model Wiki ↓ LAMB. ↓ LAMB. HellaS. PIQA ARC-E ARC-C WinoG. OBQA Avg. HwH-uni 27.63 34.38 32.66 40.18 66.97 59.01 27.39 52.88 21.40 42.93 
+
+HwH-rmfl 27.94 33.85 33.55 39.63 66.76 57.79 27.65 53.35 21.40 42.88 HwH-std 27.41 34.84 32.76 39.93 67.57 57.87 28.16 50.75 22.40 42.78 
+
+Table 8: Real-world retrieval for the layer-specific allocation ablation at 380 M. 
+
+Model FDA SWDE SQuAD NQ TriviaQA DROP Avg. HwH-uni 21.78 27.18 31.67 15.36 48.05 18.54 27.10 HwH-rmfl 19.96 24.75 33.34 16.69 48.58 18.59 26.99 HwH-std 24.14 31.05 32.74 17.29 49.17 19.45 28.98 
+
+24

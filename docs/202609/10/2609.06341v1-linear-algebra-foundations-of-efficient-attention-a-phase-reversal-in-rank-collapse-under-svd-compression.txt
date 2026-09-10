@@ -1,0 +1,218 @@
+Title: Linear Algebra Foundations of Efficient Attention: A Phase Reversal in Rank Collapse Under SVD Compression
+
+URL Source: https://arxiv.org/pdf/2609.06341v1
+
+Published Time: Wed, 09 Sep 2026 01:02:44 GMT
+
+Number of Pages: 5
+
+Markdown Content:
+# Linear Algebra Foundations of Efficient Attention: A Phase Reversal in Rank Collapse Under SVD Compression 
+
+Anjaneya Teja Sarma Kalvakolanu 
+
+Abstract —Linear algebra supplies the structural vocabulary of modern artificial intelligence: matrix rank, singular value decomposition (SVD), and eigen decomposition govern how infor-mation is represented, compressed, and propagated inside neural networks. This paper synthesizes fourteen peer-reviewed studies applying these tools to transformer-based foundation models along three connected threads: 1. formal results showing self-attention output converges doubly exponentially toward a rank-one matrix as depth increases, with explicit convergence bounds of the form O(γ3l
+
+); 2. parameter- and weight-space compression methods low-rank adaptation (∆W = BA ), Fisher-weighted factorization, and truncation-aware SVD that exploit this same low-rank structure deliberately and (3) low-rank key-value (KV) cache projection methods and a formal semiseparable-matrix du-ality between linear attention and structured state-space models. Motivated by an open question this literature leaves unaddressed whether deliberate low-rank compression compounds with or counteracts the network’s natural tendency toward rank collapse; we report an original experiment revealing a phase reversal: SVD compression of attention projections retards representation rank collapse at random initialization but accelerates it on pretrained models (GPT-2 124M, GPT-2 Medium 355M, Pythia-160M), an effect verified against object-aliasing artifacts, consistent across compression ratios, and robust across four independent rank metrics. A controlled causal decomposition run in both regimes shows the effect is driven predominantly by which subspace SVD truncation selects rather than by the resulting reduction in operator norm; accounting for approximately 76% of the effect at random initialization and approximately 83% on pretrained weights by refining a purely norm-based mechanistic account into one centered on subspace selection, and explaining why calibration-aware compression methods in the literature outper-form naive SVD truncation. 
+
+Index Terms —rank collapse, singular value decomposition, low-rank adaptation, attention mechanisms, model compression, effective rank 
+
+I. I NTRODUCTION 
+
+The transformer computes, at each layer, three linear pro-jections of an input sequence X ∈ Rn×d, queries Q = XW Q,keys K = XW K , and values V = XW V followed by the scaled dot-product attention operation: Attention (Q, K, V ) = softmax 
+
+ QK T
+
+√dk
+
+
+
+V (1) Every operation in this pipeline, the projections, , the QK T
+
+similarity matrix, and the final weighted sum is linear or bilinear in its inputs, which is why matrix rank, singular values, and eigenvalues are not merely descriptive metaphors for transformer behavior but the literal algebraic quantities that determine it [1]. This review examines a specific, currently active research thread built on this observation: the tendency of self-attention to reduce the rank of token representations, and the growing body of work that exploits low-rank structure deliberately for parameter-efficient adaptation, model com-pression, and long-context inference efficiency. The objective is twofold: 1. evaluate recent advances in applying linear algebra i.e., rank, SVD, eigendecomposition to foundation models, with governing equations stated explicitly; and (2) translate these results, including reported quantitative effect sizes, into concrete recommendations for a generic en-terprise long-context RAG system in which KV-cache memory and attention FLOPs scale with context length n.II. M ATHEMATICAL PRELIMINARIES 
+
+Rank and low-rank approximation. For a matrix W ∈
+
+Rm×n, rank (W ) = dim( range (W )) is the number of linearly independent columns. The singular value decomposition fac-tors any matrix as: 
+
+W = U ΣV T , U ∈ Rm×m, Σ ∈ Rm×n, V ∈ Rn×n (2) where Σ is diagonal with non-negative singular values σ1 ≥
+
+σ2 ≥ · · · ≥ 0. The Eckart–Young theorem [2] establishes that the rank-k truncation Wk = UkΣkV Tk , retaining only the 
+
+k largest singular values, is the unique minimizer of ∥W −
+
+Wk∥F over all rank-k matrices — the theoretical justification underlying every SVD-based compression method reviewed in Section III-C. 
+
+Eigendecomposition and spectral diagnostics. For asquare matrix (or the correlation matrix X = W T W of a rect-angular weight matrix), the eigendecomposition X = QΛQ−1
+
+yields eigenvalues λi describing how the associated linear map scales space along its eigenvectors. Random matrix theory approaches to training diagnostics [3] model the empirical spectral density (ESD) ρ(λ) of a well-trained layer’s weight correlation matrix as heavy-tailed, ρ(λ) ∼ λ−(1+ α)/2 as 
+
+λ → ∞ , with the tail exponent α used as a per-layer training-quality signal. 
+
+Low-rank factorization for adaptation. A weight update 
+
+∆W ∈ Rd×k can be constrained to rank r ≪ min( d, k ) by writing ∆W = BA with B ∈ Rd×r , A ∈ Rr×k, reducing free parameters from dk to r(d + k).arXiv:2609.06341v1 [cs.LG] 6 Sep 2026 III. L ITERATURE REVIEW 
+
+A. Rank Collapse in Self-Attention 
+
+Dong et al. [4] analyze a transformer built purely from self-attention layers (no skip connections, no MLP sublayers). Defining the residual res (X) = X − 1¯xT as a matrix’s devi-ation from its row-mean, they prove that under this restricted architecture the residual norm contracts across layers as: 
+
+∥res (X(l))∥1,∞ ≤ (4 β)3l
+
+∥res (X(0) )∥1,∞ (3) where β depends on the spectral norms of the query and key projection matrices at each layer, and the exponent 3l
+
+is the source of the paper’s headline claim that pure self-attention loses rank “doubly exponentially” with depth. The authors further show that residual (skip) connections and MLP sublayers are load-bearing components that counteract this contraction. Noci et al. [5] connect this contraction to trainability: as res (X(l)) → 0, the gradient ∂L/∂W Q → 0 as well, since the attention pattern becomes uniform and insensitive to further changes in the projections. Scaling the residual branch by 
+
+1/√l can delay but not prevent collapse as l → ∞ .Wu et al. [6] generalize the analysis to masked attention and LayerNorm. Sparse or local masks provably slow collapse relative to full attention, and self-attention with LayerNorm can sustain equilibria of any rank between 1 and full rank, refuting the earlier claim that LayerNorm has no protective effect. 
+
+B. Low-Rank Adaptation and Efficient Fine-Tuning 
+
+Hu et al. [7] (LoRA) hypothesize that the weight update 
+
+∆W required to adapt a pretrained model has low intrinsic rank, and parameterize the forward pass as: 
+
+h = W0x + ∆ W x = W0x + BAx, A ∼ N (0 , σ 2), B = 0 
+
+(4) Initializing B = 0 ensures ∆W = 0 at the start of training. Because ∆W can be merged into W0 post-training, LoRA adds zero inference latency, with the original study reporting reductions in trainable parameters on the order of 10,000-fold on GPT-3-scale (175B) models. Zhao et al. [8] (GaLore) apply the same principle to the optimizer’s gradient rather than the weight update, project-ing Gt into a low-rank subspace to reduce optimizer-state memory while allowing full-rank weight updates over training. Hsu et al. [9] incorporate Fisher-information weighting into SVD-based factorization, minimizing ∥F 1/2(W −BA )F 1/2∥F
+
+rather than ∥W − BA ∥F . Li et al. [10] (LoSparse) decompose 
+
+W ≈ BA + S, combining a low-rank component with a sparse residual to capture outlier entries that pure low-rank approximation handles poorly. 
+
+C. SVD-Based Model Compression 
+
+Wang et al. [11] (SVD-LLM) show that naive magnitude-based SVD truncation ignores how discarded directions prop-agate through subsequent layers, causing compounding error at high compression ratios. Their method estimates which singular directions minimize the resulting change in output distribution via a closed-form whitening transformation, out-performing magnitude-based truncation at high compression ratios. 
+
+D. Low-Rank Compression of the Key–Value Cache 
+
+During autoregressive decoding, a transformer caches 
+
+K, V ∈ Rn×d for all previous tokens, scaling cache memory as O(n · d) per layer. Saxena et al. [12] (Eigen Attention) compute attention within a shared low-rank eigenbasis derived from calibration data, reporting up to 40% KV-cache reduction and 60% attention-latency reduction. Singhania et al. [13] (Loki) exploit the observation that key vectors specifically exhibit strong low-rank structure. Chang et al. [14] (PALU) use Fisher-information sensitivity scores to allocate a layer-specific rank rl rather than a uniform global rank. 
+
+E. Structured State-Space Models and the Attention Duality 
+
+Dao and Gu [15] restrict a structured state-space model’s transition matrix to A = aI and show the resulting sequence-to-sequence map is a 1-semiseparable matrix: 
+
+Mts = Ctat−sBs for s ≤ t, 0 otherwise (5) algebraically identical to masked linear attention, establishing a duality between an O(n) recurrent realization and an O(n2)
+
+attention realization of the same transformation. 
+
+F. Eigenspectrum Diagnostics and Embedding Dimensionality 
+
+Hu et al. [16] show the heavy-tailedness estimate α used in HT-SR diagnostics is biased by a weight matrix’s aspect ratio, and propose fixed-aspect-ratio subsampling (FARMS) to correct it. Kusupati et al. [17] (Matryoshka Representation Learning) train embeddings so every prefix z1: k is indepen-dently useful via a nested loss: 
+
+LMRL = X
+
+> k∈K
+
+λkL(z1: k) (6) reporting up to 14 × smaller embeddings at equivalent accu-racy and up to 14 × retrieval speed-ups. IV. Q UANTITATIVE RESULTS SUMMARY 
+
+Table I consolidates the governing mechanism and reported quantitative effect size for studies where the original work provides concrete, citable figures. V. C RITICAL EVALUATION 
+
+The rank-collapse bound (Eq. 3) is derived for pure self-attention without skip connections or MLPs — an architec-ture no production transformer uses — so while the proof technique is rigorous, its direct applicability to fully-equipped transformers is limited. The compression literature (Sections III-B through III-D) is comparatively strong empirically, with a consistent, cross-study finding that importance-weighted al-location outperforms uniform truncation. Most reported effect sizes are evaluated on perplexity or standard benchmarks, which may not surface degradation in long-tail factual recall or multi-step reasoning. The Dao and Gu duality (Eq. 5) is exact TABLE I QUANTITATIVE EFFECTS REPORTED IN REVIEWED STUDIES 
+
+Study Method Reported Effect 
+
+Hu et al. [7] LoRA ∼10,000 × fewer trainable params vs. full fine-tuning; no added inference latency Saxena et al. [12] Eigen Attention Up to 40% KV-cache reduction; up to 60% attention-latency re-duction Kusupati et al. [17] MRL Up to 14 × smaller embeddings; up to 14 × retrieval speed-up Wang et al. [11] SVD-LLM Improved accuracy retention vs. magnitude-based SVD at high compression Chang et al. [14] PALU Reduced KV-cache memory with smaller accuracy loss than uniform-rank baselines Dong et al. [4] Rank-collapse bound Doubly-exponential convergence to rank-1, O(γ3l
+
+)
+
+but narrow: it holds only for the scalar-identity state-transition case. VI. S YNTHESIS 
+
+Attention has an intrinsic, provable tendency toward rank-1 collapse; a substantial body of work exploits this same low-rank tendency deliberately wherever beneficial — in the weight-update space, the static weight space, and the inference-time cache. Across nearly every applied study, importance-weighted or loss-aware rank allocation consis-tently outperforms uniform rank truncation. VII. R ECOMMENDATIONS FOR AN EXISTING SYSTEM 
+
+For a generic enterprise long-context RAG system: (1) apply rank-r KV projection to attention layers, given reported 40%/60% cache-size/latency reductions; (2) parameterize any fine-tuning update as ∆W = BA rather than full-rank updates; (3) replace uniform-ratio compression with Fisher-weighted or truncation-aware SVD; (4) train retrieval embeddings with a Matryoshka-style nested loss for multi-budget retrieval. VIII. O RIGINAL EXPERIMENT : A P HASE REVERSAL IN 
+
+HOW SVD C OMPRESSION AFFECTS REPRESENTATION 
+
+RANK COLLAPSE 
+
+Section VI identifies an open question the reviewed liter-ature does not address: whether the compression methods of Sections III-B through III-D compound with, or counteract, the network’s natural tendency toward rank collapse. This section reports an original experiment addressing that question, first on a randomly-initialized transformer and then on pretrained pro-duction models. The two regimes produce opposite answers. 
+
+A. Method 
+
+Effective rank metric. This experiment uses the entropy-based effective rank [18]: erank (X) = exp − X
+
+> i
+
+pi log pi
+
+!
+
+, pi = σi
+
+P 
+
+> j
+
+σj
+
+(7) computed from the singular values σi of the hidden-state ma-trix X(l) ∈ Rn×d at each layer l. This was supplemented with three robustness measures: pairwise token cosine similarity, the Dong et al.-style threshold rank rϵ(X) = P 
+
+> i
+
+1(σi ≥ ϵσ 1),and stable rank srank (X) = ∥X∥2 
+
+> F
+
+/∥X∥22 [19]. 
+
+Compression procedure. Compressed variants were con-structed by applying SVD truncation (Eq. 2) to every attention projection weight matrix at every layer, at retention ratio 
+
+α ∈ { 0.125 , 0.25 , 0.5, 1.0}.
+
+Models. A minimal 8-layer synthetic transformer at random initialization; GPT-2 124M under both random-initialization and pretrained weight conditions; GPT-2 Medium (355M) and Pythia-160M at pretrained weights across the full ratio sweep. 
+
+Verification. Because the initial pretrained-model result contradicted the synthetic pilot’s direction, independence of baseline/compressed model objects, exact rank truncation, and identical compression configuration across analyses were all directly verified before drawing conclusions. 
+
+B. Results: Random Initialization Regime 
+
+Under random initialization, SVD compression ( r = 0 .125 )consistently increases effective rank relative to baseline at every layer, with the gap widening with depth. On the synthetic model across 10 seeds, final-layer effective rank was 39.94 (compressed) vs. 17.45 (baseline); mean collapse rate fell from 0.957 to 0.855. 
+
+C. Results: Pretrained Regime — The Reversal 
+
+> Fig. 1. Effective rank vs. layer depth for GPT-2 (124M): random initialization (left) vs. pretrained weights (right), original vs. SVD-compressed ( r=0 .125 )attention projections.
+
+Under pretrained weights, the direction reverses (Fig. 1). Ef-fective rank at layer 8 is 4.21 (baseline) vs. 3.55 (compressed); pairwise token cosine similarity rises from 0.607 to 0.687. On GPT-2 Medium, effective rank decreases monotonically as retention ratio shrinks from 1.0 to 0.125 at every layer, consistent across all three pretrained models tested. D. Causal Mechanism: Resolving the Apparent Paradox 
+
+The value–output operator norm βl = ∥W (l) 
+
+> V
+
+W (l) 
+
+> O
+
+∥2 de-creased by a mean of 24.49% under compression; attention-map entropy H(Al) increased from 0.914 to 1.213 (+32.7%). At random initialization, this dilutes spurious noise-driven contraction; on trained weights, it strips functionally load-bearing low-energy directions that attention heads use for selective routing, causing diffuse, unselective attention that homogenizes token representations. 
+
+E. Robustness Across Metrics 
+
+All four rank metrics agree in direction on the pretrained-regime result: entropy effective rank, Dong-style threshold rank, stable rank, and angular diversity are all lower under compression at nearly every layer, making it unlikely the re-versal is an artifact of the entropy-based definition specifically. 
+
+F. Implications for Recommendations 
+
+This qualifies Recommendation 1 in Section VIII: naive SVD truncation carries a previously undocumented side effect on trained models ; accelerated homogenization of token representations providing a mechanistic explanation for why importance-weighted methods (Sections III-B–III-D) consis-tently outperform naive uniform SVD truncation. 
+
+G. Controlled Causal Decomposition: Is It the Norm, or the Subspace? 
+
+A controlled intervention isolating norm reduction from subspace truncation was run in both regimes: (A) untouched baseline; (B) full SVD compression; (C) a full-rank variant with V and O rescaled so operator norm βC = βB exactly, with no truncation; and, at random initialization only, (D) a full-rank variant with Q/K rescaled to match condition B’s logit norm. 
+
+Random-initialization regime: Condition C’s mean decay rate was 0.942 (SD 0.050) vs. baseline’s 0.958 (SD 0.038) and condition B’s 0.891 (SD 0.036); condition D showed no reliable effect (0.963, SD 0.034). Norm-matching alone accounts for approximately 24% of the total effect, leaving approximately 76% attributable to subspace selection.    
+
+> Fig. 2. Causal decomposition of the collapse-rate reduction under SVD compression, random initialization (10 seeds, mean ±SD).
+
+Pretrained regime: The identical A/B/C decomposition on pretrained GPT-2 124M ( r = 0 .125 , layer 8) gave baseline erank 3.16, norm-matched condition C 3.12 (closely tracking baseline), and full SVD condition B 2.93. Norm-matching alone accounts for approximately 17% of the total effect, leaving approximately 83% attributable to subspace selection — an even larger share than at random initialization.  
+
+> Fig. 3. Causal decomposition on pretrained GPT-2 124M ( r=0 .125 , layer 8).
+
+Together, both regimes give a unified answer: subspace selection is the dominant causal driver (76% at initialization, 83% on trained weights), with operator-norm magnitude play-ing a real but secondary role, and attention-entropy softening playing essentially no independent causal role once subspace selection is controlled for. 
+
+H. Limitations 
+
+Only plain, uncalibrated SVD truncation was tested; a head-to-head comparison against Fisher-weighted and calibration-based methods on the same effective-rank measurement re-mains to be run. The pretrained-regime decomposition re-ports a single-layer snapshot rather than a full depth profile. Pretrained evaluation used a small set of natural-language sentences rather than a large held-out corpus. All pretrained models tested are in the 124M–355M range; whether the reversal and its subspace-dominant decomposition persist at larger scale (1B+ parameters) is untested. IX. C ONCLUSION AND FUTURE WORK 
+
+This paper traced a single linear-algebraic quantity matrix rank from a provable structural vulnerability of self-attention, through deliberate low-rank exploitation for adaptation and compression, to a formal duality with structured state-space models, and closed with an original experiment showing that SVD compression of attention projections has opposite effects on representation rank collapse depending on whether weights are randomly initialized or trained. A controlled causal decomposition run in both regimes resolves the mechanism question: in both settings, the effect is driven predominantly by which subspace SVD truncation selects (76% and 83% respectively) rather than by the resulting reduction in operator norm. The two most direct remaining steps are (1) repeating the pretrained-regime measurement at 1–3B-parameter scale to establish whether the reversal persists at production scale, and (2) directly comparing naive SVD truncation against Fisher-weighted and truncation-aware methods on the same effective-rank measurement. AUTHOR DISCLOSURE 
+
+In accordance with conference and journal policies on AI-assistance transparency, the author discloses that AI systems (Anthropic’s Claude and an agentic coding tool built on Google’s Gemini) were used during the preparation of this manuscript for: (1) implementation and execution of exper-imental scripts for SVD-based compression, effective-rank tracking, and the controlled causal-decomposition ablations of Section VIII-H; (2) initial drafting and structural formatting of experimental descriptions in Section VIII; and (3) diag-nostic cross-checking of experimental outputs in particular, an initial contradiction between the synthetic-pilot trend and the pretrained-model sweep was flagged, investigated, and resolved through a verification procedure before either result was reported. All mathematical derivations, experimental code, reported empirical values, and interpretations were reviewed and verified by the author, who takes full responsibility for all scientific claims and content in this work. REFERENCES [1] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin, “Attention is all you need,” in Advances in Neural Information Processing Systems 30 (NeurIPS) , 2017. [2] C. Eckart and G. Young, “The approximation of one matrix by another of lower rank,” Psychometrika , vol. 1, no. 3, pp. 211–218, 1936. [3] C. H. Martin and M. W. Mahoney, “Implicit self-regularization in deep neural networks: Evidence from random matrix theory and implications for learning,” Journal of Machine Learning Research , vol. 22, no. 165, pp. 1–73, 2021. [4] Y. Dong, J.-B. Cordonnier, and A. Loukas, “Attention is not all you need: Pure attention loses rank doubly exponentially with depth,” in 
+
+Proc. 38th Int. Conf. Machine Learning (ICML) , 2021. [5] L. Noci, S. Anagnostidis, L. Biggio, A. Orvieto, S. P. Singh, and A. Lucchi, “Signal propagation in transformers: Theoretical perspectives and the role of rank collapse,” in Advances in Neural Information Processing Systems 35 (NeurIPS) , 2022. [6] X. Wu et al., “On the role of attention masks and LayerNorm in transformers,” in Advances in Neural Information Processing Systems 37 (NeurIPS) , 2024. [7] E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen, “LoRA: Low-rank adaptation of large language models,” in Proc. 10th Int. Conf. Learning Representations (ICLR) , 2022. [8] J. Zhao, Z. Zhang, B. Chen, Z. Wang, A. Anandkumar, and Y. Tian, “Ga-Lore: Memory-efficient LLM training by gradient low-rank projection,” in Proc. 41st Int. Conf. Machine Learning (ICML) , 2024. [9] Y.-C. Hsu, T. Hua, S. Chang, Q. Lou, Y. Shen, and H. Jin, “Language model compression with weighted low-rank factorization,” in Proc. 10th Int. Conf. Learning Representations (ICLR) , 2022. [10] Y. Li, Y. Yu, Q. Zhang, C. Liang, P. He, W. Chen, and T. Zhao, “LoSparse: Structured compression of large language models based on low-rank and sparse approximation,” in Proc. 40th Int. Conf. Machine Learning (ICML) , 2023. [11] X. Wang, Y. Zheng, Z. Wan, and M. Zhang, “SVD-LLM: Truncation-aware singular value decomposition for large language model compres-sion,” in Proc. 13th Int. Conf. Learning Representations (ICLR) , 2025. [12] U. Saxena, G. Saha, S. Choudhary, and K. Roy, “Eigen Attention: Attention in low-rank space for KV cache compression,” in Findings of the Association for Computational Linguistics: EMNLP , 2024, pp. 15332–15344. [13] P. Singhania, S. Singh, S. He, S. Feizi, and A. Bhatele, “Loki: Low-rank keys for efficient sparse attention,” in Advances in Neural Information Processing Systems 37 (NeurIPS) , 2024. [14] C.-C. Chang, W.-C. Lin, C.-Y. Lin, C.-Y. Chen, Y.-F. Hu, P.-S. Wang, N.-C. Huang, L. Ceze, M. S. Abdelfattah, and K.-C. Wu, “PALU: KV-cache compression with low-rank projection,” in Proc. 13th Int. Conf. Learning Representations (ICLR) , 2025. [15] T. Dao and A. Gu, “Transformers are SSMs: Generalized models and efficient algorithms through structured state space duality,” in Proc. 41st Int. Conf. Machine Learning (ICML) , 2024. [16] Y. Hu, K. Goel, V. Killiakov, and Y. Yang, “Eigenspectrum analysis of neural networks without aspect ratio bias,” in Proc. 42nd Int. Conf. Machine Learning (ICML) , 2025. [17] A. Kusupati, G. Bhatt, A. Rege, M. Wallingford, A. Sinha, V. Ra-manujan, W. Howard-Snyder, K. Chen, S. Kakade, P. Jain, and A. Farhadi, “Matryoshka representation learning,” in Advances in Neural Information Processing Systems 35 (NeurIPS) , 2022. [18] O. Roy and M. Vetterli, “The effective rank: A measure of effective dimensionality,” in Proc. 15th European Signal Processing Conference (EUSIPCO) , Poznan, Poland, 2007, pp. 606–610. [19] M. Rudelson and R. Vershynin, “Sampling from large matrices: An approach through geometric functional analysis,” Journal of the ACM ,vol. 54, no. 4, Article 21, 2007.

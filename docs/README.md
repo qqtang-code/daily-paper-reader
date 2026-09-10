@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-09</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-10</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 0 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 27 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>16</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-09 21:46:13 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-10 22:17:28 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日无新推荐，系统未产出可展示论文。</p>
+<p>今日精读16篇、速读11篇共27篇论文，重点关注长上下文大模型的注意力与KV缓存优化。最值得看的是CRISP（9.0）的输入自适应稀疏预填充与HeadWiseKV（9.0）的分头缓存驻留，速读中语言模型自主控制注意力（8.0）也值得跟进。普通读者可先读这两篇精读，建立“按输入和头维度省算力”的思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">16 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CRISP: Cliff-awaRe Input-adaptive Sparse Prefilling with Structural-Mass-Motivated Routing">CRISP: Cliff-awaRe Input-adaptive Sparse Prefilling with Structural-Mass-Motivated Routing</span></li><li><span class="dpr-home-dashboard-paper-title" title="HeadWiseKV: Budgeted Per-Head Cache Residency for Hybrid Long-Context Language Models">HeadWiseKV: Budgeted Per-Head Cache Residency for Hybrid Long-Context Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="SGD-KV: Summarization Guided KV Cache Compression">SGD-KV: Summarization Guided KV Cache Compression</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sparse-attn <strong>16</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Language Models Can Control Their Own Attention">Language Models Can Control Their Own Attention</span></li><li><span class="dpr-home-dashboard-paper-title" title="Interface-Aware KV Cache Quantization for Dense On-Chip NVM in Long-Context LLM Decoding">Interface-Aware KV Cache Quantization for Dense On-Chip NVM in Long-Context LLM Decoding</span></li><li><span class="dpr-home-dashboard-paper-title" title="Linear Algebra Foundations of Efficient Attention: A Phase Reversal in Rank Collapse Under SVD Compression">Linear Algebra Foundations of Efficient Attention: A Phase Reversal in Rank Collapse Under SVD Compression</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sparse-attn <strong>9</strong></span><span class="dpr-home-dashboard-tag">multimodal <strong>2</strong></span></div>
 </section>
 </div>
 
