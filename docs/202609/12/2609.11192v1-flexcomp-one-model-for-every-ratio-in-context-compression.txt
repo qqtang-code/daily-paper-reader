@@ -1,0 +1,430 @@
+Title: FlexComp: One Model for Every Ratio in Context Compression
+
+URL Source: https://arxiv.org/pdf/2609.11192v1
+
+Published Time: Fri, 11 Sep 2026 00:42:21 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# FlexComp: One Model for Every Ratio in Context Compression 
+
+Kaiyan Zhao 1,2 , Zhongtao Miao 1, Akiko Aizawa 2, Yoshimasa Tsuruoka 1
+
+> 1
+
+The University of Tokyo, 2National Institute of Informatics 
+
+{kaiyan1006, miao, tsuruoka}@logos.t.u-tokyo.ac.jp, aizawa@nii.ac.jp 
+
+Abstract 
+
+Soft context compression condenses a context into a few memory tokens that a frozen LLM consumes in place of the raw text, but existing compressors fix the compression ratio at train-ing and inference: each deployed ratio requires a separately trained model, and the chosen ratio is applied uniformly to all inputs, whose actual needs vary drastically. We propose FlexComp ,a method-agnostic framework that decouples the ratio from both training and deployment: Matryoshka-style training samples the mem-ory budget K per instance, turning one model into an any-ratio compressor, and the budget is then chosen per input by: (1) confidence-based cascade routing or (2) a lightweight learned 
+
+K predictor. Across ICAE, 500xCompressor, and SAC on MRQA, a single FlexComp model matches separately trained fixed-ratio special-ists with minimal degradation. Cascade routing preserves over 98% of the mildest ratio’s accu-racy at up to 266 × average compression; the 
+
+K predictor, in a single compression-decoding pass, reaches 158-236 × within 0.7 F1 1 of the mildest ratio. At serving-scale batch sizes, the K predictor cuts context KV cache by 50% and improves decoding throughput by 47%. 
+
+1 Introduction 
+
+Large language models (LLMs) rarely answer from a question alone: in most applications, contexts ,such as retrieved passages, tool outputs, documents, or conversation history are needed for generation, besides the prompt (Lewis et al., 2020; Yuan et al., 2025; Zhao et al., 2026). Serving these context tokens is costly, as they must be prefilled on every query, and their Key-Value (KV) cache occupies memory for the whole generation, often dominat-ing the memory footprint of inference (Liu et al., 2025). Context compression offers an attractive remedy: a compressor condenses the context into a small number of soft memory tokens , and the LLM 
+
+> 1
+
+All F1 scores are reported on a 0-100 scale. Existing method: one model per compression ratio (cr)    
+
+> Model A cr =15x trained Model B cr =51x trained Model C cr =510x trained Inference at 15x
+> 3 independent training runs, 3 deployed models
+> Inference at 51x Inference at 510x
+> Our method: one model all compression ratios (cr)
+> Our model
+> matryoshka training
+> Cascade routing/K-predictor
+> Select K at inference
+> Inference at 15x Inference at 51x Inference at 510x
+> 1 training run, any deployed ratios
+
+Figure 1: Fixed-ratio compression vs. FlexComp. Top: 
+
+for existing soft-token compressors, each deployed com-pression ratio requires a separately trained model, and the model applies the fixed ratio uniformly to all inputs. 
+
+Bottom: FlexComp trains a single model that supports any ratio, and selects the budget per input at inference time, via cascade routing or K predictor. 
+
+can run inference based on the compressed soft tokens instead of the raw context (Ge et al., 2024; Li et al., 2025; Zhao et al., 2025; Liu et al., 2026; Miao et al., 2026). Despite steady progress on compression quality, existing methods share a structural limitation: the compression ratio is fixed at training and infer-ence time . As illustrated in Figure 1 (top), support-ing multiple operating modes, e.g., mild compres-sion for difficult inputs and aggressive compression when memory is scarce, requires training, storing, and serving a separate model for every ratio. More-over, whichever ratio is deployed is applied uni-formly to all inputs, regardless of how much each input actually needs. This uniformity is wasteful, because different inputs need very different budgets. Figure 2 shows that for the in-domain subsets in MRQA (Fisch et al., 2019), most inputs are already solved with a arXiv:2609.11192v1 [cs.CL] 10 Sep 2026 0 20 40 60 80 100               
+
+> % of solvable samples
+> SQuAD (n=4311) NewsQA (n=1239) TriviaQA (n=4634) SearchQA (n=11515) HotpotQA (n=3183) NaturalQuestions (n=6540)
+> 36% 20% 44% 34% 25% 42% 61% 23% 16% 80% 11% 9% 44% 27% 29% 61% 15% 25%
+> K=1 suffices (cr=510×) K=10 needed (cr=51×) K=34 needed (cr=15×)
+
+Figure 2: The budget each input needs varies drastically. For each subset, we show the distribution over solvable inputs of the minimal sufficient budget : the smallest 
+
+K ∈ { 1, 10 , 34 } (number of memory tokens) at which the SAC Matryoshka model answers correctly. A large fraction of inputs is already solvable at K=1 (510x com-pression), so any fixed ratio could be suboptimal. 
+
+single memory token (soft token length K = 1 )2,yet a non-trivial minority is only solved with far larger budgets. A fixed K therefore loses on both ends: it wastes tokens on the many easy inputs and starves the few hard ones. Worse, the best fixed choice differs from domain to domain, so no single ratio serves all deployments well. To this end, we propose FlexComp , a frame-work that decouples the compression ratio from both training and deployment (Figure 1, bottom). FlexComp has two components. First, we intro-duce Matryoshka-style training for context com-pression, inspired by matryoshka representation learning (Kusupati et al., 2022). Specifically, dur-ing training, the soft prompt length K is sampled per instance, so that a single model learns to encode the context into K memory tokens for any budget in the supported range. One model thus replaces an entire family of fixed-ratio compressors, with no architectural changes to the underlying method. Second, since the budget is now a free inference-time variable, we introduce two complementary strategies for choosing it per input: cascade rout-ing , which starts from the most aggressive budget and re-encodes at a larger one only when the de-coder is uncertain, and a lightweight K predictor ,
+
+> 2
+
+Following existing work, contexts are segmented into chunks of 510 tokens; K=1 thus means one soft memory token per 510 raw tokens, i.e., a compression ratio of 510x. 
+
+which commits to a budget before compression and thus answers in a single compression-decoding pass. FlexComp is method-agnostic; we instantiate it on three representative compressors: ICAE (Ge et al., 2024), 500xCompressor (Li et al., 2025), and SAC (Liu et al., 2026). Across in-domain (ID) and out-of-domain (OOD) question answering tasks on MRQA (Fisch et al., 2019), a single Matryoshka-trained model matches separately trained fixed-ratio specialists at each native ratio (within 1.3 F1 in the worst case, and often better on OOD), cutting the num-ber of trained models from n to one. On top of the same model, adaptive budget selection im-proves the accuracy-compression trade-off over any fixed ratio: cascade routing retains over 98% of the mildest ratio’s accuracy while raising the average compression from 15 × to up to 266 ×,and the K predictor reaches 158–236 × in a sin-gle compression-decoding pass, at a cost of at most 0.7 F1. These savings are not merely nominal: at serving-scale batch sizes, the predictor cuts context KV cache by 50% and improves aggregate decod-ing throughput by 47% relative to always running at the mildest ratio. In summary, our contributions are as follows: • We show that Matryoshka training turns a fixed-ratio context compressor into a single 
+
+any-ratio compressor, validated on three dis-tinct methods with negligible degradation. • We introduce two per-input budget-selection strategies for soft context compression: confidence-driven cascade routing and the K
+
+predictor that commits to a budget before com-pression; for the predictor, we further show these savings translate into gains in KV mem-ory and decoding throughput. • We systematically analyze the accuracy-compression trade-off, and find it non-monotonic at the instance level: on a non-trivial fraction of inputs, larger budgets pre-serve surface details that may mislead the de-coder, and a single memory token answers correctly where the full budget fails. 
+
+2 Related Work 
+
+Context compression methods fall into two fami-lies: soft compression, which encodes the context into continuous memory tokens, and hard compres-sion, which shortens the prompt in token space by filtering or rewriting the discrete text. Our work builds on the former. 
+
+Soft context compression. A growing line of work compresses a context into a small number of continuous memory tokens consumed by a frozen LLM, including gist tokens (Mu et al., 2023), Au-toCompressors (Chevalier et al., 2023), ICAE (Ge et al., 2024), 500xCompressor (Li et al., 2025), EPL (Zhao et al., 2025) and SAC (Liu et al., 2026). These methods differ in soft token acquisition and supervision signals, but the core idea, representing contexts through soft tokens, remains consistent. Moreover, they share the same limitation that the compression ratio is uniformly a training-time con-stant: each deployed ratio requires its own trained model, and all inputs receive the same budget. Flex-Comp targets exactly on this axis and is comple-mentary to all base architectures. 
+
+Hard context compression. An orthogonal fam-ily shortens the prompt in token space, by filtering or summarizing the discrete text, e.g., Selective Context (Li et al., 2023), the LLMLingua series (Jiang et al., 2024; Pan et al., 2024), and RECOMP (Xu et al., 2024). Hard compression preserves in-terpretability, but achievable ratios are typically modest compared to soft methods. As with soft compression methods, how much to compress a given input remains an open question, which our budget-selection strategies are designed to address. 
+
+Nested and budget-conditioned representations. 
+
+Matryoshka representation learning trains embed-dings whose prefixes remain valid at multiple di-mensionalities (Kusupati et al., 2022), a principle that can be extended to model widths and other capacity axes (Devvrit et al., 2024). We transfer the one-model-many-budgets principle to context compression, with a structural difference: our bud-gets are realized by conditioning the encoder on the memory slot count rather than by truncating a fixed representation (§3.2). 
+
+Adaptive computation and cascades. Allocat-ing inference cost per input has a long history, from early exit (Miao et al., 2024) to LLM cascades that escalate from cheap to expensive models based on confidence (Yue et al., 2024). Our cascade applies this recipe within a single model, escalating over compression budgets rather than over models, and our K predictor mirrors router-based approaches that commit to a compute level before execution (Stripelis et al., 2024). Relatedly, KV cache evic-tion and quantization (Zhang et al., 2023; Li et al., 2024) reduce memory after the full context has been prefilled; soft-token compression avoids ma-terializing the full-context cache in the first place. 
+
+3 Method 
+
+Figure 3 gives an overview of FlexComp. We first fix notation and the class of compressors we build on (§3.1), then describe Matryoshka training, which converts a fixed-ratio compressor into a sin-gle any-budget compressor (§3.2), and finally two inference-time strategies for choosing the budget per input: confidence-based cascade routing (§3.3) and a learned K predictor (§3.4). 
+
+3.1 Preliminaries: Soft-Token Context Compression 
+
+We first consider an encoder LLM Eϕ, that com-presses a context c of L tokens into K ≪ L contin-uous memory tokens : m1: K = Eϕ(c; K), which a frozen decoder LLM D then consumes in place of c
+
+to answer a query q, i.e., ˆa = D(m1: K , q ). In prac-tice, the encoder Eϕ is a LoRA-adapted copy of D,that processes the context together with K train-able memory tokens. The decoder consumes the representations of these memory tokens after the encoder as a drop-in prefix, so the context’s foot-print in D’s KV cache shrinks from L to K entries. This formulation covers ICAE (Ge et al., 2024), 500xCompressor (Li et al., 2025), and SAC (Liu et al., 2026), which differ in where the memory tokens are placed and how the encoder is super-vised, but share the same interface: the number of memory slots K is fixed before training, and the re-sulting model supports only that budget. Through-out, we refer to K as the budget ; with |c| = L, the corresponding compression ratio is L/K .
+
+Training objectives. Existing compressors are trained in two stages, both at a fixed K. A pretrain-ing stage teaches the encoder to pack generic text into memory tokens: ICAE and 500xCompressor supervise the decoder to regenerate or continually generate the context from m1: K (autoencoding or text continuation objective), while SAC directly optimizes language modeling conditioned on its semantic anchors. Abstractly, 
+
+LPT (ϕ) = Ec[ℓ(D(Eϕ(c; K)) , t (c))] , (1) where the target t(c) is the context itself or its con-tinuation. A subsequent fine-tuning stage adapts Matryoshka Training         
+
+> Memory tokens Original Context
+> …
+> LLM encoder LoRA
+> Randomly select one K in one forward
+> LLM (frozen) decoder
+> K=34 K=2 K=1 …
+> Prompt
+> …
+> Answer
+> ……
+> //
+> ……
+> Response Cross Entropy Loss
+> Inference
+> (a) cascade routing
+> …
+> LLM encoder LoRA
+> Start at K=1
+> LLM (frozen) decoder
+> …
+> Confidence > 𝜏 , accept
+> …
+> Confidence < 𝜏 ,regenerate with larger K
+> (b) K-predictor
+> …
+> LLM encoder LoRA
+> Choose K=1
+> LLM (frozen) decoder
+> ……
+> K predictor (MLP)
+> K=1, 60% K=10, 30% K=34, 10%
+
+Figure 3: Overview of FlexComp. Left: Matryoshka training in fine-tuning. For each instance, a budget K is randomly sampled. The LoRA-adapted encoder compresses the context into K memory tokens, and the frozen decoder is supervised to generate the answer based on the memory tokens and prompt. Right: two inference-time budget-selection strategies exploiting the resulting freedom. (a) Cascade routing starts at the most aggressive budget and re-encodes at the next larger one only when the decoder’s confidence falls below the threshold τ . (b) The 
+
+K predictor is a lightweight MLP head that maps budget-free encoder features to a distribution over K and commits to a budget before compression, answering in a single compression-decoding pass. 
+
+the model to downstream use, supervising the an-swer given the compressed context: 
+
+LSFT (ϕ) = E(c,q,a )[ℓ(D(Eϕ(c; K), q ), a )] . (2) FlexComp keeps both objectives untouched and changes only how K is set: Matryoshka sampling (Eq. 3) wraps LSFT , while pretraining deliberately remains at a fixed budget, a choice we justify em-pirically in §5.1. 
+
+3.2 Matryoshka Training 
+
+FlexComp makes the budget a conditioning vari-able rather than an architectural constant (Figure 3, left). Let K = {K1 < K 2 < · · · < K n} be the set of supported budgets. During training, for each instance we sample a budget K ∼ p(K), allocate 
+
+K memory slots, and optimize the same objective as the underlying compressor: 
+
+L(ϕ) = E(c,q,a ) EK∼p(K)
+
+ℓ D(Eϕ(c; K), q ), a  ,
+
+(3) where ℓ is the token-level cross-entropy of the base method and D remains frozen. The single set of weights ϕ is thus trained to produce, for every 
+
+K ∈ K , a representation specialized to that budget :the encoder sees how many slots are available and distributes information accordingly. We emphasize that, unlike Matryoshka representation learning for embeddings (Kusupati et al., 2022), the budgets are not realized by truncating a single encoding, as Eϕ(c; K1) is a different forward pass from the first K1 tokens of Eϕ(c; K2), but the training prin-ciple is shared: one model, nested budgets, joint supervision. Matryoshka training requires no architectural changes to the base compressor and adds no inference-time overhead relative to a fixed-ratio model evaluated at the same K. It collapses n
+
+training runs and n deployed models into one, and exposes the full budget range K at inference time. 
+
+3.3 Inference I: Cascade Routing 
+
+The first strategy for choosing the appropriate bud-get per input requires no additional training (Fig-ure 3, Inference (a)). Given an input, we start from the most aggressive budget K1 and iteratively esca-late. At stage i, we encode m1: Ki = Eϕ(c; Ki), de-code a candidate answer, and compute a confidence score si from the decoder’s output log-probabilities, defined as the length-normalized log-probability of the decoded answer: 
+
+si = 1
+
+> |ˆai|
+
+X
+
+> t
+
+log pθ(ˆ ai,t ). (4) This score is a reliable proxy for answer quality: it correlates strongly with token-level F1 at every budget (Spearman’s ρ up to 0.58; §5.3). If si ≥ τi,the candidate is accepted; otherwise we discard it and re-encode at the next budget Ki+1 . The final budget Kn always accepts, so the procedure termi-nates. The thresholds τ1, . . . , τ n−1 are calibrated once on held-out data by sweeping the accuracy-average-budget trade-off. Different threshold set-tings trace out a controllable operating curve be-tween the most aggressive and mildest budgets. 3.4 Inference II: Learned K Prediction 
+
+The cascade decides after decoding; our second strategy decides before compression (Figure 3, In-ference (b)), committing to a single K per input. 
+
+Offline label construction. We derive supervi-sion directly from the Matryoshka model itself. For each training instance (c, q, a ), we decode at every 
+
+K ∈ K and score the output against the gold an-swer with Rouge-1 F1, yielding FK . The label is the smallest budget whose score is within a toler-ance ε of the best achievable one, 
+
+K∗ = min  K ∈ K : FK ≥ FKn − ε , (5) with ε=0 .1. Instances that remain low-quality even at the full budget ( FKn < 0.5) are excluded from predictor training. This turns budget selection into an n-way classification problem requiring no hu-man annotation. 
+
+Class balancing. The label distribution is heavily skewed: most instances are solvable at K1 (Fig-ure 2). Trained on the raw distribution, the predic-tor collapses to a shortcut of predicting the major-ity class. We therefore resample the training set to a balanced 1:1: . . . :1 ratio across the n classes, which we found necessary and sufficient to prevent this collapse (§5.2). 
+
+Predictor. The predictor operates on a budget-independent representation of the context: the con-text chunks are passed through the encoder without 
+
+allocating any memory slots, and the final-layer hidden states are mean-pooled over all context to-kens into a single vector h ∈ Rd. A two-layer MLP ( d → d/ 2, ReLU, d/ 2 → n) maps h to a distribution over K. Only the head is trained with cross-entropy on the labels of Eq. 5 on the balanced dataset. Because the features are computed from the context alone, the predicted budget is query-agnostic: it can be computed once per document, offline, and cached alongside the compressed rep-resentation. At inference, budget selection costs one budget-free encoder forward plus the (negli-gible) head; the input is then encoded once at the predicted ˆK and decoded once. Compared with the cascade, the predictor forgoes the decoder’s own confidence signal but replaces up to n encode-decode rounds with this fixed cost, and the two occupy complementary points on the cost-accuracy spectrum. 
+
+4 Experiments 
+
+4.1 Experimental Setup Compressors and budgets. We instantiate Flex-Comp on three soft context compressors: ICAE (Ge et al., 2024), 500xCompressor (Li et al., 2025), and SAC (Liu et al., 2026), keeping each method’s architecture, training objective, and hyperparam-eters unchanged; the only modification is bud-get sampling (§3.2). All compressors use Llama-3.2-1B 3 (Grattafiori et al., 2024) as both the en-coder and decoder, with the encoder equipped with LoRA (Hu et al., 2022) adapters ( r=128, α=256). We split the contexts into chunks with length 510, and we use budgets K = {1, 10 , 34 }, i.e., com-pression ratios of 510 ×, 51 ×, and 15 ×. During Matryoshka training, K is sampled uniformly from 
+
+K per instance. 
+
+Tasks and metrics. We follow the evaluation pro-tocol of existing methods and evaluate our mod-els on MRQA (Fisch et al., 2019), including six in-domain (ID) tasks (SQuAD, NewsQA, Trivi-aQA, SearchQA, HotpotQA, NaturalQuestions) and six out-of-domain (OOD) tasks (BioASQ, DROP, DuoRC, RACE, RelationExtraction, Text-bookQA). The compressor is continually pretrained on the SlimPajama-6B dataset (Soboleva et al., 2023), and finetuned on the MRQA training set. We report token-level F1 averaged within each group. 
+
+Baselines. For each method, we compare the sin-gle Matryoshka-trained model against three fixed-ratio specialists : the same architecture trained con-ventionally at each K ∈ K , following the original recipes. All fixed-ratio baselines are trained by us under identical data and compute budgets for a controlled comparison. 
+
+Budget selection. For cascade routing, thresh-olds are calibrated once on held-out data by sweeping the accuracy–average-budget trade-off; Kn=34 always accepts, so each operat-ing point is a pair (τK=1 , τ K=10 ) over the length-normalized answer log-probability. We report four points of increasing permissive-ness: conservative (−0.20 , −0.30) , balanced 
+
+(−0.20 , −0.40) , aggressive (−0.30 , −0.40) , and 
+
+high-cr (−0.40 , −0.50) ; a lower (more negative) threshold accepts lower-confidence candidates ear-lier and thus yields a higher average compression                                                                  
+
+> 3https://huggingface.co/meta-llama/Llama-3. 2-1B Fixed-Ratio (3 models per method) Matryoshka (1 model, ours )
+> ∆
+> (Matr. −Fixed) Base K(ratio) ID OOD ID OOD ID OOD
+> ICAE 34 (15 ×)44.70 30.11 43.46 30.62 −1.24 +0 .51
+> 10 (51 ×)41.17 28.05 41.82 29.10 +0 .65 +1 .05
+> 1 (510 ×)36.87 26.85 35.88 26.19 −0.99 −0.66
+> 500x 34 (15 ×)49.13 35.22 48.80 34.62 −0.33 −0.60
+> 10 (51 ×)43.07 30.72 42.79 30.68 −0.28 −0.04
+> 1 (510 ×)34.57 25.18 38.29 28.30 +3 .72 +3 .12
+> SAC 34 (15 ×)54.89 40.07 53.82 40.10 −1.07 +0 .03
+> 10 (51 ×)46.32 32.29 47.09 33.22 +0 .77 +0 .93
+> 1 (510 ×)39.05 26.93 39.63 28.13 +0 .58 +1 .20
+
+Table 1: F1 of separately trained fixed-ratio compressors vs. a single Matryoshka-trained model per method, averaged over in-domain (ID) and out-of-domain (OOD) tasks. K=34 /10 /1 correspond to 15 × /51 × /510 ×
+
+compression. 
+
+ratio. The K predictor head adds 2.1M parame-ters for Llama-3.2-1B ( d=2048 ; 0.17% of the en-coder). 
+
+Implementation Details. All training runs on 8 H800 GPUs with a per-GPU batch size of 16. Com-pressor pretraining and fine-tuning are each con-ducted for 20,000 steps with AdamW (lr 5×10 −4). For the K predictor, labeling the MRQA training split (Eq. 5) yields 183K samples (60.85% K=1 ,18.00% K=10 , 21.15% K=34 ); we downsample to a 1:1:1 balance ( ∼99K) to prevent the shortcut collapse analyzed in §5.2, and train for 2 epochs with the same optimizer, updating only the predic-tor head while the compressor stays frozen. For pre-training, we fix K = 34 (15 × compression). 
+
+4.2 One Model Matches Ratio-Specific Models 
+
+Table 1 compares each fixed-ratio specialist with the single Matryoshka-trained model evaluated at the same budget. Across all three architectures and all three ratios, the gap is small. Replacing three trained models with one costs at most about one F1 point, and in four of nine settings the single model is in fact better. On OOD tasks, the pic-ture tilts further in favor of Matryoshka training: seven of nine deltas are positive, and the only no-table losses occur for ICAE at the extreme 510 ×
+
+ratio. The clearest win is 500xCompressor at 510 ×,where the shared model exceeds its specialist by 
+
++3 .72 ID and +3 .12 OOD F1. We conjecture that jointly training across budgets regularizes the ex-treme K=1 case, which a dedicated specialist must otherwise learn in isolation. Overall, turning the budget into a free inference-time variable costs es-sentially no accuracy, while cutting the number of trained and deployed models from n to one. 
+
+4.3 Cascade Routing 
+
+Figure 4 shows what happens when the cascade chooses the budget at inference time. The pattern is the same for all three methods: as the thresholds get more permissive, the average budget drops sharply while accuracy barely moves. On ICAE, the most aggressive operating point uses an average of 19 .8
+
+tokens per input, an average compression ratio of 
+
+235 ×, yet stays within 0.6 ID F1 of always running at K=34 , and OOD accuracy is slightly above the fixed baseline at every operating point. The routing distributions (bottom row) explain why this works: even at conservative thresholds, over 20% of inputs are confidently answered at K=1 , matching the oracle picture in Figure 2. The cascade thus turns the thresholds into a practical control knob: one deployed model, and a compression-accuracy trade-off that can be tuned without retraining. 
+
+4.4 K Predictor 
+
+The K predictor decides the budget for each in-put before compression and pays for a single compression-decoding pass. Table 2 shows this cheaper strategy works well: relative to always run-ning at the mildest budget, the predictor roughly halves the average budget and raises the compres-sion ratio to 158–236 ×, while ID and OOD accu-racy both drop by at most 0.7 F1. The random routing baseline isolates where this benefit comes from. It assigns the same per-budget proportions as the predictor but ignores the input, so it matches the predictor’s average budget ex-actly; the predictor still outperforms it by about 5 F1 on both ID and OOD. The gain is therefore not an artifact of the budget mix being favorable on average, it comes from routing the right inputs 15x 133x 137x 185x 235x                                                                             
+
+> Avg. compression ratio
+> 20 25 30 35
+> Avg. budget ̄ K(incl. retries)
+> 015 30 45 60 Avg. F1  cons. bal.aggr. high cr cons. bal.aggr. high cr
+> 43.5 43.443.2 42.9 30.9 31.030.9 30.8 43.5 30.6
+> ICAE
+> 15x 152x 156x 206x 254x
+> Avg. compression ratio
+> 20 25 30 35
+> Avg. budget ̄ K(incl. retries)
+> 015 30 45 60
+> cons. bal.aggr. high cr cons. bal.aggr. high cr
+> 46.8 46.646.4 45.7 33.9 33.834.0 33.6 46.8 33.6
+> 500x
+> 15x 162x 166x 217x 266x
+> Avg. compression ratio
+> 20 25 30 35
+> Avg. budget ̄ K(incl. retries)
+> 015 30 45 60
+> cons. bal. aggr. high cr cons. bal. aggr. high cr
+> 53.7 53.3 53.2 53.1 40.3 40.1 40.2 40.2 53.8 40.1
+> SAC
+> 020 40 60 80 100
+> % of inputs
+> cons. bal. aggr. high cr
+> 22 18 59 22 28 49 33 19 48 43 18 39
+> 020 40 60 80 100
+> % of inputs
+> cons. bal. aggr. high cr
+> 26 16 57 26 26 48 37 16 47 47 15 38
+> 020 40 60 80 100
+> % of inputs
+> cons. bal. aggr. high cr
+> 28 22 50 28 31 40 39 22 39 49 21 30
+> Cascade (ID) Cascade (OOD) Fixed K= 34 (ID) Fixed K= 34 (OOD)
+> K= 1 (510×)
+> K= 10 (51×)
+> K= 34 (15×)
+
+Figure 4: Cascade routing results on ICAE, 500xCompressor, and SAC. Top: average F1 (ID: solid, OOD: dashed, F1 reported above each mark) versus the average memory budget ¯K, where ¯K includes retry costs after escalation; the top axis reports the corresponding measured average compression ratio. Each curve traces four cascade configuration thresholds, ordered from conservative (cons.) to most aggressive (high cr), and stars mark the fixed K=34 baseline of the same Matryoshka model. Bottom: realized routing distribution at each configuration. 
+
+Predicted budget (% of inputs) Model ID F1 OOD F1 Avg. cr Avg. ¯K K=1 (510 ×) K=10 (51 ×) K=34 (15 ×)
+
+ICAE ( K=34 ) 43.46 30.62 15 × 34.0 – – 100.0 + K predictor 43.29 30.61 157 .99 × 19.6 27.2 22.7 50.1 + random routing 40.02 28.03 157 .99 × 19.6 27.2 22.7 50.1 500x ( K=34 ) 48.80 34.62 15 × 34.0 – – 100.0 + K predictor 48.28 34.20 236 .08 × 16.9 43.9 11.0 45.1 + random routing 42.61 30.96 236 .08 × 16.9 43.9 11.0 45.1 SAC ( K=34 ) 53.82 40.10 15 × 34.0 – – 100.0 + K predictor 53.14 39.95 158 .96 × 19.0 27.3 25.0 47.7 + random routing 48.25 35.14 158 .96 × 19.0 27.3 25.0 47.7 
+
+Table 2: Per-input budget selection with the K predictor. Each pair compares the Matryoshka model run uniformly at its mildest budget ( K=34 , 15 ×) against the same model with the predictor choosing K ∈ { 1, 10 , 34 } per input before encoding. ID/OOD: average F1 over in-/out-of-domain tasks; Avg. cr / ¯K: measured average compression ratio and memory budget; right block: distribution of predicted budgets. Random routing assigns budgets with the same per-budget proportions but ignores the input, matching the predictor’s average budget. 
+
+to the smaller budgets, i.e., the predictor identifies which inputs tolerate aggressive compression rather than merely compressing more. 
+
+4.5 Which Strategy to Deploy 
+
+Together, the two strategies serve complementary deployment needs. When a corpus is compressed once and queried repeatedly, the cascade’s retry cost disappears while its advantage remains: it adapts to each question with iteratively decided ratio, thus offering a tunable, retraining-free trade-off curve for this scenario. When each context is compressed on the fly for a single query, the pre-dictor gives a single-pass operating point cheap enough for latency-sensitive serving. Its uniform per-request cost is also what makes the budget-grouped batching of §5.4 possible. 
+
+5 Analysis 
+
+5.1 Matryoshka in Pretraining Hurts 
+
+SAC ( K=34 , 15 ×) ID F1 OOD F1 
+
+Matryoshka in SFT only 53.82 40.10 
+
+Matryoshka in pretrain + SFT 51.51 37.60 
+
+Table 3: Applying budget sampling already during com-pressor pretraining degrades quality; FlexComp there-fore applies it only in the SFT stage. 
+
+A natural question is why we restrict Matryoshka Training set Ep. K=1 K=10 K=34               
+
+> Full ( 3.38:1:1 .18 )189.98 13.33 36.77 290.12 15.61 36.81 Resampled ( 1:1:1 )180.12 72.35 78.89 281.67 72.88 79.63
+
+Table 4: Per-class accuracy of the K predictor. Trained on the raw label distribution, the predictor collapses onto the majority class ( K=1 ); balanced resampling restores usable accuracy on all three classes. 
+
+training to the fine-tuning stage rather than incorpo-rating it into pretraining. We tried the latter: sam-pling the budget in both stages. Table 3 shows the result on SAC at K=34 : pretraining with mixed budgets loses 2.3 ID and 2.5 OOD F1 compared with sampling budgets only during SFT. Our in-terpretation is that pretraining is where the com-pressor learns the basic skill of packing text into memory tokens, and randomizing the slot count during this phase forces the model to split capacity across objectives before that skill is stable; once the base ability exists, adapting it to multiple bud-gets is cheap. Practically, this is good news: Ma-tryoshka training drops in at the cheapest stage of the pipeline. 
+
+5.2 Balanced Labels Prevent Predictor Collapse 
+
+Table 4 looks inside the K predictor. Trained on the raw minimal-budget labels, whose distribution is skewed toward K=1 (3.38:1:1 .18 ), the predic-tor takes the shortcut we warned about in §3.4: it gets 90% of the majority class right but only 13 –
+
+16% of the K=10 class, essentially defaulting to “compress everything”. Resampling to 1:1:1 trades a few points on the majority class for points on the minority class, and a second epoch adds little either way. We attribute this problem as the label distribution, not undertraining. 
+
+5.3 Decoder Confidence Tracks Answer Quality 
+
+The cascade rests on the premise that the decoder’s own confidence identifies which answers to trust. Figure 5 validates this: across all budgets, the length-normalized answer log-probability corre-lates with token-level F1 at Spearman’s ρ = 0 .56 
+
+to ρ = 0 .58 , and the relationship holds at every 
+
+K, including K=1 , where the signal must separate genuinely solved inputs from confidently wrong ones. This is what makes the calibrated thresh-
+
+Figure 5: Spearman correlation between decoder con-fidence and answer F1, computed on the Matryoshka-trained SAC model at each K. Higher confidence con-sistently corresponds to higher answer quality.                                     
+
+> Ratio KV Cache (MB) Reduction Throughput (tok/s) Speedup
+> Context length 2,048
+> 15x 411 -0% 5947 +0% 51x 123 -70.1% 7657 +28.9% 510x 15 -96.4% 9531 +60.3% K predictor 230 -44.0% 7350 +23.6%
+> Context length 8,192
+> 15x 1638 -0% 3920 +0% 51x 483 -70.5% 6140 +56.6% 510x 51 -96.9% 7791 +98.8% K predictor 811 -50.5% 5764 +47.0%
+
+Table 5: Inference efficiency across compression ra-tios on the Matryoshka-trained SAC model (generation length 512, batch size 96, greedy decoding). KV Cache 
+
+is the total context KV memory over the batch under grouped-query attention; Throughput is the aggregate decoding rate over the full batch. 
+
+olds of §3.3 meaningful control knobs rather than arbitrary cutoffs. 
+
+5.4 From KV Memory to Serving Throughput 
+
+Table 5 reports what compression buys at inference time on the Matryoshka-trained SAC model, at a batch size of 96 with two context lengths. The memory story is direct: at both context lengths, moving from 15 × to 510 × shrinks the batch context KV cache by more than 96%. Be-cause batched decoding is bandwidth-bound and model weights are shared across the batch, per-sequence KV reads dominate the incremental mem-ory traffic, so this reduction converts into aggre-gate decoding throughput. The effect grows with context length, as the compressed context then ac-counts for a larger share of each sequence’s cache: The K predictor inherits the benefit while hold-ing accuracy, cutting memory by 50% and raising throughput by 47% at the longer context. The gains thus accrue where compression is needed most. ICAE 500x SAC 0510 15 20 25 30       
+
+> % of solvable samples
+> 12.8 12.0 11.8 14.8 14.8 14.9
+> K=1 strictly beats K=34
+> ID OOD
+> ICAE 500x SAC
+> 11.0 15.4 19.4 16.0 18.5 26.0
+> K=34 strictly required
+> ID OOD
+
+Figure 6: Budget non-monotonicity on solvable samples (samples answered correctly (F1 > 0) under at least one budget). Left: fraction of samples where K=1 strictly outperforms K=34. Larger budgets can actively hurt, and consistently more so on OOD, where the gist-only representation avoids misleading surface details. Right: 
+
+fraction of samples strictly requiring the full budget (answered correctly only at K=34). Budget sensitivity grows with compressor strength (ICAE < 500xCom-pressor < SAC). 
+
+5.5 More Memory Tokens Are Not Always Better 
+
+Fixed-ratio evaluation reports averages, and aver-ages hide a phenomenon that per-sample analysis reveals: for a non-trivial fraction of inputs, larger budgets actively hurt . Throughout this section we restrict analysis to solvable samples (F1 > 0 under at least one budget) and exclude the roughly 20% to 30% of samples that fail at every K.Figure 6 (left) quantifies the effect at two levels of severity. Across the three compressors, K=1 
+
+achieves strictly higher F1 than K=34 on 11.8– 12.8% of solvable in-domain samples; within these, on 6.8–7.7% the model fails completely at K=34 
+
+yet answers correctly from a single memory to-ken, not a degradation but a reversal. Figure 6 (right) adds a forward-looking observation: the fraction of samples strictly requiring the full budget (11.0–26.0%) grows both with compressor strength (ICAE < 500xCompressor < SAC). Additional memory tokens pay off only when the compressor is capable enough to exploit them. Adaptive budget allocation thus becomes more , not less, important as compressors improve. We provide case studies in Figure 7, which fall into three failure modes. Panel (a) shows relation confusion : the parenthetical “Gloria (played by Sally Struthers)” sits directly beside the target rela-tion, the 34-token memory preserves both “played by” facts, and the decoder binds the question to the co-occurring one. Panel (b) is the most strik-ing mode, parametric-prior fallback : the wrong answer (“Hollywood”) appears nowhere in the con-text, faced with several competing filming locations                                                  
+
+> Config ID F1 OOD F1 Avg. cr ¯K
+> Fixed-ratio specialists (3 models)
+> SAC 15 ×67.35 53.30 15 ×34 SAC 51 ×61.44 46.89 51 ×10 SAC 510 ×50.67 38.01 510 ×1
+> Matryoshka (1 model, ours )
+> SAC 15 ×68.11 53.99 15 ×34 SAC 51 ×61.97 47.36 51 ×10 SAC 510 ×51.29 38.68 510 ×1
+> Adaptive budget selection ( ours )
+> Cascade (cons.) 67.92 53.96 156 ×25.6 Cascade (bal.) 67.52 53.18 164 ×18.1 Cascade (aggr.) 67.23 53.09 203 ×17.1 Cascade (high cr) 66.81 52.95 241 ×16.1 K predictor 67.69 53.27 183 ×14.2
+
+Table 6: Scaling to Llama-3.1-8B (SAC; token-level F1, averaged over ID / OOD tasks). The single Matryoshka model matches or exceeds its fixed-ratio specialists at every budget, and adaptive selection substantially raises the average compression ratio. ¯K includes retry costs for cascade routing. 
+
+preserved in the 34-token memory, the decoder abandons the memory altogether and falls back on its prior for where films are made. Panel (c) shows salient-entity anchoring : the passage opens with “Psychologists,” and the 34-token memory preserves this surface anchor, which the decoder promotes to a title. Panel (d) is the out-of-domain counterpart of (a), with the confusion packed into a single sentence. In every case the larger mem-ory faithfully preserves surface details that create room for error, whereas the single-token memory, forced to commit to the gist of the context, does not. Extreme compression thus acts as an information bottleneck: less capacity, more selectivity. 
+
+5.6 Scaling to Llama-3.1-8B 
+
+To test whether the picture transfers beyond 1B, we repeat the core experiments with Llama-3.1-8B 4
+
+as encoder and decoder on the SAC method. As shown in Table 6, all three findings transfer, and the first strengthens: the single Matryoshka model now matches or exceeds its fixed-ratio specialists at 
+
+every budget, in and out of domain (deltas of +0 .47 
+
+to +0 .76 F1 across all six cells). Adaptive selection likewise carries over. The cascade’s conservative point reaches 156 × average compression at essen-tially no cost ( −0.19 ID, −0.03 OOD F1 against the Matryoshka 15 × baseline), and its most aggres-                                        
+
+> 4https://huggingface.co/meta-llama/Llama-3. 1-8B (a) Context (NaturalQuestions, ID): “Michael Casimir ‘Mike’ Stivic is a fictional character on the 1970s Amer-ican television sitcom All in the Family. [...] Michael was the husband of Archie’s daughter Gloria (played by Sally Struthers). Rob Reiner played the role of Michael Stivic throughout the series.”
+> Q: Who played Mike Stivic on All in the Family? Gold:
+> Rob Reiner K=1 (510 ×): Rob Reiner ✓
+> K=34 (15 ×): Sally Struthers ✗
+> (b) Context (NaturalQuestions, ID): “Production was set to begin in first quarter of 2014. Principal photography commenced on March 6, 2014 in Morocco . Filming also took place in Hurghada in Egypt, as well as in Berlin and Düsseldorf in Germany. Shooting wrapped in June 2014.”
+> Q: Where was A Hologram for the King filmed? Gold:
+> Morocco / Egypt / Germany K=1 (510 ×): Morocco ✓
+> K=34 (15 ×): Hollywood ✗
+> (c) Context (RACE, OOD, abridged): “Psychologists in Britain have said that the last full week of January is the most depressing time of year, and labelled next Monday ‘Blue Monday ’. [...] The bad weather in January can also contribute to people feeling fed up. [...]”
+> Q: What’s the best title of the passage?
+> Gold: Blue Monday K=1 (510 ×): Blue Monday ✓
+> K=34 (15 ×): Psychologists ✗
+> (d) Context (RelationExtraction, OOD): “His Girl Friday is a 1940 American screwball comedy film directed by Howard Hawks, from an adaptation by Charles Lederer, Ben Hecht and Charles MacArthur of the play The Front Page by Hecht and MacArthur.”
+> Q: The His Girl Friday is based upon what?
+> Gold: The Front Page K=1 (510 ×): The Front Page ✓
+> K=34 (15 ×): Charles MacArthur & Ben Hecht ✗
+
+Figure 7: Budget non-monotonic cases ( K=1 correct, K=34 wrong) from the Matryoshka-trained SAC model, in domain (a, b) and out of domain (c, d); failure-mode analysis is provided in Section 5.5. Underlined: the in-context source of the K=34 error; bold: the gold answer. 
+
+sive point 241 × within 1.3 ID F1. The K predictor reaches 183 × in a single compression-decoding pass at −0.42 ID and −0.72 OOD F1 score, com-pared to the Matryoshka 15 × baseline. With 183 ×
+
+compression it still matches the original fixed-ratio specialist run at 15 × (+0 .34 ID, −0.03 OOD). 
+
+6 Conclusions 
+
+FlexComp decouples the fixed compression ratio of soft context compressors from both training and deployment: Matryoshka training turns one model into an any-ratio compressor that matches the accu-racy of separately trained specialists, and per-input budget selection (cascade routing or a single-pass 
+
+K predictor) preserves the mildest ratio’s accuracy at 158-266 × average compression, converting at serving scale into 50% less context KV memory and 47% higher decoding throughput. Our analy-sis reveals that larger budgets can sometimes hurt, as extreme compression sheds misleading surface details. Taken together, these results suggest that the compression ratio need not be a design constant fixed once for all inputs, but a per-input decision that a single model can both support and make. 
+
+References 
+
+Alexis Chevalier, Alexander Wettig, Anirudh Ajith, and Danqi Chen. 2023. Adapting language models to compress contexts. In Proceedings of the 2023 Con-ference on Empirical Methods in Natural Language Processing , pages 3829–3846, Singapore. Associa-tion for Computational Linguistics. Fnu Devvrit, Sneha Kudugunta, Aditya Kusupati, Tim Dettmers, Kaifeng Chen, Inderjit S Dhillon, Yulia Tsvetkov, Hannaneh Hajishirzi, Sham M. Kakade, Ali Farhadi, and Prateek Jain. 2024. Matformer: Nested transformer for elastic inference. In The Thirty-eighth Annual Conference on Neural Infor-mation Processing Systems .Adam Fisch, Alon Talmor, Robin Jia, Minjoon Seo, Eunsol Choi, and Danqi Chen. 2019. MRQA 2019 shared task: Evaluating generalization in reading comprehension. In Proceedings of the 2nd Workshop on Machine Reading for Question Answering , pages 1–13, Hong Kong, China. Association for Computa-tional Linguistics. Tao Ge, Hu Jing, Lei Wang, Xun Wang, Si-Qing Chen, and Furu Wei. 2024. In-context autoencoder for con-text compression in a large language model. In The Twelfth International Conference on Learning Repre-sentations .Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, and Abhishek Kadian et al. 2024. The llama 3 herd of models. Preprint ,arXiv:2407.21783. Edward J Hu, yelong shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. 2022. LoRA: Low-rank adaptation of large language models. In International Conference on Learning Representations .Huiqiang Jiang, Qianhui Wu, , Xufang Luo, Dong-sheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. 2024. LongLLMLingua: Accelerating and enhanc-ing LLMs in long context scenarios via prompt com-pression. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) , pages 1658–1677, Bangkok, Thailand. Association for Computational Linguistics. Aditya Kusupati, Gantavya Bhatt, Aniket Rege, Matthew Wallingford, Aditya Sinha, Vivek Ramanu-jan, William Howard-Snyder, Kaifeng Chen, Sham Kakade, Prateek Jain, et al. 2022. Matryoshka repre-sentation learning. Advances in Neural Information Processing Systems , 35:30233–30249. Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Hein-rich Küttler, Mike Lewis, Wen-tau Yih, Tim Rock-täschel, et al. 2020. Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in neu-ral information processing systems , 33:9459–9474. Yucheng Li, Bo Dong, Frank Guerin, and Chenghua Lin. 2023. Compressing context to enhance inference ef-ficiency of large language models. In Proceedings of the 2023 Conference on Empirical Methods in Natu-ral Language Processing , pages 6342–6353, Singa-pore. Association for Computational Linguistics. Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. Snapkv: Llm knows what you are looking for before genera-tion. In Proceedings of the 38th International Con-ference on Neural Information Processing Systems ,NIPS ’24, Red Hook, NY, USA. Curran Associates Inc. Zongqian Li, Yixuan Su, and Nigel Collier. 2025. 500xCompressor: Generalized prompt compression for large language models. In Proceedings of the 63rd Annual Meeting of the Association for Compu-tational Linguistics (Volume 1: Long Papers) , pages 25081–25091, Vienna, Austria. Association for Com-putational Linguistics. Xin Liu, Runsong Zhao, Pengcheng Huang, Xinyu Liu, Junyi Xiao, Chunyang Xiao, Tong Xiao, Shengx-iang Gao, Zhengtao Yu, and JingBo Zhu. 2026. Autoencoding-free context compression for LLMs via contextual semantic anchors. In The Fourteenth International Conference on Learning Representa-tions .Yanyu Liu, Jingying Fu, Sixiang Liu, Yitian Zou, Shouhua Zhang, and Jiehan Zhou. 2025. Kv cache compression for inference efficiency in llms: A re-view. In Proceedings of the 4th International Confer-ence on Artificial Intelligence and Intelligent Infor-mation Processing , pages 207–212. Ruijie Miao, Yihan Yan, Xinshuo Yao, and Tong Yang. 2024. An efficient inference framework for early-exit large language models. Preprint , arXiv:2407.20272. Zhongtao Miao, Qiyu Wu, and Yoshimasa Tsu-ruoka. 2026. Grc: Unifying reasoning-driven generation, retrieval and compression. Preprint ,arXiv:2605.09100. Jesse Mu, Xiang Lisa Li, and Noah Goodman. 2023. Learning to compress prompts with gist tokens. In 
+
+Thirty-seventh Conference on Neural Information Processing Systems .Zhuoshi Pan, Qianhui Wu, Huiqiang Jiang, Menglin Xia, Xufang Luo, Jue Zhang, Qingwei Lin, Victor Ruhle, Yuqing Yang, Chin-Yew Lin, H. Vicky Zhao, Lili Qiu, and Dongmei Zhang. 2024. LLMLingua-2: Data distillation for efficient and faithful task-agnostic prompt compression. In Findings of the Association for Computational Linguistics ACL 2024 ,pages 963–981, Bangkok, Thailand and virtual meet-ing. Association for Computational Linguistics. Daria Soboleva, Faisal Al-Khateeb, Robert Myers, Ja-cob R Steeves, Joel Hestness, and Nolan Dey. 2023. SlimPajama: A 627B token cleaned and deduplicated version of RedPajama. Dimitris Stripelis, Zhaozhuo Xu, Zijian Hu, Alay Dilipb-hai Shah, Han Jin, Yuhang Yao, Jipeng Zhang, Tong Zhang, Salman Avestimehr, and Chaoyang He. 2024. TensorOpera router: A multi-model router for effi-cient LLM inference. In Proceedings of the 2024 Conference on Empirical Methods in Natural Lan-guage Processing: Industry Track , pages 452–462, Miami, Florida, US. Association for Computational Linguistics. Fangyuan Xu, Weijia Shi, and Eunsol Choi. 2024. RE-COMP: Improving retrieval-augmented LMs with context compression and selective augmentation. In 
+
+The Twelfth International Conference on Learning Representations .Siyu Yuan, Kaitao Song, Jiangjie Chen, Xu Tan, Yongliang Shen, Kan Ren, Dongsheng Li, and De-qing Yang. 2025. EASYTOOL: Enhancing LLM-based agents with concise tool instruction. In Pro-ceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Com-putational Linguistics: Human Language Technolo-gies (Volume 1: Long Papers) , pages 951–972, Al-buquerque, New Mexico. Association for Computa-tional Linguistics. Murong Yue, Jie Zhao, Min Zhang, Liang Du, and Ziyu Yao. 2024. Large language model cascades with mixture of thought representations for cost-efficient reasoning. In The Twelfth International Conference on Learning Representations .Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuan-dong Tian, Christopher Ré, Clark Barrett, Zhangyang Wang, and Beidi Chen. 2023. H 2o: Heavy-hitter ora-cle for efficient generative inference of large language models. Preprint , arXiv:2306.14048. Kaiyan Zhao, Zijie Meng, Zheyong Xie, Jin Duan, Yao Hu, Zuozhu Liu, and Shaosheng Cao. 2026. Ecom-stage: Stage-wise and orientation-specific bench-marking for large language models in e-commerce. 
+
+Preprint , arXiv:2601.02752. Runsong Zhao, Xin Liu, Xinyu Liu, Pengcheng Huang, Chunyang Xiao, Tong Xiao, and JingBo Zhu. 2025. Position IDs matter: An enhanced position layout for efficient context compression in large language models. In Findings of the Association for Compu-tational Linguistics: EMNLP 2025 , pages 17715– 17734, Suzhou, China. Association for Computa-tional Linguistics.
