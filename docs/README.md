@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-12</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-13</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 3 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-12 21:17:04 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-13 21:13:35 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日速读 3 篇生成式推荐与 LLM 服务系统论文，聚焦高带宽闪存与生产级部署优化。最值得看的是《Enabling High-Bandwidth Flash…》提出的写感知 KV Cache 策略（7.0）和《PATTON》让商用 PIM 落地生产 LLM 服务（7.0）。普通读者可先读这两篇，重点理解 KV Cache 写入策略与 PIM 硬件如何影响推理成本。</p>
+<p>今日精读1篇、速读3篇，重点关注百万级长上下文下新型注意力机制能否真正解决attention sinks问题。最值得看的是这篇8分精读对注意力机制的实测检验，以及STAR-Pro用阶段化token自适应缩减加速视觉语言模型的方向。普通读者可先读精读文确认注意力机制是否真有改进，再按需浏览速读文了解KV缓存管理与长程召回的相关思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Do New Attention Mechanisms Actually Fix Attention Sinks at Million-Token Context?">Do New Attention Mechanisms Actually Fix Attention Sinks at Million-Token Context?</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sparse-attn <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Enabling High-Bandwidth Flash for Generative Recommendation Serving with Write-Aware KV Cache Policy">Enabling High-Bandwidth Flash for Generative Recommendation Serving with Write-Aware KV Cache Policy</span></li><li><span class="dpr-home-dashboard-paper-title" title="PATTON: Enabling Commodity PIM for Production LLM Serving">PATTON: Enabling Commodity PIM for Production LLM Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="FlexComp: One Model for Every Ratio in Context Compression">FlexComp: One Model for Every Ratio in Context Compression</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="STAR-Pro: Stage-Wise Token Adaptive Reduction with Progressive Refinement for Efficient Large Vision-Language Models">STAR-Pro: Stage-Wise Token Adaptive Reduction with Progressive Refinement for Efficient Large Vision-Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Unified AI Gateway: A Framework for Joint Model Routing and KV Cache Management">Unified AI Gateway: A Framework for Joint Model Routing and KV Cache Management</span></li><li><span class="dpr-home-dashboard-paper-title" title="Separating Stream Stability from Long-Term Recall in Language Models">Separating Stream Stability from Long-Term Recall in Language Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sparse-attn <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sparse-attn <strong>2</strong></span><span class="dpr-home-dashboard-tag">multimodal <strong>1</strong></span></div>
 </section>
 </div>
 
