@@ -1,0 +1,718 @@
+Title: Physically Partitioned KVCache Format for CPU–GPU Load Balancing in MoE Inference
+
+URL Source: https://arxiv.org/pdf/2609.14507v1
+
+Published Time: Tue, 15 Sep 2026 01:23:18 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Physically Partitioned KVCache Format for CPU–GPU Load Balancing in MoE Inference 
+
+## Enda Yu, Dezun Dong *, Xiangke Liao 
+
+yuenda,dong,xkliao@nudt.edu.cn National University of Defense Technology China 
+
+## Abstract 
+
+Single-GPU long-context inference with Mixture-of-Experts (MoE) models requires spilling the key-value cache (KV-Cache) to CPU memory. The spilled KV serves two comple-mentary purposes—transferring to the GPU for attention computation, or computing in-place on the CPU—which de-mand opposing physical states. The optimal split between them varies with workload, yet existing KVCache abstrac-tions offer only storage semantics over a monolithic object of a single physical state, and cannot express dynamic load balancing. We propose InplaceKVCache, the first KVCache abstraction whose format fixes each byte’s physical resi-dency at write time, so that the CPU–GPU load balance can be adjusted without moving data after placement. It realizes this as a four-region layout along two dimensions—device affinity and access pattern—turning load balancing into pure scheduling. Built on this abstraction, WriteScope splits CPU– GPU shares along the sequence dimension, and a portable roofline performance model determines the optimal CPU share as sequence length evolves, with online feedback track-ing CPU cost drift. On three MoE models (DeepSeek-V2-Lite, Qwen3-30B-A3B, Mixtral-8 ×7B) with a 32 GB VRAM budget, WriteScope supports end-to-end inference at the 1M-token aggregate scale. In the long-context regime ( ≥8K), it achieves geometric-mean speedups of 1 .5×–2 .5× on A100 and 1 .4×–1.7× on V100 over four reproduced baselines, while vLLM, SGLang, and KTransformers fail even with a doubled KV bud-get. A DeepSeek-V4-Flash case study validates composition with native sparse attention. 
+
+Keywords: MoE; KVCache; Load Balancing; Long Context 
+
+## 1 Introduction 
+
+By virtue of sparse activation—each token activates only a handful of experts [11, 35]—MoE architectures are a natu-ral fit for budget-constrained, privacy-first deployment on a single GPU [3, 37], whether a personal machine or an on-premise server. In this setting, single-user long-context inference is emerging as a core demand: per-turn inputs stay modest while the accumulated context grows relentlessly, driven by long-horizon agent reasoning, persistent-memory conversations, and parallel rollouts. Yet the sum of model 
+
+*Dezun Dong is the Corresponding Author GPU        
+
+> load
+> CPU -centric : all KV in -place
+> CPU
+> GPU -centric : all KV onload
+> GPU
+> PCIe
+> GPU
+> PCIe
+> CPU
+> Write Scope : Load -balanced
+> KV data placement decode -step attention timeline
+> GPU compute CPU compute KV load
+> Speedup
+> CPU
+> DRAM KVC ache
+> unpinned
+> new K/V KVC ache
+> pinned
+> GPU
+> ping
+> pong
+> CPU DRAM
+> new K/V
+> unload
+> GPU ratio
+> CPU ratio
+> D-window
+> pin ned
+> unpinned
+> write -time routing
+
+Figure 1. Three KVCache placement strategies. WriteScope routes KV to fixed physical partitions at write time, enabling dynamic CPU-GPU load balancing without reorganization. weights and long-context KVCache far exceeds what a sin-gle GPU in this setting can hold: for Qwen3-30B-A3B [39], inference with an aggregate 128K-token context requires at least 78 GB, well beyond the 32 GB of a single V100. The KVCache, together with most weights, must spill to CPU-resident memory. The spilled KV has two complementary uses, and existing CPU-GPU hybrid inference systems adopt one or the other. GPU-centric approaches load all KV back to the GPU (e.g., FlexGen [36], SolidAttention [51]); CPU-centric approaches compute all KV in-place on the CPU (e.g., NEO [19], Scou-tAttention [48]). In both cases the cost—PCIe transfer for the former, CPU compute for the latter—scales with the full KV volume, so a single strategy inevitably hits a bottleneck on one side as the workload grows. In long-context regimes, both camps mitigate this with asynchronous pre-execution of the next layer’s attention during the FFN phase ( AF over-lap ) [22]. For small-scale dense models, the FFN is executed entirely on the GPU, leaving the CPU and PCIe idle during that phase and available for attention opportunistically .Yet MoE ends the free lunch: spilled expert parameters reside on the CPU, so expert computation and loading sat-urate both CPU and PCIe during the FFN phase, turning that overlap into contention. On GPU-centric SolidAttention (Qwen3-30B-A3B, batch size 16, sequence 32K), pre-loading the next layer’s KVCache during FFN raises attention latency from 33.7 ms to 74.2 ms and drops KV transfer bandwidth from 25.4 GB/s to 14.9 GB/s. Once overlap breaks down, the PCIe-bandwidth bottleneck of the GPU-centric camp and the CPU-compute bottleneck of the CPU-centric camp stand 
+
+1arXiv:2609.14507v1 [cs.DC] 13 Sep 2026 Enda Yu, Dezun Dong *, Xiangke Liao 
+
+fully exposed, and the only lever left is the volume each engine must handle. Moreover, no fixed division of that vol-ume suffices: the CPU’s effective per-token cost shifts with working set and cache locality while the GPU’s is set by PCIe transfer, so the balance point drifts with model, batch, and sequence length (§2.2). Dynamic load balancing of the KVCache is therefore not an optimization but a requirement. However, existing KVCache abstractions cannot express this balance: they promise only storage semantics (store, re-trieve) over a monolithic object of one physical state—which bytes go to the CPU and which to the GPU is outside their vocabulary. Worse, the two uses impose opposite physical-state requirements: data destined for GPU loading must be pinned and logically contiguous (otherwise DMA bandwidth collapses), whereas data destined for CPU computation must be unpinned and organized per head (otherwise CPU reads are penalized). Implementations that try to serve both must allocate auxiliary contiguous buffers, copy, and reorganize— preparation that balloons from 3.5 ms to 185.9 ms per layer per step as context grows from 2K to 64K (§3.3)—negating the gains of load balancing. This is why the two camps each stick to one extreme. The difficulty of dynamic load balancing lies not in scheduling, but in the data structure. Our key insight is a data-layout principle we call the write-time principle : a byte has exactly one final physical residency, and that residency is determined at write time. Physical own-ership thus becomes a property of the data format rather than a runtime mechanism, and load balancing needs no post-hoc reorganization. Fig. 1 contrasts the resulting placement with both extremes: KV routed to fixed physical partitions at write time, balancing smoothly with load. This principle fits the KVCache because its consumption is deterministic—unlike stochastic expert activation, which can only be arbitrated at schedule time (e.g., Fiddler [20]). Building on this insight we propose InplaceKVCache , the cache format, and WriteScope , the scheduling layer built on it. InplaceKVCache partitions space along two orthogonal dimensions, device affinity and access pattern, into four re-gions: an unpinned compute region and a pinned load region on the CPU side, and a ping-pong compute region and a D-window offload region on the GPU side. Each engine reads only its own region—the CPU compute engine works over the unpinned compute region in place, the GPU load engine streams the pinned load region through ping-pong—so the entire fallback path of auxiliary buffers, copies, and reorga-nization disappears. Prefill KV is routed to its region at write time; decode KV is staged in the D-window and, once an eviction batch of 𝐷 entries fills, routed whole to the pinned or unpinned region. After placement nothing moves again. On top of this abstraction, WriteScope splits CPU/GPU shares along the sequence dimension. A portable roofline model directs each eviction batch to the region keeping the cu-mulative share on the roofline target, equalizing the GPU’s transfer-plus-compute cost against the CPU’s compute cost. 
+
+Table 1. VRAM breakdown (bs=4 × seq=32K, bf16, GB).                     
+
+> Model Weights KV CUDA Temp Total
+> DeepSeek-V2-Lite 31.4 4.1 2.4 1.2 39.1 Qwen3-30B-A3B 61.1 12.9 2.4 1.8 78.2 Mixtral-8 ×7B 93.4 17.2 2.4 1.7 114.7
+> Temp : peak runtime allocation (activations and intermediates).
+
+On three MoE models spanning both MLA and GQA [2] attention architectures (DeepSeek-V2-Lite [7], Qwen3-30B-A3B [39], Mixtral-8 ×7B [18]), with a 32 GB VRAM budget, WriteScope supports end-to-end inference at the 1M-token scale (bs=32 × seq=32K). In the long-context regime ( ≥8K), it achieves geometric-mean speedups of 1.5 ×–2.5 × on A100 and 1.4 ×–1.7 × on V100 over four reproduced baselines, while vLLM [21], SGLang [27], KTransformers [6] fail broadly. A DeepSeek-V4 [8] case study validates WriteScope’s general-ization to native sparse-attention scenarios. Contributions: 1. Problem formulation and root-cause attribution (§2– 3). We define the core requirement of CPU-GPU hybrid attention as dynamic load balancing of the KVCache, trace its long-standing absence to the monolithic storage se-mantics of existing KVCache abstractions, and quanti-tatively reveal the systematic breakdown of AF overlap under MoE inference on resource-constrained platforms. 2. The InplaceKVCache abstraction (§4). The first KV-Cache abstraction whose format fixes physical residency (device affinity × access pattern) at write time; its orthog-onal four-region layout makes dynamic load balancing a built-in capability—an online roofline policy retunes the CPU/GPU share while placed data never moves. 3. Load-balancing scheduling (§5). A sequence-dimension split of CPU/GPU shares, grounded in a roofline model that tracks the load-balance point as it drifts with model, batch size, and sequence length. The vision WriteScope points to is this: long-context MoE inference no longer requires a multi-GPU server—it becomes a practical configuration on the single-GPU machines that privacy and compliance considerations already favor. 
+
+## 2 Background and Requirements Analysis 
+
+2.1 KV Is the Right Object to Spill 
+
+Table 1 quantifies the overflow: for three models at an aggre-gate 128K tokens, the measured VRAM demand—including CUDA context and temporary buffers—reaches 1.2 ×, 2.4 ×,and 3.6 × a 32 GB card, so spilling is unavoidable. All measure-ments in this paper accordingly cap the A100-40GB alloca-tion at 32 GB—matching the V100-32GB used for portability validation, so both platforms run under one budget. Which object should be spilled—weights or KV? On Qwen3 (bs=4, seq=2K), raising vLLM’s KV budget from 2 GB to 11 GB and pushing more expert weights to CPU increases prefill     
+
+> 2Physically Partitioned KVCache Format for CPU–GPU Load Balancing in MoE Inference CPU Attn Expert compute
+> Latency (ms)
+> 36.7 52.2
+> 1.42×
+> 1.43 1.95
+> 1.36×
+> ScoutAttention
+> w/o AF w/ AF
+> KV load Expert load
+> Latency (ms)
+> 33.7 74.2
+> 2.20×
+> 1.25 2.37
+> 1.90×
+> SolidAttention
+> KV load
+> Bandwidth (GB/s)
+> 25.4 14.9
+> 0.6×
+> H2D BW
+
+Figure 2. AF overlap contention under MoE (Qwen3-30B-A3B, bs=16, seq=32K). AF degrades attention, expert, and PCIe bandwidth simultaneously due to resource contention. latency by 53% and decode latency by 51%. Expert GEMM has far higher arithmetic intensity than attention, so keeping weights GPU-resident yields greater benefit [20, 46]. KV, not weights, is therefore the right object to spill. The next question is when to evict. Existing frameworks evict reactively: the vLLM swap engine [21] evicts old blocks only when the GPU block pool is exhausted; SGLang’s Hi-Cache [27] writes back to host only on radix hit or eviction. Under a 4 GB KV budget, vLLM slows significantly once block-pool demand reaches 1.8 × capacity and deadlocks at 2.9 × once the KV injection rate exceeds the eviction rate; SGLang fails allocation at merely 1.08 ×. DRAM capacity is not the bottleneck; eviction timing is. Eviction decisions must therefore be made proactively, at write time. 
+
+2.2 The Need for KVCache Load Balancing 
+
+CPU-resident KVCache has two complementary uses: load-ing (required KV transferred over PCIe to GPU for attention, bounded by PCIe bandwidth) and in-place computation (KV stays in DRAM and attention is executed by CPU cores, bounded by CPU compute). Each decode step can load a portion of the KV while computing the rest in-place, with both engines working concurrently. The optimal CPU share varies widely with workload: for Qwen3-30B-A3B it spans 0 to 0.625 (i.e., 62.5% of KV computed in-place, §5.3). No fixed share covers this spectrum, so an efficient system must select the proportion of the two uses for its (model, batch, sequence length) and re-select it as the sequence grows. 
+
+2.3 AF Overlap Breaks Under MoE 
+
+Lacking dynamic load balancing, existing systems commit exclusively to one use: GPU-centric approaches rely on load-ing , CPU-centric ones on in-place computation . To mitigate their respective costs, both camps employ AF overlap—GPU-centric systems via pre-loading (early KV transfer, lossless), CPU-centric systems via pre-computation (predicting the next layer’s attention from adjacent-layer input similarity, at the cost of accuracy). This remedy relies on a premise: the FFN executes entirely on the GPU, leaving the CPU and PCIe completely idle during that phase (true for dense models). MoE invalidates this premise: weight spilling leaves most expert parameters CPU-resident. Expert placement follows the greedy schedule common to MoE offloading systems [46, 4.6 GB/s    
+
+> Contiguous DMA:
+> pinned contiguous DMA
+> H2D bandwidth :
+> pinned strided DMA
+> 25.4 GB/s
+> KVC ache
+> gap
+> gap
+> len
+> len
+> 0x0000 0xFFFF address →
+> GPU
+> PCI e
+> load
+> contiguous
+> buffer
+> gather
+> GPU
+> PCI e
+> load
+> Strided DMA:
+
+Figure 3. Strided vs. contiguous DMA on a pre-allocated buffer. Inter-row gaps fragment the source into short seg-ments, forcing per-segment copies; a contiguous layout ad-mits one full-bandwidth transfer. 52]: during FFN, the CPU executes cold-expert GEMM lo-cally while the PCIe is busy loading hot-expert weights to the GPU—precisely the resources AF overlap set out to bor-row. Fig. 2 quantifies the resulting contention on two rep-resentative implementations (SolidAttention and ScoutAt-tention; Qwen3-30B-A3B, bs=16, seq=32K; AF-enabled vs. AF-disabled): AF degrades the attention path by 1.4 ×–2.2 ×,expert-side loading/compute by 1.4 ×–1.9 ×, and KV host-to-device (H2D) bandwidth to approximately 0.6 ×. AF over-lap thus turns from an enabler into a net penalty: the pre-execution meant to hide inside the FFN phase now contends with expert work for the same saturated CPU and PCIe. 
+
+## 3 Why Monolithic Caches Fail to Balance 
+
+The write-time principle (§1) fixes a byte’s physical residency— its pin state and layout contiguity, two orthogonal attributes— once, at write time. This section grounds the principle in three microbenchmarks—two on the attributes (§3.1, §3.2) and one on decision timing (§3.3)—which together show why monolithic abstractions cannot balance efficiently (§3.4). All measurements use DS2 (DeepSeek-V2-Lite [7]) on the A100 platform (2 warmup iterations, mean of 10 runs, run-to-run variance <2%). 
+
+3.1 PCIe Transfer and Compute Differ on Pinning 
+
+PCIe transfer and in-place computation impose opposite pin requirements: DMA loading to the GPU requires pinned memory [29], otherwise falling back to a low-bandwidth syn-chronous path, whereas the CPU reads pinned memory more slowly than unpinned (page-table and allocation-path penal-ties). Measured on a single-layer KVCache buffer (sweeping seq 2K →32K), pinned transfer is consistently 2.5 × faster (25.4 vs. 10 GB/s), while CPU reads of pinned run 10–25% slower beyond 8K. Pin state is thus a seesaw : whichever state a monolithic cache commits to favors one engine and penal-izes the other—serving different parts of the same cache with different engines is unrealizable under a single pin state. 
+
+3.2 Strided DMA Collapses H2D Bandwidth 
+
+Layout contiguity is the second attribute—even with correct pinning, a single full-bandwidth DMA requires the source to be contiguous in virtual address space. To avoid frequent 
+
+> 3Enda Yu, Dezun Dong *, Xiangke Liao
+
+allocation and copying, frameworks typically pre-allocate a single maximum-capacity buffer for reuse [41]. Fig. 3 il-lustrates the consequence: when the actual sequence length falls short of capacity, each row of valid data is followed by a gap of unused capacity, fragmenting the slice into short contiguous segments. DMA cannot merge such a source into one large transfer and must copy segment by segment synchronously, with per-segment overhead dominating. In a 32K pre-allocated buffer (sequence 2K →32K), strided slices achieve only 4.6 GB/s, recovering to 25.4 GB/s only at the full 32K where the gap vanishes; exactly-allocated contiguous buffers hold 25.4 GB/s throughout—a 5.5 × short-fall. Pre-allocation thus trades contiguity for allocation-free reuse—a variable-length workload cannot keep a fixed buffer exactly allocated, so the gap is the common case. 
+
+3.3 State Is Freely Chosen Only at Write Time 
+
+The cost of changing physical state (re-pinning, re-layout) is proportional to data volume, so timing decides the total cost. At write time the data is already in flight: choosing its pin state and layout adds no copy traffic, and the pin work itself is paid once, on new bytes only, where it can be scheduled ahead of use (§4.3). Afterwards, the same choice costs a full copy of everything already placed—on the critical path, because the consumer is already waiting. This is what makes the pinning and contiguity asymmetries binding—a monolithic cache caught on the wrong side of either can escape only by paying that copy. Existing implementations fare even worse: they do not change state once—they rebuild the buffer every step. vLLM’s blocks fix pin state and layout at allocation time, so post-hoc migration re-walks the full prepare pipeline of loading →
+
+splicing →pinning →chunked H2D. On DynamicCache (bs=16, all KV consumed on GPU), this prepare pipeline costs 3.5 ms per layer per step at a 2K context, growing superlinearly to 185.9 ms at 64K—an order of magnitude above the layer’s entire attention compute. Physical state must therefore be set at write time, as a single atomic operation with the write. 
+
+3.4 Physical Ownership Must Be in the Format 
+
+The three measurements together show that monolithic ab-stractions struggle to support CPU-GPU load balancing effi-ciently on our target platform. A surface-level workaround is dual copies—maintaining two physical-state copies of ev-ery byte, one for each engine, with dynamic ratio and zero reorganization. Dual copies are infeasible: first, no reusable format—monolithic abstractions lack an existing contiguous pinned block format that can be sliced per chunk, so the GPU-side copy requires an extra preprocessing step to copy and convert spilled data into independent contiguous blocks; second, double capacity—dual-copy KVCache for Mixtral bs=32 ×seq=32K reaches 274 GB, enough alone to exhaust the host memory of 256 GB-class or smaller devices. Nor can the problem be lifted into a runtime layer: pin state and GPU VRAM    
+
+> Pinned load region
+> heads
+> seq
+> r ·L
+> (1 -r) ·L
+> heads
+> seq
+> Unp inned compute region
+> CPU DRAM
+> D-window
+> D
+> heads
+> seq heads
+> PP0
+> Ping -pong
+> PP1
+> PCI e
+> load
+> write -time routing
+
+·unloads  per D step    
+
+> roofline ratio r1-r
+> LSE merge
+> new KV
+> contiguous DMA
+> Four -region layout
+> ①
+> ②
+> ③
+> ④
+
+Figure 4. InplaceKVCache four-region layout. The roofline-guided share 𝑟 steers write-time routing of eviction batches from the GPU D-window to CPU unpinned or pinned regions. The CPU computes the unpinned share; the GPU loads the pinned share into ping-pong, with outputs merged via LSE. layout are properties of the bytes themselves, so a wrap-per above a single-state pool inherits its seesaw and stride penalties unchanged. 1
+
+The design corollary is thus direct: physical ownership belongs in the data format, not in a runtime mechanism. 
+
+## 4 The InplaceKVCache Format 
+
+4.1 The Format Is the Partition 
+
+InplaceKVCache refactors the KVCache from a monolithic object with a single physical state into a data format with explicit physical partitioning: a four-region layout along two orthogonal dimensions, device affinity and access pattern (Fig. 4). CPU ×compute maps to the unpinned compute re-gion, CPU ×transfer to the pinned load region, GPU ×transfer to the D-window offload region, and GPU ×compute to the ping-pong compute region. Each region is internally orga-nized in fixed-size blocks; the block is the unified granularity for write-time routing, staging, eviction, and transfer. Write-time routing thus places each K/V entry into a fixed region, and InplaceKVCache is constructed without the intermedi-ate monolithic state that would require post-hoc slicing. As §1 argues, KVCache consumption is deterministic, so the pin ×layout duality can be settled in the format. 
+
+4.2 Batched Write-Time Routing in Decode 
+
+Prefill and decode route differently; the crux is when the written KV is next consumed. Prefill KV is generated in bulk and can be routed to its final destination in one shot at write time; decode tokens must be attended starting from the next step, so their destination can wait one eviction window, and we therefore route in batches. 2
+
+New decode K/V is first staged in the GPU’s D-window and participates in GPU computation at zero H2D cost. Once 
+
+𝐷 entries accumulate ( 𝐷 =256, an integer multiple of the block size), the batch is evicted whole into the unpinned compute 
+
+> 1These costs concern reorganizing already-placed data; the D-window’s batched first placement of new KVCache (§4.2) touches none.
+> 2Whole-prompt prefill is balancing-free: each layer’s KV (151–537 MB at bs=4 ×seq=32K) is consumed by attention the moment it is produced and routed away on the idle D2H direction. 4Physically Partitioned KVCache Format for CPU–GPU Load Balancing in MoE Inference
+
+Figure 5. InplaceKVCache interface. The PartitionSpec 
+
+captures physical layout and roofline parameters; four thin operations enable write-time routing. or pinned load region (realized with cudaHostAlloc ), the side chosen by the roofline policy (§5.3). The write-back trav-els D2H—idle in our pipeline, which consumes only H2D—so full-duplex PCIe hides it inside the expert phase; hence any 
+
+𝐷 in 256–1024 leaves steady-state overhead unchanged, 3
+
+making 𝐷 a routing granularity rather than a decision unit. Placed batches never move again: exact attention keeps ev-ery entry live for the sequence’s lifetime, and session-end reclamation reuses blocks in place at the same granularity. During attention, the CPU computes over already-placed KVCache in the unpinned region, while the GPU streams the pinned region through the ping-pong region in an overwrite-reuse pattern. The two partial outputs are merged via log-sum-exp (LSE) rescaling [34], one join per step: the CPU returns only its partial output and normalizers—orders of magnitude smaller than raw KV—and the GPU performs the merge. The overwrite-reuse of the ping-pong region differs from vLLM-style [21] repeated destroy-and-rebuild: the transfer region is created once and reused long-term— block size and skeleton never change, only the data on the blocks is replaced; the CPU side holds the full KVCache backup, so overwrites never lose data. 
+
+4.3 Interface and Semantics 
+
+To make the abstraction a reusable primitive rather than an implementation detail, we provide a framework-agnostic interface (Fig. 5): a PartitionSpec per model/hardware (roofline parameters, the four regions, block granularity, and eviction batch size), and four operations of InplaceKVCache— 
+
+init sizes the four regions and pre-allocates the unpinned compute, ping-pong, and D-window regions, append routes each entry at write time, views returns zero-copy views for both sides, and flush offloads the D-window staging to the pinned or unpinned regions in proportion during decode (§4.2). The pinned load region instead grows batch by batch, its pinning kept off the critical path: prefill’s share is pinned during model loading and warmup, and each decode batch is pinned one eviction window ahead of its use (§7.7).       
+
+> 3At 𝐷 =256, a 1000-step decode window shows flat per-token latency (TPOT, P99/P50=1.03; Qwen3, bs=8, seq=8K, A100); even at the stress bound (𝐷 =1024, bs=32), per-layer write-backs (37.8–134.2 MB) take 1.5–5.3 ms on Gen4 (2.9–10.3 ms on Gen3), still hidden in the expert phase. DRAM gather
+> (only for sparse attn)
+> PCIe load
+> CPU attn
+> GPU attn D-win PP0
+> LSE
+> merge
+> PP0 PP0 PP0 PP1 PP1
+> time
+> PP0 PP0 PP1 PP1
+
+Figure 6. Pipelined sparse-selection loading. DRAM gather is hidden within the PCIe loading, leaving no extra overhead for block-level sparsity. It guarantees four semantics: (i) no temporary monolithic state— append is the routing decision; (ii) physical isolation— the pin and layout attributes of each region are fixed by the format, while device residency follows runtime routing; each engine reads only its own region without crossing bound-aries; (iii) zero-copy views—no copying or reorganization (under non-sparse attention); (iv) exactness—no data com-pression or sparsification beyond the model’s native mech-anism. The interface is deliberately thin: four operations constitute a complete yet minimal abstraction surface. 
+
+4.4 Sparse-Selection Compatibility 
+
+The above mechanism assumes dense full-sequence attention. Models such as DeepSeek-V4 [8], however, have begun adopt-ing sequence-dimension sparsity. The block-aligned format supports it unchanged: any block-level top-𝑘 selection yields a set of whole blocks, and a staging buffer reserved in the load region gathers them into one contiguous segment the size of the ping-pong buffer, converting the discrete transfers of sparse selection into one full-bandwidth DMA. The gather itself is hidden by pipelining (Fig. 6): measured gather bandwidth (35.1 GB/s) exceeds H2D (25.4 GB/s), so it never stalls the PCIe stream. Sparsity granularity therefore stops at the block level: each selected block costs one memcpy ,whereas token-level selection would drown in per-segment invocation overhead. These mechanisms are exercised in the DeepSeek-V4 case study (§7.5). 
+
+## 5 Load-Balancing Scheduling Theory 
+
+5.1 Sequence-Dimension Splitting 
+
+Throughout this section, let 𝑟 denote the CPU’s share of the sequence and 𝐿 the already-placed sequence length. We split the load along the sequence dimension, not the head dimension: the sequence axis makes the split ratio continu-ous, whereas a head-wise split is quantized by the KV-head count—coarse under GQA (four KV heads in Qwen3) and ill-defined under MLA’s shared latent. Both engines com-pute over all heads but on disjoint sequence ranges: the GPU handles the D-window staging segment (the latest 𝐷 entries, zero H2D) and the adjacent (1 −𝑟 ) · 𝐿 segment streamed from the pinned region, while the CPU handles the remaining 𝑟 · 𝐿 
+
+segment in the unpinned region. The partial outputs merge exactly via LSE rescaling; HGCA [9] applies the same merge across the CPU-GPU boundary but with a static split—GPU                 
+
+> 5Enda Yu, Dezun Dong *, Xiangke Liao 24816 32 64
+> Sequence Length (×1K)
+> 0.4 0.6 0.8 1.0
+> r
+> ≈0.50
+> DeepSeek-V2-Lite
+> 24816 32 64
+> Sequence Length (×1K)
+> 0.0 0.2 0.4 0.6
+> r
+> 0.56
+> Qwen3-30B-A3B
+> bs=4 bs=8 bs=16 roofline: r(L) = max(0, B/( A+B) + Δ/(( A+B)L))
+
+Figure 7. The roofline optimum 𝑟 (𝐿 ) for DeepSeek-V2-Lite and Qwen3-30B-A3B, compared with measured values. share fixed by VRAM capacity, CPU covering a sparsified remainder. We make the split dynamic: the ping-pong region decouples the GPU share from VRAM capacity (§4.2), so 𝑟 is tunable over [0, 1] and tracks the workload (§5.3). 
+
+5.2 Analytic Performance Model 
+
+The CPU side is bandwidth-bound: attention’s arithmetic intensity (0.5 MAC/byte) sits two orders of magnitude below the CPU’s compute–bandwidth balance point [40], so each KV token it processes incurs an effective read cost 𝐴 .4 Each token routed to the GPU incurs a transfer cost 𝐵 , dominated by H2D transfer with compute hidden beneath it (both costs are per token at a given batch size). With fixed per-step overheads 𝐶 CPU and 𝐶 GPU (launch and scheduling), the two engine latencies are 
+
+𝑇 CPU (𝑟 ) = 𝑟 ·𝐴 ·𝐿 +𝐶 CPU , 𝑇 GPU (𝑟 ) = (1−𝑟 )· 𝐵 ·𝐿 +𝐶 GPU , (1) and end-to-end latency is 𝑇 = max (𝑇 CPU ,𝑇 GPU ) + 𝑇 merge ;write Δ = 𝐶 GPU − 𝐶 CPU . The merge term is 𝑟 -independent— one LSE join per step regardless of the split, measured at 0.2–1.0 ms—so it cannot affect the optimal split that Eq. (2) solves for. 𝐴 is not a constant—it shifts with working set and cache locality—which is why the optimal share varies with workload (§2.2). 
+
+5.3 Allocating the CPU Share with Roofline 
+
+With both engines executing in parallel, load balancing re-quires 𝑇 CPU = 𝑇 GPU , yielding: 
+
+𝑟 (𝐿 ) = min 
+
+
+
+1, max 
+
+
+
+0, 𝐵 𝐴 + 𝐵 + Δ
+
+(𝐴 + 𝐵 ) · 𝐿 
+
+ 
+
+(2) Of the three parameters, 𝐵 is calibrated once, a constancy that the format itself provides: per-token volume is fixed by the model, and all GPU-bound KV moves through ping-pong blocks of fixed size, layout, and pin state (§4.2), so every transfer repeats the same shape. 5 𝐴 , by contrast, evolves with the workload and must be tracked online. In the long-context regime 𝐵 /( 𝐴 + 𝐵 ) determines the converged value, while Δ/(( 𝐴 + 𝐵 ) · 𝐿 ) characterizes the transition at short            
+
+> 4Per KV token, attention performs 𝑂 (𝑑 )arithmetic on 𝑂 (𝑑 )bytes ( 𝑑 the head dimension); running CPU attention with 8–48 threads shifts the mea-sured 𝐴 by less than 5% on both Qwen3 and DS2 (bs=16, seq=16K).
+> 5Transfer size shapes achieved bandwidth: on Gen4, 192 KB transfers reach 8.7 GB/s, 1 MB 22.2 GB/s, and 8 MB the 25.4 GB/s used in calibration; the ping-pong buffers (37.8–134.2 MB, Table 2) sit firmly on this plateau.
+
+sequences; clamping to 0 or 1 handles extreme configurations that require no load balancing (§7.6). Fig. 7 shows 𝑟 (𝐿 ) for DS2 and Qwen3: DS2 has positive Δ and 𝐴 varies little with bs, so 𝑟 (𝐿 ) decays to the converged value of 0.50; Qwen3 has negative Δ and 𝐴 degrades with bs, so 𝑟 (𝐿 ) transitions gradually and the converged value rises with bs. Operationally, 𝑟 (𝐿 ) guides D-window eviction during de-code: rather than freezing a fixed share, we hold the marginal share constant—successive eviction batches are routed so that the running fraction of CPU-placed batches matches 
+
+𝑝 = 𝐵 /( 𝐴 + 𝐵 ), the converged value of 𝑟 (𝐿 ). During D-window staging, the CPU-side component latency per decode step is sampled via a sliding average and 𝐴 is back-computed; 256 steps across multiple layers yield an accurate estimate. The initial share 𝑅 (𝐿 0) = 𝑟 (𝐿 0) at admission is given by offline calibration—scanning roofline parameters at differ-ent data volume scales for the target model, which takes only minutes—so adaptation starts on target and the online loop only tracks drift. Consequently, convergence is a mat-ter of batch geometry, not statistics: the cumulative share 
+
+𝑅 (𝐿 ) = 𝑝 + ( 𝑅 (𝐿 0) − 𝑝 ) · 𝐿 0/𝐿 moves toward the marginal share 𝑝 by 𝐷 /𝐿 per batch, so an initial share error decays within the first few batches of decode—a vanishing fraction of a long decode. 6 Thereafter, each D-window updates 𝐴 with the latest sliding average and adjusts the share accordingly; in the quasi-static regime where 𝐴 , 𝐵 , and Δ are approxi-mately constant, 𝑅 (𝐿 ) tracks 𝑟 (𝐿 ) batch by batch, adapting through new placements alone. 
+
+## 6 Implementation 
+
+6.1 CPU Kernel for In-Place Attention 
+
+CPU-side attention is executed by a custom fused AVX-512 kernel. Decode attention is memory-bound, and two designs in the kernel carry the format’s guarantees into the com-pute path: zero-copy consumption of partitioned views, and compressed-MLA reuse. 
+
+Zero-copy consumption of partitioned views. The kernel directly indexes CPU-side K/V slices via stride-aware addressing, never requiring contiguous copies; scores are never materialized—each head-group’s score vector lives only in registers, with online softmax [34] maintaining the running max and normalization term, and fp32 output accu-mulated in L1 cache. 
+
+Compressed-MLA variant. In DeepSeek-V2 [7], KV is cached as a compressed latent rather than per-head K/V, so attention cannot consume it directly. The kernel exploits MLA’s decoupled structure, reducing computation to a q-side projection and an output-side expansion. Multiple heads within a segment (an 8-token tile) share one compressed 
+
+> 6The deployed share stays within 3% of the empirically measured optimum for long sequences and within 5.1% (block quantization) for short ones; calibration, online feedback, and cross-platform validation are in §7.6. 6Physically Partitioned KVCache Format for CPU–GPU Load Balancing in MoE Inference
+
+latent, so repeated accesses in both the score and output phases hit L1 and each latent is read from DRAM only once. 
+
+6.2 Framework Integration 
+
+WriteScope runs on a hybrid runtime that reuses Hugging-Face Transformers [41] as the model skeleton—module wiring and the sampling loop—and replaces every compute path: custom attention kernels (§6.1), expert execution, and KV-Cache management. On the expert side, a CPU–GPU hierar-chical scheduler performs dynamic hot/cold ranking [46, 52] on the IPEX [16] AVX-512 backend, and KVCache and expert-weight budgets are governed by a single joint allocation model. The system core comprises approximately 2.2K lines of Python (InplaceKVCache routing and the roofline sched-uler), a 1.2K-line C++ backend (CPU attention, AVX-512), and a 2.1K-line DeepSeek-V4 sparse kernel; all of it builds on a shared 5K-line substrate—expert hot/cold scheduling and per-model adaptation—that also hosts the four repro-duced baselines (Appendix A). Integration into the skeleton requires only a narrow interface (§4.3): routing hooks re-place the attention module’s KVCache append calls, and the 
+
+PartitionSpec is generated offline by the roofline model before prefill, then updated continuously via online feedback during decode. Realizing WriteScope as an incremental extension of vLLM or SGLang runs into a structural mismatch: both fix expert and KVCache budgets statically at initialization ( gpu_memory _utilization ) and offload weights only at layer granular-ity, so the statically reserved KVCache pool caps the effec-tive context length (§2.1), whereas WriteScope relies on a joint allocation model that adjusts the expert-resident frac-tion against the KVCache budget at runtime—which neither framework’s extension points natively support. We estimate such a port at roughly 5K lines of code, mostly expert-side machinery rather than the KV format. 
+
+## 7 Evaluation 
+
+7.1 Experimental Setup Hardware. The primary platform is an NVIDIA A100 PCIe GPU (PCIe Gen4 ×16, VRAM constrained to 32 GB), with a single Intel Xeon Gold 5318Y (24 cores) and 502 GB of host memory. The portability validation platform (§7.6) is an NVIDIA V100-32GB (PCIe Gen3 ×16) on the same host CPU. 
+
+Models. We evaluate three MoE models (DeepSeek-V2-Lite [7] 27-layer MLA, Qwen3-30B-A3B [39] 48-layer GQA, Mixtral-8 ×7B [18] 32-layer GQA, 𝑑 ℎ =128, bf16) and DeepSeek-V4-Flash-Int8 [8], which mixes Compressed Sparse Attention (CSA) and Heavily Compressed Attention (HCA) (43-layer, 
+
+𝑑 ℎ =512, weights INT8, KV bf16), for a sparsity-generalization case study (§7.5). 
+
+Baselines. Two tiers: three inference frameworks run na-tively (KTransformers [6] 0.4.1, SGLang [27] 0.5.4, vLLM [21] bs=4 bs=8 bs=16bs=32 0500 1000 1500 2000 2500 3000       
+
+> Pre fi ll (tok/s)  DeepSeek-V2-Lite
+> OOM OOM
+> bs=4 bs=8 bs=16bs=32 0500 1000 1500 2000 Qwen3-30B-A3B
+> OOM OOM
+> bs=4 bs=8 bs=16bs=32 0100 200 300 400 500 600 Mixtral-8x7B
+> OOM OOM
+> WriteScope (Route) WriteScope (Ideal) vLLM SGLang KTransformers
+
+Figure 8. Prefill throughput (2K prompts). WriteScope (Route vs. Ideal) shows write-time routing is free; main-stream frameworks OOM at scale. 0.14) and four attention baselines chosen to span the execution-placement spectrum: GPU-centric (SolidAttention [51]: DRAM storage, PCIe streaming load to GPU, sparsified), CPU-centric with a GPU-resident share (ScoutAttention [48]: GPU-resident top-𝑘 blocks, CPU layer-ahead pre-computation, sparsified), staged CPU-logits/GPU-aggregation (HybridGen [24]), and fully CPU-resident (FastDecode [14]). The four attention baselines target dense models and have no MoE expert ex-ecution path. Each baseline is therefore reproduced on our runtime under the fairness protocol of Appendix A (devia-tions labeled by direction; validated against original reported numbers, Table 4), and all baselines and WriteScope share one runtime, one expert scheduler, and one measurement harness—the runtime is a controlled constant. WriteScope computes exact full attention throughout, while the two sparse baselines retain 80% of KV, so the reported speedups are achieved while processing strictly more data. 
+
+Workload. Prefill inputs are drawn from real conver-sations in ShareGPT [10]. Measurement uses a 2K-token prompt followed by decode generation to the target length; the 8K/32K points report cumulative end-to-end throughput, while the 2K point reports steady-state performance over 256 output tokens after reaching the target. Each configura-tion is run independently 10 times reporting the mean; 95% confidence intervals for speedup (bootstrap) are within ±5%. 
+
+KV resident budget. WriteScope and the four reproduced baselines are capped at a 2 GB VRAM-resident KVCache bud-get (0.3 GB for DS2 thanks to MLA compression); the three inference frameworks, whose offloading capability is limited, are granted 4 GB. 7 The comparison is thus conservative for our system: the frameworks run with twice WriteScope’s budget. 
+
+7.2 Prefill: Throughput and Capacity Robustness 
+
+Write-time routing is part of prefill, and its cost must be measured. Fig. 8 reports steady-state prefill throughput at 2K prompts for the three models at batch sizes (bs) 4, 8, 16, and 32, comparing five engines: WriteScope (Route, full write-time routing), WriteScope (Ideal, control without write-time routing), vLLM, SGLang, and KTransformers.                                                                   
+
+> 7Under the same 2 GB budget, the frameworks would yield only a few bs=4 data points—too sparse to analyze. 7Enda Yu, Dezun Dong *, Xiangke Liao 2832 2832 2832 015 30 45 60 75 90
+> Throughput (tok/s)  bs=4 bs=16 bs=32
+> A100 DeepSeek-V2-Lite
+> 2832 2832 2832 010 20 30 40 50 60 bs=4 bs=16 bs=32
+> Qwen3-30B-A3B
+> 2832 2832 2832 0510 15 20 25 30 bs=4 bs=16 bs=32
+> Mixtral-8x7B
+> 2832 2832 2832
+> Sequence Length (×1K)
+> 0510 15 20 25
+> Throughput (tok/s)  bs=4 bs=16 bs=32
+> V100 DeepSeek-V2-Lite
+> 2832 2832 2832
+> Sequence Length (×1K)
+> 0246810 12 14 bs=4 bs=16 bs=32
+> Qwen3-30B-A3B
+> 2832 2832 2832
+> Sequence Length (×1K)
+> 0246810 12 bs=4 bs=16 bs=32
+> Mixtral-8x7B
+> WriteScope
+> FastDecode SolidAttention SolidAttention (AF) ScoutAttention ScoutAttention (AF) HybridGen HybridGen (AF) KTransformers vLLM SGLang
+
+Figure 9. End-to-end decode throughput. For each AF-overlap baseline, the solid and hatched bars at the same x-coordinate are its non-AF and AF variants. Mainstream frameworks are shown as points/lines (missing = OOM). Three observations. First, write-time routing is free: Route and Ideal are nearly identical across all configurations, e.g., 1365 vs. 1366 tok/s for DS2 at bs=4, with difference ≤1 tok/s— direct system-level evidence of the write-time principle (§3.3). Second, capacity robustness: the three frameworks keep at-tention KV fully GPU-resident, and once total demand ex-ceeds their spill tolerance they OOM—at bs ≥16 in Fig. 8; WriteScope completes all configurations, and the capability boundary itself is part of the contribution. Third, in the spill regime WriteScope leads on every runnable configuration, and its throughput keeps rising with bs—DS2 grows from 1365 tok/s at bs=4 to 2684 at bs=32 (2 × at 8 × batch)—whereas budget-constrained frameworks plateau earlier; the gap is largest on strictly-spilled Mixtral (WriteScope 435–538 vs. vLLM 78–80 tok/s, a 5.4–6.9 × gap). WriteScope supports long-prompt prefill through layer-by-layer KVCache eviction and flexible expert offloading: at bs=4 and seq=32K, TTFT (time to first token) for DS2, Qwen3, and Mixtral is 51, 71, and 132 s, corresponding to 2570, 1850, and 990 tok/s. 
+
+7.3 End-to-End Decode Throughput 
+
+Fig. 9 gives end-to-end decode throughput on both platforms and all three models. We report speedup as WriteScope’s throughput divided by the baseline’s. First, in the seq ≥8K regime (across three models, batch sizes 4, 16, and 32), WriteScope’s geometric-mean speedup over each baseline is: on A100, 1.52 × over SolidAttention, 2.22 × over ScoutAttention, 2.48 × over HybridGen, 2.51 ×
+
+over FastDecode; on V100, 1.55 ×, 1.43 ×, 1.67 ×, 1.71 × respec-tively. The platform shift is itself informative: with the same CPU, V100’s slower PCIe and GPU narrow our margin over the CPU-centric baselines, yet the margin over GPU-centric SolidAttention holds (1.52 →1.55 ×). The halved PCIe should widen the attention-side gap, but V100’s slower GPU also drags expert execution on both sides, compressing the end-to-end difference; WriteScope simply shifts its balance point toward the CPU (§7.6). Second, WriteScope’s advantage amplifies with sequence length. On A100, with DS2 and bs=32, the speedup over Sol-idAttention grows from 1.40 × at 2K to 2.49 × at 32K, and over ScoutAttention from 1.28 × at 2K to 4.42 × at 32K. As load grows, single-side bottlenecks deepen while load bal-ancing keeps both engines busy—the larger the load, the more valuable write-time partitioning becomes. Third, no single fixed strategy consistently outperforms. SolidAttention’s pure PCIe-loading approach suffers most on V100, where halved PCIe bandwidth magnifies its per-step H2D cost; FastDecode’s fully CPU-resident strategy falls short on short sequences, where GPU-resident KV could have handled a substantial fraction of the attention computation at no transfer cost; ScoutAttention and HybridGen sit in between at different intermediate points—none covers the full spectrum of model architectures and sequence lengths. Fourth, AF overlap is universally worse than the non-overlap variant, and the gap widens with sequence length as expert contention grows. ScoutAttention exploits AF overlap to outperform HGCA on dense models, but under MoE work-loads the reverse holds: the de-overlapped, HGCA-equivalent variant wins (Appendix A). Finally, taking mainstream frameworks as reference: with a higher KVCache VRAM budget, vLLM, SGLang, and KTrans-formers even exceed WriteScope throughput at some small-load points, confirming that GPU-resident KV is efficient for short context but fails broadly at long context. 
+
+7.4 Ablation Study 
+
+Fig. 10 ablates one design point at a time on DS2, replac-ing it with the corresponding baseline implementation and reporting normalized end-to-end throughput. 
+
+> 8Physically Partitioned KVCache Format for CPU–GPU Load Balancing in MoE Inference
+
+Replace custom AVX-512 kernel with IPEX oneDNN fused GEMM [16, 17]: 0.84–1.00 normalized throughput, the mildest arm, since the replacement is itself an industrial-grade optimized library, showing that kernel engineering’s end-to-end contribution is bounded. 
+
+Replace the dynamic ratio with the fixed converged 
+
+𝑟 =0.50: 0.89–0.96 normalized throughput—the optimal share drifts with sequence length (Fig. 7), a frozen share matches it at only one point, while the marginal-share policy tracks it throughout. This arm is not the static partitioning of prior work [9, 48], whose GPU-resident fraction is bounded by VRAM capacity (DS2’s 2 GB budget is only 6% of the total KV at seq=32K, bs=32) for lack of an overwrite-reuse mechanism like our ping-pong region; it isolates the share alone, showing that roofline-guided dynamic allocation is necessary on top of InplaceKVCache. 
+
+Replace contiguous DMA with strided DMA: 0.47– 0.90 normalized throughput. Degradation amplifies with se-quence length and bs, quantifying the stride collapse of §3.2. 
+
+Replace ping-pong overwrite-reuse with per-step rebuild: 0.53–0.87 normalized throughput. This quantifies the per-step allocation, deallocation, and synchronization cost that overwrite-reuse avoids. 
+
+Replace pinned buffer with unpin: 0.62–0.94 normal-ized throughput. This quantifies the seesaw of §3.1: unpin-ning the H2D source forfeits the transfer half of the trade. 
+
+Replace InplaceKVCache with DynamicCache: 0.26– 0.79 normalized throughput, the heaviest degradation—it re-walks the full prepare pipeline of allocation, splicing, pin, chunked H2D every step, lacking the bundling effect of write-time routing. It is the combined projection of the three mea-surements in §3 (pin seesaw, stride collapse, non-amortizable timing)—the very path a runtime wrapper over a monolithic pool must walk (§3.4). Its degradation exceeds any single-factor arm, showing that each design point of the four-region format is not decorative. The pin seesaw, stride collapse, and reallocation overhead are hardware-layer phenomena, hence model-agnostic; only the AVX-512-kernel and Dynamic-ratio arms show model dependence. On Qwen3, the Dynamic-ratio arm degrades similarly (0.77–0.95), and the AVX-512-kernel arm remains bounded (0.84–1). 
+
+7.5 Composing with DeepSeek-V4’s Sparsity 
+
+DeepSeek-V4 mixes two attention mechanisms with sharply different KV compression ratios. At bs=32 × seq=64K, for example, the GPU permanently holds only 0.5 GB of compact state—window KV (4.2 MB × 43 layers, 180 MB) and the HCA layers’ 128 ×-compressed KV (16.8 MB × 20 layers, 336 MB)—whereas the 21 CSA layers, at only 4 × compression, each leave 671.1 MB in CPU memory (536.9 MB compressed KV + 134.2 MB block-selection indexer cache), 14.1 GB in total. KVCache management therefore reduces to the CSA 2 8 32 2 8 32 2 8 32   
+
+> Sequence Length (×1K)
+> 0.0 0.2 0.4 0.6 0.8 1.0 1.2
+> Norm. Throughput
+> bs=4 bs=16 bs=32
+> Full AVX-512 kernel Dynamic ratio Contiguous DMA Ping-pong Pinned bu ff er InplaceKVCache
+
+Figure 10. Ablation on DeepSeek-V2-Lite, normalized to the full system. Every other series replaces the design point it names with the baseline implementation; lower is worse. 4 16 64 4 16 64 4 16 64                
+
+> Sequence Length (×1K)
+> 0510 15 20 25 30 35
+> CSA latency (ms)
+> bs=4 bs=16 bs=32
+> 416 64 416 64 416 64
+> Sequence Length (×1K)
+> 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4
+> E2E latency (s)  bs=4 bs=16 bs=32
+> 1234567
+> Speedup (×)
+> 1.0 1.2 1.4 1.6 1.8 2.0
+> Speedup (×)
+> WriteScope SolidAttention ScoutAttention FastDecode
+
+Figure 11. Single-layer CSA latency (left) and end-to-end latency (right) in DeepSeek-V4. Lines report WriteScope’s speedup over each baseline on the right axis. layers. This case study validates the composition of write-time routing with model-native sparsity: all measurements respect the model’s CSA/HCA configuration and apply no external resparsification. Fig. 11 compares single-layer CSA attention across four strategies (WriteScope, SolidAttention, ScoutAttention, Fast-Decode): WriteScope achieves the lowest latency at every configuration, with advantages of 1.11–2.40 × over SolidAt-tention, 1.90–4.56 × over ScoutAttention, and 2.26–5.42 × over FastDecode, growing with sequence length. At the end-to-end level, the four strategies run on the same framework sharing identical expert and HCA+dense execu-tion paths, differing only in the CSA attention mechanism— so end-to-end differences are attributable to the CSA seg-ment. In the seq ≥16K regime, WriteScope’s geometric-mean speedups over SolidAttention, ScoutAttention, and FastDe-code are 1.10 ×, 1.24 ×, and 1.30 ×; at the heaviest bs=32 ×
+
+seq=64K configuration, they rise to 1.21 ×, 1.37 ×, and 1.43 ×.HybridGen is absent from this comparison: CSA com-presses K and V into a single shared representation, leaving no K/V boundary for its CPU-GPU split. DeepSeek-V4 marks the boundary of composability: sparsity shrinks the com-pute volume while changing neither physical ownership nor compute engine—the very properties write-time routing relies on. WriteScope exploits this independence: exact at-tention by default, composition with model-native sparsity, and external sparsification as an orthogonal user option (any block-level selector plugs into block-aligned regions without format changes, §4.4).                 
+
+> 9Enda Yu, Dezun Dong *, Xiangke Liao 24816 32 64
+> Sequence Length (×1K)
+> 0.2 0.4 0.6 0.8
+> r
+> A100
+> 24816 32 64
+> Sequence Length (×1K)
+> 0.4 0.6 0.8 1.0
+> r
+> V100
+> DS2 Qwen3 Mixtral measured optimal rdeployed ratio R(L)
+
+Figure 12. Deployed share 𝑅 (𝐿 ) (curves, roofline-guided) vs. the measured optimal 𝑟 (points: per 2K of context, swept over the following 256 decode steps), on A100 and V100 (bs=16). 10 20 30 40 50 60 70 80            
+
+> BW CPU (GB/s, measured)
+> 10 15 20 25 30
+> BW H2D (GB/s)
+> A100: r=0.500 V100: r=0.625
+> rof DeepSeek-V2-Lite
+> 10 20 30 40 50 60 70 80
+> BW CPU (GB/s, measured)
+> 10 15 20 25 30
+> BW H2D (GB/s)
+> A100: r=0.562 V100: r=0.750
+> rof Qwen3-30B-A3B
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> 0.0 0.2 0.4 0.6 0.8 1.0
+
+Figure 13. Extrapolated converged 𝑟 across CPU bandwidth and PCIe BW H2D ; A100 and V100 anchor the surface, and regions far from both anchors are indicative only. 
+
+7.6 Portability and Applicability Boundary 
+
+To verify that the roofline model of §5.3 generalizes across hardware and models, we compare the share the system ac-tually deploys—the roofline-guided trajectory—against the empirically optimal balance point measured at each data volume, on both A100 and V100 across three models (Fig. 12, bs=16). The two stay close: at the start of decode the deviation is 0.3%–4.5%; for long sequences ( ≥8K) it converges to ≤3%; short sequences (2K–4K) add a block-quantization deviation of at most 5.1%—one 𝐷 =256 eviction batch occupies 12.5% of a 2K context—that attenuates as 𝐿 grows. The model-specific shapes of the curves are reproduced on both platforms, with V100’s converged values uniformly higher because lower BW H2D makes the GPU side more expensive—the model’s guidance lands on the measured optimum wherever the plat-form moves it. With both anchors validated, Fig. 13 extrapolates the con-verged 𝑟 across the hardware plane, with measured CPU bandwidth and PCIe BW H2D as axes and A100/V100 as the an-chor points. The surface delineates our applicability bound-ary: where the two bandwidths are vastly imbalanced, 𝑟 
+
+clamps to 0 or 1 and the cache degenerates to a pure GPU- or CPU-centric regime; where they are comparable and VRAM forces spilling—exactly the single-box setting— 𝑟 falls strictly between 0 and 1 and dynamic balancing pays. 
+
+7.7 System Resource Footprint 
+
+Table 2 gives the memory footprint of WriteScope’s four regions (measured at seq=32K, bs=32). GPU-side residency comprises only two regions—the ping-pong region and the D-window region—totaling 0.29/0.85/1.18 GB at the deployed 
+
+𝐷 =256, less than 1% of the full KV at the same configuration. 
+
+Table 2. WriteScope memory footprint (seq=32K, bs=32). 
+
+Model Ping-pong D-window Unpinned Pinned 
+
+DS2 37.8 MB 255 MB 15.95 GB 16.66 GB Qwen3 67.1 MB 805 MB 61.95 GB 41.13 GB Mixtral 134.2 MB 1074 MB 103.08 GB 34.36 GB 
+
+Table 3. Concurrent interference and adaptive mitigation on Qwen3-30B-A3B (two concurrent pairs, ms/step). 
+
+Request solo 𝑟 adaptive 𝑟 solo fixed-𝑟 adaptive 
+
+bs8/8K 0.469 0.375–0.438 499 779 651 bs8/16K 0.469 0.18–0.469 664 959 827 bs4/8K 0.438 0–0.28 386 1010 436 bs16/16K 0.547 0.18–0.547 1095 1253 1134 The CPU side is split by write-time placement into unpinned compute and pinned H2D source, whose sum equals the full KV. The design thus decouples GPU VRAM from sequence length: for a given model, GPU residency grows with 𝐷 ×bs— and 𝐷 is a knob should the budget tighten—leaving CPU memory as the sole capacity bound for long context. Pinning is routed in time as well: each D-window batch’s 
+
+cudaHostAlloc is issued when its predecessor lands, over-lapping the page-lock work with the 256-step eviction win-dow. At 0.66 ms/MB, even the largest single allocation (711 ms, 1074 MB) is covered by this lookahead by over two orders of magnitude (256 steps at bs=32 take ≥100 s). Unlike the per-step rebuild of §3.3, each block is pinned once in its life-time, ahead of consumption, and over new bytes only—the write-time principle applied to its own metadata. 
+
+7.8 Multi-User Concurrency: Interference Analysis 
+
+The preceding evaluation assumes a single user issuing multi-request long-context workloads; this section supplements preliminary measurements under multi-user concurrency. Two users start their multi-request tasks with staggered launches and overlapping execution, sharing the same single-box single-GPU platform. Each user’s latency under exclu-sive resources serves as the reference (solo), reported along-side the steady-state share 𝑟 that roofline self-adaptation converges to in that setting. On this basis we compare two strategies in Table 3: (1) fixed 𝑟 , freezing the solo 𝑟 ; (2) runtime adaptive , independently monitoring 𝐴 and 𝐵 —contention now perturbs 𝐵 as well—and adjusting 𝑟 .Under contention, fixed 𝑟 degrades severely—it cannot per-ceive congestion on the shared CPU and PCIe—with bs4/8K latency inflating 2.6 × over solo. Runtime adaptation reads the inflated costs and retunes the roofline target: the deployed share follows the congestion—collapsing from 0.438 to 0– 0.28 at bs4/8K—and latency falls accordingly, by 57% (bs4/8K, 1010 →436 ms) and 16% (bs8/8K, 779 →651 ms) over fixed-𝑟 .
+
+> 10 Physically Partitioned KVCache Format for CPU–GPU Load Balancing in MoE Inference
+
+In the tightest configuration (bs16/16K), adaptive latency sits only 4% above solo versus 14.4% under fixed-𝑟 , and 𝑟 
+
+recovers rapidly once the competing request completes—the batch-geometry convergence of §5.3 under the harshest drift the system faces. The mechanism is agnostic to the contention source— 𝐴 
+
+and 𝐵 capture any aggregate cost change, whether from concurrent experts, attention, or non-inference tasks. It is the same loop as in §5.3—measure the current costs, adjust 
+
+𝑟 —except that the variation now comes from concurrent competition rather than sequence growth. Viewed on the surface of Fig. 13, contention shifts the platform’s effective operating point: both bandwidths drop, the CPU’s more so in our runs, which is why the adapted 𝑟 falls below solo— adaptation follows the surface to wherever the point lands. 
+
+## 8 Related Work 
+
+KVCache abstractions have evolved along a single dimen-sion, capacity. DynamicCache and StaticCache [41] manage growth and reallocation; PagedAttention [21] and vAtten-tion [30] manage fragmentation and virtual-physical map-ping; RadixAttention [27] shares prefixes across requests (ex-tended by HiCache to a three-tier hierarchy). KVDrive [23], Tutti [32], eLLM [43], and Bidaw [15] optimize where gen-erated KV is stored; Mooncake [31], AttentionStore [12], and CacheGen [26] organize KV tiers across devices, host memory, and the network; transport layers such as LM-Cache/NIXL [25] pipeline tier-to-tier movement, but every retrieved byte returns to the GPU for attention. All decide where and how much KV is stored, never what physical state bytes occupy or which engine consumes them. 
+
+Attention offloading falls into two camps. GPU-centric systems (FlexGen [36], ZeRO-Inference [33], HeadInfer [28], SolidAttention [51]) keep attention on the GPU and stream KV over PCIe, cutting volume by sparsity; CPU-centric sys-tems (NEO [19], ScoutAttention [48], HybridGen [24], Flux-ion [45]) make the CPU the primary engine and offload a VRAM-bounded share. HGCA [9] splits attention across both devices with LSE merge, but its split is static and capacity-dictated (§5.1). Our distinction is the decision layer: content-level selection, however often re-selected, never tunes the engine split against measured costs; WriteScope fixes resi-dency in the format at write time and drives the split with an online roofline policy. 
+
+MoE inference optimizes the expert side: precision and prefetching (MoE-APEX [38], FineMoE [47], FloE [53]), CPU-GPU expert orchestration (Fiddler [20], KTransformers [6], LayerScope [46]), disaggregation (JANUS [50]), and static or content-level placement (PowerInfer [37, 44], InfiniGen [22], llama.cpp [13]). In all of them attention stays on the GPU, and their expert traffic saturates the CPU and PCIe during FFN— the two lines do not compose with AF-overlap attention offloading (§2.3). WriteScope is the first to bring attention’s physical placement into the MoE design space. 
+
+## 9 Discussion and Limitations 
+
+Applicability boundary. Our mechanism provides the great-est value in single-box, memory-constrained MoE long-context inference, only then does physical partitioning (the write-time principle) graduate from implementation detail to first-class semantics. If VRAM is abundant, or if CPU and PCIe bandwidth are vastly imbalanced, the KVCache degenerates to an extreme GPU- or CPU-centric regime; the roofline sur-face of §7.6 delineates this boundary quantitatively. KVCache quantization is likewise an orthogonal, user-level choice: it only shrinks the per-token byte count—regions, routing, and block granularity are unchanged, and the roofline recali-brates 𝐵 (§5.3). 
+
+Why has this been overlooked? The absence of physical partitioning from mainstream KVCache abstractions is not accidental: in multi-GPU scenarios, VRAM is abundant; in the dense-model era, the need for load balancing was masked by AF overlap and sparsification. This absence has also given rise to behaviors now considered canonical: GPU-resident recent KV with sparsification to reduce I/O, and offloading designed as reactive pressure relief rather than proactive management. This paper demonstrates that GPU VRAM can be overwrite-reused within a single attention phase; what makes each offload–load cycle affordable is not the sched-uling but the format beneath it—pinned sources, preserved contiguity, fixed transfer shapes. 
+
+Limitations and future work. Our target scenario is ex-clusive single-user access to a single-GPU system; multi-user concurrency (§7.8) is a feasibility validation, not a recom-mended deployment mode. On hardware coverage, consumer Gen4 cards (RTX 3090/4090) share A100’s PCIe generation; their converged 𝑟 therefore lies near the A100 anchor on the roofline surface of Fig. 13. Gen5 platforms (RTX 5090) offer higher PCIe bandwidth, shifting the converged 𝑟 to-ward smaller CPU shares. In the future, we plan to extend WriteScope to jointly schedule expert prefetching and atten-tion placement under a unified roofline policy, managing their shared contention for CPU and PCIe bandwidth. 
+
+## 10 Conclusion 
+
+Single-GPU long-context MoE inference spills the KVCache to CPU, making dynamic load balancing between CPU-side computation and GPU-side loading on the same cache the core requirement. We trace its long-standing absence to the data-structure level of existing KVCache abstractions and propose InplaceKVCache, the first KVCache format that fixes each byte’s physical residency at write time; paired with a roofline-driven online policy, load balancing reduces to pure scheduling. On three MoE models, WriteScope achieves geometric-mean decode speedups of 1.5 ×–2.5 × (A100) and 
+
+> 11
+
+Enda Yu, Dezun Dong *, Xiangke Liao 
+
+1.4 ×–1.7 × (V100) over four reproduced baselines in the ≥8K regime, sustains end-to-end inference at the 1M-token aggre-gate scale where mainstream frameworks fail, and composes with model-native sparsity (DeepSeek-V4)—moving long-context MoE inference from a multi-GPU-server capability to a practical configuration on single-GPU systems. 
+
+## References 
+
+[1] Muhammad Adnan, Akhil Arunkumar, Gaurav Jain, Prashant J. Nair, Ilya Soloveychik, and Purushotham Kamath. 2024. Key-former: KV Cache Reduction through Key Tokens Selec-tion for Efficient Generative Inference. In MLSys . 114–127. 
+
+https://proceedings.mlsys.org/paper_files/paper/2024/file/ 48fecef47b19fe501d27d338b6d52582-Paper-Conference.pdf 
+
+[2] Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebrón, and Sumit Sanghai. 2023. GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints. In 
+
+EMNLP . 4895–4901. https://doi.org/10.18653/v1/2023.emnlp-main.298 
+
+[3] Keivan Alizadeh, Iman Mirzadeh, Dmitry Belenko, S. Khatamifard, Minsik Cho, Carlo C. del Mundo, Mohammad Rastegari, and Mehrdad Farajtabar. 2024. LLM in a flash: Efficient Large Language Model Inference with Limited Memory. In ACL . 12562–12584. https://doi. org/10.18653/v1/2024.acl-long.678 
+
+[4] Jason Ansel, Edward Z. Yang, Horace He, Natalia Gimelshein, Ani-mesh Jain, Michael Voznesensky, Bin Bao, Peter Bell, David Berard, Evgeni Burovski, Geeta Chauhan, Anjali Chourdia, Will Constable, Al-ban Desmaison, Zachary DeVito, Elias Ellison, Will Feng, Jiong Gong, Michael Gschwind, Brian Hirsh, Sherlock Huang, Kshiteej Kalam-barkar, Laurent Kirsch, Michael Lazos, Mario Lezcano, Yanbo Liang, Jason Liang, Yinghai Lu, C. K. Luk, Bert Maher, Yunjie Pan, Christian Puhrsch, Matthias Reso, Mark Saroufim, Marcos Yukio Siraichi, Helen Suk, Shunting Zhang, Michael Suo, Phil Tillet, Xu Zhao, Eikan Wang, Keren Zhou, Richard Zou, Xiaodong Wang, Ajit Mathews, William Wen, Gregory Chanan, Peng Wu, and Soumith Chintala. 2024. Py-Torch 2: Faster Machine Learning Through Dynamic Python Byte-code Transformation and Graph Compilation. In ASPLOS . 929–947. 
+
+https://doi.org/10.1145/3620665.3640366 
+
+[5] Shiyi Cao, Shu Liu, Tyler Griggs, Peter Schafhalter, Xiaoxuan Liu, Ying Sheng, Joseph E Gonzalez, Matei Zaharia, and Ion Stoica. 2025. MoE-Lightning: High-Throughput MoE Inference on Memory-Constrained GPUs. In ASPLOS . 715–730. https://doi.org/10.1145/3669940.3707267 
+
+[6] Hongtao Chen, Weiyu Xie, Boxin Zhang, Jingqi Tang, Jiahao Wang, Jianwei Dong, Shaoyuan Chen, Ziwei Yuan, Chen Lin, Chengyu Qiu, Yuening Zhu, Qingliang Ou, Jiaqi Liao, Xianglin Chen, Zhiyuan Ai, Yongwei Wu, and Mingxing Zhang. 2025. KTransformers: Unleashing the Full Potential of CPU/GPU Hybrid Inference for MoE Models. In 
+
+SOSP . 1014–1029. https://doi.org/10.1145/3731569.3764843 
+
+[7] DeepSeek-AI. 2024. DeepSeek-V2: A strong, economical, and efficient mixture-of-experts language model. arXiv:2405.04434 https://doi.org/ 10.48550/arXiv.2405.04434 
+
+[8] DeepSeek-AI. 2026. DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence. arXiv:2606.19348 https://doi.org/10.48550/ arXiv.2606.19348 
+
+[9] Weishu Deng, Yujie Yang, Peiran Du, Lingfeng Xiang, Zhen Lin, Cheng-Zhong Xu, Song Jiang, Hui Lu, and Jia Rao. 2025. HGCA: Hybrid GPU-CPU Attention for Long Context LLM Inference. arXiv:2507.03153 
+
+https://doi.org/10.48550/arXiv.2507.03153 
+
+[10] Hugging Face. 2024. ShareGPT-V3-unfiltered-cleaned-split. 
+
+https://huggingface.co/datasets/learnanything/sharegpt_v3_ unfiltered_cleaned_split 
+
+[11] William Fedus, Barret Zoph, and Noam Shazeer. 2022. Switch Trans-formers: Scaling to Trillion Parameter Models with Simple and Ef-ficient Sparsity. J. Mach. Learn. Res. 23, 120 (2022), 120:1–120:39. 
+
+https://jmlr.org/papers/v23/21-0998.html 
+
+[12] Bin Gao, Zhuomin He, Puru Sharma, Qingxuan Kang, Djordje Jevdjic, Junbo Deng, Xingkun Yang, Zhou Yu, and Pengfei Zuo. 2024. Cache-dAttention: Cost-efficient large language model serving for multi-turn conversations. In ATC . 1–16. https://www.usenix.org/conference/ atc24/presentation/gao 
+
+[13] Georgi Gerganov. 2023. llama.cpp . https://github.com/ggerganov/ llama.cpp 
+
+[14] Jiaao He and Jidong Zhai. 2024. FastDecode: High-Throughput GPU-Efficient LLM Serving Using Heterogeneous Pipelines. arXiv:2403.11421 https://doi.org/10.48550/arXiv.2403.11421 
+
+[15] Shipeng Hu, Guangyan Zhang, Yuqi Zhou, Yaya Wei, Ziyan Zhong, and Jike Chen. 2026. Bidaw: Enhancing Key-Value Caching for In-teractive LLM Serving via Bidirectional Computation-Storage Aware-ness. In FAST . 101–116. https://www.usenix.org/conference/fast26/ presentation/hu-shipeng 
+
+[16] Intel Corporation. 2024. Intel Extension for PyTorch (IPEX). https: //github.com/intel/intel-extension-for-pytorch 
+
+[17] Intel Corporation. 2024. oneDNN: Deep Neural Network Library for Intel Hardware. https://github.com/oneapi-src/oneDNN 
+
+[18] Albert Q. Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary, Chris Bamford, Devendra Singh Chaplot, Diego de Las Casas, Emma Bou Hanna, Florian Bressand, Gianna Lengyel, Guil-laume Bour, Guillaume Lample, Lélio Renard Lavaud, Lucile Saulnier, Marie-Anne Lachaux, Pierre Stock, Sandeep Subramanian, Sophia Yang, Szymon Antoniak, Teven Le Scao, Théophile Gervet, Thibaut Lavril, Thomas Wang, Timothée Lacroix, and William El Sayed. 2024. Mixtral of Experts. arXiv:2401.04088 https://doi.org/10.48550/arXiv. 2401.04088 
+
+[19] Xuanlin Jiang, Yang Zhou, Shiyi Cao, Ion Stoica, and Minlan Yu. 2025. NEO: Saving GPU Memory Crisis with CPU Offloading for Online LLM Inference. In MLSys . https://openreview.net/forum?id=umgy9tWBLA 
+
+[20] Keisuke Kamahori, Tian Tang, Yile Gu, Kan Zhu, and Baris Kasikci. 2025. Fiddler: CPU-GPU Orchestration for Fast Inference of Mixture-of-Experts Models. In ICLR . 56099–56115. https://openreview.net/ forum?id=N5fVv6PZGz 
+
+[21] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient Memory Management for Large Language Model Serving with PagedAttention. In SOSP . 611–626. https://doi.org/10. 1145/3600006.3613165 
+
+[22] Wonbeom Lee, Jungi Lee, Junghwan Seo, and Jaewoong Sim. 2024. InfiniGen: Efficient Generative Inference of Large Language Models with Dynamic KV Cache Management. In OSDI . 155–172. https: //www.usenix.org/conference/osdi24/presentation/lee 
+
+[23] Jian Lin, Jiazhi Mi, Zicong Hong, Haodong Wang, Qianli Liu, Haoyue Zhang, Peng Li, and Song Guo. 2026. KVDrive: A Holistic Multi-Tier KV Cache Management System for Long-Context LLM Inference. 
+
+PACMMOD 4, 3 (2026), 200:1–200:25. https://doi.org/10.1145/3802077 
+
+[24] Mao Lin, Xi Wang, Guilherme Cox, Dong Li, and Hyeran Jeon. 2026. HybridGen: Efficient LLM Generative Inference via CPU-GPU Hybrid Computing. arXiv:2604.18529 https://doi.org/10.48550/arXiv.2604. 18529 
+
+[25] Yuhan Liu, Yihua Cheng, Jiayi Yao, Cong Guo, Zihan Liu, Yangjie Zhou, Weiming Hu, Hao Wu, Changxu Shao, Ziqing Wang, Yongjie Yuan, Jun-ping Zhao, Minyi Guo, and Jingwen Leng. 2025. LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference. arXiv:2510.09665 
+
+https://doi.org/10.48550/arXiv.2510.09665 
+
+[26] Yuhan Liu, Hanchen Li, Yihua Cheng, Siddhant Ray, Yuyang Huang, Qizheng Zhang, Kuntai Du, Jiayi Yao, Shan Lu, Ganesh Anantha-narayanan, Michael Maire, Henry Hoffmann, Ari Holtzman, and Junchen Jiang. 2024. CacheGen: KV Cache Compression and Stream-ing for Fast Large Language Model Serving. In SIGCOMM . 38–56. 
+
+https://doi.org/10.1145/3651890.3672274 
+
+12 Physically Partitioned KVCache Format for CPU–GPU Load Balancing in MoE Inference 
+
+[27] LMSYS. 2025. SGLang . https://github.com/sgl-project/sglang 
+
+[28] Cheng Luo, Zefan Cai, Hanshi Sun, Jinqi Xiao, Bo Yuan, Wen Xiao, Junjie Hu, Jiawei Zhao, Beidi Chen, and Anima Anandkumar. 2025. HeadInfer: Memory-Efficient LLM Inference by Head-wise Offloading. arXiv:2502.12574 https://doi.org/10.48550/arXiv.2502.12574 
+
+[29] NVIDIA Corporation. 2025. CUDA C++ Programming Guide (pinned memory / page-locked host memory). https://docs.nvidia.com/cuda/ cuda-c-programming-guide/ 
+
+[30] Ramya Prabhu, Ajay Nayak, Jayashree Mohan, Ramachandran Ramjee, and Ashish Panwar. 2025. vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention. In ASPLOS . 1133–1150. 
+
+https://doi.org/10.1145/3669940.3707256 
+
+[31] Ruoyu Qin, Zheming Li, Weiran He, Jialei Cui, Heyi Tang, Feng Ren, Teng Ma, Shangming Cai, Yineng Zhang, Mingxing Zhang, Yongwei Wu, Weimin Zheng, and Xinran Xu. 2026. Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving. TOS 22, 4 (2026), 37:1–37:38. https://doi.org/10.1145/3773772 
+
+[32] Shi Qiu, Yifan Hu, Xintao Wang, Wenhao Zhu, Jianqin Yan, Hao Chen, Kaiqiang Xu, Kai Chen, and Yiming Zhang. 2026. Tutti: Mak-ing SSD-Backed KV Cache Practical for Long-Context LLM Serving. arXiv:2605.03375 https://doi.org/10.48550/arXiv.2605.03375 
+
+[33] Jeff Rasley, Ammar Awan, Samyam Rajbhandari, Yuxiong He, and Olatunji Ruwase. 2023. DeepSpeed ZeRO-Inference: Extreme Inference Optimizations for Billion-Parameter Models on Limited Resources. 
+
+https://www.deepspeed.ai/tutorials/inference-tutorial/ 
+
+[34] Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. 2024. FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision. In NeurIPS . 68658– 68685. https://proceedings.neurips.cc/paper_files/paper/2024/file/ 7ede97c3e082c6df10a8d6103a2eebd2-Paper-Conference.pdf 
+
+[35] Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc V. Le, Geoffrey E. Hinton, and Jeff Dean. 2017. Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer. In ICLR . https://openreview.net/forum?id=B1ckMDqlg 
+
+[36] Ying Sheng, Lianmin Zheng, Binhang Yuan, Zhuohan Li, Max Ryabinin, Beidi Chen, Percy Liang, Christopher Ré, Ion Stoica, and Ce Zhang. 2023. FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU. In ICML . 31094–31116. 
+
+https://proceedings.mlr.press/v202/sheng23a.html 
+
+[37] Yixin Song, Zeyu Mi, Haotong Xie, and Haibo Chen. 2024. PowerInfer: Fast Large Language Model Serving with a Consumer-grade GPU. In 
+
+SOSP . 590–606. https://doi.org/10.1145/3694715.3695964 
+
+[38] Peng Tang, Jiacheng Liu, Xiaofeng Hou, Yifei Pu, Jing Wang, Pheng-Ann Heng, Chao Li, and Minyi Guo. 2026. MoE-APEX: An Efficient MoE Inference System with Adaptive Precision Expert Offloading. In 
+
+ASPLOS . 1185–1200. https://doi.org/10.1145/3779212.3790187 
+
+[39] Qwen Team. 2025. Qwen3 Technical Report. arXiv:2505.09388 https: //doi.org/10.48550/arXiv.2505.09388 
+
+[40] Samuel Williams, Andrew Waterman, and David A. Patterson. 2009. Roofline: An Insightful Visual Performance Model for Multicore Ar-chitectures. Commun. ACM 52, 4 (2009), 65–76. https://doi.org/10. 1145/1498765.1498785 
+
+[41] Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi, Pierric Cistac, Tim Rault, Rémi Louf, Morgan Funtowicz, and Jamie Brew. 2019. HuggingFace’s Transform-ers: State-of-the-art Natural Language Processing. arXiv:1910.03771 
+
+http://arxiv.org/abs/1910.03771 
+
+[42] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2024. Efficient Streaming Language Models with Attention Sinks. In ICLR . https://openreview.net/forum?id=NG7sS51zVF 
+
+[43] Jiale Xu, Rui Zhang, Yi Xiong, Cong Guo, Zihan Liu, Yangjie Zhou, Weiming Hu, Hao Wu, Changxu Shao, Ziqing Wang, Yongjie Yuan, Jun-ping Zhao, Minyi Guo, and Jingwen Leng. 2025. eLLM: Elastic Memory Management Framework for Efficient LLM Serving. arXiv:2506.15155 
+
+https://doi.org/10.48550/arXiv.2506.15155 
+
+[44] Zhenliang Xue, Yixin Song, Zeyu Mi, Le Chen, Yubin Xia, and Haibo Chen. 2024. PowerInfer-2: Fast Large Language Model Inference on a Smartphone. arXiv:2406.06282 https://doi.org/10.48550/arXiv.2406. 06282 
+
+[45] Feiyu Yao, Zhixiong Niu, Xiaqing Li, Yongqiang Xiong, Juan Fang, and Qian Wang. 2026. An Efficient Hybrid Sparse Attention with CPU-GPU Parallelism for Long-Context Inference. arXiv:2605.07719 
+
+https://doi.org/10.48550/arXiv.2605.07719 
+
+[46] Enda Yu, Dezun Dong, Zhaoning Zhang, Zhe Bai, Weiling Yang, Haojie Wang, Dongsheng Li, Yongwei Wu, and Xiangke Liao. 2026. LayerScope: Predictive Cross-Layer Scheduling for Efficient Multi-Batch MoE Inference on Legacy Servers. In ICS . 881–892. https: //doi.org/10.1145/3797905.3807834 
+
+[47] Hanfei Yu, Xingqi Cui, Hong Zhang, Hao Wang, and Hao Wang. 2026. Taming Latency-Memory Trade-Off in MoE-Based LLM Serving via Fine-Grained Expert Offloading. In EuroSys . 176–191. https://doi.org/ 10.1145/3767295.3769319 
+
+[48] Qiuyang Zhang, Kai Zhou, Ding Tang, Kai Lu, Cheng Li, Zhenyu Yang, Peng Xu, and Jiguang Wan. 2026. ScoutAttention: Efficient KV Cache Offloading via Layer-Ahead CPU Pre-computation for LLM Inference. arXiv:2603.27138 https://arxiv.org/abs/2603.27138 
+
+[49] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lian-min Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christo-pher Ré, Clark W. Barrett, Zhangyang Wang, and Beidi Chen. 2023. H2O: Heavy-Hitter Oracle for Efficient Generative In-ference of Large Language Models. In NeurIPS . 34661–34710. 
+
+https://proceedings.neurips.cc/paper_files/paper/2023/file/ 6ceefa7b15572587b78ecfcebb2827f8-Paper-Conference.pdf 
+
+[50] Zhexiang Zhang, Ye Wang, Xiangyu Wang, Yumiao Zhao, Jingzhe Jiang, Qizhen Weng, Shaohuai Shi, Yin Chen, and Minchen Yu. 2025. Janus: Disaggregating Attention and Experts for Scalable MoE Infer-ence. arXiv:2512.13525 https://doi.org/10.48550/arXiv.2512.13525 
+
+[51] Xinrui Zheng, Dongliang Wei, Jianxiang Gao, Yixin Song, Zeyu Mi, and Haibo Chen. 2026. SolidAttention: Low-Latency SSD-based Serving on Memory-Constrained PCs. In FAST . 67–82. https://www.usenix. org/conference/fast26/presentation/zheng 
+
+[52] Shuzhang Zhong, Yanfan Sun, Ling Liang, Runsheng Wang, Ru Huang, and Meng Li. 2025. HybriMoE: Hybrid CPU-GPU Scheduling and Cache Management for Efficient MoE Inference. In DAC . 1–7. https: //doi.org/10.1109/DAC63849.2025.11133274 
+
+[53] Yuxin Zhou, Zheng Li, Jun Zhang, Jue Wang, Yiping Wang, Zhongle Xie, Ke Chen, and Lidan Shou. 2025. FloE: On-the-Fly MoE Infer-ence on Memory-constrained GPU. In ICML . 78859–78882. https: //proceedings.mlr.press/v267/zhou25j.html 
+
+## A Baseline Mechanism Alignment 
+
+All reproduced baselines run on the WriteScope runtime, sharing the same MoE expert scheduling backend, CPU-GPU execution pipeline, and measurement harness; the runtime is a controlled constant, so end-to-end differences isolate the KV-management mechanisms (§7.1). Reproduction follows four rules: (R1) the original core mechanism is preserved verbatim; only what the workload structurally requires is changed (storage medium, platform-specific memory tiers, node count); (R2) every deviation from the original is listed in Table 4 with the direction it favors; (R3) each reproduction is validated against the original paper’s reported numbers on a reproducible configuration, using hardware-normalized anchors (Table 5); (R4) no baseline number in this paper 
+
+13 Enda Yu, Dezun Dong *, Xiangke Liao 
+
+comes from a native implementation that cannot execute the workload. 
+
+Reproduction validation. Hardware differences across the original papers are not part of any baseline’s mechanism, so validation uses hardware-normalized anchors—bandwidth ceilings and ratios against common references—rather than cross-hardware absolute numbers (Table 5). SolidAttention’s paradigm is I/O-bound: the original’s 7.5 GB/s is the SSD ceiling, and our reproduction saturates the DRAM path at the measured H2D peak (25.4 GB/s)—the mechanism reaches the physical limit of its new medium. ScoutAttention’s origi-nal paper reports 1.78 × over Transformer full-KV attention (Qwen3-8B, 8K); our reproduction (DS2, 8K, bs=4, retaining 80% of KV) measures 1.26 × end-to-end against the InplaceKV-Cache arm (Fig. 10)—the same magnitude once the MoE ex-pert share (experts take 223 ms of a decode step, whereas the original’s dense models are attention-dominated) is ac-counted for. HybridGen’s original paper reports 1.87–3.02 ×
+
+over MoE-Lightning (OPT-13B, bs=4–16); on Mixtral, our HybridGen reproduction reaches 1.32–3.14 × and our FastDe-code reproduction 1.39–2.94 × over natively running MoE-Lightning—the same magnitude against a reference that itself runs without reproduction. 
+
+SolidAttention. Its original mechanism is SSD-backed dynamic sparse attention: KV merged into coarse-grained blocks, speculative prefetching, fine-grained I/O-compute orchestration. We replace the storage medium from SSD to DRAM [favors baseline] , preserving block-level streaming and sparse selection, with 80% of KV retained (the quality-retention point reported in the original paper). SSD →DRAM removes the I/O bandwidth bottleneck, placing its PCIe stream-ing bandwidth on par with our ping-pong region at the mea-sured peak (25.4 GB/s); had SSD been retained, the baseline would perform worse. 
+
+ScoutAttention. Its original mechanism is GPU-resident top-𝑘 blocks and CPU layer-ahead precomputation of non-resident blocks (i.e., AF overlap) with asynchronous periodic recall. We preserve the mechanism and retain 80% of KV 
+
+[mixed] . Removing AF overlap recovers the HGCA para-digm [9] (static split, sparsified CPU remainder, cross-engine merge); the non-AF arm in Fig. 9 therefore doubles as the HGCA representative—neither work is open-source, but Scou-tAttention’s own pipeline diagram confirms the equivalence at matching sparsity. 
+
+HybridGen. Its original mechanism is CPU-decoupled logits computation, predictive next-layer attention precom-putation based on adjacent-layer input similarity (AF over-lap), and CXL tiered memory (NUMA-aware). We preserve logits splitting (CPU computes 𝑞𝐾 ⊤, reads K but not V, then transfers to GPU for aggregation) and predictive precompu-tation; the CXL tier is unavailable on our platform [neutral] —502 GB of host DRAM already holds the full KV, so the tier’s capacity role does not arise on this workload. 
+
+FastDecode. Its original mechanism is heterogeneous at-tention execution across multiple CPU nodes. We shrink to a single node (the GPU does not retain KV; 100% offloaded to CPU) [against baseline] : node-level parallelism is lost, so the original’s expected performance is correspondingly higher; the unified single-box platform is the constant across all systems. 
+
+Other systems not included. In the dense-model regime, SolidAttention has already been compared against FlexGen [36] and llama.cpp [13]; ScoutAttention against HGCA [9] and InfiniGen [22]; HybridGen against FlexGen, Keyformer [1], StreamingLLM [42], MoE-Lightning [5], H2O [49], and Infini-Gen. These systems natively lack the MoE expert execution path required for our workload, and their attention mech-anisms are covered by the four baselines above—HGCA in particular is directly represented by the non-AF ScoutAtten-tion arm (see above). MoE-Lightning (which supports Mixtral and is open-source) is taken as an example: its native design has attention on CPU and experts loaded over PCIe to GPU. Natively running MoE-Lightning reaches only 34%–72% of our reproduced FastDecode on Mixtral: loading one expert over PCIe (14 ms on A100) is much more expensive than the AVX-512-optimized local CPU expert computation (average 4.6 ms at bs=32), and our runtime’s expert side universally employs CPU-GPU hierarchical scheduling, widening the gap with pure GPU expert processing. 
+
+KV transport layers (LMCache/NIXL).. These are storage-and-movement layers between inference engines and de-vices, with no decode path of their own: retrieved KV returns to the engine’s GPU for attention (§8). Turning one into an end-to-end baseline means building a new inference engine around it, and the resulting comparison would again reduce to the attention mechanisms already covered by our four reproduced baselines. 
+
+V100 bf16 execution. V100 (sm70) has no native bf16 support—Tensor Cores support only fp16, and CUDA cores have no bf16 instructions. On the GPU side, our system runs bf16 via the PyTorch software promotion path [4] (bf16 →fp32) at fp32-level performance without Tensor Core acceleration; on the CPU side, AVX-512-F widens bf16 to fp32 registers for FMA (our Xeon 5318Y lacks AVX-512 BF16). Since computa-tion is dominated by the CPU and the GPU only handles a small streaming/resident fraction, V100’s bf16 deficiency has limited impact on our architecture—this also demonstrates that the CPU-dominated hybrid architecture does not rely on GPU bf16 Tensor Cores. The three inference frameworks 
+
+> 14
+
+Physically Partitioned KVCache Format for CPU–GPU Load Balancing in MoE Inference 
+
+Table 4. Deviations from the original baselines and the direction each favors. 
+
+Baseline Deviation Favors Rationale SolidAttention SSD →DRAM baseline removes the I/O bottleneck; PCIe streaming hits the H2D peak (25.4 GB/s) Solid./Scout. KV retention set to 80% mixed the quality-retention point reported in the original papers; keeps the comparison on transfer/compute mechanisms HybridGen CXL tier unavailable neutral 502 GB host DRAM already holds the full KV; the capacity tier does not arise on this workload FastDecode multi-node →single-node against the unified single-box platform is the constant across all systems 
+
+Table 5. Reproduction validation anchors. All entries are ratios or hardware ceilings, not cross-hardware absolutes. 
+
+Baseline Anchor Original (reported) Reproduction (measured) SolidAttention I/O bandwidth ceiling 7.5 GB/s (SSD) 25.4 GB/s (DRAM, = H2D peak) ScoutAttention vs. full-KV attention, 8K 1.78 × (Qwen3-8B) 1.26 × e2e (same magnitude once the MoE expert share is accounted for) HybridGen vs. MoE-Lightning 1.87–3.02 × (OPT-13B) 1.32–3.14 × (Mixtral, native reference) FastDecode vs. MoE-Lightning — 1.39–2.94 × (Mixtral, native reference) HGCA paradigm equivalence — non-AF ScoutAttention arm = HGCA design (static split, sparsified CPU remainder, cross-engine merge) 
+
+(vLLM, SGLang, and KTransformers), whose kernels are com-piled for sm80+, have no corresponding cubin on Volta and thus cannot run on V100. 
+
+15
